@@ -13,6 +13,8 @@ pytz==2024.1
 email-validator==2.1.0
 gunicorn
 psutil==5.9.0
+scrypt==0.8.24
+cryptography>=3.4.8
 
 # Testing dependencies
 pytest==7.4.3

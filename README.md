@@ -127,12 +127,15 @@ docker exec -it bibliotheca python3 admin_tools.py system-stats
 
 ### Migration from V1.x
 
-Existing single-user installations are automatically migrated to multi-user:
-- All existing books are assigned to the admin user
+Existing single-user installations are **automatically migrated** to multi-user:
+- **Automatic database backup** created before migration
+- All existing books are assigned to the admin user  
 - No data is lost during migration
 - V1.x functionality remains unchanged
+- **No manual steps required** - just start the application!
 
 📖 **Documentation:**
+- **[MIGRATION.md](MIGRATION.md)** - Automatic migration system details
 - **[AUTHENTICATION.md](AUTHENTICATION.md)** - Complete authentication guide
 - **[ADMIN_TOOLS.md](ADMIN_TOOLS.md)** - Admin tools and user management
 - **[TESTING.md](TESTING.md)** - Comprehensive testing documentation and procedures

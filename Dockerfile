@@ -5,18 +5,49 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# Configure OpenSSL for compatibility with modern Python and enable legacy support
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
+ENV OPENSSL_ENABLE_SHA1_SIGNATURES=1
+
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies required for psutil and other packages
+# Install system dependencies required for psutil and cryptographic packages
 RUN apt-get update && apt-get install -y \
     gcc \
+    g++ \
     python3-dev \
+    openssl \
+    ca-certificates \
+    libssl-dev \
+    libffi-dev \
+    build-essential \
+    pkg-config \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Configure OpenSSL to support legacy algorithms for compatibility
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
+RUN echo "openssl_conf = openssl_init" >> /etc/ssl/openssl.cnf && \
+    echo "" >> /etc/ssl/openssl.cnf && \
+    echo "[openssl_init]" >> /etc/ssl/openssl.cnf && \
+    echo "providers = provider_sect" >> /etc/ssl/openssl.cnf && \
+    echo "" >> /etc/ssl/openssl.cnf && \
+    echo "[provider_sect]" >> /etc/ssl/openssl.cnf && \
+    echo "default = default_sect" >> /etc/ssl/openssl.cnf && \
+    echo "legacy = legacy_sect" >> /etc/ssl/openssl.cnf && \
+    echo "" >> /etc/ssl/openssl.cnf && \
+    echo "[default_sect]" >> /etc/ssl/openssl.cnf && \
+    echo "activate = 1" >> /etc/ssl/openssl.cnf && \
+    echo "" >> /etc/ssl/openssl.cnf && \
+    echo "[legacy_sect]" >> /etc/ssl/openssl.cnf && \
+    echo "activate = 1" >> /etc/ssl/openssl.cnf
+
 # Install Python dependencies
 COPY requirements.txt .
+# Upgrade pip and install cryptographic dependencies first
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir cryptography
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all source code

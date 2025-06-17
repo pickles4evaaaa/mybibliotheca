@@ -210,3 +210,6 @@ project_summary.md
 MULTI_USER_PROJECT_PLAN.md
 PROJECT_SUMMARY.md
 temp_cookies.txt
+
+# Database backups
+data/backups/

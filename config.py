@@ -11,8 +11,9 @@ class Config:
 
     # Database
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-        f"sqlite:///{os.path.join(basedir, 'books.db')}"
+        f"sqlite:///{os.path.join(basedir, 'data', 'books.db')}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    DATABASE_PATH = os.path.join(basedir, 'data', 'books.db')
 
     # External APIs
     ISBN_API_KEY = os.environ.get('ISBN_API_KEY') or 'your_isbn_api_key'
