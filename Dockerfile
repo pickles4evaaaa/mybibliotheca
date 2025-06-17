@@ -61,6 +61,7 @@ RUN mkdir -p /app/data && \
 
 # Set environment variables for multi-user authentication
 ENV DATABASE_URL=sqlite:////app/data/books.db
+ENV DATABASE_PATH=sqlite:////app/data/books.db
 ENV WTF_CSRF_ENABLED=True
 
 # Default admin credentials (override with docker run -e or docker-compose)
