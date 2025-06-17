@@ -8,7 +8,7 @@
   <link href="{{ url_for('static', filename='bootstrap.min.css') }}" rel="stylesheet">
   <style>
     body {
-      background-image: url("{{ url_for('static', filename='bookshelf.png') }}"), linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+      background-image: url("{{ url_for('static', filename='bookshelf.png') }}"), linear-gradient(to bottom, var(--background-light), var(--background-dark));
       background-size: cover;
       background-repeat: no-repeat;
       background-attachment: fixed;
@@ -21,32 +21,30 @@
       padding: 40px 0;
     }
     .container {
-      /* max-width: 700px; */ /* Removed */
-      /* margin: auto; */ /* Removed */
-      width: 100%; /* Added */
+      width: 100%;
       border-radius: 16px;
       box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-      background: rgba(255,255,255,0.95);
-      padding: 32px 15px; /* Modified from 32px 24px */
+      background: var(--container-background);
+      padding: 32px 15px;
     }
     h1, h2, h3 {
       font-family: 'Georgia', serif;
-      color: #5a3e1b;
+      color: var(--text-primary);
     }
     a {
-      color: #8d5524;
+      color: var(--link-color);
       text-decoration: none;
     }
     a:hover {
-      color: #c68642;
+      color: var(--link-hover-color);
       text-decoration: underline;
     }
     .btn-link {
-      color: #8d5524;
+      color: var(--link-color);
       text-decoration: none;
     }
     .btn-link:hover {
-      color: #c68642;
+      color: var(--link-hover-color);
       text-decoration: underline;
     }
     .book-cover {
@@ -56,9 +54,31 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     .navbar {
-      background: rgba(255,255,255,0.95);
-      border-bottom: 1px solid #e0c9a6;
+      background: var(--navbar-background);
+      border-bottom: 1px solid var(--navbar-border-color);
       margin-bottom: 32px;
+    }
+    :root {
+      --background-light: #f5f5f5;
+      --background-dark: #e0e0e0;
+      --overlay-background: rgba(255, 255, 255, 0.95);
+      --container-background: rgba(255, 255, 255, 0.95);
+      --text-primary: #5a3e1b;
+      --link-color: #8d5524;
+      --link-hover-color: #c68642;
+      --navbar-background: rgba(255, 255, 255, 0.95);
+      --navbar-border-color: #e0c9a6;
+    }
+    [data-bs-theme="dark"] {
+      --background-light: #121212;
+      --background-dark: #1e1e1e;
+      --overlay-background: rgba(0, 0, 0, 0.95);
+      --container-background: rgba(0, 0, 0, 0.95);
+      --text-primary: #d4af37;
+      --link-color: #f4a460;
+      --link-hover-color: #ffa07a;
+      --navbar-background: rgba(0, 0, 0, 0.95);
+      --navbar-border-color: #444;
     }
   </style>
 </head>
@@ -111,16 +131,16 @@
     </div>
   </div>
   <script>
-  let prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)')
+    let prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)');
 
-  function updateTheme() {
-    const theme = prefersDarkMode.matches ? 'dark' : 'light'
-    document.documentElement.setAttribute('data-bs-theme', theme)
-  }
+    function updateTheme() {
+      const theme = prefersDarkMode.matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-bs-theme', theme);
+    }
 
-  updateTheme();
-  prefersDarkMode.addEventListener("change", () => updateTheme());
-</script>
+    updateTheme();
+    prefersDarkMode.addEventListener("change", updateTheme);
+  </script>
   <!-- Bootstrap JS (local file) -->
   <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
 </body>
