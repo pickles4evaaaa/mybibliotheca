@@ -1,7 +1,7 @@
 import os
 import shutil
 from datetime import datetime
-from flask import Flask
+from flask import Flask, session
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import inspect, text
@@ -144,6 +144,13 @@ def create_default_admin_if_needed():
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    # Initialize debug utilities
+    from .debug_utils import setup_debug_logging, print_debug_banner, debug_middleware
+    
+    with app.app_context():
+        setup_debug_logging()
+        print_debug_banner()
 
     # Initialize extensions
     db.init_app(app)
@@ -289,6 +296,36 @@ def create_app():
                     print(f"⚠️  Reading log migration failed: {e}")
         
         print("🎉 Database migration completed successfully!")
+
+    # Add middleware to check for forced password changes
+    @app.before_request
+    def check_password_change_required():
+        from flask import request, redirect, url_for
+        from flask_login import current_user
+        from .debug_utils import debug_middleware
+        
+        # Run debug middleware if enabled
+        debug_middleware()
+        
+        # Skip if user is not authenticated
+        if not current_user.is_authenticated:
+            return
+        
+        # Skip for certain routes to avoid redirect loops
+        allowed_endpoints = [
+            'auth.forced_password_change',
+            'auth.logout',
+            'static'
+        ]
+        
+        # Allow API and AJAX requests, and skip for static files
+        if request.endpoint in allowed_endpoints or (request.endpoint and request.endpoint.startswith('static')):
+            return
+        
+        # Check if user must change password
+        if hasattr(current_user, 'password_must_change') and current_user.password_must_change:
+            if request.endpoint != 'auth.forced_password_change':
+                return redirect(url_for('auth.forced_password_change'))
 
     # Register blueprints
     from .routes import bp

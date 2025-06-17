@@ -5,6 +5,7 @@
 {% block content %}
 <h2>Search for Books</h2>
 <form method="post" class="mb-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
   <input type="text" name="query" value="{{ query }}" placeholder="Enter book title" class="form-control" required>
   <button type="submit" class="btn btn-primary mt-2">Search</button>
 </form>
@@ -21,6 +22,7 @@
           <small>ISBN: {{ book.isbn or 'N/A' }}</small>
         </div>
         <form method="post" action="{{ url_for('main.add_book_from_search') }}" class="ms-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
           <input type="hidden" name="title" value="{{ book.title }}">
           <input type="hidden" name="author" value="{{ book.authors }}">
           <input type="hidden" name="isbn" value="{{ book.isbn }}">

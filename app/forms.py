@@ -3,6 +3,12 @@ from wtforms import StringField, PasswordField, BooleanField, SubmitField, TextA
 from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError
 from .models import User
 
+def validate_strong_password(form, field):
+    """Custom validator for strong passwords"""
+    if not User.is_password_strong(field.data):
+        requirements = User.get_password_requirements()
+        raise ValidationError(f"Password must meet the following requirements: {'; '.join(requirements)}")
+
 class LoginForm(FlaskForm):
     username = StringField('Username or Email', validators=[DataRequired()])
     password = PasswordField('Password', validators=[DataRequired()])
@@ -17,13 +23,13 @@ class RegistrationForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Email()])
     password = PasswordField('Password', validators=[
         DataRequired(),
-        Length(min=6, message='Password must be at least 6 characters long')
+        validate_strong_password
     ])
     password2 = PasswordField('Repeat Password', validators=[
         DataRequired(), 
         EqualTo('password', message='Passwords must match')
     ])
-    submit = SubmitField('Register')
+    submit = SubmitField('Create User')
 
     def validate_username(self, username):
         user = User.query.filter_by(username=username.data).first()
@@ -34,26 +40,6 @@ class RegistrationForm(FlaskForm):
         user = User.query.filter_by(email=email.data).first()
         if user is not None:
             raise ValidationError('Please use a different email address.')
-
-class RequestPasswordResetForm(FlaskForm):
-    email = StringField('Email', validators=[DataRequired(), Email()])
-    submit = SubmitField('Request Password Reset')
-
-    def validate_email(self, email):
-        user = User.query.filter_by(email=email.data).first()
-        if user is None:
-            raise ValidationError('No account found with that email address.')
-
-class PasswordResetForm(FlaskForm):
-    password = PasswordField('New Password', validators=[
-        DataRequired(),
-        Length(min=6, message='Password must be at least 6 characters long')
-    ])
-    password2 = PasswordField('Repeat Password', validators=[
-        DataRequired(), 
-        EqualTo('password', message='Passwords must match')
-    ])
-    submit = SubmitField('Reset Password')
 
 class UserProfileForm(FlaskForm):
     username = StringField('Username', validators=[
@@ -84,7 +70,7 @@ class ChangePasswordForm(FlaskForm):
     current_password = PasswordField('Current Password', validators=[DataRequired()])
     new_password = PasswordField('New Password', validators=[
         DataRequired(),
-        Length(min=6, message='Password must be at least 6 characters long')
+        validate_strong_password
     ])
     new_password2 = PasswordField('Repeat New Password', validators=[
         DataRequired(), 
@@ -101,10 +87,22 @@ class PrivacySettingsForm(FlaskForm):
 class AdminPasswordResetForm(FlaskForm):
     new_password = PasswordField('New Password', validators=[
         DataRequired(),
-        Length(min=6, message='Password must be at least 6 characters long')
+        validate_strong_password
     ])
     new_password2 = PasswordField('Repeat New Password', validators=[
         DataRequired(), 
         EqualTo('new_password', message='Passwords must match')
     ])
+    force_change = BooleanField('Require user to change password on next login', default=True)
     submit = SubmitField('Reset User Password')
+
+class ForcedPasswordChangeForm(FlaskForm):
+    new_password = PasswordField('New Password', validators=[
+        DataRequired(),
+        validate_strong_password
+    ])
+    new_password2 = PasswordField('Repeat New Password', validators=[
+        DataRequired(), 
+        EqualTo('new_password', message='Passwords must match')
+    ])
+    submit = SubmitField('Set New Password')

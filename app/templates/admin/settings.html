@@ -28,7 +28,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('admin.settings') }}">
-                    <!-- CSRF protection would be added here when forms become functional -->
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     
                     <div class="mb-3">
                         <label for="site_name" class="form-label">Site Name</label>

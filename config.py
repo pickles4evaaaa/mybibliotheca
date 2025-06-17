@@ -63,3 +63,13 @@ class Config:
     ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@bibliotheca.local')
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
     ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme123')
+    
+    # Debug settings (disabled by default for security)
+    DEBUG_MODE = os.environ.get('BIBLIOTHECA_DEBUG', 'false').lower() in ['true', 'on', '1']
+    DEBUG_CSRF = os.environ.get('BIBLIOTHECA_DEBUG_CSRF', 'false').lower() in ['true', 'on', '1']
+    DEBUG_SESSION = os.environ.get('BIBLIOTHECA_DEBUG_SESSION', 'false').lower() in ['true', 'on', '1']
+    DEBUG_AUTH = os.environ.get('BIBLIOTHECA_DEBUG_AUTH', 'false').lower() in ['true', 'on', '1']
+    DEBUG_REQUESTS = os.environ.get('BIBLIOTHECA_DEBUG_REQUESTS', 'false').lower() in ['true', 'on', '1']
+    
+    # Debug log level (only used if debug mode is enabled)
+    DEBUG_LOG_LEVEL = os.environ.get('BIBLIOTHECA_DEBUG_LOG_LEVEL', 'INFO')

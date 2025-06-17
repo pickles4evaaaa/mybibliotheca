@@ -31,19 +31,15 @@ except ImportError as e:
 
 def validate_password(password):
     """Validate password meets security requirements"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long"
-    
-    if not any(c.isalpha() for c in password):
-        return False, "Password must contain at least one letter"
-    
-    if not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one number"
-    
-    return True, "Password is valid"
+    return User.is_password_strong(password), "Password meets security requirements" if User.is_password_strong(password) else "Password does not meet security requirements"
 
 def get_secure_password(prompt="Enter new password: "):
     """Get a password from user input with validation"""
+    print("\n📋 Password Requirements:")
+    for req in User.get_password_requirements():
+        print(f"  • {req}")
+    print()
+    
     while True:
         password = getpass.getpass(prompt)
         
@@ -91,14 +87,18 @@ def reset_admin_password(args):
             password = get_secure_password()
         
         # Update password
-        admin_user.set_password(password)
-        db.session.commit()
-        
-        print(f"✅ Password reset successful for admin user: {admin_user.username}")
-        print(f"📧 Email: {admin_user.email}")
-        print("🔒 Please store the new password securely")
-        
-        return True
+        try:
+            admin_user.set_password(password)
+            db.session.commit()
+            
+            print(f"✅ Password reset successful for admin user: {admin_user.username}")
+            print(f"📧 Email: {admin_user.email}")
+            print("🔒 Please store the new password securely")
+            
+            return True
+        except ValueError as e:
+            print(f"❌ Password validation failed: {e}")
+            return False
 
 def create_admin(args):
     """Create a new admin user"""
@@ -155,19 +155,23 @@ def create_admin(args):
             password = get_secure_password("Enter admin password: ")
         
         # Create admin user
-        admin_user = User(
-            username=username,
-            email=email,
-            is_admin=True,
-            created_at=datetime.now(timezone.utc)
-        )
-        admin_user.set_password(password)
-        
-        db.session.add(admin_user)
-        db.session.commit()
-        
-        print(f"✅ Created admin user: {username}")
-        print(f"📧 Email: {email}")
+        try:
+            admin_user = User(
+                username=username,
+                email=email,
+                is_admin=True,
+                created_at=datetime.now(timezone.utc)
+            )
+            admin_user.set_password(password)
+            
+            db.session.add(admin_user)
+            db.session.commit()
+            
+            print(f"✅ Created admin user: {username}")
+            print(f"📧 Email: {email}")
+        except ValueError as e:
+            print(f"❌ Password validation failed: {e}")
+            return False
         print("🔒 Please store the password securely")
         
         return True

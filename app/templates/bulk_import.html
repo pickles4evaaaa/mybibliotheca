@@ -17,6 +17,7 @@
             <h3 class="card-title">Bulk Import Books</h3>
             <p class="card-text">Upload a CSV file containing UPCs/ISBNs in a single column to bulk import books.</p>
             <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="mb-3">
                     <label for="csv_file" class="form-label">Upload CSV File</label>
                     <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
@@ -40,6 +41,7 @@
             <h3 class="card-title">Import from Goodreads</h3>
             <p class="card-text">Upload a Goodreads CSV file to import books from your Goodreads account.</p>
             <form action="{{ url_for('main.import_goodreads') }}" method="post" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="mb-3">
                     <label for="goodreads_csv" class="form-label">Upload Goodreads CSV</label>
                     <input type="file" class="form-control" name="goodreads_csv" id="goodreads_csv" accept=".csv" required>

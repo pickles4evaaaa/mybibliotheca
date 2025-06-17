@@ -25,7 +25,7 @@ def create_default_admin():
     """Create a default admin user for migration"""
     admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
     admin_email = os.environ.get('ADMIN_EMAIL', 'admin@bibliotheca.local')
-    admin_password = os.environ.get('ADMIN_PASSWORD', 'changeme123')
+    admin_password = os.environ.get('ADMIN_PASSWORD', 'TempAdmin123!@#')
     
     # Check if admin already exists
     existing_admin = User.query.filter_by(username=admin_username).first()
@@ -40,16 +40,25 @@ def create_default_admin():
         is_admin=True,
         created_at=datetime.now(timezone.utc)
     )
-    admin_user.set_password(admin_password)
     
-    db.session.add(admin_user)
-    db.session.commit()
-    
-    print(f"✅ Created admin user: {admin_username} (email: {admin_email})")
-    print(f"⚠️  Default password: {admin_password}")
-    print("🔒 Please change the admin password after migration!")
-    
-    return admin_user
+    try:
+        # For initial setup, bypass password validation
+        admin_user.set_password(admin_password, validate=False)
+        admin_user.password_changed_at = None  # Mark as never changed
+        # Force password change on first login
+        admin_user.password_must_change = True
+        
+        db.session.add(admin_user)
+        db.session.commit()
+        
+        print(f"✅ Created admin user: {admin_username} (email: {admin_email})")
+        print(f"⚠️  Default password: {admin_password}")
+        print("🔒 Admin will be required to change password on first login!")
+        
+        return admin_user
+    except Exception as e:
+        print(f"⚠️  Failed to create default admin: {e}")
+        raise
 
 def migrate_books_to_user(user):
     """Assign all books without user_id to the specified user"""

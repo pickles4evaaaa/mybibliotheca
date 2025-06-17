@@ -241,12 +241,20 @@ def reset_user_password(user_id):
     form = AdminPasswordResetForm()
     
     if form.validate_on_submit():
-        user.set_password(form.new_password.data)
-        # Also unlock the account if it was locked
-        user.unlock_account()
-        db.session.commit()
-        flash(f'Password reset successfully for user {user.username}.', 'success')
-        return redirect(url_for('admin.user_detail', user_id=user.id))
+        try:
+            user.set_password(form.new_password.data)
+            # Set force password change if requested
+            if form.force_change.data:
+                user.password_must_change = True
+            # Also unlock the account if it was locked
+            user.unlock_account()
+            db.session.commit()
+            
+            force_msg = " User will be required to change password on next login." if form.force_change.data else ""
+            flash(f'Password reset successfully for user {user.username}.{force_msg}', 'success')
+            return redirect(url_for('admin.user_detail', user_id=user.id))
+        except ValueError as e:
+            flash(str(e), 'error')
     
     return render_template('admin/reset_password.html', 
                          title=f'Reset Password - {user.username}',

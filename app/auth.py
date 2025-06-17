@@ -1,21 +1,37 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, current_user, login_required
-from .models import User, PasswordResetToken, db
-from .forms import (LoginForm, RegistrationForm, RequestPasswordResetForm, 
-                   PasswordResetForm, UserProfileForm, ChangePasswordForm,
-                   PrivacySettingsForm, AdminPasswordResetForm)
-from datetime import datetime, timedelta, timezone
-import secrets
+from .models import User, db
+from .forms import (LoginForm, RegistrationForm, UserProfileForm, ChangePasswordForm,
+                   PrivacySettingsForm, ForcedPasswordChangeForm)
+from .debug_utils import debug_route, debug_auth, debug_csrf, debug_session
+from datetime import datetime, timezone
 
 auth = Blueprint('auth', __name__)
 
 @auth.route('/login', methods=['GET', 'POST'])
+@debug_route('AUTH')
 def login():
+    debug_auth("Login route accessed")
+    
     if current_user.is_authenticated:
+        debug_auth("User already authenticated, redirecting to index")
         return redirect(url_for('main.index'))
     
     form = LoginForm()
+    debug_auth(f"Form created, CSRF token should be generated")
+    
+    # Debug CSRF token generation
+    from flask_wtf.csrf import generate_csrf
+    try:
+        csrf_token = generate_csrf()
+        debug_csrf(f"Generated CSRF token: {csrf_token[:10]}...")
+    except Exception as e:
+        debug_csrf(f"Error generating CSRF token: {e}")
+    
     if form.validate_on_submit():
+        debug_auth(f"Login form submitted for user: {form.username.data}")
+        debug_csrf("Form validation passed, checking CSRF")
+        
         # Try to find user by username or email
         user = User.query.filter(
             (User.username == form.username.data) | 
@@ -23,27 +39,45 @@ def login():
         ).first()
         
         if user:
+            debug_auth(f"User found: {user.username} (ID: {user.id})")
             # Check if account is locked
             if user.is_locked():
+                debug_auth("Account is locked")
                 flash('Account is temporarily locked due to too many failed login attempts. Please try again later.', 'error')
                 return redirect(url_for('auth.login'))
             
             # Check if account is active
             if not user.is_active:
+                debug_auth("Account is inactive")
                 flash('Your account has been deactivated. Please contact an administrator.', 'error')
                 return redirect(url_for('auth.login'))
             
             # Check password
             if user.check_password(form.password.data):
+                debug_auth("Password check passed")
                 # Successful login
                 user.reset_failed_login()
                 login_user(user, remember=form.remember_me.data)
+                debug_auth(f"User logged in successfully: {user.username}")
+                
+                # Ensure session is committed before checking password requirements
+                db.session.commit()
+                debug_session("Database session committed after login")
+                
+                # Check if user must change password
+                if user.password_must_change:
+                    debug_auth("User must change password - redirecting to forced password change")
+                    flash('You must change your password before continuing.', 'warning')
+                    return redirect(url_for('auth.forced_password_change'))
+                
                 next_page = request.args.get('next')
                 if not next_page or not next_page.startswith('/'):
                     next_page = url_for('main.index')
+                debug_auth(f"Redirecting to: {next_page}")
                 flash(f'Welcome back, {user.username}!', 'success')
                 return redirect(next_page)
             else:
+                debug_auth("Password check failed")
                 # Failed password
                 user.increment_failed_login()
                 attempts_left = max(0, 5 - user.failed_login_attempts)
@@ -52,6 +86,7 @@ def login():
                 else:
                     flash('Account locked due to too many failed attempts. Please try again in 30 minutes.', 'error')
         else:
+            debug_auth("User not found")
             # User not found
             flash('Invalid username/email or password', 'error')
     
@@ -70,36 +105,41 @@ def logout():
     return redirect(url_for('main.index'))
 
 @auth.route('/register', methods=['GET', 'POST'])
+@login_required
 def register():
-    # Allow admin users to create new users, otherwise redirect authenticated users
-    if current_user.is_authenticated and not current_user.is_admin:
+    # Only admin users can create new users
+    if not current_user.is_admin:
+        flash('Access denied. Only administrators can create new users.', 'error')
         return redirect(url_for('main.index'))
     
     form = RegistrationForm()
     if form.validate_on_submit():
-        user = User(
-            username=form.username.data,
-            email=form.email.data
-        )
-        user.set_password(form.password.data)
-        
-        # First user becomes admin
-        if User.query.count() == 0:
-            user.is_admin = True
-            flash('Congratulations! As the first user, you have been granted admin privileges.', 'info')
-        
-        db.session.add(user)
-        db.session.commit()
-        
-        # If admin is creating a user, redirect back to user management
-        if current_user.is_authenticated and current_user.is_admin:
-            flash(f'User {user.username} has been created successfully!', 'success')
+        try:
+            user = User(
+                username=form.username.data,
+                email=form.email.data
+            )
+            user.set_password(form.password.data)
+            
+            # Check if this is the very first user in the system
+            if User.query.count() == 0:
+                user.is_admin = True
+                # First admin must change password on first login
+                user.password_must_change = True
+                flash('Congratulations! As the first user, you have been granted admin privileges. You must change your password on first login.', 'info')
+            else:
+                # New users created by admin should change password on first login
+                user.password_must_change = True
+            
+            db.session.add(user)
+            db.session.commit()
+            
+            flash(f'User {user.username} has been created successfully! They will be required to change their password on first login.', 'success')
             return redirect(url_for('admin.users'))
-        else:
-            flash('Congratulations, you are now registered!', 'success')
-            return redirect(url_for('auth.login'))
+        except ValueError as e:
+            flash(str(e), 'error')
     
-    return render_template('auth/register.html', title='Register', form=form)
+    return render_template('auth/register.html', title='Create New User', form=form)
 
 @auth.route('/profile', methods=['GET', 'POST'])
 @login_required
@@ -125,64 +165,69 @@ def change_password():
     
     if form.validate_on_submit():
         if current_user.check_password(form.current_password.data):
-            current_user.set_password(form.new_password.data)
-            db.session.commit()
-            flash('Your password has been changed.', 'success')
-            return redirect(url_for('auth.profile'))
+            try:
+                current_user.set_password(form.new_password.data)
+                db.session.commit()
+                flash('Your password has been changed.', 'success')
+                return redirect(url_for('auth.profile'))
+            except ValueError as e:
+                flash(str(e), 'error')
         else:
             flash('Current password is incorrect.', 'error')
     
     return render_template('auth/change_password.html', title='Change Password', form=form)
 
-@auth.route('/reset_password_request', methods=['GET', 'POST'])
-def reset_password_request():
-    if current_user.is_authenticated:
+@auth.route('/forced_password_change', methods=['GET', 'POST'])
+@login_required
+@debug_route('AUTH')
+def forced_password_change():
+    debug_auth("Forced password change route accessed")
+    
+    # If user doesn't need to change password, redirect to main page
+    if not current_user.password_must_change:
+        debug_auth("User doesn't need to change password, redirecting to index")
         return redirect(url_for('main.index'))
     
-    form = RequestPasswordResetForm()
+    form = ForcedPasswordChangeForm()
+    
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
-        if user:
-            # Generate reset token
-            token = secrets.token_urlsafe(32)
-            reset_token = PasswordResetToken(
-                user_id=user.id,
-                token=token,
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
-            )
-            db.session.add(reset_token)
-            db.session.commit()
-            
-            # TODO: Send email with reset link
-            # For now, just flash the token (in production, this would be emailed)
-            flash(f'Password reset requested. Reset token: {token} (expires in 1 hour)', 'info')
-            
-        flash('Check your email for instructions to reset your password.', 'info')
-        return redirect(url_for('auth.login'))
-    
-    return render_template('auth/reset_password_request.html', title='Reset Password', form=form)
-
-@auth.route('/reset_password/<token>', methods=['GET', 'POST'])
-def reset_password(token):
-    if current_user.is_authenticated:
-        return redirect(url_for('main.index'))
-    
-    reset_token = PasswordResetToken.query.filter_by(token=token, used=False).first()
-    if not reset_token or reset_token.is_expired():
-        flash('Invalid or expired reset token.', 'error')
-        return redirect(url_for('auth.reset_password_request'))
-    
-    form = PasswordResetForm()
-    if form.validate_on_submit():
-        user = reset_token.user
-        user.set_password(form.password.data)
-        reset_token.used = True
-        db.session.commit()
+        debug_auth("Forced password change form submitted")
+        debug_csrf("Form validation passed for forced password change")
         
-        flash('Your password has been reset.', 'success')
-        return redirect(url_for('auth.login'))
+        try:
+            current_user.set_password(form.new_password.data)
+            db.session.commit()
+            debug_auth("Password changed successfully")
+            flash('Your password has been changed successfully. You can now continue using the application.', 'success')
+            return redirect(url_for('main.index'))
+        except ValueError as e:
+            debug_auth(f"Password validation failed: {e}")
+            flash(str(e), 'error')
+    else:
+        if request.method == 'POST':
+            debug_csrf("Form validation failed for forced password change")
+            debug_csrf(f"Form errors: {form.errors}")
     
-    return render_template('auth/reset_password.html', title='Reset Password', form=form)
+    debug_auth("Rendering forced password change template")
+    return render_template('auth/forced_password_change.html', title='Change Required Password', form=form)
+
+@auth.route('/debug_info')
+@login_required
+def debug_info():
+    """Debug route to display comprehensive debug information (only if debug mode enabled)"""
+    from .debug_utils import get_debug_info
+    from flask import current_app, jsonify
+    
+    if not current_app.config.get('DEBUG_MODE', False):
+        flash('Debug mode is not enabled.', 'error')
+        return redirect(url_for('main.index'))
+    
+    if not current_user.is_admin:
+        flash('Access denied. Admin privileges required.', 'error')
+        return redirect(url_for('main.index'))
+    
+    debug_data = get_debug_info()
+    return jsonify(debug_data)
 
 @auth.route('/privacy_settings', methods=['GET', 'POST'])
 @login_required

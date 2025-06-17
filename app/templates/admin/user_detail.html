@@ -145,6 +145,7 @@
                     <!-- Unlock Account (if locked) -->
                     {% if user.is_locked() %}
                     <form method="POST" action="{{ url_for('admin.unlock_user_account', user_id=user.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <button type="submit" class="btn btn-outline-info w-100">
                             <i class="bi bi-unlock"></i> Unlock Account
                         </button>
@@ -153,6 +154,7 @@
                     
                     <!-- Admin Toggle -->
                     <form method="POST" action="{{ url_for('admin.toggle_admin', user_id=user.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <button type="submit" 
                                 class="btn btn-outline-{{ 'warning' if user.is_admin else 'success' }} w-100"
                                 onclick="return confirm('{{ 'Remove admin privileges from' if user.is_admin else 'Grant admin privileges to' }} {{ user.username }}?')">
@@ -166,6 +168,7 @@
                     
                     <!-- Active Toggle -->
                     <form method="POST" action="{{ url_for('admin.toggle_active', user_id=user.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <button type="submit" 
                                 class="btn btn-outline-{{ 'secondary' if user.is_active else 'success' }} w-100"
                                 onclick="return confirm('{{ 'Deactivate' if user.is_active else 'Activate' }} {{ user.username }}?')">
@@ -186,6 +189,7 @@
                     <!-- Unlock Account -->
                     {% if user.is_locked() %}
                     <form method="POST" action="{{ url_for('admin.unlock_user_account', user_id=user.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <button type="submit" 
                                 class="btn btn-outline-info w-100"
                                 onclick="return confirm('Unlock account for {{ user.username }}?')">
@@ -196,6 +200,7 @@
                     
                     <!-- Delete User -->
                     <form method="POST" action="{{ url_for('admin.delete_user', user_id=user.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <button type="submit" 
                                 class="btn btn-outline-danger w-100"
                                 onclick="return confirm('Are you sure you want to delete {{ user.username }}? This will also delete all their books and reading logs. This action cannot be undone!')">

@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 import secrets
+import re
 
 db = SQLAlchemy()
 
@@ -25,16 +26,79 @@ class User(UserMixin, db.Model):
     share_reading_activity = db.Column(db.Boolean, default=True)
     share_library = db.Column(db.Boolean, default=True)
     
+    # Password security
+    password_must_change = db.Column(db.Boolean, default=False)
+    password_changed_at = db.Column(db.DateTime, nullable=True)
+    
     # Relationships
     books = db.relationship('Book', backref='user', lazy=True, cascade='all, delete-orphan')
     
-    def set_password(self, password):
+    def set_password(self, password, validate=True):
         """Set password hash"""
+        # Validate password strength before setting (unless explicitly bypassed)
+        if validate and not self.is_password_strong(password):
+            raise ValueError("Password does not meet security requirements")
+        
         self.password_hash = generate_password_hash(password)
+        self.password_changed_at = datetime.now(timezone.utc)
+        # Clear password change requirement when password is set (unless it's initial setup)
+        if validate:
+            self.password_must_change = False
     
     def check_password(self, password):
         """Check password hash"""
         return check_password_hash(self.password_hash, password)
+    
+    @staticmethod
+    def is_password_strong(password):
+        """
+        Check if password meets security requirements:
+        - At least 12 characters long
+        - Contains uppercase letter
+        - Contains lowercase letter
+        - Contains number
+        - Contains special character
+        - Not in common password blacklist
+        """
+        if len(password) < 12:
+            return False
+        
+        if not re.search(r'[A-Z]', password):
+            return False
+        
+        if not re.search(r'[a-z]', password):
+            return False
+        
+        if not re.search(r'\d', password):
+            return False
+        
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]', password):
+            return False
+        
+        # Common password blacklist
+        common_passwords = {
+            'password123', 'password1234', 'admin123', 'administrator',
+            'qwerty123', 'welcome123', 'letmein123', 'password!',
+            'password1!', 'admin1234', 'password12', '123456789',
+            'qwertyuiop', 'asdfghjkl', 'zxcvbnm123'
+        }
+        
+        if password.lower() in common_passwords:
+            return False
+        
+        return True
+    
+    @staticmethod
+    def get_password_requirements():
+        """Return a list of password requirements for display to users"""
+        return [
+            "At least 12 characters long",
+            "Contains at least one uppercase letter (A-Z)",
+            "Contains at least one lowercase letter (a-z)",
+            "Contains at least one number (0-9)",
+            "Contains at least one special character (!@#$%^&*()_+-=[]{};\':\"\\|,.<>/?)",
+            "Not a commonly used password"
+        ]
     
     def is_locked(self):
         """Check if account is currently locked"""
@@ -65,22 +129,6 @@ class User(UserMixin, db.Model):
     
     def __repr__(self):
         return f'<User {self.username}>'
-
-class PasswordResetToken(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    token = db.Column(db.String(100), unique=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    expires_at = db.Column(db.DateTime, nullable=False)
-    used = db.Column(db.Boolean, default=False)
-    
-    user = db.relationship('User', backref='password_reset_tokens')
-    
-    def is_expired(self):
-        return datetime.now(timezone.utc) > self.expires_at
-    
-    def __repr__(self):
-        return f'<PasswordResetToken {self.token[:8]}...>'
 
 class Book(db.Model):
     id = db.Column(db.Integer, primary_key=True)

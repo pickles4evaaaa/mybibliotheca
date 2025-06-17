@@ -12,9 +12,9 @@ fi
 
 # Set default admin password if not provided
 if [ -z "$ADMIN_PASSWORD" ]; then
-    export ADMIN_PASSWORD="changeme123"
+    export ADMIN_PASSWORD="TempAdmin123!@#"
     echo "⚠️  Using default admin password: $ADMIN_PASSWORD"
-    echo "🔒 Please change this after first login!"
+    echo "🔒 Admin will be required to change this on first login!"
 fi
 
 # Check if database exists and migrate if needed

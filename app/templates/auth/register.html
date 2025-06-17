@@ -1,22 +1,32 @@
 {% extends "base.html" %}
 
-{% block title %}Register - Bibliotheca{% endblock %}
+{% block title %}Create New User - Bibliotheca{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-6 col-lg-4">
+    <div class="col-md-8 col-lg-6">
         <div class="card">
             <div class="card-header">
-                {% if current_user.is_authenticated and current_user.is_admin %}
-                    <h3 class="text-center">
-                        <i class="bi bi-person-plus-fill me-2"></i>Create New User
-                    </h3>
-                    <p class="text-center text-muted mb-0">Creating a new user as administrator</p>
-                {% else %}
-                    <h3 class="text-center">Create Account</h3>
-                {% endif %}
+                <h3 class="text-center">
+                    <i class="bi bi-person-plus-fill me-2"></i>Create New User
+                </h3>
+                <p class="text-center text-muted mb-0">Administrator creating a new user account</p>
             </div>
             <div class="card-body">
+                <div class="alert alert-info" role="alert">
+                    <h6><i class="fas fa-shield-alt"></i> Password Security Requirements:</h6>
+                    <ul class="mb-0">
+                        <li>At least 12 characters long</li>
+                        <li>Contains at least one uppercase letter (A-Z)</li>
+                        <li>Contains at least one lowercase letter (a-z)</li>
+                        <li>Contains at least one number (0-9)</li>
+                        <li>Contains at least one special character (!@#$%^&*()_+-=[]{};\':\"\\|,.<>/?)</li>
+                        <li>Not a commonly used password</li>
+                    </ul>
+                    <hr class="my-2">
+                    <small><strong>Note:</strong> The new user will be required to change their password on first login.</small>
+                </div>
+                
                 <form method="post">
                     {{ form.hidden_tag() }}
                     

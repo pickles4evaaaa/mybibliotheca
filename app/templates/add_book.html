@@ -3,6 +3,7 @@
 {% block content %}
 <h1>Add a New Book</h1>
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
   <button type="button" class="btn btn-secondary" onclick="startScanner()">Scan Barcode</button>
   <!-- Use type="tel" and pattern="\d*" for mobile keypad -->
   <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" type="tel" pattern="\d*" inputmode="numeric">

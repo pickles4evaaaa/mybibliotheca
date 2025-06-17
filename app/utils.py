@@ -10,39 +10,48 @@ import os
 from flask import current_app
 
 def fetch_book_data(isbn):
+    """Fetch book data with timeout and error handling"""
     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
-    response = requests.get(url)
-    data = response.json()
-    book_key = f"ISBN:{isbn}"
-    if book_key in data:
-        book = data[book_key]
-        title = book.get('title', '')
-        authors = ', '.join([a['name'] for a in book.get('authors', [])])
-        cover_url = book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
+    try:
+        response = requests.get(url, timeout=10)  # 10 second timeout
+        response.raise_for_status()
+        data = response.json()
         
-        # Extract additional metadata
-        description = book.get('notes', {}).get('value') if isinstance(book.get('notes'), dict) else book.get('notes')
-        published_date = book.get('publish_date', '')
-        page_count = book.get('number_of_pages')
-        subjects = book.get('subjects', [])
-        categories = ', '.join([s['name'] if isinstance(s, dict) else str(s) for s in subjects[:5]])  # Limit to 5 categories
-        publishers = book.get('publishers', [])
-        publisher = publishers[0]['name'] if publishers and isinstance(publishers[0], dict) else (publishers[0] if publishers else '')
-        languages = book.get('languages', [])
-        language = languages[0]['key'].split('/')[-1] if languages and isinstance(languages[0], dict) else (languages[0] if languages else '')
-        
-        return {
-            'title': title,
-            'author': authors,
-            'cover': cover_url,
-            'description': description,
-            'published_date': published_date,
-            'page_count': page_count,
-            'categories': categories,
-            'publisher': publisher,
-            'language': language
-        }
-    return None
+        book_key = f"ISBN:{isbn}"
+        if book_key in data:
+            book = data[book_key]
+            title = book.get('title', '')
+            authors = ', '.join([a['name'] for a in book.get('authors', [])])
+            cover_url = book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
+            
+            # Extract additional metadata
+            description = book.get('notes', {}).get('value') if isinstance(book.get('notes'), dict) else book.get('notes')
+            published_date = book.get('publish_date', '')
+            page_count = book.get('number_of_pages')
+            subjects = book.get('subjects', [])
+            categories = ', '.join([s['name'] if isinstance(s, dict) else str(s) for s in subjects[:5]])  # Limit to 5 categories
+            publishers = book.get('publishers', [])
+            publisher = publishers[0]['name'] if publishers and isinstance(publishers[0], dict) else (publishers[0] if publishers else '')
+            languages = book.get('languages', [])
+            language = languages[0]['key'].split('/')[-1] if languages and isinstance(languages[0], dict) else (languages[0] if languages else '')
+            
+            return {
+                'title': title,
+                'author': authors,
+                'cover': cover_url,
+                'description': description,
+                'published_date': published_date,
+                'page_count': page_count,
+                'categories': categories,
+                'publisher': publisher,
+                'language': language
+            }
+        return None
+    
+    except (requests.exceptions.RequestException, requests.exceptions.Timeout, ValueError) as e:
+        # Log the error for debugging but don't crash the bulk import
+        current_app.logger.warning(f"Failed to fetch book data for ISBN {isbn}: {e}")
+        return None
 
 def get_google_books_cover(isbn, fetch_title_author=False):
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
