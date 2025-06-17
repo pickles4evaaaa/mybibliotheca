@@ -110,6 +110,17 @@
       {% endblock %}
     </div>
   </div>
+  <script>
+  let prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)')
+
+  function updateTheme() {
+    const theme = prefersDarkMode.matches ? 'dark' : 'light'
+    document.documentElement.setAttribute('data-bs-theme', theme)
+  }
+
+  updateTheme();
+  prefersDarkMode.addEventListener("change", () => updateTheme());
+</script>
   <!-- Bootstrap JS (local file) -->
   <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
 </body>
