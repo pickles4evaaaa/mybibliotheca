@@ -14,10 +14,11 @@
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     margin: 12px;
-    width: 180px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    /* width: 180px; */ /* Removed for Bootstrap grid */
+    /* display: flex; */ /* Removed for Bootstrap grid */
+    /* flex-direction: column; */ /* Removed for Bootstrap grid */
+    /* align-items: center; */ /* Handled by Bootstrap card/grid or utilities */
+    height: 100%; /* Added for consistent card height in a row */
     transition: transform 0.1s;
   }
   .book-card:hover {
@@ -33,10 +34,10 @@
     background: #eee;
   }
   .bookshelf-row {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    align-items: flex-end;
+    /* display: flex; */ /* Removed for Bootstrap grid */
+    /* flex-wrap: wrap; */ /* Removed for Bootstrap grid */
+    /* justify-content: flex-start; */ /* Handled by Bootstrap grid */
+    /* align-items: flex-end; */ /* Handled by Bootstrap grid, default is stretch */
     min-height: 200px;
   }
   .book-title {
@@ -68,13 +69,13 @@
 
 <!-- Filter Section -->
 <div class="filter-section">
-  <form method="GET" class="row g-3">
+  <form method="GET" class="row g-3 w-100">
     <div class="col-md-3">
       <label for="search" class="form-label">Search</label>
       <input type="text" class="form-control" id="search" name="search" 
              value="{{ current_search }}" placeholder="Title, author, description...">
     </div>
-    <div class="col-md-3">
+    <div class="col-12 col-sm-6 col-lg-3">
       <label for="category" class="form-label">Category</label>
       <select class="form-select" id="category" name="category">
         <option value="">All Categories</option>
@@ -85,7 +86,7 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-3">
+    <div class="col-12 col-sm-6 col-lg-3">
       <label for="publisher" class="form-label">Publisher</label>
       <select class="form-select" id="publisher" name="publisher">
         <option value="">All Publishers</option>
@@ -96,7 +97,7 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-2">
+    <div class="col-12 col-sm-6 col-lg-2">
       <label for="language" class="form-label">Language</label>
       <select class="form-select" id="language" name="language">
         <option value="">All Languages</option>
@@ -107,61 +108,50 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-1">
-      <label>&nbsp;</label>
-      <button type="submit" class="btn btn-primary d-block">Filter</button>
-    </div>
   </form>
-  <div class="mt-2">
-    <a href="{{ url_for('main.library') }}" class="btn btn-secondary btn-sm">Clear Filters</a>
+  <div class="mt-2 text-center w-100">
+    <button type="submit" class="btn btn-primary btn-sm me-2">Filter</button> <!-- Blue Filter Button -->
+    <a href="{{ url_for('main.library') }}" class="btn btn-secondary btn-sm">Clear Filters</a> <!-- Gray Clear Filters Button -->
     <span class="ms-3 text-muted">Showing {{ books|length }} book(s)</span>
   </div>
 </div>
 <div class="bookshelf-bg">
-  <div class="bookshelf-row">
+  <div class="bookshelf-row row">
     {% for book in books %}
-      <div class="book-card">
-        {% if book.cover_url %}
-          <img src="{{ book.cover_url }}" alt="cover" class="book-cover-shelf"
-               onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
-        {% else %}
-          <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover" class="book-cover-shelf">
-        {% endif %}
-        <div class="book-title">
-          <a href="{{ url_for('main.view_book', uid=book.uid) }}">{{ book.title }}</a>
-        </div>
-        <div class="book-author">
-          {{ book.author }}
-        </div>
-        {% if book.published_date %}
-          <div style="font-size:0.8em; color:#666; margin-bottom:2px;">{{ book.published_date }}</div>
-        {% endif %}
-        {% if book.page_count %}
-          <div style="font-size:0.8em; color:#666; margin-bottom:2px;">{{ book.page_count }} pages</div>
-        {% endif %}
-        {% if book.publisher %}
-          <div style="font-size:0.8em; color:#666; margin-bottom:4px;">{{ book.publisher }}</div>
-        {% endif %}
-        {% if book.categories %}
-          <div style="font-size:0.75em; color:#888; margin-bottom:4px; text-align:center;">
-            {% for category in book.categories.split(',')[:2] %}
-              <span class="badge bg-light text-dark me-1">{{ category.strip() }}</span>
-            {% endfor %}
+      <div class="col-12 col-sm-6 col-md-4 col-lg-3 col-xl-2 mb-4">
+        <div class="book-card">
+          {% if book.cover_url %}
+            <img src="{{ book.cover_url }}" alt="cover" class="book-cover-shelf mx-auto d-block"
+           onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+          {% else %}
+            <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover" class="book-cover-shelf mx-auto d-block">
+          {% endif %}
+          <div class="book-title">
+            <a href="{{ url_for('main.view_book', uid=book.uid) }}">{{ book.title }}</a>
           </div>
-        {% endif %}
-        {% if book.average_rating %}
-          <div style="font-size:0.8em; color:#f39c12; margin-bottom:4px;">
-            ⭐ {{ "%.1f"|format(book.average_rating) }}
-            {% if book.rating_count %}({{ book.rating_count }}){% endif %}
+          <div class="book-author">
+            {{ book.author }}
           </div>
-        {% endif %}
-        <div class="book-badges">
-          {% if book.want_to_read %}<span class="badge bg-info">Want to Read</span>{% endif %}
-          {% if not book.finish_date and not book.want_to_read and not book.library_only %}<span class="badge bg-warning">Currently Reading</span>{% endif %}
-          {% if book.finish_date %}<span class="badge bg-success">Finished</span>{% endif %}
-          {% if book.library_only %}<span class="badge bg-secondary">Library Only</span>{% endif %}
+          {% if book.categories %}
+            <div style="font-size:0.75em; color:#888; margin-bottom:4px; text-align:center;">
+              {% for category in book.categories.split(',')[:2] %}
+                <span class="badge bg-light text-dark me-1">{{ category.strip() }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+          {% if book.average_rating %}
+            <div style="font-size:0.8em; color:#f39c12; margin-bottom:4px; text-align:center;">
+              ⭐ {{ "%.1f"|format(book.average_rating) }}
+              {% if book.rating_count %}({{ book.rating_count }}){% endif %}
+            </div>
+          {% endif %}
+          <div class="book-badges">
+            {% if book.want_to_read %}<span class="badge bg-info">Want to Read</span>{% endif %}
+            {% if not book.finish_date and not book.want_to_read and not book.library_only %}<span class="badge bg-warning">Currently Reading</span>{% endif %}
+            {% if book.finish_date %}<span class="badge bg-success">Finished</span>{% endif %}
+            {% if book.library_only %}<span class="badge bg-secondary">Library Only</span>{% endif %}
+          </div>
         </div>
-        <div style="font-size:0.85em; color:#888; margin-bottom:8px;">ISBN: {{ book.isbn }}</div>
       </div>
     {% else %}
       <div class="text-center w-100">No books in your library.</div>

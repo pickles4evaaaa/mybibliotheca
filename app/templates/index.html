@@ -8,15 +8,15 @@
 <h2 class="mt-4">Currently Reading</h2>
 <ul class="list-group mb-4">
   {% for book in currently_reading %}
-    <li class="list-group-item d-flex align-items-center">
+    <li class="list-group-item text-center d-flex flex-column align-items-center">
       <a href="{{ url_for('main.view_book', uid=book.uid) }}">
         {% if book.cover_url %}
           <img src="{{ book.cover_url }}" alt="cover"
-               style="height:60px;width:auto;margin-right:16px;border-radius:4px;"
-               onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+               style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
+               onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
         {% else %}
-          <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover"
-               style="height:60px;width:auto;margin-right:16px;border-radius:4px;">
+          <img src="{{ url_for('static', filename='book_cover.png') }}" alt="cover"
+               style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;">
         {% endif %}
       </a>
       <div>
@@ -26,22 +26,22 @@
       </div>
     </li>
   {% else %}
-    <li class="list-group-item">No books currently being read.</li>
+    <li class="list-group-item text-center">No books currently being read.</li>
   {% endfor %}
 </ul>
 
 <h2>Want to Read</h2>
 <ul class="list-group mb-4">
   {% for book in want_to_read %}
-    <li class="list-group-item d-flex align-items-center">
+    <li class="list-group-item text-center d-flex flex-column align-items-center">
       <a href="{{ url_for('main.view_book', uid=book.uid) }}">
         {% if book.cover_url %}
           <img src="{{ book.cover_url }}" alt="cover"
-               style="height:60px;width:auto;margin-right:16px;border-radius:4px;"
-               onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+               style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
+               onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
         {% else %}
-          <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover"
-               style="height:60px;width:auto;margin-right:16px;border-radius:4px;">
+          <img src="{{ url_for('static', filename='book_cover.png') }}" alt="cover"
+               style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;">
         {% endif %}
       </a>
       <div>
@@ -51,7 +51,7 @@
       </div>
     </li>
   {% else %}
-    <li class="list-group-item">No books in Want to Read.</li>
+    <li class="list-group-item text-center">No books in Want to Read.</li>
   {% endfor %}
 </ul>
 
@@ -63,15 +63,15 @@
 </h2>
 <ul class="list-group mb-2">
   {% for book in finished[:5] %}
-    <li class="list-group-item d-flex align-items-center">
+    <li class="list-group-item text-center d-flex flex-column align-items-center">
       <a href="{{ url_for('main.view_book', uid=book.uid) }}">
         {% if book.cover_url %}
           <img src="{{ book.cover_url }}" alt="cover"
-               style="height:60px;width:auto;margin-right:16px;border-radius:4px;"
-               onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+               style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
+               onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
         {% else %}
-          <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover"
-               style="height:60px;width:auto;margin-right:16px;border-radius:4px;">
+          <img src="{{ url_for('static', filename='book_cover.png') }}" alt="cover"
+               style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;">
         {% endif %}
       </a>
       <div>
@@ -85,21 +85,21 @@
       </div>
     </li>
   {% else %}
-    <li class="list-group-item">No finished books.</li>
+    <li class="list-group-item text-center">No finished books.</li>
   {% endfor %}
 </ul>
 <div class="collapse" id="allFinishedBooks">
   <ul class="list-group">
     {% for book in finished[5:] %}
-      <li class="list-group-item d-flex align-items-center">
+      <li class="list-group-item text-center d-flex flex-column align-items-center">
         <a href="{{ url_for('main.view_book', uid=book.uid) }}">
           {% if book.cover_url %}
             <img src="{{ book.cover_url }}" alt="cover"
-                 style="height:60px;width:auto;margin-right:16px;border-radius:4px;"
-                 onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+                 style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
+                 onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
           {% else %}
-            <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover"
-                 style="height:60px;width:auto;margin-right:16px;border-radius:4px;">
+            <img src="{{ url_for('static', filename='book_cover.png') }}" alt="cover"
+                 style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;">
           {% endif %}
         </a>
         <div>

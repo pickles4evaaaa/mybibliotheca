@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Background Tasks{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Background Tasks</h1>
+    <a href="{{ url_for('main.bulk_import') }}" class="btn btn-primary">
+        <i class="bi bi-upload"></i> New Import
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        {% if tasks %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Recent Tasks</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Task</th>
+                                <th>Status</th>
+                                <th>Progress</th>
+                                <th>Created</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for task in tasks %}
+                            <tr>
+                                <td>
+                                    <strong>{{ task.name }}</strong>
+                                    {% if task.description %}
+                                    <br><small class="text-muted">{{ task.description }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge bg-{% if task.status == 'completed' %}success{% elif task.status == 'failed' %}danger{% elif task.status == 'running' %}primary{% else %}secondary{% endif %}">
+                                        {{ task.status.title() }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="progress" style="width: 100px;">
+                                        <div class="progress-bar" role="progressbar" 
+                                             style="width: {{ task.progress }}%" 
+                                             aria-valuenow="{{ task.progress }}" 
+                                             aria-valuemin="0" 
+                                             aria-valuemax="100">
+                                            {{ task.progress }}%
+                                        </div>
+                                    </div>
+                                    {% if task.total_items > 0 %}
+                                    <small class="text-muted">{{ task.processed_items }}/{{ task.total_items }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small>{{ task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else 'N/A' }}</small>
+                                </td>
+                                <td>
+                                    {% if task.completed_at and task.started_at %}
+                                        {% set duration = (task.completed_at - task.started_at).total_seconds() %}
+                                        <small>{{ "%.1f"|format(duration) }}s</small>
+                                    {% elif task.started_at %}
+                                        <small class="text-primary">Running...</small>
+                                    {% else %}
+                                        <small class="text-muted">-</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('main.task_status', task_id=task.id) }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye"></i> View
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="bi bi-list-task" style="font-size: 3rem; color: #6c757d;"></i>
+                <h5 class="mt-3">No Tasks Yet</h5>
+                <p class="text-muted">Background tasks will appear here when you start a bulk import.</p>
+                <a href="{{ url_for('main.bulk_import') }}" class="btn btn-primary">
+                    <i class="bi bi-upload"></i> Start Your First Import
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

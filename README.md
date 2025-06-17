@@ -2,7 +2,11 @@
 
 **Bibliotheca** is a self-hosted personal library and reading tracker web app built with Flask. It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
 
+
 🆕 **Multi-User Features**: Multi-user authentication, user data isolation, admin management, and secure password handling.
+
+---
+[**Join us on Discord!**](https://discord.gg/Hc8C5eRm7Q)
 
 ---
 
@@ -63,7 +67,7 @@ services:
     image: pickles4evaaaa/bibliotheca:latest
     container_name: bibliotheca
     ports:
-      - "5053:5054"
+      - "5054:5054"
     volumes:
       - bibliotheca_data:/app/data
     restart: unless-stopped

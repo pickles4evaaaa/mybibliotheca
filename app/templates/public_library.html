@@ -15,11 +15,16 @@
     border: 2px solid #e0c9a6;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    margin: 12px auto;
-    width: 180px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    /* margin: 12px auto; */ /* Rely on column padding/margins */
+    /* width: 180px; */ /* Handled by Bootstrap column */
+    /* display: flex; */ /* Handled by Bootstrap card/grid or utilities */
+    /* flex-direction: column; */ /* Handled by Bootstrap card/grid or utilities */
+    /* align-items: center; */ /* Handled by Bootstrap card/grid or utilities */
+    width: 100%; /* Make card take full width of column */
+    height: 100%; /* Added for consistent card height in a row */
+    display: flex; /* Keep flex for internal card structure */
+    flex-direction: column; /* Keep flex for internal card structure */
+    align-items: center; /* Keep flex for internal card structure, or adjust if needed */
     transition: transform 0.1s;
   }
   .book-card:hover {
@@ -27,13 +32,13 @@
     box-shadow: 0 6px 16px rgba(0,0,0,0.16);
   }
   .book-cover-shelf {
-    height: 120px;
-    width: auto;
-    max-width: 100%;
+    height: 120px; /* Or adjust/remove if using img-fluid to dictate height via aspect ratio */
+    width: auto;   /* Let height and image aspect ratio dictate width, up to max-width */
+    max-width: 100%; /* Ensure it doesn't overflow its container */
     margin: 16px 0 8px 0;
     border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.10);
-    background: #eee;
+    background: #eee; /* Placeholder background */
   }
   .book-title {
     font-size: 1.05em;
@@ -54,46 +59,46 @@
     text-align: center;
   }
   @media (max-width: 767px) {
-    .bookshelf-row {
-      justify-content: center !important;
-    }
-    .book-card {
-      width: 90vw;
-      max-width: 320px;
-      margin: 10px auto;
-    }
+    /* .bookshelf-row { */
+      /* justify-content: center !important; */ /* Bootstrap grid handles this */
+    /* } */
+    /* .book-card { */
+      /* width: 90vw; */ /* Handled by Bootstrap column */
+      /* max-width: 320px; */ /* Handled by Bootstrap column */
+      /* margin: 10px auto; */ /* Handled by Bootstrap column */
+    /* } */
     .book-cover-shelf {
-      height: 90px;
+      height: 90px; /* Adjust cover height for smaller cards if needed */
     }
   }
 </style>
 
-<div class="d-flex justify-content-center mb-4">
+<div class="d-flex justify-content-center mb-4 flex-wrap">
   <a href="{{ url_for('main.public_library', filter='all') }}"
-     class="btn btn-outline-primary me-2 {% if filter_status == 'all' %}active{% endif %}">
+     class="btn btn-outline-primary m-1 {% if filter_status == 'all' %}active{% endif %}">
     Show All
   </a>
   <a href="{{ url_for('main.public_library', filter='currently_reading') }}"
-     class="btn btn-outline-warning me-2 {% if filter_status == 'currently_reading' %}active{% endif %}">
+     class="btn btn-outline-warning m-1 {% if filter_status == 'currently_reading' %}active{% endif %}">
     Currently Reading
   </a>
   <a href="{{ url_for('main.public_library', filter='want_to_read') }}"
-     class="btn btn-outline-info {% if filter_status == 'want_to_read' %}active{% endif %}">
+     class="btn btn-outline-info m-1 {% if filter_status == 'want_to_read' %}active{% endif %}">
     Want to Read
   </a>
 </div>
 
 <h1 class="mb-4 text-center">Bibliotheca</h1>
 <div class="bookshelf-bg">
-  <div class="row bookshelf-row justify-content-start">
+  <div class="row bookshelf-row justify-content-center"> <!-- Changed to justify-content-center -->
     {% for book in books %}
-      <div class="col-12 col-sm-6 col-md-4 col-lg-3 d-flex justify-content-center">
-        <div class="book-card">
+      <div class="col-12 col-sm-6 col-md-4 col-lg-3 mb-4 d-flex align-items-stretch">
+        <div class="book-card p-2"> <!-- Added padding to card for content spacing -->
           {% if book.cover_url %}
-            <img src="{{ book.cover_url }}" alt="cover" class="book-cover-shelf"
+            <img src="{{ book.cover_url }}" alt="{{ book.title }} cover" class="book-cover-shelf img-fluid"
                  onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
           {% else %}
-            <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="cover" class="book-cover-shelf">
+            <img src="{{ url_for('static', filename='bookshelf.png') }}" alt="Default cover" class="book-cover-shelf img-fluid">
           {% endif %}
           <div class="book-title">
             {{ book.title }}

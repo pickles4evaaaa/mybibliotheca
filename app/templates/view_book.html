@@ -2,8 +2,11 @@
 {% block title %}{{ book.title }} - Bibliotheca{% endblock %}
 {% block content %}
 <h1>{{ book.title }}</h1>
-{% if cover_url %}
-  <img src="{{ cover_url }}" alt="Book Cover" class="book-cover mb-3">
+{% if book.cover_url %}
+  <img src="{{ book.cover_url }}" alt="Book Cover" class="book-cover mb-3"
+       onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
+{% else %}
+  <img src="{{ url_for('static', filename='book_cover.png') }}" alt="Book Cover" class="book-cover mb-3">
 {% endif %}
 <div class="row">
   <div class="col-md-6">

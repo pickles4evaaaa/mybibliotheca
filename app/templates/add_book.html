@@ -5,29 +5,51 @@
 <form method="post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
   <button type="button" class="btn btn-secondary" onclick="startScanner()">Scan Barcode</button>
-  <!-- Use type="tel" and pattern="\d*" for mobile keypad -->
-  <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" type="tel" pattern="\d*" inputmode="numeric">
-  <div id="scanner" style="width:300px; height:200px; display:none;"></div>
-  <button name="fetch" value="1" type="submit">Fetch Book Data</button><br>
+
+  <!-- ISBN input -->
+  <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" type="text" pattern="[\d-]+" title="Enter a valid ISBN (digits and hyphens only)">
+
+  <!-- Constrained scanner box -->
+  <div id="scanner" style="
+    width: 300px;
+    height: 200px;
+    display: none;
+    border: 2px solid #ccc;
+    margin: 1rem 0;
+    overflow: hidden;
+    position: relative;
+    background-color: #000;
+  "></div>
+
+  <!-- Fetch and book data inputs -->
+  <button name="fetch" value="1" type="submit" class="btn btn-secondary">Fetch Book Data</button><br>
   Title: <input id="title" name="title" value="{{ book_data.title if book_data else request.form.title or '' }}"><br>
   Author: <input name="author" value="{{ book_data.author if book_data else request.form.author or '' }}"><br>
   Start Date: <input name="start_date" type="date"><br>
   Finish Date: <input name="finish_date" type="date"><br>
+
   {% if book_data and book_data.cover %}
-    <img src="{{ book_data.cover }}" alt="Book Cover" style="max-height:200px;"><br>
+  <div class="mb-3 text-center">
+    <img src="{{ book_data.cover }}" alt="Book Cover" class="img-fluid rounded book-cover">
+  </div>
   {% endif %}
+
   <label>
     <input type="checkbox" name="want_to_read" {% if request.form.want_to_read %}checked{% endif %}>
     Want to Read
   </label><br>
+
   <label>
     <input type="checkbox" name="library_only" {% if request.form.library_only %}checked{% endif %}>
     Add to Library Only (not for reading)
   </label><br>
+
   <input type="submit" name="add" value="Add Book">
 </form>
+
 <a href="{{ url_for('main.index') }}">Back to list</a>
 
+<!-- QuaggaJS -->
 <script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.min.js"></script>
 <script>
 let quaggaStarted = false;
@@ -63,7 +85,7 @@ function startScanner() {
     quaggaStarted = true;
   });
 
-  Quagga.offDetected(); // Remove previous handlers
+  Quagga.offDetected();
   Quagga.onDetected(function(result) {
     if (result && result.codeResult && result.codeResult.code) {
       const code = result.codeResult.code;

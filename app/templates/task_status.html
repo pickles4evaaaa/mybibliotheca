@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Task Status - {{ task.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>{{ task.name }}</h1>
+    <a href="{{ url_for('main.list_tasks') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-list"></i> All Tasks
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Progress</h5>
+                <span class="badge bg-{% if task.status == 'completed' %}success{% elif task.status == 'failed' %}danger{% elif task.status == 'running' %}primary{% else %}secondary{% endif %}">
+                    {{ task.status.title() }}
+                </span>
+            </div>
+            <div class="card-body">
+                <!-- Progress Bar -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <small class="text-muted">Progress</small>
+                        <small class="text-muted" id="progress-text">{{ task.progress }}%</small>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" 
+                             style="width: {{ task.progress }}%" 
+                             id="progress-bar"
+                             aria-valuenow="{{ task.progress }}" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current Status -->
+                <div class="row mb-3">
+                    <div class="col-sm-6">
+                        <strong>Processed:</strong> 
+                        <span id="processed-count">{{ task.processed_items }}</span> / 
+                        <span id="total-count">{{ task.total_items }}</span>
+                    </div>
+                    <div class="col-sm-6">
+                        <strong>Success:</strong> 
+                        <span id="success-count" class="text-success">{{ task.success_count or 0 }}</span>
+                        <strong class="ms-3">Errors:</strong> 
+                        <span id="error-count" class="text-danger">{{ task.error_count or 0 }}</span>
+                    </div>
+                </div>
+
+                <!-- Current Item -->
+                {% if task.current_item %}
+                <div class="mb-3">
+                    <strong>Current Item:</strong>
+                    <span id="current-item" class="text-muted">{{ task.current_item }}</span>
+                </div>
+                {% endif %}
+
+                <!-- Description -->
+                {% if task.description %}
+                <div class="mb-3">
+                    <strong>Description:</strong>
+                    <p class="text-muted mb-0">{{ task.description }}</p>
+                </div>
+                {% endif %}
+
+                <!-- Error Message -->
+                {% if task.error_message %}
+                <div class="alert alert-danger">
+                    <strong>Error:</strong> {{ task.error_message }}
+                </div>
+                {% endif %}
+
+                <!-- Completion Result -->
+                {% if task.result and task.status == 'completed' %}
+                <div class="alert alert-success">
+                    <strong>Completed!</strong> {{ task.result.message }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Task Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <strong>Task ID:</strong><br>
+                    <small class="text-muted font-monospace">{{ task.id }}</small>
+                </div>
+                <div class="mb-2">
+                    <strong>Created:</strong><br>
+                    <small class="text-muted">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if task.created_at else 'N/A' }}</small>
+                </div>
+                {% if task.started_at %}
+                <div class="mb-2">
+                    <strong>Started:</strong><br>
+                    <small class="text-muted">{{ task.started_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</small>
+                </div>
+                {% endif %}
+                {% if task.completed_at %}
+                <div class="mb-2">
+                    <strong>Completed:</strong><br>
+                    <small class="text-muted">{{ task.completed_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Actions</h5>
+            </div>
+            <div class="card-body">
+                <a href="{{ url_for('main.index') }}" class="btn btn-primary btn-sm mb-2">
+                    <i class="bi bi-house"></i> Go to Library
+                </a>
+                {% if task.status == 'completed' %}
+                <a href="{{ url_for('main.bulk_import') }}" class="btn btn-success btn-sm mb-2">
+                    <i class="bi bi-upload"></i> Import More Books
+                </a>
+                {% endif %}
+                <button onclick="refreshStatus()" class="btn btn-outline-secondary btn-sm mb-2">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let autoRefresh = {{ 'true' if task.status in ['pending', 'running'] else 'false' }};
+let taskId = '{{ task.id }}';
+
+function refreshStatus() {
+    fetch(`/api/task/${taskId}`)
+        .then(response => response.json())
+        .then(data => {
+            // Update progress bar
+            document.getElementById('progress-bar').style.width = data.progress + '%';
+            document.getElementById('progress-bar').setAttribute('aria-valuenow', data.progress);
+            document.getElementById('progress-text').textContent = data.progress + '%';
+            
+            // Update counts
+            document.getElementById('processed-count').textContent = data.processed_items;
+            document.getElementById('total-count').textContent = data.total_items;
+            document.getElementById('success-count').textContent = data.success_count || 0;
+            document.getElementById('error-count').textContent = data.error_count || 0;
+            
+            // Update current item
+            const currentItemEl = document.getElementById('current-item');
+            if (currentItemEl && data.current_item) {
+                currentItemEl.textContent = data.current_item;
+            }
+            
+            // Check if task is complete
+            if (data.status === 'completed' || data.status === 'failed') {
+                autoRefresh = false;
+                // Reload page to show final result
+                setTimeout(() => location.reload(), 2000);
+            }
+        })
+        .catch(error => console.error('Error refreshing status:', error));
+}
+
+// Auto-refresh every 2 seconds for running tasks
+if (autoRefresh) {
+    setInterval(refreshStatus, 2000);
+}
+</script>
+{% endblock %}
