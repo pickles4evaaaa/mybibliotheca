@@ -1,0 +1,20 @@
+{% macro csrf_token() %}
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+{% endmacro %}
+
+{% macro form_start(action="", method="post", class="", id="", enctype="") %}
+<form action="{{ action }}" method="{{ method }}"{% if class %} class="{{ class }}"{% endif %}{% if id %} id="{{ id }}"{% endif %}{% if enctype %} enctype="{{ enctype }}"{% endif %}>
+{{ csrf_token() }}
+{% endmacro %}
+
+{% macro form_end() %}
+</form>
+{% endmacro %}
+
+{% macro submit_button(text="Submit", class="btn btn-primary", id="") %}
+<button type="submit"{% if class %} class="{{ class }}"{% endif %}{% if id %} id="{{ id }}"{% endif %}>{{ text }}</button>
+{% endmacro %}
+
+{% macro delete_button(text="Delete", class="btn btn-danger", id="", onclick="") %}
+<button type="submit"{% if class %} class="{{ class }}"{% endif %}{% if id %} id="{{ id }}"{% endif %}{% if onclick %} onclick="{{ onclick }}"{% endif %}>{{ text }}</button>
+{% endmacro %}

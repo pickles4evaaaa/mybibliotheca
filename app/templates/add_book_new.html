@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Add Book - Bibliotheca{% endblock %}
+{% block content %}
+<style>
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --cream: #F5F5DC;
+    --warm-white: #FEFEFE;
+    --gold: #DAA520;
+    --shadow: rgba(0,0,0,0.1);
+    --hover-shadow: rgba(0,0,0,0.2);
+  }
+
+  .add-book-header {
+    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+    color: white;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .add-book-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+    opacity: 0.3;
+  }
+
+  .add-book-header h1 {
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 1;
+  }
+
+  .tab-content {
+    background: var(--warm-white);
+    border-radius: 15px;
+    padding: 2rem;
+    box-shadow: 0 6px 20px var(--shadow);
+    border: 2px solid var(--light-brown);
+  }
+
+  .nav-tabs .nav-link {
+    color: var(--primary-brown);
+    border: 2px solid transparent;
+    font-weight: 500;
+  }
+
+  .nav-tabs .nav-link.active {
+    background-color: var(--primary-brown);
+    color: white;
+    border-color: var(--primary-brown);
+  }
+
+  .nav-tabs .nav-link:hover {
+    border-color: var(--light-brown);
+    color: var(--primary-brown);
+  }
+
+  .btn-primary {
+    background-color: var(--primary-brown);
+    border-color: var(--primary-brown);
+  }
+
+  .btn-primary:hover {
+    background-color: #654321;
+    border-color: #654321;
+  }
+
+  .btn-success {
+    background-color: var(--gold);
+    border-color: var(--gold);
+    color: #333;
+  }
+
+  .btn-success:hover {
+    background-color: #b8941a;
+    border-color: #b8941a;
+  }
+
+  .search-results {
+    background: var(--cream);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-top: 1rem;
+  }
+
+  .list-group-item {
+    border: 1px solid var(--light-brown);
+    background: var(--warm-white);
+  }
+
+  .list-group-item:first-child {
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+  }
+
+  .list-group-item:last-child {
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+  }
+</style>
+
+<div class="add-book-header text-center">
+  <h1>📚 Add Books to Your Library</h1>
+  <p class="lead mb-0">Manually add books or import in bulk</p>
+</div>
+
+<!-- Add Book Options Tabs -->
+<ul class="nav nav-tabs mb-3" id="addBookTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="manual-tab" data-bs-toggle="tab" data-bs-target="#manual-add" type="button" role="tab">
+      ✏️ Manual Entry
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="bulk-tab" data-bs-toggle="tab" data-bs-target="#bulk-import" type="button" role="tab">
+      📁 Bulk Import
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="addBookTabsContent">
+  <!-- Manual Entry Tab -->
+  <!-- Manual Entry Tab -->
+  <div class="tab-pane fade show active" id="manual-add" role="tabpanel">
+    <form method="post" action="{{ url_for('main.add_book_manual') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+      
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label for="manual-isbn" class="form-label">ISBN (Optional)</label>
+          <input type="text" class="form-control" id="manual-isbn" name="isbn" placeholder="Enter ISBN to fetch metadata">
+          <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="fetchBookData()">Fetch Book Data</button>
+        </div>
+        <div class="col-md-6">
+          <label for="manual-title" class="form-label">Title *</label>
+          <input type="text" class="form-control" id="manual-title" name="title" required>
+        </div>
+      </div>
+
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label for="manual-author" class="form-label">Author</label>
+          <input type="text" class="form-control" id="manual-author" name="author">
+        </div>
+        <div class="col-md-6">
+          <label for="manual-cover-url" class="form-label">Cover URL</label>
+          <input type="url" class="form-control" id="manual-cover-url" name="cover_url" placeholder="https://...">
+        </div>
+      </div>
+
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label for="manual-start-date" class="form-label">Start Date</label>
+          <input type="date" class="form-control" id="manual-start-date" name="start_date">
+        </div>
+        <div class="col-md-6">
+          <label for="manual-finish-date" class="form-label">Finish Date</label>
+          <input type="date" class="form-control" id="manual-finish-date" name="finish_date">
+        </div>
+      </div>
+
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="manual-want-to-read" name="want_to_read">
+            <label class="form-check-label" for="manual-want-to-read">Want to Read</label>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="manual-library-only" name="library_only">
+            <label class="form-check-label" for="manual-library-only">Add to Library Only</label>
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Add Book to Library</button>
+    </form>
+  </div>
+
+  <!-- Bulk Import Tab -->
+  <div class="tab-pane fade" id="bulk-import" role="tabpanel">
+    <div class="alert alert-info">
+      <strong>📝 Background Processing:</strong> Bulk imports run in the background! You'll be redirected to a progress page where you can monitor the import status in real-time.
+    </div>
+    
+    <div class="row">
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-body">
+            <h6 class="card-title">CSV Upload</h6>
+            <p class="card-text small">Upload a CSV file containing ISBNs/UPCs in a single column.</p>
+            <form method="POST" action="{{ url_for('main.import_books') }}" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <div class="mb-3">
+                <input type="file" class="form-control form-control-sm" name="csv_file" accept=".csv" required>
+              </div>
+              <div class="mb-3">
+                <select class="form-select form-select-sm" name="default_status">
+                  <option value="library_only">Add to Library Only</option>
+                  <option value="want_to_read">Want to Read</option>
+                  <option value="reading">Currently Reading</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-primary btn-sm">Start Import</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-body">
+            <h6 class="card-title">Sample CSV Format</h6>
+            <p class="card-text small">Your CSV should have ISBNs/UPCs in the first column:</p>
+            <pre class="small bg-light p-2 rounded">ISBN
+9780143127741
+9780525478812
+9781594206252</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function fetchBookData() {
+  const isbn = document.getElementById('manual-isbn').value.trim();
+  if (!isbn) {
+    alert('Please enter an ISBN first.');
+    return;
+  }
+  
+  fetch(`{{ url_for('main.fetch_book', isbn='') }}${isbn}`)
+    .then(response => response.json())
+    .then(data => {
+      if (data.title) document.getElementById('manual-title').value = data.title;
+      if (data.author) document.getElementById('manual-author').value = data.author;
+      if (data.cover) document.getElementById('manual-cover-url').value = data.cover;
+    })
+    .catch(error => {
+      console.error('Error fetching book data:', error);
+      alert('Failed to fetch book data. Please try again.');
+    });
+}
+</script>
+
+<div class="text-center mt-4">
+  <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+    ← Back to Library
+  </a>
+</div>
+
+{% endblock %}

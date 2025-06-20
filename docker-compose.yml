@@ -1,6 +1,18 @@
-version: '3.8'
-
 services:
+  # Redis Graph Database Service
+  redis-graph:
+    image: redis/redis-stack:7.2.0-v10
+    volumes:
+      - ./data/redis:/data
+    environment:
+      - REDIS_ARGS=--save 900 1 --save 300 10 --save 60 10000 --appendonly yes --appendfsync everysec
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   bibliotheca:
     build: .
     ports:
@@ -14,10 +26,17 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - SECURITY_PASSWORD_SALT=${SECURITY_PASSWORD_SALT}
       
+      # Database configuration
+      - REDIS_URL=redis://redis-graph:6379/0
+      - GRAPH_DATABASE_ENABLED=true
+      
       # Application settings
       - TIMEZONE=${TIMEZONE:-UTC}
       - WORKERS=${WORKERS:-4}
     restart: unless-stopped
+    depends_on:
+      redis-graph:
+        condition: service_healthy
 
 volumes:
   bibliotheca_data:

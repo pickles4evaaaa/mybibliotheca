@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Add Location - Bibliotheca{% endblock %}
+
+{% block content %}
+<style>
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --cream: #F5F5DC;
+    --warm-white: #FEFEFE;
+    --gold: #DAA520;
+    --shadow: rgba(0,0,0,0.1);
+    --hover-shadow: rgba(0,0,0,0.2);
+  }
+
+  .locations-header {
+    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+    color: white;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .locations-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+    opacity: 0.3;
+  }
+
+  .locations-header h1 {
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 1;
+  }
+
+  .card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px var(--hover-shadow);
+  }
+</style>
+
+<div class="container mt-4">
+    <div class="locations-header text-center">
+        <h1><i class="bi bi-geo-alt-fill"></i> Add New Location</h1>
+        <p class="mb-0 opacity-75">Create a new storage location for your books</p>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h3 class="mb-0"><i class="bi bi-plus-circle text-success"></i> Location Details</h3>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Location Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="name" name="name" 
+                                   placeholder="e.g., Home, Office, Vacation House" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="location_type" class="form-label">Location Type</label>
+                            <select class="form-select" id="location_type" name="location_type">
+                                <option value="home">Home</option>
+                                <option value="office">Office</option>
+                                <option value="vacation">Vacation</option>
+                                <option value="storage">Storage</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" 
+                                      rows="2" placeholder="Optional description of this location"></textarea>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="address" class="form-label">Address</label>
+                            <textarea class="form-control" id="address" name="address" 
+                                      rows="2" placeholder="Optional address"></textarea>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="is_default" name="is_default">
+                                <label class="form-check-label" for="is_default">
+                                    Set as default location
+                                </label>
+                                <div class="form-text">
+                                    New books will be automatically assigned to your default location.
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-plus-circle"></i> Create Location
+                            </button>
+                            <a href="{{ url_for('locations.manage_locations') }}" class="btn btn-outline-secondary">
+                                Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

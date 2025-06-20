@@ -210,7 +210,53 @@ project_summary.md
 MULTI_USER_PROJECT_PLAN.md
 PROJECT_SUMMARY.md
 temp_cookies.txt
+database_upgrade_planning.md
+
+# Sample import files and testing data
+sample_imports/
 
 # Database backups
 data/backups/
 documentation.md
+
+# Archive and backup files
+archive/
+*.bak
+*.backup
+*~
+
+# API testing and debug files
+api_test_results.json
+cookies.txt
+
+# Development and testing files
+debug_*.py
+test_*.py
+tests/
+scripts/debug/
+
+# Planning and internal documentation
+*planning*.md
+*PLANNING*.md
+PROJECT_STRUCTURE.md
+SQLALCHEMY_CLEANUP.md
+
+# Runtime data and sensitive information
+data/
+*.log
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary editor files
+.DS_Store
+*~
+.swp
+.swo

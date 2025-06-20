@@ -1,48 +1,43 @@
 {% if user_stats %}
 <div class="row">
     <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Community Members Sharing Their Reading Activity</h5>
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead>
-                            <tr>
-                                <th>Reader</th>
-                                <th>Books This Month</th>
-                                <th>Total Books</th>
-                                <th>Currently Reading</th>
-                                <th>Member Since</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for stat in user_stats %}
-                            <tr>
-                                <td>
-                                    <a href="{{ url_for('main.user_profile', user_id=stat.user.id) }}" 
-                                       class="text-decoration-none fw-bold">
-                                        {{ stat.user.username }}
-                                    </a>
-                                </td>
-                                <td>
-                                    <span class="badge bg-success">{{ stat.books_this_month }}</span>
-                                </td>
-                                <td>
-                                    <span class="badge bg-primary">{{ stat.total_books }}</span>
-                                </td>
-                                <td>
-                                    <span class="badge bg-info">{{ stat.currently_reading }}</span>
-                                </td>
-                                <td>
-                                    <small class="text-muted">{{ stat.user.created_at.strftime('%b %Y') }}</small>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
+        <div class="reading-activity">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th><i class="bi bi-person"></i> Reader</th>
+                            <th><i class="bi bi-calendar-month"></i> Books This Month</th>
+                            <th><i class="bi bi-check-circle"></i> Total Books</th>
+                            <th><i class="bi bi-book-half"></i> Currently Reading</th>
+                            <th><i class="bi bi-calendar-plus"></i> Member Since</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in user_stats %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('main.user_profile', user_id=stat.user.id) }}" 
+                                   class="text-decoration-none fw-bold text-primary">
+                                    {{ stat.user.username }}
+                                </a>
+                            </td>
+                            <td>
+                                <span class="badge bg-success">{{ stat.books_this_month }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-primary">{{ stat.total_books }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-info">{{ stat.currently_reading }}</span>
+                            </td>
+                            <td>
+                                <small class="text-muted">{{ stat.user.created_at.strftime('%b %Y') if stat.user.created_at else 'N/A' }}</small>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

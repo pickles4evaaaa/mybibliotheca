@@ -1,7 +1,7 @@
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, BooleanField, SubmitField, TextAreaField, IntegerField
 from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError, Optional, NumberRange
-from .models import User
+from .domain.models import User
 
 def validate_strong_password(form, field):
     """Custom validator for strong passwords"""
@@ -32,12 +32,14 @@ class RegistrationForm(FlaskForm):
     submit = SubmitField('Create User')
 
     def validate_username(self, username):
-        user = User.query.filter_by(username=username.data).first()
+        from .services import user_service
+        user = user_service.get_user_by_username_sync(username.data)
         if user is not None:
             raise ValidationError('Please use a different username.')
 
     def validate_email(self, email):
-        user = User.query.filter_by(email=email.data).first()
+        from .services import user_service
+        user = user_service.get_user_by_email_sync(email.data)
         if user is not None:
             raise ValidationError('Please use a different email address.')
 
@@ -56,13 +58,15 @@ class UserProfileForm(FlaskForm):
 
     def validate_username(self, username):
         if username.data != self.original_username:
-            user = User.query.filter_by(username=username.data).first()
+            from .services import user_service
+            user = user_service.get_user_by_username_sync(username.data)
             if user is not None:
                 raise ValidationError('Please use a different username.')
 
     def validate_email(self, email):
         if email.data != self.original_email:
-            user = User.query.filter_by(email=email.data).first()
+            from .services import user_service
+            user = user_service.get_user_by_email_sync(email.data)
             if user is not None:
                 raise ValidationError('Please use a different email address.')
 
@@ -126,13 +130,15 @@ class SetupForm(FlaskForm):
 
     def validate_username(self, username):
         """Ensure no users exist with this username"""
-        user = User.query.filter_by(username=username.data).first()
+        from .services import user_service
+        user = user_service.get_user_by_username_sync(username.data)
         if user is not None:
             raise ValidationError('Please use a different username.')
 
     def validate_email(self, email):
         """Ensure no users exist with this email"""
-        user = User.query.filter_by(email=email.data).first()
+        from .services import user_service
+        user = user_service.get_user_by_email_sync(email.data)
         if user is not None:
             raise ValidationError('Please use a different email address.')
 

@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}Import Progress - Bibliotheca{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <h2>📊 Import Progress</h2>
+    
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Import Job: {{ task_id }}</h5>
+                    
+                    <div class="progress mb-3" style="height: 30px;">
+                        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            0%
+                        </div>
+                    </div>
+                    
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="processedCount">0</div>
+                                <small class="text-muted">Processed</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="successCount">0</div>
+                                <small class="text-success">Success</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="errorCount">0</div>
+                                <small class="text-danger">Errors</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="totalCount">{{ total_books }}</div>
+                                <small class="text-muted">Total</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <div id="statusMessage" class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> Import starting...
+                        </div>
+                    </div>
+                    
+                    <div id="completionButtons" class="d-none">
+                        <hr>
+                        <div class="d-flex gap-2">
+                            <a href="{{ url_for('main.library') }}" class="btn btn-primary">
+                                <i class="fas fa-books"></i> View Library
+                            </a>
+                            <a href="{{ url_for('main.import_books') }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-upload"></i> Import More Books
+                            </a>
+                            <button id="downloadErrorsBtn" class="btn btn-outline-danger d-none">
+                                <i class="fas fa-download"></i> Download Error Report
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title">📋 Import Details</h6>
+                    <ul class="list-unstyled small">
+                        <li><strong>Started:</strong> <span id="startTime">{{ start_time }}</span></li>
+                        <li><strong>Estimated Time:</strong> <span id="estimatedTime">Calculating...</span></li>
+                        <li><strong>Current Speed:</strong> <span id="currentSpeed">-</span> books/min</li>
+                        <li><strong>Status:</strong> <span id="jobStatus" class="badge bg-primary">Running</span></li>
+                    </ul>
+                    
+                    <hr>
+                    
+                    <h6>📝 Recent Activity</h6>
+                    <div id="activityLog" class="small" style="max-height: 200px; overflow-y: auto;">
+                        <!-- Activity log will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let taskId = '{{ task_id }}';
+let totalBooks = {{ total_books }};
+let startTime = new Date('{{ start_time }}');
+let lastUpdateTime = startTime;
+let lastProcessedCount = 0;
+
+function updateProgress() {
+    fetch(`/api/import/progress/${taskId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-exclamation-triangle"></i> Error: ${data.error}`;
+                document.getElementById('statusMessage').className = 'alert alert-danger';
+                return;
+            }
+            
+            // Update progress bar
+            const percentage = Math.round((data.processed / totalBooks) * 100);
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percentage + '%';
+            progressBar.setAttribute('aria-valuenow', percentage);
+            progressBar.textContent = percentage + '%';
+            
+            // Update counters
+            document.getElementById('processedCount').textContent = data.processed;
+            document.getElementById('successCount').textContent = data.success;
+            document.getElementById('errorCount').textContent = data.errors;
+            
+            // Update status
+            const jobStatus = document.getElementById('jobStatus');
+            if (data.status === 'completed') {
+                jobStatus.textContent = 'Completed';
+                jobStatus.className = 'badge bg-success';
+                progressBar.className = 'progress-bar bg-success';
+                
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-check-circle"></i> Import completed! Successfully imported ${data.success} books.`;
+                document.getElementById('statusMessage').className = 'alert alert-success';
+                
+                document.getElementById('completionButtons').classList.remove('d-none');
+                
+                if (data.errors > 0) {
+                    document.getElementById('downloadErrorsBtn').classList.remove('d-none');
+                }
+                
+                return; // Stop polling
+            } else if (data.status === 'failed') {
+                jobStatus.textContent = 'Failed';
+                jobStatus.className = 'badge bg-danger';
+                progressBar.className = 'progress-bar bg-danger';
+                
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-exclamation-triangle"></i> Import failed: ${data.error || 'Unknown error'}`;
+                document.getElementById('statusMessage').className = 'alert alert-danger';
+                
+                return; // Stop polling
+            } else {
+                jobStatus.textContent = 'Running';
+                jobStatus.className = 'badge bg-primary';
+                
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-cog fa-spin"></i> Processing books... Current: ${data.current_book || 'Unknown'}`;
+            }
+            
+            // Calculate speed and estimated time
+            const now = new Date();
+            const elapsedMinutes = (now - lastUpdateTime) / (1000 * 60);
+            const processedSinceLastUpdate = data.processed - lastProcessedCount;
+            
+            if (elapsedMinutes > 0 && processedSinceLastUpdate > 0) {
+                const currentSpeed = Math.round(processedSinceLastUpdate / elapsedMinutes);
+                document.getElementById('currentSpeed').textContent = currentSpeed;
+                
+                const remaining = totalBooks - data.processed;
+                if (currentSpeed > 0) {
+                    const estimatedMinutes = Math.round(remaining / currentSpeed);
+                    document.getElementById('estimatedTime').textContent = 
+                        estimatedMinutes < 60 ? `${estimatedMinutes} minutes` : 
+                        `${Math.round(estimatedMinutes / 60)} hours`;
+                }
+                
+                lastUpdateTime = now;
+                lastProcessedCount = data.processed;
+            }
+            
+            // Update activity log
+            if (data.recent_activity && data.recent_activity.length > 0) {
+                const activityLog = document.getElementById('activityLog');
+                activityLog.innerHTML = data.recent_activity
+                    .slice(-10) // Show last 10 activities
+                    .map(activity => `<div class="mb-1">${activity}</div>`)
+                    .join('');
+                activityLog.scrollTop = activityLog.scrollHeight;
+            }
+            
+            // Continue polling if not completed
+            if (data.status === 'running' || data.status === 'pending') {
+                setTimeout(updateProgress, 2000); // Poll every 2 seconds
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching progress:', error);
+            document.getElementById('statusMessage').innerHTML = 
+                `<i class="fas fa-exclamation-triangle"></i> Error fetching progress: ${error.message}`;
+            document.getElementById('statusMessage').className = 'alert alert-warning';
+            
+            // Retry after 5 seconds
+            setTimeout(updateProgress, 5000);
+        });
+}
+
+// Start polling
+setTimeout(updateProgress, 1000);
+
+// Handle error report download
+document.getElementById('downloadErrorsBtn').addEventListener('click', function() {
+    window.location.href = `/api/import/errors/${taskId}`;
+});
+</script>
+{% endblock %}

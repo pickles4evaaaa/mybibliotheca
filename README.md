@@ -226,11 +226,11 @@ Existing single-user installations are **automatically migrated** to multi-user:
 
 ### ⚙️ Configuration
 
-* By default, uses SQLite (`books.db`) and a simple dev secret key.
+* By default, uses Redis for data storage and a secure auto-generated secret key.
 * For production, you can configure:
 
   * `SECRET_KEY`
-  * `DATABASE_URI`
+  * `REDIS_URL`
     via environment variables or `.env`.
 
 ---

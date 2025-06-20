@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "macros/forms.html" import form_start, form_end, submit_button, csrf_token %}
+
+{% block title %}CSRF Protection Guide{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>CSRF Protection Implementation Guide</h1>
+    
+    <div class="alert alert-info">
+        <h5>🛡️ Automatic CSRF Protection</h5>
+        <p>This application now automatically handles CSRF tokens. Here are the available methods:</p>
+    </div>
+
+    <h2>Method 1: Automatic Form Protection (Recommended)</h2>
+    <p>All POST forms automatically get CSRF tokens via JavaScript. Just create normal forms:</p>
+    
+    <div class="card mb-4">
+        <div class="card-header">Example: Simple Form (Auto-Protected)</div>
+        <div class="card-body">
+            <form method="post" action="/example">
+                <div class="mb-3">
+                    <label for="title" class="form-label">Title</label>
+                    <input type="text" class="form-control" id="title" name="title" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Submit</button>
+            </form>
+            <small class="text-muted">CSRF token is automatically added by JavaScript</small>
+        </div>
+    </div>
+
+    <h2>Method 2: Form Macros (For Complex Forms)</h2>
+    <p>Use our form macros for more control and consistency:</p>
+    
+    <div class="card mb-4">
+        <div class="card-header">Example: Using Form Macros</div>
+        <div class="card-body">
+            {{ form_start(action="/example", class="needs-validation") }}
+                <div class="mb-3">
+                    <label for="description" class="form-label">Description</label>
+                    <textarea class="form-control" id="description" name="description" required></textarea>
+                </div>
+                {{ submit_button("Save Changes", class="btn btn-success") }}
+            {{ form_end() }}
+            <small class="text-muted">CSRF token is included via the form_start macro</small>
+        </div>
+    </div>
+
+    <h2>Method 3: Manual CSRF Token (Legacy Support)</h2>
+    <p>If you need to manually add CSRF tokens:</p>
+    
+    <div class="card mb-4">
+        <div class="card-header">Example: Manual CSRF Token</div>
+        <div class="card-body">
+            <form method="post" action="/example">
+                {{ csrf_token() }}
+                <div class="mb-3">
+                    <label for="notes" class="form-label">Notes</label>
+                    <input type="text" class="form-control" id="notes" name="notes">
+                </div>
+                <button type="submit" class="btn btn-primary">Submit</button>
+            </form>
+            <small class="text-muted">CSRF token manually added using the csrf_token() macro</small>
+        </div>
+    </div>
+
+    <h2>Method 4: JavaScript/AJAX Requests</h2>
+    <div class="card mb-4">
+        <div class="card-header">Example: CSRF-Protected AJAX</div>
+        <div class="card-body">
+            <button id="ajax-example" class="btn btn-info">Test AJAX Request</button>
+            <div id="ajax-result" class="mt-2"></div>
+            
+            <script>
+                document.getElementById('ajax-example').addEventListener('click', function() {
+                    // Method 1: Using the csrfFetch utility
+                    csrfFetch('/api/example', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({data: 'example'})
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('ajax-result').innerHTML = 
+                            '<div class="alert alert-success">AJAX request successful!</div>';
+                    })
+                    .catch(error => {
+                        document.getElementById('ajax-result').innerHTML = 
+                            '<div class="alert alert-danger">AJAX request failed: ' + error + '</div>';
+                    });
+                    
+                    // Method 2: Manual fetch with CSRF token
+                    /*
+                    fetch('/api/example', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': window.csrfToken
+                        },
+                        body: JSON.stringify({data: 'example'})
+                    })
+                    */
+                });
+            </script>
+            <small class="text-muted">Uses the global csrfFetch() utility function</small>
+        </div>
+    </div>
+
+    <h2>Available Global JavaScript Utilities</h2>
+    <div class="card mb-4">
+        <div class="card-body">
+            <ul>
+                <li><code>window.csrfToken</code> - The current CSRF token value</li>
+                <li><code>addCSRFToForm(form)</code> - Manually add CSRF token to a form element</li>
+                <li><code>csrfFetch(url, options)</code> - Fetch wrapper that automatically includes CSRF token</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="alert alert-success">
+        <h5>✅ Migration Guide</h5>
+        <p>Existing forms will continue to work. New forms can use any of the methods above. 
+           The automatic JavaScript method (#1) is recommended for simplicity.</p>
+    </div>
+</div>
+{% endblock %}

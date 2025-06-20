@@ -1,0 +1,621 @@
+{% extends "base.html" %}
+{% block title %}My Library - Bibliotheca{% endblock %}
+{% block content %}
+<style>
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --cream: #F5F5DC;
+    --warm-white: #FEFEFE;
+    --gold: #DAA520;
+    --shadow: rgba(0,0,0,0.1);
+    --hover-shadow: rgba(0,0,0,0.2);
+  }
+
+  .library-header {
+    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+    color: white;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .library-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+    opacity: 0.3;
+  }
+
+  .library-header h1 {
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 1;
+  }
+
+  .book-cover-wrapper {
+    height: 240px;
+    overflow: hidden;
+    position: relative;
+    padding: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f8f9fa;
+  }
+
+  .book-cover {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    transition: transform 0.2s ease;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+
+  .book-card:hover .book-cover {
+    transform: scale(1.05);
+  }
+
+  .book-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border: none;
+  }
+
+  .book-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+  }
+
+  .book-title {
+    font-size: 0.9rem;
+    line-height: 1.2;
+    height: 2.4em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .filter-btn {
+    transition: all 0.2s ease;
+    border: 2px solid;
+  }
+
+  .filter-btn:hover {
+    transform: translateY(-2px);
+  }
+
+  /* Fix for selected filter button - very light styling */
+  .filter-btn.btn-warning {
+    background-color: rgba(255, 193, 7, 0.1) !important; /* Very light yellow */
+    border-color: #ffc107 !important;
+    color: #856404 !important; /* Dark yellow text */
+  }
+
+  .filter-btn.btn-success {
+    background-color: rgba(25, 135, 84, 0.1) !important; /* Very light green */
+    border-color: #198754 !important;
+    color: #0a3622 !important; /* Dark green text */
+  }
+
+  .filter-btn.btn-info {
+    background-color: rgba(13, 202, 240, 0.1) !important; /* Very light blue */
+    border-color: #0dcaf0 !important;
+    color: #055160 !important; /* Dark blue text */
+  }
+
+  .filter-btn.btn-primary {
+    background-color: rgba(13, 110, 253, 0.1) !important; /* Very light blue */
+    border-color: #0d6efd !important;
+    color: #052c65 !important; /* Dark blue text */
+  }
+
+  .filter-btn.btn-secondary {
+    background-color: rgba(108, 117, 125, 0.1) !important; /* Very light gray */
+    border-color: #6c757d !important;
+    color: #373a3c !important; /* Dark gray text */
+  }
+
+  .filter-btn.btn-dark {
+    background-color: rgba(33, 37, 41, 0.1) !important; /* Very light dark */
+    border-color: #212529 !important;
+    color: #212529 !important; /* Dark text */
+  }
+
+  .book-checkbox {
+    transform: scale(1.2);
+  }
+
+  @media (max-width: 768px) {
+    .book-cover-wrapper {
+      height: 180px;
+    }
+  }
+</style>
+
+<div class="container-fluid px-4 py-4">
+    <!-- Library Header -->
+    <div class="library-header text-center">
+        <h1><i class="bi bi-book-fill me-2"></i>My Library</h1>
+        <p class="lead mb-0">Your personal collection of books</p>
+    </div>
+
+    <!-- Library Stats with Filters -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-lg-10 col-md-9">
+                            <div class="row text-center">
+                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
+                                    <button class="btn btn-outline-warning w-100 filter-btn" data-filter="reading">
+                                        <div class="h4 mb-0 text-warning">{{ stats.currently_reading }}</div>
+                                        <small class="text-muted">Currently Reading</small>
+                                    </button>
+                                </div>
+                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
+                                    <button class="btn btn-outline-success w-100 filter-btn" data-filter="read">
+                                        <div class="h4 mb-0 text-success">{{ stats.books_read }}</div>
+                                        <small class="text-muted">Books Read</small>
+                                    </button>
+                                </div>
+                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
+                                    <button class="btn btn-outline-info w-100 filter-btn" data-filter="plan_to_read">
+                                        <div class="h4 mb-0 text-info">{{ stats.want_to_read }}</div>
+                                        <small class="text-muted">Want to Read</small>
+                                    </button>
+                                </div>
+                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
+                                    <button class="btn btn-outline-primary w-100 filter-btn" data-filter="wishlist">
+                                        <div class="h4 mb-0 text-primary">{{ stats.wishlist }}</div>
+                                        <small class="text-muted">Wishlist</small>
+                                    </button>
+                                </div>
+                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
+                                    <button class="btn btn-outline-secondary w-100 filter-btn" data-filter="on_hold">
+                                        <div class="h4 mb-0 text-secondary">{{ stats.on_hold }}</div>
+                                        <small class="text-muted">On Hold</small>
+                                    </button>
+                                </div>
+                                <div class="col-lg-2 col-md-4 col-6">
+                                    <button class="btn btn-outline-dark w-100 filter-btn" data-filter="all">
+                                        <div class="h4 mb-0 text-dark">{{ stats.total_books }}</div>
+                                        <small class="text-muted">Total Books</small>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-2 col-md-3 text-center">
+                            <a href="{{ url_for('main.add_book_page') }}" class="btn btn-success btn-lg">
+                                <i class="bi bi-plus-circle me-1"></i>Add Books
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Advanced Filters (Collapsible) -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <button class="btn btn-link text-decoration-none p-0 w-100 text-start" type="button" 
+                            data-bs-toggle="collapse" data-bs-target="#advancedFilters" 
+                            aria-expanded="false" aria-controls="advancedFilters">
+                        <i class="bi bi-funnel me-2"></i>Advanced Filters
+                        <i class="bi bi-chevron-down float-end"></i>
+                    </button>
+                </div>
+                <div id="advancedFilters" class="collapse">
+                    <div class="card-body">
+                        <form method="GET" id="filter-form">
+                            <input type="hidden" name="status_filter" id="status_filter" value="{{ current_status_filter or 'all' }}">
+                            <div class="row g-3">
+                                <div class="col-md-3">
+                                    <label for="search" class="form-label">Search</label>
+                                    <input type="text" class="form-control" id="search" name="search" 
+                                           value="{{ current_search }}" placeholder="Title, author, description...">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="category" class="form-label">Category</label>
+                                    <select class="form-select" id="category" name="category">
+                                        <option value="">All Categories</option>
+                                        {% for category in categories %}
+                                            <option value="{{ category }}" {% if category == current_category %}selected{% endif %}>
+                                                {{ category }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="publisher" class="form-label">Publisher</label>
+                                    <select class="form-select" id="publisher" name="publisher">
+                                        <option value="">All Publishers</option>
+                                        {% for publisher in publishers %}
+                                            <option value="{{ publisher }}" {% if publisher == current_publisher %}selected{% endif %}>
+                                                {{ publisher }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="language" class="form-label">Language</label>
+                                    <select class="form-select" id="language" name="language">
+                                        <option value="">All Languages</option>
+                                        {% for language in languages %}
+                                            <option value="{{ language }}" {% if language == current_language %}selected{% endif %}>
+                                                {{ language }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-primary me-2">
+                                        <i class="bi bi-funnel me-1"></i>Apply Filters
+                                    </button>
+                                    <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+                                        <i class="bi bi-x-circle me-1"></i>Clear All
+                                    </a>
+                                    <span class="ms-3 text-muted">Showing <span id="book-count">{{ books|length }}</span> book(s)</span>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Books Grid -->
+    <div class="row">
+        <div class="col-12">
+            {% if books %}
+                <!-- Selection toolbar (hidden by default) -->
+                <div id="selection-toolbar" class="card bg-primary text-white mb-3" style="display: none;">
+                    <div class="card-body py-2">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div>
+                                <span id="selection-count">0</span> book(s) selected
+                            </div>
+                            <div>
+                                <button type="button" class="btn btn-outline-light btn-sm me-2" onclick="selectAll()">
+                                    Select All
+                                </button>
+                                <button type="button" class="btn btn-outline-light btn-sm me-2" onclick="clearSelection()">
+                                    Clear Selection
+                                </button>
+                                <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected()">
+                                    Delete Selected
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Books Grid -->
+                <div class="row g-4" id="books-container">
+                    {% for book in books %}
+                        <div class="col-lg-2 col-md-3 col-sm-4 col-6 book-item" 
+                             data-reading-status="{{ book.reading_status or 'library_only' }}"
+                             data-ownership-status="{{ book.ownership_status or 'owned' }}">
+                            <div class="card h-100 book-card shadow-sm" data-book-id="{{ book.uid }}">
+                                <!-- Selection checkbox -->
+                                <div class="position-absolute top-0 end-0 p-2" style="z-index: 10;">
+                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book.uid }}">
+                                </div>
+
+                                <!-- Book Cover -->
+                                <div class="book-cover-wrapper" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
+                                    {% if book.cover_url %}
+                                        <img src="{{ book.cover_url }}" 
+                                             class="card-img-top book-cover" 
+                                             alt="{{ book.title }} cover"
+                                             onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}'">
+                                    {% else %}
+                                        <div class="bg-light d-flex align-items-center justify-content-center book-cover">
+                                            <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
+                                        </div>
+                                    {% endif %}
+                                </div>
+
+                                <!-- Book Info -->
+                                <div class="card-body p-2" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
+                                    <h6 class="card-title mb-1 book-title">{{ book.title }}</h6>
+                                    {% if book.author %}
+                                        <p class="card-text text-muted small mb-2">{{ book.author }}</p>
+                                    {% endif %}
+
+                                    <!-- Reading Status Badge -->
+                                    <div class="mb-2">
+                                        {% if book.reading_status == 'reading' %}
+                                            <span class="badge bg-warning text-dark">📖 Reading</span>
+                                        {% elif book.reading_status == 'read' %}
+                                            <span class="badge bg-success">✅ Read</span>
+                                        {% elif book.reading_status == 'plan_to_read' %}
+                                            <span class="badge bg-info">📚 Plan to Read</span>
+                                        {% elif book.reading_status == 'on_hold' %}
+                                            <span class="badge bg-secondary">⏸️ On Hold</span>
+                                        {% elif book.reading_status == 'did_not_finish' %}
+                                            <span class="badge bg-danger">❌ DNF</span>
+                                        {% endif %}
+
+                                        {% if book.ownership_status == 'wishlist' %}
+                                            <span class="badge bg-primary">⭐ Wishlist</span>
+                                        {% elif book.ownership_status == 'borrowed' %}
+                                            <span class="badge bg-warning">📚 Borrowed</span>
+                                        {% elif book.ownership_status == 'loaned' %}
+                                            <span class="badge bg-info">📤 Loaned</span>
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Rating -->
+                                    {% if book.average_rating %}
+                                        <div class="text-warning small">
+                                            {% for i in range(5) %}
+                                                {% if i < book.average_rating %}⭐{% else %}☆{% endif %}
+                                            {% endfor %}
+                                            <span class="text-muted">{{ "%.1f"|format(book.average_rating) }}</span>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+
+                <!-- No books message (hidden by default) -->
+                <div id="no-books-message" class="text-center py-5" style="display: none;">
+                    <div class="text-muted">
+                        <i class="bi bi-book display-1"></i>
+                        <p class="mt-3" id="no-books-text">No books found matching your current filter.</p>
+                        <button class="btn btn-outline-primary" onclick="clearStatusFilter()">
+                            Show All Books
+                        </button>
+                    </div>
+                </div>
+
+            {% else %}
+                <!-- Empty state with context-aware message -->
+                <div class="text-center py-5">
+                    <div class="text-muted">
+                        <i class="bi bi-book display-1"></i>
+                        {% if current_status_filter == 'reading' %}
+                            <h4 class="mt-3">You're not currently reading any books</h4>
+                            <p class="mb-4">Start a new book from your library or add some books to read!</p>
+                        {% elif current_status_filter == 'read' %}
+                            <h4 class="mt-3">You haven't finished any books yet</h4>
+                            <p class="mb-4">Complete some books and they'll appear here!</p>
+                        {% elif current_status_filter == 'plan_to_read' %}
+                            <h4 class="mt-3">You have no books planned to read</h4>
+                            <p class="mb-4">Add some books to your reading list!</p>
+                        {% elif current_status_filter == 'wishlist' %}
+                            <h4 class="mt-3">You have no books on your wishlist</h4>
+                            <p class="mb-4">Add books you want to acquire to your wishlist!</p>
+                        {% elif current_status_filter == 'on_hold' %}
+                            <h4 class="mt-3">You have no books on hold</h4>
+                            <p class="mb-4">Books you've paused will appear here!</p>
+                        {% else %}
+                            <h4 class="mt-3">No books found</h4>
+                            <p class="mb-4">Try adjusting your filters or add some books to your library!</p>
+                        {% endif %}
+                        <a href="{{ url_for('main.add_book_page') }}" class="btn btn-primary btn-lg">
+                            <i class="bi bi-plus-circle me-1"></i>Add Books
+                        </a>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Bulk Delete Form (hidden) -->
+    <form id="bulk-delete-form" method="POST" action="{{ url_for('main.bulk_delete_books') }}" style="display: none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize with the current filter from the URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentFilter = urlParams.get('status_filter') || 'all';  // Changed default to 'all'
+    
+    // Set active filter button
+    updateActiveFilter(currentFilter);
+    
+    // Apply initial filter
+    applyStatusFilter(currentFilter);
+
+    // Filter button handlers
+    document.querySelectorAll('.filter-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const filter = this.dataset.filter;
+            applyStatusFilter(filter);
+            updateActiveFilter(filter);
+            
+            // Update URL without page reload
+            const url = new URL(window.location);
+            if (filter === 'all') {
+                url.searchParams.delete('status_filter');
+            } else {
+                url.searchParams.set('status_filter', filter);
+            }
+            window.history.pushState({}, '', url);
+        });
+    });
+
+    // Selection functionality
+    const checkboxes = document.querySelectorAll('.book-checkbox');
+    const selectionToolbar = document.getElementById('selection-toolbar');
+    const selectionCount = document.getElementById('selection-count');
+
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateSelectionUI);
+    });
+
+    function updateSelectionUI() {
+        const selected = document.querySelectorAll('.book-checkbox:checked');
+        const count = selected.length;
+        
+        selectionCount.textContent = count;
+        selectionToolbar.style.display = count > 0 ? 'block' : 'none';
+    }
+
+    // Global functions for inline handlers
+    window.selectAll = function() {
+        const visibleCheckboxes = document.querySelectorAll('.book-item:not([style*="display: none"]) .book-checkbox');
+        visibleCheckboxes.forEach(cb => cb.checked = true);
+        updateSelectionUI();
+    };
+
+    window.clearSelection = function() {
+        checkboxes.forEach(cb => cb.checked = false);
+        updateSelectionUI();
+    };
+
+    window.deleteSelected = function() {
+        const selected = document.querySelectorAll('.book-checkbox:checked');
+        if (selected.length === 0) return;
+        
+        if (confirm(`Are you sure you want to delete ${selected.length} book(s) from your library?`)) {
+            const form = document.getElementById('bulk-delete-form');
+            
+            // Clear existing inputs
+            form.querySelectorAll('input[name="book_ids"]').forEach(input => input.remove());
+            
+            // Add selected book IDs
+            selected.forEach(checkbox => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'book_ids';
+                input.value = checkbox.value;
+                form.appendChild(input);
+            });
+            
+            form.submit();
+        }
+    };
+
+    window.openBook = function(uid) {
+        window.location.href = `/book/${uid}`;
+    };
+
+    window.clearStatusFilter = function() {
+        applyStatusFilter('all');
+        updateActiveFilter('all');
+    };
+});
+
+function applyStatusFilter(filter) {
+    const books = document.querySelectorAll('.book-item');
+    const noBooks = document.getElementById('no-books-message');
+    const noBooksText = document.getElementById('no-books-text');
+    let visibleCount = 0;
+
+    books.forEach(book => {
+        const readingStatus = book.dataset.readingStatus;
+        const ownershipStatus = book.dataset.ownershipStatus;
+        let shouldShow = false;
+
+        switch(filter) {
+            case 'all':
+                shouldShow = true;
+                break;
+            case 'reading':
+                shouldShow = readingStatus === 'reading';
+                break;
+            case 'read':
+                shouldShow = readingStatus === 'read';
+                break;
+            case 'plan_to_read':
+                shouldShow = readingStatus === 'plan_to_read';
+                break;
+            case 'on_hold':
+                shouldShow = readingStatus === 'on_hold';
+                break;
+            case 'wishlist':
+                shouldShow = ownershipStatus === 'wishlist';
+                break;
+        }
+
+        if (shouldShow) {
+            book.style.display = '';
+            visibleCount++;
+        } else {
+            book.style.display = 'none';
+        }
+    });
+
+    // Update book count
+    document.getElementById('book-count').textContent = visibleCount;
+    
+    // Update no books message based on filter
+    if (visibleCount === 0) {
+        let message = 'No books found matching your current filter.';
+        switch(filter) {
+            case 'reading':
+                message = "You're not currently reading any books.";
+                break;
+            case 'read':
+                message = "You haven't finished any books yet.";
+                break;
+            case 'plan_to_read':
+                message = "You have no books planned to read.";
+                break;
+            case 'on_hold':
+                message = "You have no books on hold.";
+                break;
+            case 'wishlist':
+                message = "You have no books on your wishlist.";
+                break;
+            case 'all':
+                message = "Your library is empty.";
+                break;
+        }
+        noBooksText.textContent = message;
+    }
+    
+    // Show/hide no books message
+    noBooks.style.display = visibleCount === 0 ? 'block' : 'none';
+    
+    // Update hidden form field
+    document.getElementById('status_filter').value = filter;
+}
+
+function updateActiveFilter(filter) {
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        if (btn.dataset.filter === filter) {
+            btn.classList.remove('btn-outline-warning', 'btn-outline-success', 'btn-outline-info', 'btn-outline-primary', 'btn-outline-secondary', 'btn-outline-dark');
+            if (filter === 'reading') btn.classList.add('btn-warning');
+            else if (filter === 'read') btn.classList.add('btn-success');
+            else if (filter === 'plan_to_read') btn.classList.add('btn-info');
+            else if (filter === 'wishlist') btn.classList.add('btn-primary');
+            else if (filter === 'on_hold') btn.classList.add('btn-secondary');
+            else btn.classList.add('btn-dark');
+        } else {
+            btn.classList.remove('btn-warning', 'btn-success', 'btn-info', 'btn-primary', 'btn-secondary', 'btn-dark');
+            if (btn.dataset.filter === 'reading') btn.classList.add('btn-outline-warning');
+            else if (btn.dataset.filter === 'read') btn.classList.add('btn-outline-success');
+            else if (btn.dataset.filter === 'plan_to_read') btn.classList.add('btn-outline-info');
+            else if (btn.dataset.filter === 'wishlist') btn.classList.add('btn-outline-primary');
+            else if (btn.dataset.filter === 'on_hold') btn.classList.add('btn-outline-secondary');
+            else btn.classList.add('btn-outline-dark');
+        }
+    });
+}
+</script>
+
+{% endblock %}

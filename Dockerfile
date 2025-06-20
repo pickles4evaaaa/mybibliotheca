@@ -53,14 +53,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all source code
 COPY . .
 
-# Create directory for SQLite database with proper permissions
+# Create directory for Redis data with proper permissions (no SQLite)
 RUN mkdir -p /app/data && \
-    chmod 755 /app/data && \
-    touch /app/data/books.db && \
-    chmod 664 /app/data/books.db
+    chmod 755 /app/data
 
-# Set environment variables for multi-user authentication
-ENV DATABASE_URL=sqlite:////app/data/books.db
+# Set environment variables for Redis-only multi-user authentication
 ENV WTF_CSRF_ENABLED=True
 
 # Flask environment (using FLASK_DEBUG instead of deprecated FLASK_ENV)

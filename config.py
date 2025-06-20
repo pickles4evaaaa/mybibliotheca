@@ -33,10 +33,12 @@ class Config:
     WTF_CSRF_ENABLED = True
     WTF_CSRF_TIME_LIMIT = 3600  # 1 hour
 
-    # Database - unified path handling for Docker and standalone
-    DATABASE_PATH = os.path.join(data_dir, 'books.db')
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or f"sqlite:///{DATABASE_PATH}"
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # File uploads
+    MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
+
+    # Redis Database Configuration
+    REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
+    GRAPH_DATABASE_ENABLED = os.environ.get('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
 
     # External APIs
     ISBN_API_KEY = os.environ.get('ISBN_API_KEY') or 'your_isbn_api_key'
@@ -50,6 +52,9 @@ class Config:
     REMEMBER_COOKIE_SECURE = os.environ.get('FLASK_DEBUG', 'false').lower() == 'false'
     REMEMBER_COOKIE_HTTPONLY = True
     
+    # File Upload settings
+    MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file upload
+    
     # Email settings (for password reset)
     MAIL_SERVER = os.environ.get('MAIL_SERVER', 'localhost')
     MAIL_PORT = int(os.environ.get('MAIL_PORT', 587))
@@ -61,7 +66,11 @@ class Config:
     # Admin settings
     ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@bibliotheca.local')
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
-    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'G7#xP@9zL!qR2')
+    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')  # No default - must be set via env var
+    
+    # API Authentication
+    # For development, use a simple test token. In production, implement proper token management.
+    API_TEST_TOKEN = os.environ.get('API_TEST_TOKEN')  # No default - must be set via env var
     
     # Debug settings (disabled by default for security)
     DEBUG_MODE = os.environ.get('BIBLIOTHECA_DEBUG', 'false').lower() in ['true', 'on', '1']

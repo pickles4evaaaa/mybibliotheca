@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Settings - Bibliotheca{% endblock %}
+{% block content %}
+<style>
+:root {
+  --primary-brown: #8B4513;
+  --light-brown: #D2B48C;
+  --cream: #F5F5DC;
+  --warm-white: #FEFEFE;
+  --gold: #DAA520;
+  --shadow: rgba(0,0,0,0.1);
+  --hover-shadow: rgba(0,0,0,0.2);
+}
+
+.settings-header {
+  background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+  color: white;
+  padding: 2rem 0;
+  margin-bottom: 2rem;
+  border-radius: 15px;
+  position: relative;
+  overflow: hidden;
+}
+
+.settings-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+  opacity: 0.3;
+}
+
+.settings-header h1 {
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+  font-weight: 700;
+  margin: 0;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+  position: relative;
+  z-index: 1;
+}
+
+.accordion-item {
+    border: 1px solid rgba(0,0,0,.125);
+    border-radius: 0.375rem;
+}
+
+.accordion-button {
+    font-weight: 500;
+    border-radius: 0.375rem;
+}
+
+.accordion-button:not(.collapsed) {
+    color: white;
+    box-shadow: none;
+}
+
+.accordion-button.bg-primary:not(.collapsed) {
+    background-color: var(--bs-primary) !important;
+}
+
+.accordion-button.bg-success:not(.collapsed) {
+    background-color: var(--bs-success) !important;
+}
+
+.accordion-button.bg-info:not(.collapsed) {
+    background-color: var(--bs-info) !important;
+}
+
+.accordion-button.bg-warning:not(.collapsed) {
+    background-color: var(--bs-warning) !important;
+}
+
+.accordion-button.bg-secondary:not(.collapsed) {
+    background-color: var(--bs-secondary) !important;
+}
+
+.accordion-button.bg-dark:not(.collapsed) {
+    background-color: var(--bs-dark) !important;
+}
+
+.accordion-button.bg-danger:not(.collapsed) {
+    background-color: var(--bs-danger) !important;
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.accordion-body {
+    padding: 1.25rem;
+}
+
+.breadcrumb-item a {
+    text-decoration: none;
+}
+
+/* Smooth transitions for accordion */
+.accordion-collapse {
+    transition: height 0.35s ease;
+}
+
+/* Better spacing between accordion items */
+.accordion-item:not(:last-child) {
+    margin-bottom: 0.5rem;
+}
+
+/* Settings header styling */
+.card.bg-primary {
+    background: linear-gradient(135deg, var(--bs-primary) 0%, #4a6cf7 100%) !important;
+}
+
+.btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.1rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .accordion-body {
+        padding: 1rem;
+    }
+    
+    .col-lg-8 {
+        max-width: 100%;
+    }
+}
+</style>
+<div class="container mt-4">
+    <div class="settings-header text-center">
+        <h1><i class="bi bi-gear-fill"></i> Settings</h1>
+        <p class="mb-0 opacity-75">Manage your account and preferences</p>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <!-- Settings Accordion -->
+            <div class="accordion" id="settingsAccordion">
+                
+                <!-- Admin Settings (only visible to admins) -->
+                {% if current_user.is_admin %}
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-danger text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseAdmin" 
+                                aria-expanded="false" aria-controls="collapseAdmin">
+                            <i class="bi bi-shield-exclamation me-2"></i>Administrator Tools
+                        </button>
+                    </h2>
+                    <div id="collapseAdmin" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Access administrative functions and manage the Bibliotheca instance.</p>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <a href="{{ url_for('admin.dashboard') }}" class="btn btn-danger w-100">
+                                        <i class="bi bi-speedometer2 me-1"></i>Admin Dashboard
+                                    </a>
+                                </div>
+                                <div class="col-md-6">
+                                    <a href="{{ url_for('admin.users') }}" class="btn btn-outline-danger w-100">
+                                        <i class="bi bi-people me-1"></i>User Management
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Personal Profile -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-primary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseProfile" 
+                                aria-expanded="false" aria-controls="collapseProfile">
+                            <i class="bi bi-person-circle me-2"></i>Personal Profile
+                        </button>
+                    </h2>
+                    <div id="collapseProfile" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Update your personal information, username, and account details.</p>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <a href="{{ url_for('auth.profile') }}" class="btn btn-primary w-100">
+                                        <i class="bi bi-person me-1"></i>Manage Profile
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reading Activity -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-success text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseActivity" 
+                                aria-expanded="false" aria-controls="collapseActivity">
+                            <i class="bi bi-activity me-2"></i>Reading Activity
+                        </button>
+                    </h2>
+                    <div id="collapseActivity" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">View your reading history, logs, and track your progress over time.</p>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <a href="{{ url_for('auth.my_activity') }}" class="btn btn-success w-100">
+                                        <i class="bi bi-graph-up me-1"></i>View My Activity
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Privacy & Sharing -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-info text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapsePrivacy" 
+                                aria-expanded="false" aria-controls="collapsePrivacy">
+                            <i class="bi bi-shield-lock me-2"></i>Privacy & Sharing
+                        </button>
+                    </h2>
+                    <div id="collapsePrivacy" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Control what information you share with the community and manage your privacy settings.</p>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <a href="{{ url_for('auth.privacy_settings') }}" class="btn btn-info w-100">
+                                        <i class="bi bi-shield-check me-1"></i>Privacy Settings
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Security -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseSecurity" 
+                                aria-expanded="false" aria-controls="collapseSecurity">
+                            <i class="bi bi-key me-2"></i>Security
+                        </button>
+                    </h2>
+                    <div id="collapseSecurity" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Change your password and manage account security settings.</p>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <a href="{{ url_for('auth.change_password') }}" class="btn btn-warning w-100">
+                                        <i class="bi bi-lock me-1"></i>Change Password
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Location Management -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-secondary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseLocations" 
+                                aria-expanded="false" aria-controls="collapseLocations">
+                            <i class="bi bi-geo-alt me-2"></i>Location Management
+                        </button>
+                    </h2>
+                    <div id="collapseLocations" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Manage your book storage locations and organize your physical library.</p>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <a href="{{ url_for('locations.manage_locations') }}" class="btn btn-secondary w-100">
+                                        <i class="bi bi-house me-1"></i>Manage Locations
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Management -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-dark text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseData" 
+                                aria-expanded="false" aria-controls="collapseData">
+                            <i class="bi bi-download me-2"></i>Data Management
+                        </button>
+                    </h2>
+                    <div id="collapseData" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Download a backup of your database for safekeeping.</p>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <a href="{{ url_for('main.download_db') }}" class="btn btn-dark w-100">
+                                        <i class="bi bi-database me-1"></i>Download Database
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Back Button -->
+            <div class="text-center mt-4">
+                <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Library
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

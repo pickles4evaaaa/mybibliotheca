@@ -1,55 +1,41 @@
 {% if books %}
-<div class="row">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Books Finished in {{ month_name }} {{ year }}</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    {% for book in books %}
-                    <div class="col-md-6 col-lg-4 mb-3">
-                        <div class="d-flex">
-                            {% if book.cover_url %}
-                                <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                     style="height:80px;width:auto;margin-right:12px;border-radius:4px;">
-                            {% else %}
-                                <div style="height:80px;width:55px;background:#f8f9fa;border:1px solid #dee2e6;margin-right:12px;border-radius:4px;display:flex;align-items:center;justify-content:center;">
-                                    <i class="bi bi-book text-muted"></i>
-                                </div>
-                            {% endif %}
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ book.title }}</h6>
-                                <p class="card-text text-muted mb-2">by {{ book.author }}</p>
-                                <div class="mb-2">
-                                    <a href="{{ url_for('main.user_profile', user_id=book.user.id) }}" 
-                                       class="text-decoration-none">
-                                        <small class="text-primary">
-                                            {{ book.user.username }}
-                                        </small>
-                                    </a>
-                                </div>
-                                <small class="text-success">
-                                    Finished: {{ book.finish_date.strftime('%b %d') }}
-                                </small>
-                            </div>
-                        </div>
+<div class="reading-activity">
+    <div class="row">
+        {% for book in books %}
+        <div class="col-md-6 col-lg-4 mb-3">
+            <div class="d-flex">
+                {% if book.cover_url %}
+                    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
+                         style="height:80px;width:auto;margin-right:12px;border-radius:4px;">
+                {% else %}
+                    <div style="height:80px;width:55px;background:#f8f9fa;border:1px solid #dee2e6;margin-right:12px;border-radius:4px;display:flex;align-items:center;justify-content:center;">
+                        <i class="bi bi-book text-muted"></i>
                     </div>
-                    {% endfor %}
+                {% endif %}
+                <div class="flex-grow-1">
+                    <h6 class="mb-1">{{ book.title }}</h6>
+                    <p class="text-muted mb-2">by {{ book.author }}</p>
+                    <div class="mb-2">
+                        <a href="{{ url_for('main.user_profile', user_id=book.user.id) }}" 
+                           class="text-decoration-none">
+                            <small class="text-primary">
+                                <i class="bi bi-person"></i> {{ book.user.username }}
+                            </small>
+                        </a>
+                    </div>
+                    <small class="text-success">
+                        <i class="bi bi-check-circle"></i> Finished: {{ book.finish_date.strftime('%b %d') }}
+                    </small>
                 </div>
             </div>
         </div>
+        {% endfor %}
     </div>
 </div>
 {% else %}
-<div class="row">
-    <div class="col-12">
-        <div class="card text-center">
-            <div class="card-body py-4">
-                <h5 class="mt-3 mb-2">No Books Finished This Month</h5>
-                <p class="text-muted mb-3">No community members have finished books in {{ month_name }} {{ year }} yet.</p>
-            </div>
-        </div>
-    </div>
+<div class="reading-activity text-center py-4">
+    <i class="bi bi-book" style="font-size: 3rem; color: #ccc;"></i>
+    <h5 class="mt-3 mb-2">No Books Finished This Month</h5>
+    <p class="text-muted mb-3">No community members have finished books this month yet.</p>
 </div>
 {% endif %}

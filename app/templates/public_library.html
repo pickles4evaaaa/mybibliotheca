@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block navbar %}{% endblock %}
-{% block title %}Bibliotheca{% endblock %}
+{% block title %}{{ site_name }}{% endblock %}
 {% block footer %}{% endblock %}
 {% block content %}
 <style>
@@ -88,7 +88,7 @@
   </a>
 </div>
 
-<h1 class="mb-4 text-center">Bibliotheca</h1>
+<h1 class="mb-4 text-center">{{ site_name }}</h1>
 <div class="bookshelf-bg">
   <div class="row bookshelf-row justify-content-center"> <!-- Changed to justify-content-center -->
     {% for book in books %}

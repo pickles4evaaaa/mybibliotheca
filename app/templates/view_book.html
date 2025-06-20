@@ -16,7 +16,7 @@
       <p><strong>Published:</strong> {{ book.published_date }}</p>
     {% endif %}
     {% if book.publisher %}
-      <p><strong>Publisher:</strong> {{ book.publisher }}</p>
+      <p><strong>Publisher:</strong> {{ book.publisher.name if book.publisher.name else book.publisher }}</p>
     {% endif %}
     {% if book.page_count %}
       <p><strong>Pages:</strong> {{ book.page_count }}</p>

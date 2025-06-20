@@ -38,7 +38,7 @@
     <div class="col-md-6">
       <div class="mb-3">
         <label for="publisher" class="form-label">Publisher</label>
-        <input type="text" class="form-control" id="publisher" name="publisher" value="{{ book.publisher or '' }}">
+        <input type="text" class="form-control" id="publisher" name="publisher" value="{{ book.publisher.name if book.publisher and book.publisher.name else book.publisher or '' }}">
       </div>
     </div>
     <div class="col-md-6">

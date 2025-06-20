@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Import Books - Bibliotheca{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <h2>📚 Import Books</h2>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="row">
+        <div class="col-lg-8">
+            <!-- Upload CSV File -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h3 class="card-title">📁 Upload CSV File</h3>
+                    <p class="card-text">Upload a CSV file containing your book data. We support various formats including Goodreads exports, StoryGraph exports, and custom CSV files.</p>
+                    
+                    <div class="alert alert-info">
+                        <h6 class="alert-heading">📝 Supported Formats:</h6>
+                        <ul class="mb-0">
+                            <li><strong>Goodreads Export:</strong> Standard Goodreads library export CSV</li>
+                            <li><strong>StoryGraph Export:</strong> StoryGraph library export CSV</li>
+                            <li><strong>Simple ISBN List:</strong> Single column with ISBNs/UPCs</li>
+                            <li><strong>Custom CSV:</strong> Any CSV with book data (Title, Author, ISBN, etc.)</li>
+                        </ul>
+                    </div>
+
+                    <form id="uploadForm" method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <div class="mb-3">
+                            <label for="csv_file" class="form-label">CSV File</label>
+                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
+                            <div class="form-text">Maximum file size: 100MB</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-upload"></i> Upload & Preview
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <!-- Help Section -->
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">💡 Import Tips</h5>
+                    <ul class="list-unstyled">
+                        <li class="mb-2">
+                            <i class="fas fa-check-circle text-success"></i>
+                            <small>CSV files should be UTF-8 encoded</small>
+                        </li>
+                        <li class="mb-2">
+                            <i class="fas fa-check-circle text-success"></i>
+                            <small>First row should contain column headers</small>
+                        </li>
+                        <li class="mb-2">
+                            <i class="fas fa-check-circle text-success"></i>
+                            <small>We'll auto-detect common field names</small>
+                        </li>
+                        <li class="mb-2">
+                            <i class="fas fa-check-circle text-success"></i>
+                            <small>You can map any column to any field</small>
+                        </li>
+                        <li class="mb-2">
+                            <i class="fas fa-check-circle text-success"></i>
+                            <small>Import progress is tracked in real-time</small>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    const fileInput = document.getElementById('csv_file');
+    const file = fileInput.files[0];
+    
+    if (file) {
+        if (file.size > 100 * 1024 * 1024) { // 100MB
+            e.preventDefault();
+            alert('File size must be less than 100MB');
+            return;
+        }
+        
+        // Show loading state
+        const submitBtn = this.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+    }
+});
+</script>
+{% endblock %}

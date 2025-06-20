@@ -4,12 +4,11 @@ Provides admin-only decorators, middleware, and management functions
 """
 
 from functools import wraps
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort, current_app
 from flask_login import login_required, current_user
-from .models import User, Book, ReadingLog, db
+from .services import user_service, book_service, reading_log_service
 from .forms import UserProfileForm, AdminPasswordResetForm
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import func
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -63,166 +62,241 @@ def admin_or_self_required(user_id_param='user_id'):
 @admin_required
 def dashboard():
     """Admin dashboard with system overview"""
-    # Get system statistics
-    stats = get_system_stats()
-    
-    # Get recent user registrations (last 30 days)
-    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
-    recent_users = User.query.filter(User.created_at >= thirty_days_ago).order_by(User.created_at.desc()).limit(10).all()
-    
-    # Get recent book additions (last 30 days)  
-    recent_books = Book.query.filter(Book.created_at >= thirty_days_ago).order_by(Book.created_at.desc()).limit(10).all()
-    
-    return render_template('admin/dashboard.html', 
-                         title='Admin Dashboard',
-                         stats=stats,
-                         recent_users=recent_users,
-                         recent_books=recent_books)
+    try:
+        # Get system statistics
+        stats = get_system_stats()
+        
+        # Get recent user registrations (last 30 days) - placeholder for now
+        # This would need to be implemented in the user service
+        recent_users = []
+        
+        # Get recent book additions (last 30 days) - placeholder for now
+        # This would need to be implemented in the book service  
+        recent_books = []
+        
+        return render_template('admin/dashboard.html', 
+                             title='Admin Dashboard',
+                             stats=stats,
+                             recent_users=recent_users,
+                             recent_books=recent_books)
+    except Exception as e:
+        current_app.logger.error(f"Error loading admin dashboard: {e}")
+        flash('Error loading dashboard data.', 'danger')
+        return render_template('admin/dashboard.html', 
+                             title='Admin Dashboard',
+                             stats={},
+                             recent_users=[],
+                             recent_books=[])
 
 @admin.route('/users')
 @login_required
 @admin_required
 def users():
     """User management interface"""
-    page = request.args.get('page', 1, type=int)
-    search = request.args.get('search', '', type=str)
-    
-    # Build query with optional search
-    query = User.query
-    if search:
-        query = query.filter(
-            db.or_(
-                User.username.contains(search),
-                User.email.contains(search)
-            )
-        )
-    
-    # Paginate results
-    users = query.order_by(User.created_at.desc()).paginate(
-        page=page, per_page=20, error_out=False
-    )
-    
-    return render_template('admin/users.html',
-                         title='User Management',
-                         users=users,
-                         search=search)
+    try:
+        page = request.args.get('page', 1, type=int)
+        search = request.args.get('search', '', type=str)
+        
+        # For now, return basic info - search functionality would need to be implemented
+        # in the user service for full functionality
+        all_users = user_service.get_all_users_sync() if hasattr(user_service, 'get_all_users_sync') else []
+        
+        # Simple client-side search filtering
+        if search:
+            filtered_users = [user for user in all_users 
+                            if search.lower() in user.username.lower() or search.lower() in user.email.lower()]
+        else:
+            filtered_users = all_users
+        
+        # Simple pagination
+        per_page = 20
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_users = filtered_users[start:end]
+        
+        # Create pagination object simulation
+        class PaginationResult:
+            def __init__(self, items, page, per_page, total):
+                self.items = items
+                self.page = page
+                self.per_page = per_page
+                self.total = total
+                self.pages = (total + per_page - 1) // per_page  # Calculate total pages
+                self.has_prev = page > 1
+                self.has_next = end < total
+                self.prev_num = page - 1 if self.has_prev else None
+                self.next_num = page + 1 if self.has_next else None
+        
+        users_paginated = PaginationResult(page_users, page, per_page, len(filtered_users))
+        
+        return render_template('admin/users.html',
+                             title='User Management',
+                             users=users_paginated,
+                             search=search)
+    except Exception as e:
+        current_app.logger.error(f"Error loading users: {e}")
+        flash('Error loading users.', 'danger')
+        return render_template('admin/users.html',
+                             title='User Management',
+                             users=None,
+                             search=search)
 
-@admin.route('/users/<int:user_id>')
+@admin.route('/users/<string:user_id>')
 @login_required
 @admin_required
 def user_detail(user_id):
     """Individual user management"""
-    user = User.query.get_or_404(user_id)
-    
-    # Get user statistics
-    book_count = Book.query.filter_by(user_id=user.id).count()
-    reading_count = ReadingLog.query.filter_by(user_id=user.id).count()
-    
-    # Get more detailed stats
-    from sqlalchemy import extract
-    current_year = datetime.now().year
-    books_this_year = Book.query.filter(
-        Book.user_id == user.id,
-        extract('year', Book.created_at) == current_year
-    ).count()
-    
-    logs_this_month = ReadingLog.query.filter(
-        ReadingLog.user_id == user.id,
-        ReadingLog.created_at >= datetime.now().replace(day=1)
-    ).count()
-    
-    # Get recent activity
-    recent_books = Book.query.filter_by(user_id=user.id).order_by(Book.created_at.desc()).limit(5).all()
-    recent_logs = ReadingLog.query.filter_by(user_id=user.id).order_by(ReadingLog.created_at.desc()).limit(10).all()
-    
-    return render_template('admin/user_detail.html',
-                         title=f'User: {user.username}',
-                         user=user,
-                         book_count=book_count,
-                         reading_count=reading_count,
-                         books_this_year=books_this_year,
-                         logs_this_month=logs_this_month,
-                         recent_books=recent_books,
-                         recent_logs=recent_logs)
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            abort(404)
+        
+        # Get user statistics from services
+        user_books = book_service.get_user_books_sync(user_id)
+        book_count = len(user_books)
+        
+        reading_count = reading_log_service.get_user_logs_count_sync(user_id) if hasattr(reading_log_service, 'get_user_logs_count_sync') else 0
+        
+        # Get more detailed stats
+        current_year = datetime.now().year
+        books_this_year = len([book for book in user_books 
+                              if book.created_at and book.created_at.year == current_year])
+        
+        # Reading logs this month would need service implementation
+        logs_this_month = 0  # Placeholder
+        
+        # Get recent activity - limit to recent books
+        recent_books = sorted(user_books, key=lambda x: x.created_at or datetime.min, reverse=True)[:5]
+        recent_logs = []  # Would need service implementation
+        
+        return render_template('admin/user_detail.html',
+                             title=f'User: {user.username}',
+                             user=user,
+                             book_count=book_count,
+                             reading_count=reading_count,
+                             books_this_year=books_this_year,
+                             logs_this_month=logs_this_month,
+                             recent_books=recent_books,
+                             recent_logs=recent_logs)
+    except Exception as e:
+        current_app.logger.error(f"Error loading user detail {user_id}: {e}")
+        flash('Error loading user details.', 'danger')
+        return redirect(url_for('admin.users'))
 
-@admin.route('/users/<int:user_id>/toggle_admin', methods=['POST'])
+@admin.route('/users/<string:user_id>/toggle_admin', methods=['POST'])
 @login_required
 @admin_required
 def toggle_admin(user_id):
     """Toggle admin status for a user"""
-    user = User.query.get_or_404(user_id)
-    
-    # Prevent removing admin from the last admin
-    if user.is_admin:
-        admin_count = User.query.filter_by(is_admin=True).count()
-        if admin_count <= 1:
-            flash('Cannot remove admin privileges from the last admin user.', 'error')
-            return redirect(url_for('admin.user_detail', user_id=user_id))
-    
-    # Toggle admin status
-    user.is_admin = not user.is_admin
-    db.session.commit()
-    
-    action = 'granted' if user.is_admin else 'removed'
-    flash(f'Admin privileges {action} for user {user.username}.', 'success')
-    
-    return redirect(url_for('admin.user_detail', user_id=user_id))
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            abort(404)
+        
+        # Prevent removing admin from the last admin
+        if user.is_admin:
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1
+            if admin_count <= 1:
+                flash('Cannot remove admin privileges from the last admin user.', 'error')
+                return redirect(url_for('admin.user_detail', user_id=user_id))
+        
+        # Toggle admin status
+        user.is_admin = not user.is_admin
+        user_service.update_user_sync(user)
+        
+        action = 'granted' if user.is_admin else 'removed'
+        flash(f'Admin privileges {action} for user {user.username}.', 'success')
+        
+        return redirect(url_for('admin.user_detail', user_id=user_id))
+    except Exception as e:
+        current_app.logger.error(f"Error toggling admin status for user {user_id}: {e}")
+        flash('Error updating user privileges.', 'danger')
+        return redirect(url_for('admin.user_detail', user_id=user_id))
 
-@admin.route('/users/<int:user_id>/toggle_active', methods=['POST'])
+@admin.route('/users/<string:user_id>/toggle_active', methods=['POST'])
 @login_required
 @admin_required
 def toggle_active(user_id):
     """Toggle active status for a user"""
-    user = User.query.get_or_404(user_id)
-    
-    # Prevent deactivating the current admin
-    if user.id == current_user.id:
-        flash('Cannot deactivate your own account.', 'error')
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            abort(404)
+        
+        # Prevent deactivating the current admin
+        if user.id == current_user.id:
+            flash('Cannot deactivate your own account.', 'error')
+            return redirect(url_for('admin.user_detail', user_id=user_id))
+        
+        # Toggle active status
+        user.is_active = not user.is_active
+        user_service.update_user_sync(user)
+        
+        status = 'activated' if user.is_active else 'deactivated'
+        flash(f'User {user.username} has been {status}.', 'success')
+        
         return redirect(url_for('admin.user_detail', user_id=user_id))
-    
-    # Toggle active status
-    user.is_active = not user.is_active
-    db.session.commit()
-    
-    status = 'activated' if user.is_active else 'deactivated'
-    flash(f'User {user.username} has been {status}.', 'success')
-    
-    return redirect(url_for('admin.user_detail', user_id=user_id))
+    except Exception as e:
+        current_app.logger.error(f"Error toggling active status for user {user_id}: {e}")
+        flash('Error updating user status.', 'danger')
+        return redirect(url_for('admin.user_detail', user_id=user_id))
 
-@admin.route('/users/<int:user_id>/delete', methods=['POST'])
+@admin.route('/users/<string:user_id>/delete', methods=['POST'])
 @login_required
 @admin_required
 def delete_user(user_id):
     """Delete a user and handle their data"""
-    user = User.query.get_or_404(user_id)
-    
-    # Prevent deleting own account
-    if user.id == current_user.id:
-        flash('Cannot delete your own account.', 'error')
-        return redirect(url_for('admin.user_detail', user_id=user_id))
-    
-    # Prevent deleting the last admin
-    if user.is_admin:
-        admin_count = User.query.filter_by(is_admin=True).count()
-        if admin_count <= 1:
-            flash('Cannot delete the last admin user.', 'error')
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            abort(404)
+        
+        # Prevent deleting own account
+        if user.id == current_user.id:
+            flash('Cannot delete your own account.', 'error')
             return redirect(url_for('admin.user_detail', user_id=user_id))
-    
-    username = user.username
-    
-    # Delete user (cascades will handle books and logs)
-    db.session.delete(user)
-    db.session.commit()
-    
-    flash(f'User {username} and all associated data have been deleted.', 'success')
-    return redirect(url_for('admin.users'))
+        
+        # Prevent deleting the last admin
+        if user.is_admin:
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1
+            if admin_count <= 1:
+                flash('Cannot delete the last admin user.', 'error')
+                return redirect(url_for('admin.user_detail', user_id=user_id))
+        
+        username = user.username
+        
+        # Delete user (would need service implementation for cascading deletes)
+        # For now, just mark as placeholder
+        flash(f'User deletion not fully implemented for Redis backend. User {username} would be deleted.', 'warning')
+        return redirect(url_for('admin.users'))
+    except Exception as e:
+        current_app.logger.error(f"Error deleting user {user_id}: {e}")
+        flash('Error deleting user.', 'danger')
+        return redirect(url_for('admin.user_detail', user_id=user_id))
 
-@admin.route('/settings')
+@admin.route('/settings', methods=['GET', 'POST'])
 @login_required 
 @admin_required
 def settings():
     """Admin settings page"""
-    return render_template('admin/settings.html', title='Admin Settings')
+    from .infrastructure.redis_graph import get_graph_storage
+    redis_client = get_graph_storage().redis
+    
+    if request.method == 'POST':
+        site_name = request.form.get('site_name', 'Bibliotheca')
+        # Store the site name in Redis
+        redis_client.set('site_name', site_name)
+        flash(f'Settings updated! Site name set to: {site_name}', 'success')
+        return redirect(url_for('admin.settings'))
+    
+    # Get the current site name from Redis, default to 'Bibliotheca'
+    current_site_name = redis_client.get('site_name')
+    if current_site_name:
+        current_site_name = current_site_name.decode('utf-8') if isinstance(current_site_name, bytes) else current_site_name
+    else:
+        current_site_name = 'Bibliotheca'
+    
+    return render_template('admin/settings.html', title='Admin Settings', site_name=current_site_name)
 
 @admin.route('/api/stats')
 @login_required
@@ -232,104 +306,134 @@ def api_stats():
     stats = get_system_stats()
     return jsonify(stats)
 
-@admin.route('/users/<int:user_id>/reset_password', methods=['GET', 'POST'])
+@admin.route('/users/<string:user_id>/reset_password', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def reset_user_password(user_id):
     """Admin function to reset a user's password"""
-    user = User.query.get_or_404(user_id)
-    form = AdminPasswordResetForm()
-    
-    if form.validate_on_submit():
-        try:
-            user.set_password(form.new_password.data)
-            # Set force password change if requested
-            if form.force_change.data:
-                user.password_must_change = True
-            # Also unlock the account if it was locked
-            user.unlock_account()
-            db.session.commit()
-            
-            force_msg = " User will be required to change password on next login." if form.force_change.data else ""
-            flash(f'Password reset successfully for user {user.username}.{force_msg}', 'success')
-            return redirect(url_for('admin.user_detail', user_id=user.id))
-        except ValueError as e:
-            flash(str(e), 'error')
-    
-    return render_template('admin/reset_password.html', 
-                         title=f'Reset Password - {user.username}',
-                         form=form, 
-                         user=user)
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            abort(404)
+        form = AdminPasswordResetForm()
+        
+        if form.validate_on_submit():
+            try:
+                # Update password using service - would need implementation
+                # user.set_password(form.new_password.data)
+                # Set force password change if requested
+                if form.force_change.data:
+                    user.password_must_change = True
+                # Also unlock the account if it was locked
+                if hasattr(user, 'unlock_account'):
+                    user.unlock_account()
+                user_service.update_user_sync(user)
+                
+                force_msg = " User will be required to change password on next login." if form.force_change.data else ""
+                flash(f'Password reset functionality not fully implemented for Redis backend. User {user.username} would be updated.{force_msg}', 'warning')
+                return redirect(url_for('admin.user_detail', user_id=user.id))
+            except ValueError as e:
+                flash(str(e), 'error')
+        
+        return render_template('admin/reset_password.html', 
+                             title=f'Reset Password - {user.username}',
+                             form=form, 
+                             user=user)
+    except Exception as e:
+        current_app.logger.error(f"Error resetting password for user {user_id}: {e}")
+        flash('Error resetting password.', 'danger')
+        return redirect(url_for('admin.user_detail', user_id=user_id))
 
-@admin.route('/users/<int:user_id>/unlock_account', methods=['POST'])
+@admin.route('/users/<string:user_id>/unlock_account', methods=['POST'])
 @login_required
 @admin_required
 def unlock_user_account(user_id):
     """Admin function to unlock a locked user account"""
-    user = User.query.get_or_404(user_id)
-    
-    if user.is_locked():
-        user.unlock_account()
-        flash(f'Account unlocked for user {user.username}.', 'success')
-    else:
-        flash(f'User {user.username} account is not locked.', 'info')
-    
-    return redirect(url_for('admin.user_detail', user_id=user.id))
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            abort(404)
+        
+        if hasattr(user, 'is_locked') and user.is_locked():
+            if hasattr(user, 'unlock_account'):
+                user.unlock_account()
+                user_service.update_user_sync(user)
+            flash(f'Account unlocked for user {user.username}.', 'success')
+        else:
+            flash(f'User {user.username} account is not locked.', 'info')
+        
+        return redirect(url_for('admin.user_detail', user_id=user.id))
+    except Exception as e:
+        current_app.logger.error(f"Error unlocking user account {user_id}: {e}")
+        flash('Error unlocking user account.', 'danger')
+        return redirect(url_for('admin.user_detail', user_id=user_id))
 
 def get_system_stats():
     """Get system statistics for admin dashboard"""
-    total_users = User.query.count()
-    active_users = User.query.filter_by(is_active=True).count()
-    admin_users = User.query.filter_by(is_admin=True).count()
-    total_books = Book.query.count()
-    
-    # Users registered in last 30 days
-    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
-    new_users_30d = User.query.filter(User.created_at >= thirty_days_ago).count()
-    
-    # Books added in last 30 days
-    new_books_30d = Book.query.filter(Book.created_at >= thirty_days_ago).count()
-    
-    # Most active users (by book count)
-    top_users = db.session.query(
-        User.username,
-        func.count(Book.id).label('book_count')
-    ).join(Book).group_by(User.id).order_by(func.count(Book.id).desc()).limit(5).all()
-    
-    # System health info (with fallback if psutil not available)
-    system_info = {}
     try:
-        import psutil
-        disk_usage = psutil.disk_usage('/')
-        memory = psutil.virtual_memory()
+        # Get basic stats from services
+        total_users = user_service.get_user_count_sync() if hasattr(user_service, 'get_user_count_sync') else 0
+        active_users = user_service.get_active_user_count_sync() if hasattr(user_service, 'get_active_user_count_sync') else 0
+        admin_users = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 0
         
-        system_info = {
-            'disk_free_gb': round(disk_usage.free / (1024**3), 2),
-            'disk_total_gb': round(disk_usage.total / (1024**3), 2),
-            'disk_percent': round((disk_usage.used / disk_usage.total) * 100, 1),
-            'memory_percent': memory.percent,
-            'memory_available_gb': round(memory.available / (1024**3), 2)
+        # Total books across all users - would need service implementation
+        total_books = 0  # Placeholder
+        
+        # Users registered in last 30 days - would need service implementation
+        new_users_30d = 0  # Placeholder
+        
+        # Books added in last 30 days - would need service implementation
+        new_books_30d = 0  # Placeholder
+        
+        # Most active users (by book count) - would need service implementation
+        top_users = []  # Placeholder
+        
+        # System health info (with fallback if psutil not available)
+        system_info = {}
+        try:
+            import psutil
+            disk_usage = psutil.disk_usage('/')
+            memory = psutil.virtual_memory()
+            
+            system_info = {
+                'disk_free_gb': round(disk_usage.free / (1024**3), 2),
+                'disk_total_gb': round(disk_usage.total / (1024**3), 2),
+                'disk_percent': round((disk_usage.used / disk_usage.total) * 100, 1),
+                'memory_percent': memory.percent,
+                'memory_available_gb': round(memory.available / (1024**3), 2)
+            }
+        except ImportError:
+            # Fallback if psutil is not available
+            system_info = {
+                'disk_free_gb': 'N/A',
+                'disk_total_gb': 'N/A', 
+                'disk_percent': 'N/A',
+                'memory_percent': 'N/A',
+                'memory_available_gb': 'N/A'
+            }
+        
+        return {
+            'total_users': total_users,
+            'active_users': active_users,
+            'admin_users': admin_users,
+            'total_books': total_books,
+            'new_users_30d': new_users_30d,
+            'new_books_30d': new_books_30d,
+            'top_users': [{'username': user[0], 'book_count': user[1]} for user in top_users],
+            'system': system_info
         }
-    except ImportError:
-        # Fallback if psutil is not available
-        system_info = {
-            'disk_free_gb': 'N/A',
-            'disk_total_gb': 'N/A', 
-            'disk_percent': 'N/A',
-            'memory_percent': 'N/A',
-            'memory_available_gb': 'N/A'
+    except Exception as e:
+        current_app.logger.error(f"Error getting system stats: {e}")
+        return {
+            'total_users': 0,
+            'active_users': 0,
+            'admin_users': 0,
+            'total_books': 0,
+            'new_users_30d': 0,
+            'new_books_30d': 0,
+            'top_users': [],
+            'system': {}
         }
-    
-    return {
-        'total_users': total_users,
-        'active_users': active_users,
-        'admin_users': admin_users,
-        'total_books': total_books,
-        'new_users_30d': new_users_30d,
-        'new_books_30d': new_books_30d,
-        'top_users': [{'username': user[0], 'book_count': user[1]} for user in top_users],
-        'system': system_info
-    }
 
 def is_admin(user):
     """Helper function to check if user is admin"""
@@ -337,29 +441,42 @@ def is_admin(user):
 
 def promote_user_to_admin(user_id):
     """Promote a user to admin status"""
-    user = User.query.get(user_id)
-    if user:
-        user.is_admin = True
-        db.session.commit()
-        return True
-    return False
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if user:
+            user.is_admin = True
+            user_service.update_user_sync(user)
+            return True
+        return False
+    except Exception as e:
+        current_app.logger.error(f"Error promoting user {user_id} to admin: {e}")
+        return False
 
 def demote_admin_user(user_id):
     """Demote an admin user (with safety checks)"""
-    user = User.query.get(user_id)
-    if user and user.is_admin:
-        # Check if this is the last admin
-        admin_count = User.query.filter_by(is_admin=True).count()
-        if admin_count > 1:
-            user.is_admin = False
-            db.session.commit()
-            return True
-    return False
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if user and user.is_admin:
+            # Check if this is the last admin
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1
+            if admin_count > 1:
+                user.is_admin = False
+                user_service.update_user_sync(user)
+                return True
+        return False
+    except Exception as e:
+        current_app.logger.error(f"Error demoting admin user {user_id}: {e}")
+        return False
 
 def unlock_user_account_by_id(user_id):
     """Helper function to unlock a user account"""
-    user = User.query.get(user_id)
-    if user:
-        user.unlock_account()
-        return True
-    return False
+    try:
+        user = user_service.get_user_by_id_sync(user_id)
+        if user and hasattr(user, 'unlock_account'):
+            user.unlock_account()
+            user_service.update_user_sync(user)
+            return True
+        return False
+    except Exception as e:
+        current_app.logger.error(f"Error unlocking user account {user_id}: {e}")
+        return False

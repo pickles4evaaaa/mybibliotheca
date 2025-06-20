@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+
+{% block title %}Reading Stats - Bibliotheca{% endblock %}
+
+{% block content %}
+<style>
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --cream: #F5F5DC;
+    --warm-white: #FEFEFE;
+    --gold: #DAA520;
+    --shadow: rgba(0,0,0,0.1);
+    --hover-shadow: rgba(0,0,0,0.2);
+  }
+
+  .stats-header {
+    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+    color: white;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stats-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+    opacity: 0.3;
+  }
+
+  .stats-header h1 {
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 1;
+  }
+
+  .stat-card {
+    background: var(--warm-white);
+    border: 2px solid var(--light-brown);
+    border-radius: 15px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 6px 20px var(--shadow);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px var(--hover-shadow);
+  }
+
+  .stat-number {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: var(--primary-brown);
+    margin: 0;
+  }
+
+  .stat-label {
+    color: #666;
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  .section-divider {
+    border: none;
+    height: 3px;
+    background: linear-gradient(to right, var(--primary-brown), var(--light-brown), var(--primary-brown));
+    margin: 3rem 0 2rem 0;
+    border-radius: 2px;
+  }
+
+  .community-stat-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    cursor: pointer;
+    border: 2px solid var(--light-brown);
+    background: var(--warm-white);
+    color: var(--primary-brown);
+  }
+
+  .community-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px var(--hover-shadow);
+  }
+
+  .community-stat-card .stat-number {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: var(--primary-brown);
+    margin: 0;
+  }
+
+  .community-stat-card .stat-label {
+    color: #666;
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  .reading-activity {
+    background: var(--warm-white);
+    border: 2px solid var(--light-brown);
+    border-radius: 15px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 6px 20px var(--shadow);
+  }
+</style>
+
+<div class="stats-header text-center">
+  <h1><i class="bi bi-graph-up"></i> Reading Statistics</h1>
+  <p class="mb-0 opacity-75">Your reading journey and community insights</p>
+</div>
+
+<!-- User Stats Section -->
+<div class="row mb-4">
+  <div class="col-12">
+    <h3 class="mb-3"><i class="bi bi-person-circle"></i> Your Reading Stats</h3>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ books_finished_this_week }}</p>
+      <p class="stat-label">Books This Week</p>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ books_finished_this_month }}</p>
+      <p class="stat-label">Books This Month</p>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ books_finished_this_year }}</p>
+      <p class="stat-label">Books This Year</p>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ books_finished_total }}</p>
+      <p class="stat-label">Total Books Finished</p>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-lg-4 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ currently_reading|length }}</p>
+      <p class="stat-label">Currently Reading</p>
+    </div>
+  </div>
+  <div class="col-lg-4 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ want_to_read|length }}</p>
+      <p class="stat-label">Want to Read</p>
+    </div>
+  </div>
+  <div class="col-lg-4 col-md-6 mb-3">
+    <div class="stat-card text-center">
+      <p class="stat-number">{{ streak }}</p>
+      <p class="stat-label">Day Reading Streak</p>
+    </div>
+  </div>
+</div>
+
+<!-- Community Stats Section -->
+<hr class="section-divider">
+
+<div class="row mb-4">
+  <div class="col-12">
+    <h3 class="mb-3"><i class="bi bi-people"></i> Community Reading Activity</h3>
+  </div>
+</div>
+
+<!-- Community Statistics Cards -->
+<div class="row mb-4">
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('active-readers')">
+      <p class="stat-number">{{ total_active_readers }}</p>
+      <p class="stat-label">Active Readers</p>
+    </div>
+  </div>
+  
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('books-this-month')">
+      <p class="stat-number">{{ total_books_this_month }}</p>
+      <p class="stat-label">Books This Month</p>
+    </div>
+  </div>
+  
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('currently-reading')">
+      <p class="stat-number">{{ community_currently_reading|length }}</p>
+      <p class="stat-label">Currently Reading</p>
+    </div>
+  </div>
+  
+  <div class="col-lg-3 col-md-6 mb-3">
+    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('recent-activity')">
+      <p class="stat-number">{{ recent_logs|length }}</p>
+      <p class="stat-label">Recent Activity</p>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Community Activity -->
+{% if recent_finished_books %}
+<div class="reading-activity">
+  <h5 class="mb-3"><i class="bi bi-book-check"></i> Recently Finished Books</h5>
+  <div class="row">
+    {% for book in recent_finished_books[:12] %}
+    <div class="col-lg-2 col-md-3 col-sm-4 col-6 mb-3">
+      <div class="text-center">
+        {% if book.cover_url %}
+          <img src="{{ book.cover_url }}" alt="{{ book.title }}" class="img-fluid rounded mb-1" style="height: 120px; width: auto; object-fit: cover;">
+        {% else %}
+          <div class="bg-secondary rounded d-flex align-items-center justify-content-center mb-1" style="height: 120px; width: 80px; margin: 0 auto;">
+            <i class="bi bi-book text-white"></i>
+          </div>
+        {% endif %}
+        <small class="d-block text-truncate" style="font-size: 0.8rem;">{{ book.title }}</small>
+        <small class="text-muted" style="font-size: 0.7rem;">{{ book.user.username }}</small>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Currently Reading Community -->
+{% if community_currently_reading %}
+<div class="reading-activity">
+  <h5 class="mb-3"><i class="bi bi-book-half"></i> Community Currently Reading</h5>
+  <div class="row">
+    {% for book in community_currently_reading[:12] %}
+    <div class="col-lg-2 col-md-3 col-sm-4 col-6 mb-3">
+      <div class="text-center">
+        {% if book.cover_url %}
+          <img src="{{ book.cover_url }}" alt="{{ book.title }}" class="img-fluid rounded mb-1" style="height: 120px; width: auto; object-fit: cover;">
+        {% else %}
+          <div class="bg-secondary rounded d-flex align-items-center justify-content-center mb-1" style="height: 120px; width: 80px; margin: 0 auto;">
+            <i class="bi bi-book text-white"></i>
+          </div>
+        {% endif %}
+        <small class="d-block text-truncate" style="font-size: 0.8rem;">{{ book.title }}</small>
+        <small class="text-muted" style="font-size: 0.7rem;">{{ book.user.username }}</small>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Detailed Community Views (Hidden by default) -->
+<div id="community-detail-container" style="display: none;">
+  <hr class="section-divider">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 id="community-detail-title">Community Detail</h4>
+    <button type="button" class="btn btn-outline-secondary" onclick="hideCommunityDetail()">
+      <i class="bi bi-x"></i> Close
+    </button>
+  </div>
+  <div id="community-detail-content">
+    <!-- Content will be loaded dynamically -->
+  </div>
+</div>
+
+<script>
+function showCommunityDetail(type) {
+  const container = document.getElementById('community-detail-container');
+  const title = document.getElementById('community-detail-title');
+  const content = document.getElementById('community-detail-content');
+  
+  // Set title based on type
+  const titles = {
+    'active-readers': '<i class="bi bi-people"></i> Active Community Readers',
+    'books-this-month': '<i class="bi bi-calendar-month"></i> Books Finished This Month',
+    'currently-reading': '<i class="bi bi-book-half"></i> Currently Reading in Community',
+    'recent-activity': '<i class="bi bi-activity"></i> Recent Reading Activity'
+  };
+  
+  title.innerHTML = titles[type] || 'Community Detail';
+  
+  // Load appropriate content
+  content.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+  
+  // Show the container
+  container.style.display = 'block';
+  container.scrollIntoView({ behavior: 'smooth' });
+  
+  // Fetch content via AJAX
+  fetch(`/community_stats/${type}`)
+    .then(response => response.text())
+    .then(html => {
+      content.innerHTML = html;
+    })
+    .catch(error => {
+      console.error('Error loading community detail:', error);
+      content.innerHTML = '<div class="alert alert-danger">Error loading community data. Please try again.</div>';
+    });
+}
+
+function hideCommunityDetail() {
+  const container = document.getElementById('community-detail-container');
+  container.style.display = 'none';
+}
+</script>
+
+{% endblock %}

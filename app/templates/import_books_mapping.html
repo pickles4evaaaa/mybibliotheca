@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Map Fields - Import Books - Bibliotheca{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <h2>🗺️ Map CSV Fields</h2>
+    
+    <div class="alert alert-info">
+        <h6 class="alert-heading">Field Mapping</h6>
+        <p class="mb-0">Map your CSV columns to book fields. We've auto-detected some fields for you, but you can adjust any mappings below.</p>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <form id="mappingForm" method="POST" action="{{ url_for('main.import_books_execute') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <input type="hidden" name="csv_file_path" value="{{ csv_file_path }}"/>
+                
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">📊 CSV Preview (first 3 rows)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        {% for header in csv_headers %}
+                                        <th class="text-nowrap">{{ header }}</th>
+                                        {% endfor %}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in csv_preview %}
+                                    <tr>
+                                        {% for cell in row %}
+                                        <td class="small text-truncate" style="max-width: 150px;" title="{{ cell }}">{{ cell }}</td>
+                                        {% endfor %}
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">🔗 Field Mapping</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% for header in csv_headers %}
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">
+                                    <strong>{{ header }}</strong>
+                                    <span class="text-muted">(CSV Column)</span>
+                                </label>
+                                <select class="form-select" name="field_mapping[{{ header }}]">
+                                    <option value="">-- Don't Import --</option>
+                                    <option value="title" {% if suggested_mappings.get(header) == 'title' %}selected{% endif %}>Title</option>
+                                    <option value="author" {% if suggested_mappings.get(header) == 'author' %}selected{% endif %}>Author</option>
+                                    <option value="isbn" {% if suggested_mappings.get(header) == 'isbn' %}selected{% endif %}>ISBN</option>
+                                    <option value="description" {% if suggested_mappings.get(header) == 'description' %}selected{% endif %}>Description</option>
+                                    <option value="publisher" {% if suggested_mappings.get(header) == 'publisher' %}selected{% endif %}>Publisher</option>
+                                    <option value="publication_year" {% if suggested_mappings.get(header) == 'publication_year' %}selected{% endif %}>Publication Year</option>
+                                    <option value="page_count" {% if suggested_mappings.get(header) == 'page_count' %}selected{% endif %}>Page Count</option>
+                                    <option value="language" {% if suggested_mappings.get(header) == 'language' %}selected{% endif %}>Language</option>
+                                    <option value="categories" {% if suggested_mappings.get(header) == 'categories' %}selected{% endif %}>Categories/Genres</option>
+                                    <option value="rating" {% if suggested_mappings.get(header) == 'rating' %}selected{% endif %}>My Rating</option>
+                                    <option value="reading_status" {% if suggested_mappings.get(header) == 'reading_status' %}selected{% endif %}>Reading Status</option>
+                                    <option value="date_read" {% if suggested_mappings.get(header) == 'date_read' %}selected{% endif %}>Date Read</option>
+                                    <option value="date_added" {% if suggested_mappings.get(header) == 'date_added' %}selected{% endif %}>Date Added</option>
+                                    <option value="notes" {% if suggested_mappings.get(header) == 'notes' %}selected{% endif %}>Notes/Review</option>
+                                    <option value="tags" {% if suggested_mappings.get(header) == 'tags' %}selected{% endif %}>Tags/Shelves</option>
+                                </select>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">⚙️ Import Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="default_reading_status" class="form-label">Default Reading Status</label>
+                                <select class="form-select" id="default_reading_status" name="default_reading_status">
+                                    <option value="plan_to_read">Plan to Read</option>
+                                    <option value="reading">Currently Reading</option>
+                                    <option value="read">Read</option>
+                                    <option value="on_hold">On Hold</option>
+                                    <option value="library_only" selected>Library Only</option>
+                                </select>
+                                <div class="form-text">Used when no reading status is specified in CSV</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="duplicate_handling" class="form-label">Duplicate Handling</label>
+                                <select class="form-select" id="duplicate_handling" name="duplicate_handling">
+                                    <option value="skip" selected>Skip Duplicates</option>
+                                    <option value="update">Update Existing</option>
+                                    <option value="create_new">Create New Copy</option>
+                                </select>
+                                <div class="form-text">How to handle books that already exist</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between">
+                    <a href="{{ url_for('main.import_books') }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left"></i> Back to Upload
+                    </a>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-play"></i> Start Import ({{ total_rows }} books)
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title">📈 Import Summary</h6>
+                    <ul class="list-unstyled">
+                        <li><strong>Total Rows:</strong> {{ total_rows }}</li>
+                        <li><strong>CSV Columns:</strong> {{ csv_headers|length }}</li>
+                        <li><strong>Detected Fields:</strong> {{ suggested_mappings|length }}</li>
+                    </ul>
+                    
+                    <hr>
+                    
+                    <h6>🎯 Auto-Detected Mappings</h6>
+                    {% if suggested_mappings %}
+                    <ul class="list-unstyled small">
+                        {% for csv_field, book_field in suggested_mappings.items() %}
+                        <li><span class="badge bg-secondary">{{ csv_field }}</span> → {{ book_field }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="small text-muted">No fields were auto-detected. Please map them manually.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('mappingForm').addEventListener('submit', function(e) {
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting Import...';
+});
+</script>
+{% endblock %}

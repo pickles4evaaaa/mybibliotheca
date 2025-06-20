@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Edit Location - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="mb-0">📍 Edit Location</h3>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Location Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="name" name="name" 
+                                   value="{{ location.name }}" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="location_type" class="form-label">Location Type</label>
+                            <select class="form-select" id="location_type" name="location_type">
+                                <option value="home" {% if location.location_type == 'home' %}selected{% endif %}>Home</option>
+                                <option value="office" {% if location.location_type == 'office' %}selected{% endif %}>Office</option>
+                                <option value="vacation" {% if location.location_type == 'vacation' %}selected{% endif %}>Vacation</option>
+                                <option value="storage" {% if location.location_type == 'storage' %}selected{% endif %}>Storage</option>
+                                <option value="other" {% if location.location_type == 'other' %}selected{% endif %}>Other</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" 
+                                      rows="2">{{ location.description or '' }}</textarea>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="address" class="form-label">Address</label>
+                            <textarea class="form-control" id="address" name="address" 
+                                      rows="2">{{ location.address or '' }}</textarea>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="is_default" name="is_default"
+                                       {% if location.is_default %}checked{% endif %}>
+                                <label class="form-check-label" for="is_default">
+                                    Set as default location
+                                </label>
+                                <div class="form-text">
+                                    New books will be automatically assigned to your default location.
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle"></i> Update Location
+                            </button>
+                            <a href="{{ url_for('locations.manage_locations') }}" class="btn btn-outline-secondary">
+                                Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

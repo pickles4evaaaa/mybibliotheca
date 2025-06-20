@@ -1,53 +1,41 @@
-{% if recent_logs %}
-<div class="row">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Recent Reading Activity (Last 7 Days)</h5>
-            </div>
-            <div class="card-body">
-                <div class="list-group list-group-flush">
-                    {% for log in recent_logs %}
-                    <div class="list-group-item border-0 px-0">
-                        <div class="d-flex align-items-center">
-                            <div class="me-3">
-                                <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" 
-                                     style="width:40px;height:40px;">
-                                    <i class="bi bi-book"></i>
-                                </div>
-                            </div>
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">
-                                    <a href="{{ url_for('main.user_profile', user_id=log.user.id) }}" 
-                                       class="text-decoration-none">
-                                        {{ log.user.username }}
-                                    </a> 
-                                    read "{{ log.book.title }}"
-                                </h6>
-                                <small class="text-muted">
-                                    by {{ log.book.author }} • {{ log.date.strftime('%B %d, %Y') }}
-                                </small>
-                            </div>
-                            <div class="text-end">
-                                <small class="text-muted">{{ log.created_at.strftime('%I:%M %p') if log.created_at else '' }}</small>
-                            </div>
-                        </div>
+{% if logs %}
+<div class="reading-activity">
+    <div class="list-group">
+        {% for log in logs %}
+        <div class="list-group-item border-0 px-0">
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" 
+                         style="width:40px;height:40px;">
+                        <i class="bi bi-book"></i>
                     </div>
-                    {% endfor %}
+                </div>
+                <div class="flex-grow-1">
+                    <h6 class="mb-1">
+                        <a href="{{ url_for('main.user_profile', user_id=log.user.id) }}" 
+                           class="text-decoration-none text-primary">
+                            <i class="bi bi-person"></i> {{ log.user.username }}
+                        </a> 
+                        logged reading "{{ log.book.title }}"
+                    </h6>
+                    <small class="text-muted">
+                        by {{ log.book.author }} • <i class="bi bi-calendar"></i> {{ log.date.strftime('%B %d, %Y') }}
+                    </small>
+                </div>
+                <div class="text-end">
+                    <small class="text-muted">
+                        <i class="bi bi-clock"></i> {{ log.created_at.strftime('%I:%M %p') if log.created_at else '' }}
+                    </small>
                 </div>
             </div>
         </div>
+        {% endfor %}
     </div>
 </div>
 {% else %}
-<div class="row">
-    <div class="col-12">
-        <div class="card text-center">
-            <div class="card-body py-4">
-                <h5 class="mt-3 mb-2">No Recent Activity</h5>
-                <p class="text-muted mb-3">No reading activity has been logged in the last 7 days.</p>
-            </div>
-        </div>
-    </div>
+<div class="reading-activity text-center py-4">
+    <i class="bi bi-activity" style="font-size: 3rem; color: #ccc;"></i>
+    <h5 class="mt-3 mb-2">No Recent Activity</h5>
+    <p class="text-muted mb-3">No reading activity has been logged in the last 7 days.</p>
 </div>
 {% endif %}

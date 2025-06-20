@@ -1,6 +1,24 @@
-version: '3.8'
+# DEVELOPMENT ONLY - Contains hardcoded credentials for testing
+# DO NOT USE IN PRODUCTION - Use docker-compose.yml instead
 
 services:
+  # Redis Graph Database Service
+  redis-graph:
+    image: redis/redis-stack:7.2.0-v10
+    ports:
+      - "6379:6379"
+      - "8001:8001"  # Redis Insight web UI
+    volumes:
+      - ./data/redis:/data
+    environment:
+      - REDIS_ARGS=--requirepass dev-redis-password --save 900 1 --save 300 10 --save 60 10000 --appendonly yes --appendfsync everysec
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "dev-redis-password", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   bibliotheca:
     build: .
     ports:
@@ -13,8 +31,9 @@ services:
       - SECURITY_PASSWORD_SALT=dev-salt-change-in-production
       - WTF_CSRF_ENABLED=true
       
-      # Database
-      - DATABASE_URL=sqlite:////app/data/books.db
+      # Database - Redis as primary datastore
+      - REDIS_URL=redis://:dev-redis-password@redis-graph:6379/0
+      - GRAPH_DATABASE_ENABLED=true
       
       # Application settings
       - TIMEZONE=UTC
@@ -24,6 +43,9 @@ services:
       # Development Gunicorn settings
       - WORKERS=2
     restart: unless-stopped
+    depends_on:
+      redis-graph:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5054/"]
       interval: 30s
@@ -40,12 +62,18 @@ services:
     environment:
       - SECRET_KEY=test-secret-key
       - SECURITY_PASSWORD_SALT=test-salt
-      - DATABASE_URL=sqlite:////app/data/test_books.db
+      - REDIS_URL=redis://:dev-redis-password@redis-graph:6379/1
+      - GRAPH_DATABASE_ENABLED=true  # Enable for testing
       - FLASK_DEBUG=true
+      # Test admin credentials
+      - DEV_ADMIN_USERNAME=testadmin
+      - DEV_ADMIN_PASSWORD=TestPassword123!
     command: python3 -m pytest tests/ -v
+    depends_on:
+      redis-graph:
+        condition: service_healthy
     profiles:
       - test
 
 volumes:
   bibliotheca_data:
-    driver: local

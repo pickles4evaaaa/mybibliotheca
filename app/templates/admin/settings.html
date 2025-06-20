@@ -32,40 +32,15 @@
                     
                     <div class="mb-3">
                         <label for="site_name" class="form-label">Site Name</label>
-                        <input type="text" class="form-control" id="site_name" name="site_name" value="Bibliotheca" readonly>
+                        <input type="text" class="form-control" id="site_name" name="site_name" value="{{ site_name }}">
                         <small class="form-text text-muted">The name displayed in the site header</small>
                     </div>
                     
-                    <div class="mb-3">
-                        <label for="max_users" class="form-label">Maximum Users</label>
-                        <input type="number" class="form-control" id="max_users" name="max_users" value="100" readonly>
-                        <small class="form-text text-muted">Maximum number of users allowed to register</small>
-                    </div>
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
                     
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="allow_registration" name="allow_registration" checked disabled>
-                            <label class="form-check-label" for="allow_registration">
-                                Allow User Registration
-                            </label>
-                            <small class="form-text text-muted d-block">Whether new users can register accounts</small>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="require_email_verification" name="require_email_verification" disabled>
-                            <label class="form-check-label" for="require_email_verification">
-                                Require Email Verification
-                            </label>
-                            <small class="form-text text-muted d-block">Require users to verify their email before activating account</small>
-                        </div>
-                    </div>
-                    
-                    <!-- Note: These settings are read-only in this demo -->
-                    <div class="alert alert-info">
-                        <strong>ℹ️ Note:</strong> System configuration settings are currently read-only. 
-                        Contact your system administrator to modify these settings.
+                    <!-- Note: Additional features will be added in future updates -->
+                    <div class="alert alert-info mt-3">
+                        <strong>ℹ️ Note:</strong> Additional system configuration options will be available in future updates.
                     </div>
                 </form>
             </div>

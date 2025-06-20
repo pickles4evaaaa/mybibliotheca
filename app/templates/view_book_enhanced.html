@@ -1,0 +1,506 @@
+{% extends "base.html" %}
+{% block title %}{{ book.title }} - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.library') }}">Library</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{{ book.title }}</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Main Content -->
+        <div class="col-lg-8">
+            <!-- Book Overview Card -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 text-center mb-3 mb-md-0">
+                            {% if book.cover_url %}
+                                <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
+                                     class="img-fluid rounded shadow-sm" style="max-height: 300px;">
+                            {% else %}
+                                <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
+                                     style="height: 300px; max-width: 200px; margin: 0 auto;">
+                                    <i class="bi bi-book text-muted" style="font-size: 4rem;"></i>
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-9">
+                            <h1 class="h2 mb-2 fw-bold">{{ book.title }}</h1>
+                            {% if book.subtitle %}
+                                <h2 class="h5 text-muted mb-3">{{ book.subtitle }}</h2>
+                            {% endif %}
+                            
+                            {% if book.author %}
+                                <p class="h6 text-primary mb-3">
+                                    <i class="bi bi-person-fill me-1"></i>
+                                    {{ book.author }}
+                                </p>
+                            {% endif %}
+                            
+                            <!-- Book Meta Information -->
+                            <div class="row g-3 mb-3">
+                                {% if book.isbn %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">ISBN</small>
+                                    <span class="fw-medium">{{ book.isbn }}</span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.publisher %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">Publisher</small>
+                                    <span class="fw-medium">{{ book.publisher.name if book.publisher.name else book.publisher }}</span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.page_count %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">Pages</small>
+                                    <span class="fw-medium">{{ book.page_count }}</span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.published_date %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">Published</small>
+                                    <span class="fw-medium">{{ book.published_date }}</span>
+                                </div>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Categories -->
+                            {% if book.categories %}
+                            <div class="mb-3">
+                                <small class="text-muted d-block mb-1">Categories</small>
+                                {% for category in book.categories.split(',') %}
+                                    <span class="badge bg-light text-dark border me-1 mb-1">{{ category.strip() }}</span>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Rating -->
+                            {% if book.average_rating %}
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="me-2">
+                                    {% for i in range(5) %}
+                                        {% if i < book.average_rating %}
+                                            <i class="bi bi-star-fill text-warning"></i>
+                                        {% else %}
+                                            <i class="bi bi-star text-muted"></i>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                                <span class="fw-medium">{{ "%.1f"|format(book.average_rating) }}</span>
+                                {% if book.rating_count %}
+                                    <small class="text-muted ms-1">({{ book.rating_count }} ratings)</small>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Description -->
+            {% if book.description %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0"><i class="bi bi-file-text me-2"></i>Description</h5>
+                </div>
+                <div class="card-body">
+                    <p class="mb-0">{{ book.description }}</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="col-lg-4">
+            <!-- Accordion for collapsible sections -->
+            <div class="accordion" id="bookAccordion">
+                <!-- Book Status -->
+                <div class="accordion-item shadow-sm mb-2">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-primary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseStatus" 
+                                aria-expanded="false" aria-controls="collapseStatus">
+                            <i class="bi bi-bookmark-fill me-2"></i>Book Status
+                        </button>
+                    </h2>
+                    <div id="collapseStatus" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
+                        <div class="accordion-body">
+                            <form method="post" action="{{ url_for('main.update_book_details', uid=book.uid) }}" id="status-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                
+                                <!-- Reading Status -->
+                                <div class="mb-3">
+                                    <label for="reading_status" class="form-label fw-medium">
+                                        <i class="bi bi-book me-1"></i>Reading Status
+                                    </label>
+                                    <select class="form-select" id="reading_status" name="reading_status">
+                                        <option value="plan_to_read" {% if book.reading_status == 'plan_to_read' %}selected{% endif %}>📚 Plan to Read</option>
+                                        <option value="reading" {% if book.reading_status == 'reading' %}selected{% endif %}>📖 Currently Reading</option>
+                                        <option value="read" {% if book.reading_status == 'read' %}selected{% endif %}>✅ Read</option>
+                                        <option value="on_hold" {% if book.reading_status == 'on_hold' %}selected{% endif %}>⏸️ On Hold</option>
+                                        <option value="did_not_finish" {% if book.reading_status == 'did_not_finish' %}selected{% endif %}>❌ Did Not Finish</option>
+                                        <option value="library_only" {% if book.reading_status == 'library_only' %}selected{% endif %}>📚 Library Only</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- Ownership Status -->
+                                <div class="mb-3">
+                                    <label for="ownership_status" class="form-label fw-medium">
+                                        <i class="bi bi-house me-1"></i>Ownership
+                                    </label>
+                                    <select class="form-select" id="ownership_status" name="ownership_status">
+                                        <option value="owned" {% if book.ownership_status == 'owned' %}selected{% endif %}>🏠 Owned</option>
+                                        <option value="borrowed" {% if book.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
+                                        <option value="loaned" {% if book.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
+                                        <option value="wishlist" {% if book.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- Media Type -->
+                                <div class="mb-3">
+                                    <label for="media_type" class="form-label fw-medium">
+                                        <i class="bi bi-collection me-1"></i>Format
+                                    </label>
+                                    <select class="form-select" id="media_type" name="media_type">
+                                        <option value="physical" {% if book.media_type == 'physical' %}selected{% endif %}>📖 Physical Book</option>
+                                        <option value="ebook" {% if book.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
+                                        <option value="audiobook" {% if book.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
+                                        <option value="kindle" {% if book.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- Location (for physical books) -->
+                                <div class="mb-3" id="location-section">
+                                    <label for="primary_location_id" class="form-label fw-medium">
+                                        <i class="bi bi-geo-alt me-1"></i>Location
+                                    </label>
+                                    <select class="form-select" id="primary_location_id" name="primary_location_id">
+                                        <option value="">Select location...</option>
+                                    </select>
+                                    <div class="form-text">
+                                        <a href="{{ url_for('locations.manage_locations') }}" target="_blank" class="text-decoration-none">
+                                            <i class="bi bi-gear me-1"></i>Manage Locations
+                                        </a>
+                                    </div>
+                                </div>
+                                
+                                <!-- Borrowing Details -->
+                                <div id="borrowed-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
+                                    <h6 class="text-primary mb-2"><i class="bi bi-arrow-down-circle me-1"></i>Borrowing Details</h6>
+                                    <div class="mb-2">
+                                        <label for="borrowed_from" class="form-label">Borrowed From</label>
+                                        <input type="text" class="form-control form-control-sm" id="borrowed_from" name="borrowed_from" 
+                                               value="{{ book.borrowed_from or '' }}" placeholder="Name or contact">
+                                    </div>
+                                    <div class="mb-2">
+                                        <label for="borrowed_due_date" class="form-label">Due Date</label>
+                                        <input type="date" class="form-control form-control-sm" id="borrowed_due_date" name="borrowed_due_date" 
+                                               value="{{ book.borrowed_due_date or '' }}">
+                                    </div>
+                                </div>
+                                
+                                <!-- Loaning Details -->
+                                <div id="loaned-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
+                                    <h6 class="text-warning mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Loaning Details</h6>
+                                    <div class="mb-2">
+                                        <label for="loaned_to" class="form-label">Loaned To</label>
+                                        <input type="text" class="form-control form-control-sm" id="loaned_to" name="loaned_to" 
+                                               value="{{ book.loaned_to or '' }}" placeholder="Name or contact">
+                                    </div>
+                                    <div class="mb-2">
+                                        <label for="loaned_due_date" class="form-label">Expected Return</label>
+                                        <input type="date" class="form-control form-control-sm" id="loaned_due_date" name="loaned_due_date" 
+                                               value="{{ book.loaned_due_date or '' }}">
+                                    </div>
+                                </div>
+                                
+                                <div class="d-grid gap-2">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-check-circle me-1"></i>Update Status
+                                    </button>
+                                    <button type="submit" name="redirect_to_library" value="true" class="btn btn-outline-primary">
+                                        <i class="bi bi-arrow-left me-1"></i>Save & Go to Library
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Reading Progress -->
+                <div class="accordion-item shadow-sm mb-2">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-success text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseProgress" 
+                                aria-expanded="false" aria-controls="collapseProgress">
+                            <i class="bi bi-calendar-check me-2"></i>Reading Progress
+                        </button>
+                    </h2>
+                    <div id="collapseProgress" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
+                        <div class="accordion-body">
+                            <form method="post" action="{{ url_for('main.update_reading_dates', uid=book.uid) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <div class="mb-3">
+                                    <label for="start_date" class="form-label fw-medium">
+                                        <i class="bi bi-play-circle me-1"></i>Start Date
+                                    </label>
+                                    <input type="date" class="form-control" id="start_date" name="start_date" 
+                                           value="{{ book.start_date or '' }}">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="finish_date" class="form-label fw-medium">
+                                        <i class="bi bi-check-circle me-1"></i>Finish Date
+                                    </label>
+                                    <input type="date" class="form-control" id="finish_date" name="finish_date" 
+                                           value="{{ book.finish_date or '' }}">
+                                </div>
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-success">
+                                        <i class="bi bi-save me-1"></i>Update Dates
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Personal Notes & Rating -->
+                <div class="accordion-item shadow-sm mb-2">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-info text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseNotes" 
+                                aria-expanded="false" aria-controls="collapseNotes">
+                            <i class="bi bi-journal-text me-2"></i>Personal Notes
+                        </button>
+                    </h2>
+                    <div id="collapseNotes" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
+                        <div class="accordion-body">
+                            <form method="post" action="{{ url_for('main.update_book_notes', uid=book.uid) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                
+                                <!-- Your Rating -->
+                                <div class="mb-3">
+                                    <label for="user_rating" class="form-label fw-medium">
+                                        <i class="bi bi-star me-1"></i>Your Rating
+                                    </label>
+                                    <select class="form-select" id="user_rating" name="user_rating">
+                                        <option value="">No rating</option>
+                                        <option value="1" {% if book.user_rating == 1 %}selected{% endif %}>⭐ Poor (1 star)</option>
+                                        <option value="2" {% if book.user_rating == 2 %}selected{% endif %}>⭐⭐ Fair (2 stars)</option>
+                                        <option value="3" {% if book.user_rating == 3 %}selected{% endif %}>⭐⭐⭐ Good (3 stars)</option>
+                                        <option value="4" {% if book.user_rating == 4 %}selected{% endif %}>⭐⭐⭐⭐ Very Good (4 stars)</option>
+                                        <option value="5" {% if book.user_rating == 5 %}selected{% endif %}>⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- Notes -->
+                                <div class="mb-3">
+                                    <label for="personal_notes" class="form-label fw-medium">
+                                        <i class="bi bi-chat-square-text me-1"></i>Notes
+                                    </label>
+                                    <textarea class="form-control" id="personal_notes" name="personal_notes" 
+                                              rows="4" placeholder="Your thoughts, quotes, or notes about this book...">{{ book.personal_notes or '' }}</textarea>
+                                </div>
+                                
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-info">
+                                        <i class="bi bi-save me-1"></i>Save Notes
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Actions -->
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left me-1"></i>Back to Library
+                        </a>
+                        <a href="{{ url_for('main.edit_book', uid=book.uid) }}" class="btn btn-outline-primary">
+                            <i class="bi bi-pencil me-1"></i>Edit Book Details
+                        </a>
+                        <hr class="my-2">
+                        <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" 
+                              class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book from your library?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            <button type="submit" class="btn btn-outline-danger w-100">
+                                <i class="bi bi-trash me-1"></i>Remove from Library
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const ownershipSelect = document.getElementById('ownership_status');
+    const mediaTypeSelect = document.getElementById('media_type');
+    const locationSection = document.getElementById('location-section');
+    const borrowedSection = document.getElementById('borrowed-section');
+    const loanedSection = document.getElementById('loaned-section');
+    const locationSelect = document.getElementById('primary_location_id');
+    
+    // Load user locations
+    function loadLocations() {
+        fetch('/locations/api/user_locations')
+            .then(response => response.json())
+            .then(locations => {
+                locationSelect.innerHTML = '<option value="">Select location...</option>';
+                locations.forEach(location => {
+                    const option = document.createElement('option');
+                    option.value = location.id;
+                    option.textContent = location.name;
+                    if (location.is_default) {
+                        option.textContent += ' (Default)';
+                    }
+                    if (location.id === '{{ book.primary_location_id or "" }}') {
+                        option.selected = true;
+                    }
+                    locationSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error loading locations:', error);
+                locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+            });
+    }
+    
+    function updateVisibility() {
+        const ownership = ownershipSelect.value;
+        const mediaType = mediaTypeSelect.value;
+        
+        // Show/hide location section based on media type
+        locationSection.style.display = mediaType === 'physical' ? 'block' : 'none';
+        
+        // Show/hide borrowing/loaning sections with smooth transitions
+        borrowedSection.style.display = ownership === 'borrowed' ? 'block' : 'none';
+        loanedSection.style.display = ownership === 'loaned' ? 'block' : 'none';
+    }
+    
+    // Event listeners
+    ownershipSelect.addEventListener('change', updateVisibility);
+    mediaTypeSelect.addEventListener('change', updateVisibility);
+    
+    // Initial setup
+    loadLocations();
+    updateVisibility();
+    
+    // Auto-save functionality (optional enhancement)
+    const form = document.getElementById('status-form');
+    let saveTimeout;
+    
+    function autoSave() {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            // Could implement auto-save here
+            console.log('Auto-save triggered');
+        }, 2000);
+    }
+    
+    // Add auto-save to form inputs if desired
+    // form.querySelectorAll('select, input').forEach(input => {
+    //     input.addEventListener('change', autoSave);
+    // });
+});
+</script>
+
+<style>
+.card {
+    border: none;
+    transition: box-shadow 0.15s ease-in-out;
+}
+
+.card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
+}
+
+.accordion-item {
+    border: 1px solid rgba(0,0,0,.125);
+    border-radius: 0.375rem;
+}
+
+.accordion-button {
+    font-weight: 500;
+    border-radius: 0.375rem;
+}
+
+.accordion-button:not(.collapsed) {
+    color: white;
+    background-color: var(--bs-primary);
+    box-shadow: none;
+}
+
+.accordion-button.bg-primary:not(.collapsed) {
+    background-color: var(--bs-primary) !important;
+}
+
+.accordion-button.bg-success:not(.collapsed) {
+    background-color: var(--bs-success) !important;
+}
+
+.accordion-button.bg-info:not(.collapsed) {
+    background-color: var(--bs-info) !important;
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.accordion-body {
+    padding: 1.25rem;
+}
+
+.form-label {
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.badge {
+    font-size: 0.75rem;
+}
+
+.btn {
+    font-size: 0.9rem;
+}
+
+#borrowed-section, #loaned-section {
+    border: 1px solid #dee2e6;
+    background-color: #f8f9fa;
+}
+
+.breadcrumb-item a {
+    text-decoration: none;
+}
+
+/* Smooth transitions for accordion */
+.accordion-collapse {
+    transition: height 0.35s ease;
+}
+
+/* Better spacing between accordion items */
+.accordion-item:not(:last-child) {
+    margin-bottom: 0.5rem;
+}
+</style>
+{% endblock %}

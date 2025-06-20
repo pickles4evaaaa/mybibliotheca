@@ -1,7 +1,6 @@
 from datetime import date, timedelta, datetime
 import pytz
-from .models import ReadingLog
-from sqlalchemy import func
+from .services import reading_log_service
 import calendar
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
@@ -103,63 +102,59 @@ def calculate_reading_streak(user_id, streak_offset=0):
     """
     Calculate reading streak for a specific user with foolproof logic
     """
-    # Get all unique dates with reading logs for this user, sorted descending
-    dates = (
-        ReadingLog.query
-        .filter_by(user_id=user_id)
-        .with_entities(ReadingLog.date)
-        .distinct()
-        .order_by(ReadingLog.date.desc())
-        .all()
-    )
-    
-    if not dates:
-        return streak_offset
-    
-    # Convert to list of date objects
-    log_dates = [d[0] for d in dates if d[0] is not None]
-    
-    if not log_dates:
-        return streak_offset
-    
-    # Sort in descending order (most recent first)
-    log_dates.sort(reverse=True)
-    
-    today = date.today()
-    streak = 0
-    
-    # Check if there's a log for today or yesterday
-    # (allow for timezone differences and late logging)
-    most_recent = log_dates[0]
-    days_since_recent = (today - most_recent).days
-    
-    # If the most recent log is more than 1 day old, streak is broken
-    if days_since_recent > 1:
-        return streak_offset
-    
-    # Start counting the streak
-    current_date = most_recent
-    
-    for log_date in log_dates:
-        # If this date continues the streak (same day or previous day)
-        if log_date == current_date:
-            streak += 1
-            current_date = current_date - timedelta(days=1)
+    try:
+        # Get all reading logs for this user using the service
+        # This would need to be implemented in the reading log service
+        if hasattr(reading_log_service, 'get_user_log_dates_sync'):
+            log_dates = reading_log_service.get_user_log_dates_sync(user_id)
         else:
-            # Check if there's a gap
-            days_gap = (current_date - log_date).days
-            if days_gap == 0:
-                # Same date, skip (already counted)
-                continue
-            elif days_gap == 1:
-                # Previous day, continue streak
+            # Fallback - return the offset
+            return streak_offset
+        
+        if not log_dates:
+            return streak_offset
+        
+        # Sort in descending order (most recent first)
+        log_dates.sort(reverse=True)
+        
+        today = date.today()
+        streak = 0
+        
+        # Check if there's a log for today or yesterday
+        # (allow for timezone differences and late logging)
+        most_recent = log_dates[0]
+        days_since_recent = (today - most_recent).days
+        
+        # If the most recent log is more than 1 day old, streak is broken
+        if days_since_recent > 1:
+            return streak_offset
+        
+        # Start counting the streak
+        current_date = most_recent
+        
+        for log_date in log_dates:
+            # If this date continues the streak (same day or previous day)
+            if log_date == current_date:
                 streak += 1
-                current_date = log_date - timedelta(days=1)
+                current_date = current_date - timedelta(days=1)
             else:
-                # Gap found, streak ends
-                break
-    
-    return streak + streak_offset
+                # Check if there's a gap
+                days_gap = (current_date - log_date).days
+                if days_gap == 0:
+                    # Same date, skip (already counted)
+                    continue
+                elif days_gap == 1:
+                    # Previous day, continue streak
+                    streak += 1
+                    current_date = log_date - timedelta(days=1)
+                else:
+                    # Gap found, streak ends
+                    break
+        
+        return streak + streak_offset
+    except Exception as e:
+        current_app.logger.error(f"Error calculating reading streak for user {user_id}: {e}")
+        return streak_offset
 
 def get_reading_streak(timezone=None):
     """

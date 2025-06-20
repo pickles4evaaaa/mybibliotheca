@@ -1,7 +1,8 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
-from app.models import User, db
+from app.domain.models import User
+from app.services import user_service, book_service, reading_log_service
 from wtforms import IntegerField, SubmitField
 from wtforms.validators import Optional, NumberRange
 from flask_wtf import FlaskForm
@@ -18,11 +19,16 @@ def setup():
     """Initial setup route for creating the first admin user"""
     debug_auth("Setup route accessed")
     
-    # Check if any users already exist
-    if User.query.count() > 0:
-        debug_auth("Users already exist, redirecting to login")
-        flash('Setup has already been completed.', 'info')
-        return redirect(url_for('auth.login'))
+    # Check if any users already exist using Redis service
+    try:
+        user_count = user_service.get_user_count_sync()
+        if user_count > 0:
+            debug_auth("Users already exist, redirecting to login")
+            flash('Setup has already been completed.', 'info')
+            return redirect(url_for('auth.login'))
+    except Exception as e:
+        debug_auth(f"Error checking user count: {e}")
+        # If we can't check, assume no users exist and continue with setup
     
     form = SetupForm()
     debug_auth("Setup form created")
@@ -30,18 +36,16 @@ def setup():
     if form.validate_on_submit():
         debug_auth("Setup form submitted and validated")
         try:
-            # Create the first admin user
-            admin_user = User(
+            # Create the first admin user through Redis service
+            password_hash = generate_password_hash(form.password.data)
+            admin_user = user_service.create_user_sync(
                 username=form.username.data,
                 email=form.email.data,
+                password_hash=password_hash,
                 is_admin=True,
                 is_active=True,
-                created_at=datetime.now(timezone.utc)
+                password_must_change=False  # First admin doesn't need to change password
             )
-            admin_user.set_password(form.password.data)
-            
-            db.session.add(admin_user)
-            db.session.commit()
             
             debug_auth(f"First admin user created: {admin_user.username}")
             
@@ -53,8 +57,7 @@ def setup():
             
         except Exception as e:
             debug_auth(f"Setup failed: {e}")
-            db.session.rollback()
-            flash('Setup failed. Please try again.', 'error')
+            flash(f'Setup failed: {str(e)}. Please try again.', 'error')
     else:
         if request.method == 'POST':
             debug_auth(f"Setup form validation failed: {form.errors}")
@@ -85,11 +88,8 @@ def login():
         debug_auth(f"Login form submitted for user: {form.username.data}")
         debug_csrf("Form validation passed, checking CSRF")
         
-        # Try to find user by username or email
-        user = User.query.filter(
-            (User.username == form.username.data) | 
-            (User.email == form.username.data)
-        ).first()
+        # Try to find user by username or email using Redis service
+        user = user_service.get_user_by_username_or_email_sync(form.username.data)
         
         if user:
             debug_auth(f"User found: {user.username} (ID: {user.id})")
@@ -108,14 +108,13 @@ def login():
             # Check password
             if user.check_password(form.password.data):
                 debug_auth("Password check passed")
-                # Successful login
-                user.reset_failed_login()
+                # Successful login - reset failed login attempts if any
+                if user.failed_login_attempts > 0 or user.locked_until:
+                    user.reset_failed_login()
+                    user_service.update_user_sync(user)
+                
                 login_user(user, remember=form.remember_me.data)
                 debug_auth(f"User logged in successfully: {user.username}")
-                
-                # Ensure session is committed before checking password requirements
-                db.session.commit()
-                debug_session("Database session committed after login")
                 
                 # Check if user must change password
                 if user.password_must_change:
@@ -131,8 +130,9 @@ def login():
                 return redirect(next_page)
             else:
                 debug_auth("Password check failed")
-                # Failed password
+                # Failed password - increment failed attempts and save to Redis
                 user.increment_failed_login()
+                user_service.update_user_sync(user)
                 attempts_left = max(0, 5 - user.failed_login_attempts)
                 if attempts_left > 0:
                     flash(f'Invalid password. You have {attempts_left} attempts remaining.', 'error')
@@ -149,10 +149,15 @@ def login():
 @login_required
 def logout():
     username = current_user.username
+    
+    # Clear all user session data first
+    session.clear()
+    
+    # Then call logout_user
     logout_user()
     
-    # Clear the session to ensure CSRF tokens are regenerated
-    session.clear()
+    # Force session regeneration by creating a new session
+    session.permanent = False
     
     flash(f'Goodbye, {username}!', 'info')
     return redirect(url_for('main.index'))
@@ -168,26 +173,25 @@ def register():
     form = RegistrationForm()
     if form.validate_on_submit():
         try:
-            user = User(
-                username=form.username.data,
-                email=form.email.data
-            )
-            user.set_password(form.password.data)
-            
             # Check if this is the very first user in the system
-            if User.query.count() == 0:
-                user.is_admin = True
-                # First admin must change password on first login
-                user.password_must_change = True
+            existing_users = user_service.list_all()
+            is_first_user = len(existing_users) == 0
+            
+            # Create user through Redis service
+            password_hash = generate_password_hash(form.password.data)
+            domain_user = user_service.create_user_sync(
+                username=form.username.data,
+                email=form.email.data,
+                password_hash=password_hash,
+                is_admin=is_first_user,
+                password_must_change=True  # All new users must change password on first login
+            )
+            
+            if is_first_user:
                 flash('Congratulations! As the first user, you have been granted admin privileges. You must change your password on first login.', 'info')
             else:
-                # New users created by admin should change password on first login
-                user.password_must_change = True
+                flash(f'User {domain_user.username} has been created successfully! They will be required to change their password on first login.', 'success')
             
-            db.session.add(user)
-            db.session.commit()
-            
-            flash(f'User {user.username} has been created successfully! They will be required to change their password on first login.', 'success')
             return redirect(url_for('admin.users'))
         except ValueError as e:
             flash(str(e), 'error')
@@ -200,11 +204,23 @@ def profile():
     form = UserProfileForm(current_user.username, current_user.email)
     
     if form.validate_on_submit():
-        current_user.username = form.username.data
-        current_user.email = form.email.data
-        db.session.commit()
-        flash('Your profile has been updated.', 'success')
-        return redirect(url_for('auth.profile'))
+        try:
+            # Update user profile through Redis service
+            updated_user = user_service.update_user_profile_sync(
+                user_id=current_user.id,
+                username=form.username.data,
+                email=form.email.data
+            )
+            if updated_user:
+                # Update current_user object for immediate UI reflection
+                current_user.username = updated_user.username
+                current_user.email = updated_user.email
+                flash('Your profile has been updated.', 'success')
+                return redirect(url_for('auth.profile'))
+            else:
+                flash('Failed to update profile.', 'error')
+        except Exception as e:
+            flash(f'Failed to update profile: {str(e)}', 'error')
     elif request.method == 'GET':
         form.username.data = current_user.username
         form.email.data = current_user.email
@@ -219,12 +235,27 @@ def change_password():
     if form.validate_on_submit():
         if current_user.check_password(form.current_password.data):
             try:
-                current_user.set_password(form.new_password.data)
-                db.session.commit()
-                flash('Your password has been changed.', 'success')
-                return redirect(url_for('auth.profile'))
-            except ValueError as e:
-                flash(str(e), 'error')
+                # Generate new password hash
+                from werkzeug.security import generate_password_hash
+                new_password_hash = generate_password_hash(form.new_password.data)
+                
+                # Update password through Redis service
+                updated_user = user_service.update_user_password_sync(
+                    user_id=current_user.id,
+                    password_hash=new_password_hash,
+                    clear_must_change=True
+                )
+                
+                if updated_user:
+                    # Update current_user object for immediate reflection
+                    current_user.password_hash = updated_user.password_hash
+                    current_user.password_must_change = updated_user.password_must_change
+                    flash('Your password has been changed.', 'success')
+                    return redirect(url_for('auth.profile'))
+                else:
+                    flash('Failed to update password.', 'error')
+            except Exception as e:
+                flash(f'Failed to update password: {str(e)}', 'error')
         else:
             flash('Current password is incorrect.', 'error')
     
@@ -248,14 +279,29 @@ def forced_password_change():
         debug_csrf("Form validation passed for forced password change")
         
         try:
-            current_user.set_password(form.new_password.data)
-            db.session.commit()
-            debug_auth("Password changed successfully")
-            flash('Your password has been changed successfully. You can now continue using the application.', 'success')
-            return redirect(url_for('main.index'))
-        except ValueError as e:
-            debug_auth(f"Password validation failed: {e}")
-            flash(str(e), 'error')
+            # Generate new password hash
+            from werkzeug.security import generate_password_hash
+            new_password_hash = generate_password_hash(form.new_password.data)
+            
+            # Update password through Redis service
+            updated_user = user_service.update_user_password_sync(
+                user_id=current_user.id,
+                password_hash=new_password_hash,
+                clear_must_change=True
+            )
+            
+            if updated_user:
+                # Update current_user object for immediate reflection
+                current_user.password_hash = updated_user.password_hash
+                current_user.password_must_change = updated_user.password_must_change
+                debug_auth("Password changed successfully")
+                flash('Your password has been changed successfully. You can now continue using the application.', 'success')
+                return redirect(url_for('main.index'))
+            else:
+                flash('Failed to update password.', 'error')
+        except Exception as e:
+            debug_auth(f"Password update failed: {e}")
+            flash(f'Failed to update password: {str(e)}', 'error')
     else:
         if request.method == 'POST':
             debug_csrf("Form validation failed for forced password change")
@@ -298,12 +344,30 @@ def privacy_settings():
         streak_form.reading_streak_offset.data = current_user.reading_streak_offset
     
     if form.validate_on_submit():
-        current_user.share_current_reading = form.share_current_reading.data
-        current_user.share_reading_activity = form.share_reading_activity.data
-        current_user.share_library = form.share_library.data
-        db.session.commit()
-        flash('Privacy settings updated successfully!', 'success')
-        return redirect(url_for('auth.privacy_settings'))
+        try:
+            # Get current user from Redis to ensure we have the latest data
+            user_from_redis = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_redis:
+                # Update privacy settings
+                user_from_redis.share_current_reading = form.share_current_reading.data
+                user_from_redis.share_reading_activity = form.share_reading_activity.data
+                user_from_redis.share_library = form.share_library.data
+                
+                # Save through Redis service
+                updated_user = user_service.update_user_sync(user_from_redis)
+                if updated_user:
+                    # Update current_user object for immediate reflection
+                    current_user.share_current_reading = updated_user.share_current_reading
+                    current_user.share_reading_activity = updated_user.share_reading_activity
+                    current_user.share_library = updated_user.share_library
+                    flash('Privacy settings updated successfully!', 'success')
+                    return redirect(url_for('auth.privacy_settings'))
+                else:
+                    flash('Failed to update privacy settings.', 'error')
+            else:
+                flash('User not found.', 'error')
+        except Exception as e:
+            flash(f'Failed to update privacy settings: {str(e)}', 'error')
     
     return render_template('auth/privacy_settings.html', 
                          title='Privacy Settings', 
@@ -313,30 +377,31 @@ def privacy_settings():
 @auth.route('/my_activity')
 @login_required
 def my_activity():
-    from .models import Book, ReadingLog
-    from sqlalchemy import func
-    
-    # Get user's reading statistics
-    total_books = Book.query.filter_by(user_id=current_user.id).count()
-    
-    # Get reading logs count
-    reading_logs = ReadingLog.query.filter_by(user_id=current_user.id).count()
-    
-    # Get books added this year
-    current_year = datetime.now(timezone.utc).year
-    books_this_year = Book.query.filter_by(user_id=current_user.id).filter(
-        func.strftime('%Y', Book.created_at) == str(current_year)
-    ).count()
-    
-    # Get recent books (last 10)
-    recent_books = Book.query.filter_by(user_id=current_user.id).order_by(
-        Book.created_at.desc()
-    ).limit(10).all()
-    
-    # Get recent reading logs (last 10)
-    recent_logs = ReadingLog.query.filter_by(user_id=current_user.id).order_by(
-        ReadingLog.date.desc()
-    ).limit(10).all()
+    try:
+        # Get user's books from Redis
+        user_books = book_service.get_user_books_sync(current_user.id)
+        total_books = len(user_books)
+        
+        # Get books added this year
+        current_year = datetime.now(timezone.utc).year
+        books_this_year = sum(1 for book in user_books 
+                             if book.created_at and book.created_at.year == current_year)
+        
+        # Get recent books (last 10) - sort by created_at descending
+        recent_books = sorted(user_books, key=lambda x: x.created_at or datetime.min, reverse=True)[:10]
+        
+        # For reading logs, we'll need to implement a method or use a placeholder for now
+        # TODO: Implement reading log functionality when needed
+        reading_logs = 0  # Placeholder
+        recent_logs = []  # Placeholder
+        
+    except Exception as e:
+        # Fallback if services fail
+        total_books = 0
+        books_this_year = 0
+        recent_books = []
+        reading_logs = 0
+        recent_logs = []
     
     return render_template('auth/my_activity.html', 
                          title='My Activity',
@@ -352,9 +417,25 @@ def update_streak_settings():
     form = ReadingStreakForm()
     
     if form.validate_on_submit():
-        current_user.reading_streak_offset = form.reading_streak_offset.data or 0
-        db.session.commit()
-        flash('Reading streak settings updated successfully!', 'success')
+        try:
+            # Get current user from Redis to ensure we have the latest data
+            user_from_redis = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_redis:
+                # Update reading streak offset
+                user_from_redis.reading_streak_offset = form.reading_streak_offset.data or 0
+                
+                # Save through Redis service
+                updated_user = user_service.update_user_sync(user_from_redis)
+                if updated_user:
+                    # Update current_user object for immediate reflection
+                    current_user.reading_streak_offset = updated_user.reading_streak_offset
+                    flash('Reading streak settings updated successfully!', 'success')
+                else:
+                    flash('Failed to update streak settings.', 'error')
+            else:
+                flash('User not found.', 'error')
+        except Exception as e:
+            flash(f'Error updating streak settings: {str(e)}', 'error')
     else:
         flash('Error updating streak settings. Please try again.', 'danger')
     
