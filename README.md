@@ -1,6 +1,6 @@
-# 📚 Bibliotheca
+# 📚 MyBibliotheca
 
-**Bibliotheca** is a self-hosted personal library and reading tracker web app built with Flask. It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
+**MyBibliotheca** is a self-hosted personal library and reading tracker web app built with Flask. It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
 
 
 🆕 **Multi-User Features**: Multi-user authentication, user data isolation, admin management, and secure password handling.
@@ -34,7 +34,7 @@
 
 ### 📦 Run with Docker
 
-Bibliotheca can be run completely in Docker — no need to install Python or dependencies on your machine.
+MyBibliotheca can be run completely in Docker — no need to install Python or dependencies on your machine.
 
 #### ✅ Prerequisites
 
@@ -47,13 +47,13 @@ Bibliotheca can be run completely in Docker — no need to install Python or dep
 
 ```bash
 docker run -d \
-  --name bibliotheca \
+  --name mybibliotheca \
   -p 5054:5054 \
   -v /path/to/data:/app/data \
   -e TIMEZONE=America/Chicago \
   -e WORKERS=6 \
   --restart unless-stopped \
-  pickles4evaaaa/bibliotheca:latest
+  pickles4evaaaa/mybibliotheca:latest
 ```
 
 ---
@@ -67,8 +67,8 @@ version: '3.8'
 
 services:
   bibliotheca:
-    image: pickles4evaaaa/bibliotheca:latest
-    container_name: bibliotheca
+    image: pickles4evaaaa/mybibliotheca:latest
+    container_name: mybibliotheca
     ports:
       - "5054:5054"
     volumes:
@@ -99,14 +99,14 @@ docker compose up -d
 
 ### First Time Setup
 
-When you first run Bibliotheca, you'll be prompted to complete a one-time setup:
+When you first run MyBibliotheca, you'll be prompted to complete a one-time setup:
 
 1. **Access the application** at `http://localhost:5054` (or your configured port)
 2. **Complete the setup form** to create your administrator account:
    - Choose an admin username
    - Provide an admin email address  
    - Set a secure password (must meet security requirements)
-3. **Start using Bibliotheca** - you'll be automatically logged in after setup
+3. **Start using MyBibliotheca** - you'll be automatically logged in after setup
 
 ✅ **Secure by Design**: No default credentials - you control your admin account from the start!
 
@@ -165,7 +165,7 @@ Existing single-user installations are **automatically migrated** to multi-user:
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/pickles4evaaaa/bibliotheca.git
+   git clone https://github.com/pickles4evaaaa/mybibliotheca.git
    cd bibliotheca
    ```
 
@@ -241,8 +241,8 @@ Existing single-user installations are **automatically migrated** to multi-user:
 
 1. **Clone and configure**:
 ```bash
-git clone https://github.com/your-username/bibliotheca.git
-cd bibliotheca
+git clone https://github.com/pickles4evaaaa/mybibliotheca.git
+cd mybibliotheca
 cp .env.example .env
 ```
 
@@ -297,7 +297,7 @@ docker compose -f docker-compose.dev.yml --profile test up bibliotheca-test
 ## 🗂️ Project Structure
 
 ```
-bibliotheca/
+mybibliotheca/
 ├── app/
 │   ├── __init__.py
 │   ├── models.py
@@ -321,6 +321,6 @@ Licensed under the [MIT License](LICENSE).
 
 ## ❤️ Contribute
 
-**Bibliotheca** is open source and contributions are welcome!
+**MyBibliotheca** is open source and contributions are welcome!
 
 Pull requests, bug reports, and feature suggestions are appreciated.
