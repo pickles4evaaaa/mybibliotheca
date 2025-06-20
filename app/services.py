@@ -141,7 +141,7 @@ class RedisBookService:
                             book.start_date = rel.start_date
                             book.finish_date = rel.finish_date
                             book.user_rating = rel.user_rating
-                            book.personal_notes = rel.user_notes
+                            book.personal_notes = rel.personal_notes
                             book.date_added = rel.date_added
                             book.user_tags = rel.user_tags
                             book.locations = rel.locations
@@ -202,20 +202,47 @@ class RedisBookService:
         return await self.get_book_by_id(uid, user_id)
     
     async def update_book(self, uid: str, user_id: str, **kwargs) -> Optional[Book]:
-        """Update a book."""
+        """Update a book or user-book relationship fields."""
         try:
             book = await self.redis_book_repo.get_by_id(uid)
             if not book:
                 return None
             
-            # Update book fields
-            for field, value in kwargs.items():
-                if hasattr(book, field):
-                    setattr(book, field, value)
+            # Separate relationship fields from book fields
+            relationship_fields = {'personal_notes', 'user_rating', 'reading_status', 'ownership_status', 
+                                 'date_started', 'date_finished', 'date_added', 'favorite', 'priority'}
+            book_fields = {}
+            rel_fields = {}
             
-            # Update in Redis
-            await self.redis_book_repo.update(book)
-            current_app.logger.info(f"Book {uid} updated in Redis")
+            for field, value in kwargs.items():
+                if field in relationship_fields:
+                    rel_fields[field] = value
+                elif hasattr(book, field):
+                    book_fields[field] = value
+            
+            # Update book fields if any
+            if book_fields:
+                for field, value in book_fields.items():
+                    setattr(book, field, value)
+                await self.redis_book_repo.update(book)
+                current_app.logger.info(f"Book {uid} updated in Redis")
+            
+            # Update relationship fields if any
+            if rel_fields:
+                # Get existing relationship
+                relationship = await self.redis_user_book_repo.get_relationship(user_id, uid)
+                if relationship:
+                    # Update relationship fields
+                    for field, value in rel_fields.items():
+                        if hasattr(relationship, field):
+                            setattr(relationship, field, value)
+                    
+                    # Update the relationship in Redis
+                    await self.redis_user_book_repo.update_relationship(relationship)
+                    current_app.logger.info(f"User-book relationship updated for book {uid} and user {user_id}")
+                else:
+                    current_app.logger.warning(f"No relationship found between user {user_id} and book {uid}")
+            
             return book
         except Exception as e:
             current_app.logger.error(f"Failed to update book {uid}: {e}")

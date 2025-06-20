@@ -11,7 +11,7 @@ import redis
 import logging
 from typing import Optional, Dict, Any, List
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, date
 
 from ..domain.models import Book, User, Author
 
@@ -131,13 +131,22 @@ class RedisGraphStorage:
             # Update timestamp
             updates['_updated_at'] = datetime.utcnow().isoformat()
             
-            # Serialize any datetime objects in updates
+            # Recursively serialize any datetime/date objects in updates
+            def serialize_value(value):
+                if isinstance(value, datetime):
+                    return value.isoformat()
+                elif isinstance(value, date):
+                    return value.isoformat()
+                elif isinstance(value, dict):
+                    return {k: serialize_value(v) for k, v in value.items()}
+                elif isinstance(value, list):
+                    return [serialize_value(item) for item in value]
+                else:
+                    return value
+            
             serialized_updates = {}
             for field, value in updates.items():
-                if isinstance(value, datetime):
-                    serialized_updates[field] = value.isoformat()
-                else:
-                    serialized_updates[field] = value
+                serialized_updates[field] = serialize_value(value)
             
             # Update fields
             for field, value in serialized_updates.items():

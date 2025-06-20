@@ -216,7 +216,7 @@ class DualWriteBookService:
                     reading_status=ReadingStatus.PLAN_TO_READ,
                     user_rating=None,
                     user_review=None,
-                    user_notes=None,
+                    personal_notes=None,
                     reading_start_date=None,
                     reading_end_date=None,
                     created_at=datetime.now(),
@@ -271,7 +271,7 @@ class DualWriteBookService:
                         book.start_date = rel.start_date
                         book.finish_date = rel.finish_date
                         book.user_rating = rel.user_rating
-                        book.personal_notes = rel.user_notes
+                        book.personal_notes = rel.personal_notes
                         book.date_added = rel.date_added
                         book.user_tags = rel.user_tags
                         book.locations = rel.locations
@@ -300,19 +300,49 @@ class DualWriteBookService:
             if not sqlite_book:
                 return None
             
-            # Update fields
-            for field, value in kwargs.items():
-                if hasattr(sqlite_book, field):
-                    setattr(sqlite_book, field, value)
+            # Separate relationship fields from book fields
+            relationship_fields = {'personal_notes', 'user_rating', 'reading_status', 'ownership_status', 
+                                 'date_started', 'date_finished', 'date_added', 'favorite', 'priority'}
+            sqlite_fields = {}
+            rel_fields = {}
             
-            db.session.commit()
+            for field, value in kwargs.items():
+                if field in relationship_fields:
+                    rel_fields[field] = value
+                elif hasattr(sqlite_book, field):
+                    sqlite_fields[field] = value
+            
+            # Update SQLite fields
+            if sqlite_fields:
+                for field, value in sqlite_fields.items():
+                    setattr(sqlite_book, field, value)
+                db.session.commit()
             
             # Update Redis if enabled
             if self.redis_enabled:
                 try:
                     domain_book = self._sqlite_to_domain_book(sqlite_book)
-                    await self.redis_book_repo.update(domain_book)
-                    current_app.logger.info(f"Book {uid} updated in both SQLite and Redis")
+                    
+                    # Update book in Redis
+                    if sqlite_fields:
+                        await self.redis_book_repo.update(domain_book)
+                        current_app.logger.info(f"Book {uid} updated in Redis")
+                    
+                    # Update relationship fields in Redis
+                    if rel_fields:
+                        relationship = await self.redis_user_book_repo.get_relationship(str(user_id), uid)
+                        if relationship:
+                            # Update relationship fields
+                            for field, value in rel_fields.items():
+                                if hasattr(relationship, field):
+                                    setattr(relationship, field, value)
+                            
+                            # Update the relationship in Redis
+                            await self.redis_user_book_repo.update_relationship(relationship)
+                            current_app.logger.info(f"User-book relationship updated for book {uid} and user {user_id}")
+                        else:
+                            current_app.logger.warning(f"No relationship found between user {user_id} and book {uid}")
+                    
                 except Exception as e:
                     current_app.logger.error(f"Failed to update book in Redis: {e}")
             

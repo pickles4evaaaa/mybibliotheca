@@ -221,14 +221,8 @@ class RedisBookRepository(BookRepository):
         if not book.id:
             raise ValueError("Book must have an ID to update")
             
-        book_data = asdict(book)
-        # Handle nested objects
-        book_data['authors'] = [asdict(author) for author in book.authors]
-        if book.publisher:
-            book_data['publisher'] = asdict(book.publisher)
-        if book.series:
-            book_data['series'] = asdict(book.series)
-        book_data['categories'] = [asdict(category) for category in book.categories]
+        # Use the serialization function to properly handle datetime objects
+        book_data = _serialize_for_json(asdict(book))
         
         success = self.storage.update_node('book', book.id, book_data)
         if not success:
@@ -536,7 +530,7 @@ class RedisAuthorRepository(AuthorRepository):
         if not author.id:
             raise ValueError("Author must have an ID to update")
             
-        author_data = asdict(author)
+        author_data = _serialize_for_json(asdict(author))
         success = self.storage.update_node('author', author.id, author_data)
         if not success:
             raise Exception(f"Failed to update author {author.id}")
