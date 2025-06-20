@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting Bibliotheca with setup page..."
+echo "🚀 Starting MyBibliotheca with setup page..."
 
 # Generate a secure secret key if not provided
 if [ -z "$SECRET_KEY" ]; then
