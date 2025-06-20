@@ -156,6 +156,35 @@
     .overlay {
       padding: clamp(20px, 5vw, 50px) clamp(8px, 2vw, 20px);
     }
+    .social-icons {
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      align-items: center;
+    }
+    .social-icon {
+      width: 40px !important;
+      height: 40px !important;
+      font-size: 40px !important;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+      vertical-align: middle;
+      padding: 0;
+      background: none;
+      border: none;
+    }
+    .social-icon:hover {
+      opacity: 1;
+    }
+    .social-icon img,
+    .social-icon svg {
+      width: 40px !important;
+      height: 40px !important;
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -211,11 +240,23 @@
         <a href="{{ url_for('main.view_book', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
       {% endblock %}
       <div class="text-center mt-4">
-        <a href="https://github.com/pickles4evaaaa/bibliotheca" target="_blank" rel="noopener" title="View on GitHub">
-          <img src="{{ url_for('static', filename='github-mark.png') }}"
-               alt="GitHub" width="40" height="40" style="opacity:0.7; transition:opacity 0.2s;">
-        </a>
-        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">Bibliotheca v0.1.0 | It is highly recommended to backup your database regularly.</div>
+        <div class="social-icons">
+          <a href="https://github.com/pickles4evaaaa/mybibliotheca" target="_blank" rel="noopener" title="View on GitHub" class="social-icon">
+            <img src="{{ url_for('static', filename='github-mark.png') }}" alt="GitHub">
+          </a>
+          <a href="https://discord.gg/Hc8C5eRm7Q" target="_blank" rel="noopener" title="Join our Discord" class="social-icon">
+            <i class="bi bi-discord" style="color: #5865F2;"></i>
+          </a>
+          <a href="https://x.com/my_bibliotheca" target="_blank" rel="noopener" title="Follow us on X (Twitter)" class="social-icon">
+            <i class="bi bi-twitter-x" style="color: #000;"></i>
+          </a>
+          <a href="https://bsky.app/profile/mybibliotheca.org" target="_blank" rel="noopener" title="Follow us on Bluesky" class="social-icon">
+            <svg viewBox="0 0 568 501" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M123.121 33.664C188.241 82.553 258.281 181.68 284 234.873c25.719-53.192 95.759-152.32 160.879-201.209C491.866-1.611 568-28.906 568 57.947c0 17.346-9.945 145.713-15.778 166.555-20.275 72.453-94.155 90.933-159.875 79.748C507.222 323.8 536.444 388.56 473.333 453.32c-119.86-120.404-209.185-135.713-209.185-135.713s-89.325 15.309-209.185 135.713C-8.056 388.56 21.167 323.8 135.631 304.25c-65.72 11.185-139.6-7.295-159.875-79.748C-9.945 203.66-20 75.293-20 57.947c0-86.853 76.134-59.558 123.121-24.283Z" fill="#1185fe"/>
+            </svg>
+          </a>
+        </div>
+        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">MyBibliotheca v0.1.0 | It is highly recommended to backup your database regularly.</div>
       </div>
       {% block footer %}
       <footer class="text-center mt-4">
