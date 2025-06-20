@@ -42,6 +42,89 @@ class MediaType(Enum):
     KINDLE = "kindle"
 
 
+class CustomFieldType(Enum):
+    """Custom field type enumeration."""
+    TEXT = "text"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    DATE = "date"
+    RATING_5 = "rating_5"  # 1-5 scale
+    RATING_10 = "rating_10"  # 1-10 scale
+    LIST = "list"  # Multiple values, comma-separated
+    TAGS = "tags"  # Similar to list but with tag-like UI
+    URL = "url"
+    EMAIL = "email"
+    TEXTAREA = "textarea"  # Long text
+
+
+@dataclass
+class CustomFieldDefinition:
+    """Definition of a custom metadata field that can be applied to books."""
+    id: Optional[str] = None
+    name: str = ""  # Internal name (e.g., "reading_pace")
+    display_name: str = ""  # User-friendly name (e.g., "Reading Pace")
+    field_type: CustomFieldType = CustomFieldType.TEXT
+    description: Optional[str] = None
+    
+    # Ownership and sharing
+    created_by_user_id: str = ""
+    is_shareable: bool = False  # Can other users see/use this definition
+    is_global: bool = False  # Applies to global book data vs user-specific
+    
+    # Field configuration
+    default_value: Optional[str] = None
+    placeholder_text: Optional[str] = None
+    help_text: Optional[str] = None
+    
+    # For list/tags fields - predefined options
+    predefined_options: List[str] = field(default_factory=list)
+    allow_custom_options: bool = True
+    
+    # For rating fields
+    rating_min: int = 1
+    rating_max: int = 5
+    rating_labels: Dict[int, str] = field(default_factory=dict)  # e.g., {1: "Poor", 5: "Excellent"}
+    
+    # Usage statistics
+    usage_count: int = 0  # How many users are using this definition
+    
+    # Timestamps
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class ImportMappingTemplate:
+    """Saved mapping template for CSV imports to avoid re-mapping same formats."""
+    id: Optional[str] = None
+    user_id: str = ""
+    name: str = ""  # User-friendly name (e.g., "Goodreads Export")
+    description: Optional[str] = None
+    
+    # Import source identification
+    source_type: str = ""  # "goodreads", "storygraph", "custom"
+    sample_headers: List[str] = field(default_factory=list)  # For matching detection
+    
+    # Field mappings
+    field_mappings: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Format: {
+    #   "csv_column_name": {
+    #     "action": "map_existing|create_custom|skip",
+    #     "target_field": "field_name",  # if map_existing
+    #     "custom_field_def": CustomFieldDefinition,  # if create_custom
+    #     "is_global": bool  # if create_custom
+    #   }
+    # }
+    
+    # Usage tracking
+    times_used: int = 0
+    last_used: Optional[datetime] = None
+    
+    # Timestamps
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
 @dataclass
 class Author:
     """Author domain model."""
@@ -149,6 +232,9 @@ class Book:
     # Global metadata (not user-specific)
     average_rating: Optional[float] = None
     rating_count: Optional[int] = None
+    
+    # Custom metadata fields (global, shared across all users)
+    custom_metadata: Dict[str, Any] = field(default_factory=dict)
     
     # Timestamps
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -374,6 +460,9 @@ class UserBookRelationship:
     # Personal organization
     personal_notes: Optional[str] = None
     user_tags: List[str] = field(default_factory=list)
+    
+    # Custom metadata fields (user-specific)
+    custom_metadata: Dict[str, Any] = field(default_factory=dict)
     
     # Reading analytics (StoryGraph-style)
     reading_sessions: List[Dict[str, Any]] = field(default_factory=list)

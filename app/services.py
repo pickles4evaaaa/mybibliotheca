@@ -7,7 +7,7 @@ as the sole data store with graph database functionality.
 
 import os
 import asyncio
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, date, timedelta
 from dataclasses import asdict
 from functools import wraps
@@ -15,8 +15,8 @@ from functools import wraps
 from flask import current_app
 from flask_login import current_user
 
-from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus, OwnershipStatus, OwnershipStatus
-from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository, RedisUserBookRepository
+from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus, OwnershipStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
+from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository, RedisUserBookRepository, RedisCustomFieldRepository, RedisImportMappingRepository
 from .infrastructure.redis_graph import get_graph_storage
 
 
@@ -798,7 +798,429 @@ class RedisReadingLogService:
         return self.get_user_log_dates(user_id)
 
 
+class RedisCustomFieldService:
+    """Service for managing custom field definitions."""
+    
+    def __init__(self):
+        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        
+        if not self.redis_enabled:
+            raise RuntimeError("Custom fields require Redis/graph database to be enabled")
+        
+        self.storage = get_graph_storage()
+        self.repository = RedisCustomFieldRepository(self.storage)
+    
+    @run_async
+    async def create_field(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Create a new custom field definition."""
+        return await self.repository.create(field_def)
+    
+    @run_async
+    async def get_field_by_id(self, field_id: str) -> Optional[CustomFieldDefinition]:
+        """Get a custom field definition by ID."""
+        return await self.repository.get_by_id(field_id)
+    
+    @run_async
+    async def get_user_fields(self, user_id: str) -> List[CustomFieldDefinition]:
+        """Get all custom field definitions created by a user."""
+        return await self.repository.get_by_user(user_id)
+    
+    @run_async
+    async def get_shareable_fields(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Get all shareable custom field definitions."""
+        return await self.repository.get_shareable(exclude_user_id)
+    
+    @run_async
+    async def search_fields(self, query: str, user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Search custom field definitions."""
+        return await self.repository.search(query, user_id)
+    
+    @run_async
+    async def update_field(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Update an existing custom field definition."""
+        return await self.repository.update(field_def)
+    
+    @run_async
+    async def delete_field(self, field_id: str) -> bool:
+        """Delete a custom field definition."""
+        return await self.repository.delete(field_id)
+    
+    @run_async
+    async def increment_field_usage(self, field_id: str) -> None:
+        """Increment usage count for a field definition."""
+        await self.repository.increment_usage(field_id)
+    
+    @run_async
+    async def get_popular_fields(self, limit: int = 20) -> List[CustomFieldDefinition]:
+        """Get most popular shareable custom field definitions."""
+        return await self.repository.get_popular(limit)
+    
+    def validate_field_value(self, field_def: CustomFieldDefinition, value: Any) -> Tuple[bool, Optional[str]]:
+        """Validate a value against a custom field definition."""
+        if value is None or value == "":
+            return True, None  # Allow empty values for now
+        
+        try:
+            if field_def.field_type == CustomFieldType.TEXT:
+                if not isinstance(value, str):
+                    return False, "Value must be text"
+            
+            elif field_def.field_type == CustomFieldType.TEXTAREA:
+                if not isinstance(value, str):
+                    return False, "Value must be text"
+            
+            elif field_def.field_type == CustomFieldType.NUMBER:
+                float(value)  # Try to convert to number
+            
+            elif field_def.field_type == CustomFieldType.BOOLEAN:
+                if not isinstance(value, bool) and str(value).lower() not in ['true', 'false', '1', '0']:
+                    return False, "Value must be true/false"
+            
+            elif field_def.field_type == CustomFieldType.DATE:
+                if isinstance(value, str):
+                    datetime.fromisoformat(value.replace('Z', '+00:00'))
+                elif not isinstance(value, (date, datetime)):
+                    return False, "Value must be a valid date"
+            
+            elif field_def.field_type in [CustomFieldType.RATING_5, CustomFieldType.RATING_10]:
+                rating_value = float(value)
+                if not (field_def.rating_min <= rating_value <= field_def.rating_max):
+                    return False, f"Rating must be between {field_def.rating_min} and {field_def.rating_max}"
+            
+            elif field_def.field_type in [CustomFieldType.LIST, CustomFieldType.TAGS]:
+                if isinstance(value, str):
+                    # Split comma-separated values
+                    value = [v.strip() for v in value.split(',') if v.strip()]
+                if not isinstance(value, list):
+                    return False, "Value must be a list or comma-separated text"
+            
+            elif field_def.field_type == CustomFieldType.URL:
+                if not isinstance(value, str) or not (value.startswith('http://') or value.startswith('https://')):
+                    return False, "Value must be a valid URL starting with http:// or https://"
+            
+            elif field_def.field_type == CustomFieldType.EMAIL:
+                import re
+                if not isinstance(value, str) or not re.match(r'^[^@]+@[^@]+\.[^@]+$', value):
+                    return False, "Value must be a valid email address"
+            
+            return True, None
+            
+        except (ValueError, TypeError) as e:
+            return False, f"Invalid value: {str(e)}"
+    
+    # Sync wrappers
+    def create_field_sync(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Sync wrapper for create_field."""
+        return self.create_field(field_def)
+    
+    def get_field_by_id_sync(self, field_id: str) -> Optional[CustomFieldDefinition]:
+        """Sync wrapper for get_field_by_id."""
+        return self.get_field_by_id(field_id)
+    
+    def get_user_fields_sync(self, user_id: str) -> List[CustomFieldDefinition]:
+        """Sync wrapper for get_user_fields."""
+        return self.get_user_fields(user_id)
+    
+    def get_shareable_fields_sync(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Sync wrapper for get_shareable_fields."""
+        return self.get_shareable_fields(exclude_user_id)
+    
+    def search_fields_sync(self, query: str, user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Sync wrapper for search_fields."""
+        return self.search_fields(query, user_id)
+    
+    def update_field_sync(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Sync wrapper for update_field."""
+        return self.update_field(field_def)
+    
+    def delete_field_sync(self, field_id: str) -> bool:
+        """Sync wrapper for delete_field."""
+        return self.delete_field(field_id)
+    
+    def get_popular_fields_sync(self, limit: int = 20) -> List[CustomFieldDefinition]:
+        """Sync wrapper for get_popular_fields."""
+        return self.get_popular_fields(limit)
+
+
+class RedisImportMappingService:
+    """Service for managing import mapping templates."""
+    
+    def __init__(self):
+        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        
+        if not self.redis_enabled:
+            raise RuntimeError("Import mapping requires Redis/graph database to be enabled")
+        
+        self.storage = get_graph_storage()
+        self.repository = RedisImportMappingRepository(self.storage)
+    
+    @run_async
+    async def create_template(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Create a new import mapping template."""
+        return await self.repository.create(template)
+    
+    @run_async
+    async def get_template_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
+        """Get an import mapping template by ID."""
+        return await self.repository.get_by_id(template_id)
+    
+    @run_async
+    async def get_user_templates(self, user_id: str) -> List[ImportMappingTemplate]:
+        """Get all import mapping templates for a user."""
+        return await self.repository.get_by_user(user_id)
+    
+    @run_async
+    async def detect_template(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
+        """Detect matching template based on CSV headers."""
+        return await self.repository.detect_template(headers, user_id)
+    
+    @run_async
+    async def update_template(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Update an existing import mapping template."""
+        return await self.repository.update(template)
+    
+    @run_async
+    async def delete_template(self, template_id: str) -> bool:
+        """Delete an import mapping template."""
+        return await self.repository.delete(template_id)
+    
+    @run_async
+    async def increment_template_usage(self, template_id: str) -> None:
+        """Increment usage count and update last used timestamp."""
+        await self.repository.increment_usage(template_id)
+    
+    # Sync wrappers
+    def create_template_sync(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Sync wrapper for create_template."""
+        return self.create_template(template)
+    
+    def get_template_by_id_sync(self, template_id: str) -> Optional[ImportMappingTemplate]:
+        """Sync wrapper for get_template_by_id."""
+        return self.get_template_by_id(template_id)
+    
+    def get_user_templates_sync(self, user_id: str) -> List[ImportMappingTemplate]:
+        """Sync wrapper for get_user_templates."""
+        return self.get_user_templates(user_id)
+    
+    def detect_template_sync(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
+        """Sync wrapper for detect_template."""
+        return self.detect_template(headers, user_id)
+    
+    def update_template_sync(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Sync wrapper for update_template."""
+        return self.update_template(template)
+    
+    def delete_template_sync(self, template_id: str) -> bool:
+        """Sync wrapper for delete_template."""
+        return self.delete_template(template_id)
+
+
+class CustomMetadataService:
+    """Service for managing custom metadata values on books and user book relationships."""
+    
+    def __init__(self):
+        # Initialize with None, will be set after global services are created
+        self.custom_field_service = None
+        self.book_service = None
+    
+    def _ensure_services(self):
+        """Lazy initialization of services to avoid circular dependencies."""
+        if self.custom_field_service is None:
+            global custom_field_service, book_service
+            self.custom_field_service = custom_field_service
+            self.book_service = book_service
+    
+    def create_field(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Create a new custom field definition."""
+        self._ensure_services()
+        return self.custom_field_service.create_field_sync(field_def)
+    
+    def get_available_fields(self, user_id: str, is_global: bool = False) -> List[CustomFieldDefinition]:
+        """Get all available custom fields for a user (their own + shareable)."""
+        self._ensure_services()
+        try:
+            # Get user's own fields
+            user_fields = self.custom_field_service.get_user_fields_sync(user_id)
+            
+            # Get shareable fields from others
+            shareable_fields = self.custom_field_service.get_shareable_fields_sync(exclude_user_id=user_id)
+            
+            # Filter by scope
+            all_fields = user_fields + shareable_fields
+            if is_global is not None:
+                all_fields = [f for f in all_fields if f.is_global == is_global]
+            
+            return sorted(all_fields, key=lambda f: f.display_name)
+        except Exception as e:
+            print(f"Error getting available fields: {e}")
+            return []
+    
+    def get_custom_metadata_for_display(self, metadata: Dict[str, Any], user_id: str, is_global: bool = False) -> List[Dict[str, Any]]:
+        """Convert raw custom metadata to display format with field definitions."""
+        if not metadata:
+            return []
+        
+        # Get field definitions
+        available_fields = self.get_available_fields(user_id, is_global)
+        field_definitions = {f.name: f for f in available_fields}
+        
+        display_metadata = []
+        for field_name, value in metadata.items():
+            field_def = field_definitions.get(field_name)
+            
+            # Format value for display
+            display_value = self._format_value_for_display(value, field_def)
+            
+            display_metadata.append({
+                'name': field_name,
+                'display_name': field_def.display_name if field_def else field_name.replace('_', ' ').title(),
+                'value': value,
+                'display_value': display_value,
+                'field_type': field_def.field_type.value if field_def else 'text',
+                'has_definition': field_def is not None,
+                'field_def': field_def
+            })
+        
+        return sorted(display_metadata, key=lambda x: x['display_name'])
+    
+    def _format_value_for_display(self, value: Any, field_def: Optional[CustomFieldDefinition]) -> str:
+        """Format a custom field value for display."""
+        if value is None or value == "":
+            return ""
+        
+        if not field_def:
+            return str(value)
+        
+        try:
+            if field_def.field_type == CustomFieldType.BOOLEAN:
+                return "Yes" if value else "No"
+            
+            elif field_def.field_type == CustomFieldType.DATE:
+                if isinstance(value, str):
+                    # Try to parse ISO format
+                    try:
+                        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        return dt.strftime('%Y-%m-%d')
+                    except:
+                        return value
+                elif isinstance(value, (date, datetime)):
+                    return value.strftime('%Y-%m-%d')
+                return str(value)
+            
+            elif field_def.field_type in [CustomFieldType.RATING_5, CustomFieldType.RATING_10]:
+                rating_value = float(value)
+                stars = "★" * int(rating_value) + "☆" * (field_def.rating_max - int(rating_value))
+                label = field_def.rating_labels.get(int(rating_value), "")
+                if label:
+                    return f"{stars} ({label})"
+                return f"{stars} ({rating_value}/{field_def.rating_max})"
+            
+            elif field_def.field_type in [CustomFieldType.LIST, CustomFieldType.TAGS]:
+                if isinstance(value, list):
+                    return ", ".join(str(v) for v in value)
+                elif isinstance(value, str):
+                    return value
+                return str(value)
+            
+            elif field_def.field_type == CustomFieldType.URL:
+                if value.startswith(('http://', 'https://')):
+                    return f'<a href="{value}" target="_blank" rel="noopener">{value}</a>'
+                return str(value)
+            
+            elif field_def.field_type == CustomFieldType.EMAIL:
+                return f'<a href="mailto:{value}">{value}</a>'
+            
+            else:
+                return str(value)
+                
+        except Exception as e:
+            print(f"Error formatting value {value}: {e}")
+            return str(value)
+    
+    def validate_and_save_metadata(self, metadata: Dict[str, Any], user_id: str, is_global: bool = False) -> Tuple[bool, List[str]]:
+        """Validate custom metadata values against field definitions."""
+        if not metadata:
+            return True, []
+        
+        available_fields = self.get_available_fields(user_id, is_global)
+        field_definitions = {f.name: f for f in available_fields}
+        
+        errors = []
+        validated_metadata = {}
+        
+        for field_name, value in metadata.items():
+            field_def = field_definitions.get(field_name)
+            
+            if field_def:
+                # Validate using field definition
+                is_valid, error_msg = self.custom_field_service.validate_field_value(field_def, value)
+                if not is_valid:
+                    errors.append(f"{field_def.display_name}: {error_msg}")
+                    continue
+            
+            # Store the value (potentially converting it)
+            validated_metadata[field_name] = self._convert_value_for_storage(value, field_def)
+        return len(errors) == 0, errors
+    
+    def _convert_value_for_storage(self, value: Any, field_def: Optional[CustomFieldDefinition]) -> Any:
+        """Convert a value to the appropriate format for storage."""
+        if value is None or value == "":
+            return None
+        
+        if not field_def:
+            return value
+        
+        try:
+            if field_def.field_type == CustomFieldType.NUMBER:
+                return float(value)
+            
+            elif field_def.field_type == CustomFieldType.BOOLEAN:
+                if isinstance(value, bool):
+                    return value
+                return str(value).lower() in ['true', '1', 'yes', 'on']
+            
+            elif field_def.field_type == CustomFieldType.DATE:
+                if isinstance(value, str):
+                    # Parse various date formats
+                    try:
+                        return datetime.fromisoformat(value.replace('Z', '+00:00')).isoformat()
+                    except:
+                        # Try other formats
+                        for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y']:
+                            try:
+                                return datetime.strptime(value, fmt).isoformat()
+                            except:
+                                continue
+                elif isinstance(value, (date, datetime)):
+                    return value.isoformat()
+                return value
+            
+            elif field_def.field_type in [CustomFieldType.RATING_5, CustomFieldType.RATING_10]:
+                return float(value)
+            
+            elif field_def.field_type in [CustomFieldType.LIST, CustomFieldType.TAGS]:
+                if isinstance(value, str):
+                    # Split comma-separated values
+                    return [v.strip() for v in value.split(',') if v.strip()]
+                elif isinstance(value, list):
+                    return value
+                return [str(value)]
+            
+            else:
+                return str(value)
+                
+        except Exception as e:
+            print(f"Error converting value {value}: {e}")
+            return value
+
+
 # Global service instances
 book_service = RedisBookService()
 user_service = RedisUserService()
 reading_log_service = RedisReadingLogService()
+custom_field_service = RedisCustomFieldService()
+import_mapping_service = RedisImportMappingService()
+custom_metadata_service = CustomMetadataService()
+
+# Initialize the custom metadata service after other services are created
+custom_metadata_service._ensure_services()

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Metadata Management{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Metadata Management</h1>
+            
+            <div class="row">
+                <div class="col-md-6 mb-4">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Custom Fields</h5>
+                            <a href="{{ url_for('metadata.create_field') }}" class="btn btn-primary btn-sm">
+                                <i class="fas fa-plus"></i> Create Field
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            {% if user_fields %}
+                                <p class="text-muted">You have {{ user_fields|length }} custom field(s)</p>
+                                <div class="list-group">
+                                    {% for field in user_fields[:5] %}
+                                    <div class="list-group-item">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h6 class="mb-1">{{ field.display_name }}</h6>
+                                                <small class="text-muted">
+                                                    {{ field.field_type.value|title }} • 
+                                                    {% if field.is_global %}Global{% else %}Personal{% endif %}
+                                                    {% if field.is_shareable %} • Shareable{% endif %}
+                                                </small>
+                                            </div>
+                                            <small class="text-muted">Used {{ field.usage_count }} times</small>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% if user_fields|length > 5 %}
+                                <div class="mt-2">
+                                    <small class="text-muted">... and {{ user_fields|length - 5 }} more</small>
+                                </div>
+                                {% endif %}
+                            {% else %}
+                                <p class="text-muted">No custom fields created yet.</p>
+                                <p class="small">Custom fields allow you to add any metadata you want to your books, like reading pace, mood, content warnings, etc.</p>
+                            {% endif %}
+                            
+                            <div class="mt-3">
+                                <a href="{{ url_for('metadata.fields') }}" class="btn btn-outline-primary">
+                                    Manage All Fields
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6 mb-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">Popular Community Fields</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if popular_fields %}
+                                <p class="text-muted">Popular fields shared by other users</p>
+                                <div class="list-group">
+                                    {% for field in popular_fields[:5] %}
+                                    <div class="list-group-item">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h6 class="mb-1">{{ field.display_name }}</h6>
+                                                <small class="text-muted">
+                                                    {{ field.field_type.value|title }}
+                                                    {% if field.description %} • {{ field.description }}{% endif %}
+                                                </small>
+                                            </div>
+                                            <small class="text-muted">{{ field.usage_count }} users</small>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <p class="text-muted">No community fields available yet.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">Import Templates</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if import_templates %}
+                                <p class="text-muted">You have {{ import_templates|length }} saved import template(s)</p>
+                                <div class="row">
+                                    {% for template in import_templates[:4] %}
+                                    <div class="col-md-6 col-lg-3 mb-3">
+                                        <div class="card">
+                                            <div class="card-body">
+                                                <h6 class="card-title">{{ template.name }}</h6>
+                                                <p class="card-text small text-muted">
+                                                    {{ template.source_type|title }} format<br>
+                                                    Used {{ template.times_used }} times
+                                                    {% if template.last_used %}
+                                                    <br>Last used: {{ template.last_used.strftime('%m/%d/%Y') }}
+                                                    {% endif %}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% if import_templates|length > 4 %}
+                                <div class="mt-2">
+                                    <small class="text-muted">... and {{ import_templates|length - 4 }} more</small>
+                                </div>
+                                {% endif %}
+                            {% else %}
+                                <p class="text-muted">No import templates saved yet.</p>
+                                <p class="small">Import templates save your field mappings so you don't have to re-map the same CSV format each time.</p>
+                            {% endif %}
+                            
+                            <div class="mt-3">
+                                <a href="{{ url_for('metadata.templates') }}" class="btn btn-outline-primary">
+                                    Manage Templates
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

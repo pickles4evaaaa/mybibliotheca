@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}Migration in Progress{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white">
+                    <h2 class="mb-0">
+                        <i class="fas fa-sync-alt fa-spin me-2"></i>
+                        Migration in Progress
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <!-- Progress Steps -->
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between">
+                            <div class="step-item completed">
+                                <div class="step-number">✓</div>
+                                <div class="step-title">Select Databases</div>
+                            </div>
+                            <div class="step-item completed">
+                                <div class="step-number">✓</div>
+                                <div class="step-title">Configure</div>
+                            </div>
+                            <div class="step-item active">
+                                <div class="step-number">3</div>
+                                <div class="step-title">Migrate</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info" id="statusAlert">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <span id="statusText">Preparing migration...</span>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span>Progress</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%" id="progressBar">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Migration Results -->
+                    <div id="migrationResults" style="display: none;">
+                        <h4>Migration Results</h4>
+                        <div id="resultsList"></div>
+                    </div>
+
+                    <!-- Migration Log -->
+                    <div class="mb-3">
+                        <h5>Migration Log</h5>
+                        <div class="border rounded p-3" style="height: 300px; overflow-y: auto; background-color: #f8f9fa;" id="migrationLog">
+                            <div class="text-muted">Migration log will appear here...</div>
+                        </div>
+                    </div>
+
+                    <div class="text-center">
+                        <button type="button" class="btn btn-secondary" id="cancelBtn" onclick="cancelMigration()">
+                            <i class="fas fa-times me-2"></i>Cancel Migration
+                        </button>
+                        <a href="{{ url_for('migration.migration_success') }}" class="btn btn-success" id="continueBtn" style="display: none;">
+                            <i class="fas fa-check me-2"></i>Continue to Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.step-item {
+    text-align: center;
+    position: relative;
+    flex: 1;
+}
+
+.step-item:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 15px;
+    right: -50%;
+    width: 100%;
+    height: 2px;
+    background-color: #dee2e6;
+    z-index: 1;
+}
+
+.step-item.active:not(:last-child)::after,
+.step-item.completed:not(:last-child)::after {
+    background-color: #0d6efd;
+}
+
+.step-number {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background-color: #dee2e6;
+    color: #6c757d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 8px;
+    font-weight: bold;
+    position: relative;
+    z-index: 2;
+}
+
+.step-item.active .step-number {
+    background-color: #0d6efd;
+    color: white;
+}
+
+.step-item.completed .step-number {
+    background-color: #198754;
+    color: white;
+}
+
+.step-title {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.step-item.active .step-title,
+.step-item.completed .step-title {
+    color: #0d6efd;
+    font-weight: 600;
+}
+
+.step-item.completed .step-title {
+    color: #198754;
+}
+
+.log-entry {
+    margin-bottom: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+}
+
+.log-info { color: #0d6efd; }
+.log-success { color: #198754; }
+.log-warning { color: #ffc107; }
+.log-error { color: #dc3545; }
+</style>
+
+<script>
+let migrationStarted = false;
+
+function addLogEntry(message, type = 'info') {
+    const log = document.getElementById('migrationLog');
+    const entry = document.createElement('div');
+    entry.className = `log-entry log-${type}`;
+    entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+function updateProgress(percent, message) {
+    document.getElementById('progressBar').style.width = percent + '%';
+    document.getElementById('progressPercent').textContent = percent + '%';
+    document.getElementById('statusText').textContent = message;
+}
+
+function showResults(results) {
+    const resultsDiv = document.getElementById('migrationResults');
+    const resultsList = document.getElementById('resultsList');
+    
+    resultsList.innerHTML = '';
+    
+    results.forEach(result => {
+        const card = document.createElement('div');
+        card.className = 'card mb-2';
+        
+        const cardBody = document.createElement('div');
+        cardBody.className = 'card-body py-2';
+        
+        if (result.success) {
+            cardBody.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-check-circle text-success me-2"></i>
+                        <strong>${result.database}</strong> - Migration successful
+                    </div>
+                    <div class="text-end small">
+                        <div>📚 ${result.books_migrated} books</div>
+                        ${result.users_migrated > 0 ? `<div>👥 ${result.users_migrated} users</div>` : ''}
+                        ${result.reading_logs_migrated > 0 ? `<div>📖 ${result.reading_logs_migrated} reading logs</div>` : ''}
+                    </div>
+                </div>
+            `;
+        } else {
+            cardBody.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-times-circle text-danger me-2"></i>
+                        <strong>${result.database}</strong> - Migration failed
+                    </div>
+                    <div class="text-danger small">${result.error}</div>
+                </div>
+            `;
+        }
+        
+        card.appendChild(cardBody);
+        resultsList.appendChild(card);
+    });
+    
+    resultsDiv.style.display = 'block';
+}
+
+function startMigration() {
+    if (migrationStarted) return;
+    migrationStarted = true;
+    
+    addLogEntry('Starting migration process...', 'info');
+    updateProgress(10, 'Initializing migration...');
+    
+    const configFile = '{{ config_file }}';
+    
+    fetch(`{{ url_for('migration.run_migration', migration_id=migration_id) }}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            config_file: configFile
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            addLogEntry('Migration completed successfully!', 'success');
+            updateProgress(100, 'Migration completed');
+            
+            showResults(data.results);
+            
+            document.getElementById('statusAlert').className = 'alert alert-success';
+            document.getElementById('statusAlert').innerHTML = `
+                <i class="fas fa-check-circle me-2"></i>
+                Migration completed successfully! Migrated ${data.total_migrated} books total.
+            `;
+            
+            document.getElementById('cancelBtn').style.display = 'none';
+            document.getElementById('continueBtn').style.display = 'inline-block';
+            
+            // Auto-redirect to library after 3 seconds
+            addLogEntry('Redirecting to your library in 3 seconds...', 'info');
+            setTimeout(() => {
+                window.location.href = '{{ url_for("main.library") }}';
+            }, 3000);
+            
+        } else {
+            addLogEntry(`Migration failed: ${data.error}`, 'error');
+            updateProgress(0, 'Migration failed');
+            
+            document.getElementById('statusAlert').className = 'alert alert-danger';
+            document.getElementById('statusAlert').innerHTML = `
+                <i class="fas fa-times-circle me-2"></i>
+                Migration failed: ${data.error}
+            `;
+        }
+    })
+    .catch(error => {
+        addLogEntry(`Error: ${error.message}`, 'error');
+        document.getElementById('statusAlert').className = 'alert alert-danger';
+        document.getElementById('statusAlert').innerHTML = `
+            <i class="fas fa-times-circle me-2"></i>
+            Migration failed due to an error.
+        `;
+    });
+}
+
+function cancelMigration() {
+    if (confirm('Are you sure you want to cancel the migration?')) {
+        window.location.href = '{{ url_for("migration.migration_wizard") }}';
+    }
+}
+
+// Start migration automatically when page loads
+window.addEventListener('load', function() {
+    setTimeout(startMigration, 1000);
+});
+</script>
+{% endblock %}

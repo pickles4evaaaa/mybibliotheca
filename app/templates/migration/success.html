@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Migration Complete{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow border-success">
+                <div class="card-header bg-success text-white">
+                    <h2 class="mb-0">
+                        <i class="fas fa-check-circle me-2"></i>
+                        Migration Complete!
+                    </h2>
+                </div>
+                <div class="card-body text-center">
+                    <div class="mb-4">
+                        <i class="fas fa-check-circle text-success" style="font-size: 4rem;"></i>
+                    </div>
+                    
+                    <h3 class="text-success mb-3">Successfully Migrated!</h3>
+                    <p class="lead">Your SQLite database has been successfully migrated to Redis.</p>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Your books, users, and reading data are now available in your new MyBibliotheca installation.
+                    </div>
+                    
+                    <div class="row mt-4">
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h5><i class="fas fa-book me-2 text-primary"></i>Books</h5>
+                                    <p class="mb-0">All your books with metadata, ratings, and categories</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h5><i class="fas fa-chart-line me-2 text-success"></i>Reading Data</h5>
+                                    <p class="mb-0">Reading logs, progress, and personal notes</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <a href="{{ url_for('main.library') }}" class="btn btn-primary btn-lg me-3">
+                            <i class="fas fa-book-open me-2"></i>View Library
+                        </a>
+                        <a href="{{ url_for('main.index') }}" class="btn btn-outline-primary">
+                            <i class="fas fa-home me-2"></i>Go to Dashboard
+                        </a>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="text-muted">
+                        <h5>What's Next?</h5>
+                        <ul class="list-unstyled">
+                            <li><i class="fas fa-plus-circle me-2 text-success"></i>Add new books to your library</li>
+                            <li><i class="fas fa-cog me-2 text-info"></i>Customize your reading preferences</li>
+                            <li><i class="fas fa-users me-2 text-warning"></i>Invite other users to join your library</li>
+                            <li><i class="fas fa-chart-bar me-2 text-primary"></i>Explore your reading statistics</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

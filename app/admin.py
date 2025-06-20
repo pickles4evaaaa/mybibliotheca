@@ -3,12 +3,14 @@ Admin functionality for Bibliotheca multi-user platform
 Provides admin-only decorators, middleware, and management functions
 """
 
+import os
 from functools import wraps
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort, current_app
 from flask_login import login_required, current_user
 from .services import user_service, book_service, reading_log_service
 from .forms import UserProfileForm, AdminPasswordResetForm
 from datetime import datetime, timedelta, timezone
+import os
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -283,18 +285,18 @@ def settings():
     redis_client = get_graph_storage().redis
     
     if request.method == 'POST':
-        site_name = request.form.get('site_name', 'Bibliotheca')
+        site_name = request.form.get('site_name', 'MyBibliotheca')
         # Store the site name in Redis
         redis_client.set('site_name', site_name)
         flash(f'Settings updated! Site name set to: {site_name}', 'success')
         return redirect(url_for('admin.settings'))
     
-    # Get the current site name from Redis, default to 'Bibliotheca'
+    # Get the current site name from Redis, default to 'MyBibliotheca'
     current_site_name = redis_client.get('site_name')
     if current_site_name:
         current_site_name = current_site_name.decode('utf-8') if isinstance(current_site_name, bytes) else current_site_name
     else:
-        current_site_name = 'Bibliotheca'
+        current_site_name = 'MyBibliotheca'
     
     return render_template('admin/settings.html', title='Admin Settings', site_name=current_site_name)
 
@@ -367,6 +369,49 @@ def unlock_user_account(user_id):
         current_app.logger.error(f"Error unlocking user account {user_id}: {e}")
         flash('Error unlocking user account.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
+
+@admin.route('/migration')
+@login_required
+@admin_required
+def migration_management():
+    """Migration management page for admins"""
+    try:
+        from .migration_detector import MigrationDetector
+        detector = MigrationDetector()
+        databases = detector.find_sqlite_databases()
+        
+        migration_info = {
+            'databases_found': len(databases),
+            'migration_available': len(databases) > 0,
+            'databases': []
+        }
+        
+        for db_path in databases:
+            info = detector.analyze_database(db_path)
+            migration_info['databases'].append({
+                'path': db_path,
+                'filename': os.path.basename(db_path),
+                'version': info.get('version', 'unknown'),
+                'books': info.get('total_books', 0),
+                'users': info.get('total_users', 0),
+                'reading_logs': info.get('total_reading_logs', 0),
+                'size_mb': round(os.path.getsize(db_path) / (1024 * 1024), 2) if os.path.exists(db_path) else 0
+            })
+        
+        return render_template('admin/migration.html',
+                             title='Database Migration',
+                             migration_info=migration_info)
+    
+    except Exception as e:
+        current_app.logger.error(f"Error loading migration info: {e}")
+        flash('Error loading migration information.', 'danger')
+        return render_template('admin/migration.html',
+                             title='Database Migration',
+                             migration_info={
+                                 'databases_found': 0,
+                                 'migration_available': False,
+                                 'databases': []
+                             })
 
 def get_system_stats():
     """Get system statistics for admin dashboard"""

@@ -48,6 +48,21 @@
                         <h5 class="mb-0">🔗 Field Mapping</h5>
                     </div>
                     <div class="card-body">
+                        <!-- Import Template Selection -->
+                        <div class="mb-4">
+                            <label for="import_template" class="form-label">🔧 Import Template (Optional)</label>
+                            <select class="form-select" id="import_template" name="import_template" onchange="applyTemplate()">
+                                <option value="">-- No Template (Map Manually) --</option>
+                                {% for template in import_templates %}
+                                <option value="{{ template.name }}" data-mappings="{{ template.field_mappings | tojson | e }}">
+                                    {{ template.name }}
+                                    <span class="text-muted">({{ template.description }})</span>
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Import templates save your field mappings for reuse with similar CSV files.</div>
+                        </div>
+
                         <div class="row">
                             {% for header in csv_headers %}
                             <div class="col-md-6 mb-3">
@@ -55,24 +70,81 @@
                                     <strong>{{ header }}</strong>
                                     <span class="text-muted">(CSV Column)</span>
                                 </label>
-                                <select class="form-select" name="field_mapping[{{ header }}]">
+                                <select class="form-select mapping-select" name="field_mapping[{{ header }}]" data-csv-field="{{ header }}">
                                     <option value="">-- Don't Import --</option>
-                                    <option value="title" {% if suggested_mappings.get(header) == 'title' %}selected{% endif %}>Title</option>
-                                    <option value="author" {% if suggested_mappings.get(header) == 'author' %}selected{% endif %}>Author</option>
-                                    <option value="isbn" {% if suggested_mappings.get(header) == 'isbn' %}selected{% endif %}>ISBN</option>
-                                    <option value="description" {% if suggested_mappings.get(header) == 'description' %}selected{% endif %}>Description</option>
-                                    <option value="publisher" {% if suggested_mappings.get(header) == 'publisher' %}selected{% endif %}>Publisher</option>
-                                    <option value="publication_year" {% if suggested_mappings.get(header) == 'publication_year' %}selected{% endif %}>Publication Year</option>
-                                    <option value="page_count" {% if suggested_mappings.get(header) == 'page_count' %}selected{% endif %}>Page Count</option>
-                                    <option value="language" {% if suggested_mappings.get(header) == 'language' %}selected{% endif %}>Language</option>
-                                    <option value="categories" {% if suggested_mappings.get(header) == 'categories' %}selected{% endif %}>Categories/Genres</option>
-                                    <option value="rating" {% if suggested_mappings.get(header) == 'rating' %}selected{% endif %}>My Rating</option>
-                                    <option value="reading_status" {% if suggested_mappings.get(header) == 'reading_status' %}selected{% endif %}>Reading Status</option>
-                                    <option value="date_read" {% if suggested_mappings.get(header) == 'date_read' %}selected{% endif %}>Date Read</option>
-                                    <option value="date_added" {% if suggested_mappings.get(header) == 'date_added' %}selected{% endif %}>Date Added</option>
-                                    <option value="notes" {% if suggested_mappings.get(header) == 'notes' %}selected{% endif %}>Notes/Review</option>
-                                    <option value="tags" {% if suggested_mappings.get(header) == 'tags' %}selected{% endif %}>Tags/Shelves</option>
+                                    
+                                    <optgroup label="📚 Standard Book Fields">
+                                        <option value="title" {% if suggested_mappings.get(header) == 'title' %}selected{% endif %}>Title</option>
+                                        <option value="author" {% if suggested_mappings.get(header) == 'author' %}selected{% endif %}>Author</option>
+                                        <option value="isbn" {% if suggested_mappings.get(header) == 'isbn' %}selected{% endif %}>ISBN</option>
+                                        <option value="description" {% if suggested_mappings.get(header) == 'description' %}selected{% endif %}>Description</option>
+                                        <option value="publisher" {% if suggested_mappings.get(header) == 'publisher' %}selected{% endif %}>Publisher</option>
+                                        <option value="publication_year" {% if suggested_mappings.get(header) == 'publication_year' %}selected{% endif %}>Publication Year</option>
+                                        <option value="page_count" {% if suggested_mappings.get(header) == 'page_count' %}selected{% endif %}>Page Count</option>
+                                        <option value="language" {% if suggested_mappings.get(header) == 'language' %}selected{% endif %}>Language</option>
+                                        <option value="categories" {% if suggested_mappings.get(header) == 'categories' %}selected{% endif %}>Categories/Genres</option>
+                                    </optgroup>
+                                    
+                                    <optgroup label="👤 Personal Reading Data">
+                                        <option value="rating" {% if suggested_mappings.get(header) == 'rating' %}selected{% endif %}>My Rating</option>
+                                        <option value="reading_status" {% if suggested_mappings.get(header) == 'reading_status' %}selected{% endif %}>Reading Status</option>
+                                        <option value="date_read" {% if suggested_mappings.get(header) == 'date_read' %}selected{% endif %}>Date Read</option>
+                                        <option value="date_added" {% if suggested_mappings.get(header) == 'date_added' %}selected{% endif %}>Date Added</option>
+                                        <option value="notes" {% if suggested_mappings.get(header) == 'notes' %}selected{% endif %}>Notes/Review</option>
+                                        <option value="tags" {% if suggested_mappings.get(header) == 'tags' %}selected{% endif %}>Tags/Shelves</option>
+                                    </optgroup>
+                                    
+                                    {% if global_custom_fields %}
+                                    <optgroup label="🌍 Global Custom Fields">
+                                        {% for field in global_custom_fields %}
+                                        <option value="custom_global_{{ field.name }}" 
+                                                {% if suggested_mappings.get(header) == 'custom_global_' + field.name %}selected{% endif %}>
+                                            {{ field.display_name }} ({{ field.field_type }})
+                                        </option>
+                                        {% endfor %}
+                                    </optgroup>
+                                    {% endif %}
+                                    
+                                    {% if personal_custom_fields %}
+                                    <optgroup label="👤 Personal Custom Fields">
+                                        {% for field in personal_custom_fields %}
+                                        <option value="custom_personal_{{ field.name }}" 
+                                                {% if suggested_mappings.get(header) == 'custom_personal_' + field.name %}selected{% endif %}>
+                                            {{ field.display_name }} ({{ field.field_type }})
+                                        </option>
+                                        {% endfor %}
+                                    </optgroup>
+                                    {% endif %}
+                                    
+                                    <optgroup label="➕ Create New Custom Field">
+                                        <option value="create_global_field">Create New Global Field...</option>
+                                        <option value="create_personal_field">Create New Personal Field...</option>
+                                    </optgroup>
                                 </select>
+                                
+                                <!-- Dynamic field creation inputs (hidden by default) -->
+                                <div class="create-field-inputs mt-2" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <input type="text" class="form-control form-control-sm" 
+                                                   placeholder="Field Label" 
+                                                   name="new_field_label[{{ header }}]">
+                                        </div>
+                                        <div class="col-6">
+                                            <select class="form-select form-select-sm" name="new_field_type[{{ header }}]">
+                                                <option value="text">Text</option>
+                                                <option value="number">Number</option>
+                                                <option value="date">Date</option>
+                                                <option value="boolean">Yes/No</option>
+                                                <option value="rating">Rating (1-5)</option>
+                                                <option value="tags">Tags (comma-separated)</option>
+                                                <option value="url">URL</option>
+                                                <option value="email">Email</option>
+                                                <option value="textarea">Long Text</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             {% endfor %}
                         </div>
@@ -104,6 +176,24 @@
                                     <option value="create_new">Create New Copy</option>
                                 </select>
                                 <div class="form-text">How to handle books that already exist</div>
+                            </div>
+                        </div>
+                        
+                        <hr>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="save_as_template" name="save_as_template">
+                                    <label class="form-check-label" for="save_as_template">
+                                        Save this mapping as template
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <input type="text" class="form-control" id="template_name" name="template_name" 
+                                       placeholder="Template name..." disabled>
+                                <div class="form-text">Save these mappings for future imports</div>
                             </div>
                         </div>
                     </div>
@@ -149,10 +239,94 @@
 </div>
 
 <script>
+// Handle template application
+function applyTemplate() {
+    const templateSelect = document.getElementById('import_template');
+    const selectedOption = templateSelect.options[templateSelect.selectedIndex];
+    
+    if (selectedOption.value && selectedOption.dataset.mappings) {
+        try {
+            const mappings = JSON.parse(selectedOption.dataset.mappings);
+            
+            // Apply mappings to form
+            document.querySelectorAll('.mapping-select').forEach(select => {
+                const csvField = select.dataset.csvField;
+                if (mappings[csvField]) {
+                    select.value = mappings[csvField];
+                    handleFieldSelection(select);
+                }
+            });
+        } catch (e) {
+            console.error('Error applying template:', e);
+        }
+    }
+}
+
+// Handle dynamic field creation options
+function handleFieldSelection(selectElement) {
+    const createInputs = selectElement.parentElement.querySelector('.create-field-inputs');
+    const value = selectElement.value;
+    
+    if (value === 'create_global_field' || value === 'create_personal_field') {
+        createInputs.style.display = 'block';
+    } else {
+        createInputs.style.display = 'none';
+    }
+}
+
+// Handle save as template checkbox
+document.getElementById('save_as_template').addEventListener('change', function() {
+    const templateNameInput = document.getElementById('template_name');
+    templateNameInput.disabled = !this.checked;
+    if (this.checked) {
+        templateNameInput.focus();
+    } else {
+        templateNameInput.value = '';
+    }
+});
+
+// Add event listeners to all mapping selects
+document.querySelectorAll('.mapping-select').forEach(select => {
+    select.addEventListener('change', function() {
+        handleFieldSelection(this);
+    });
+});
+
+// Form submission handling
 document.getElementById('mappingForm').addEventListener('submit', function(e) {
     const submitBtn = this.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting Import...';
+    
+    // Validate template name if saving as template
+    const saveAsTemplate = document.getElementById('save_as_template').checked;
+    const templateName = document.getElementById('template_name').value.trim();
+    
+    if (saveAsTemplate && !templateName) {
+        e.preventDefault();
+        alert('Please enter a template name or uncheck "Save as template"');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-play"></i> Start Import';
+        return;
+    }
+    
+    // Validate that at least one field is mapped
+    const mappingSelects = document.querySelectorAll('.mapping-select');
+    let hasMappings = false;
+    
+    mappingSelects.forEach(select => {
+        if (select.value && select.value !== '') {
+            hasMappings = true;
+        }
+    });
+    
+    if (!hasMappings) {
+        e.preventDefault();
+        alert('Please map at least one CSV column to a book field before starting the import.');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-play"></i> Start Import';
+        return;
+    }
 });
 </script>
 {% endblock %}

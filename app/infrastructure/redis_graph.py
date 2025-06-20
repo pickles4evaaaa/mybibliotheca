@@ -19,6 +19,26 @@ from ..domain.models import Book, User, Author
 logger = logging.getLogger(__name__)
 
 
+def serialize_datetime_values(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively serialize datetime objects in a dictionary to ISO format strings."""
+    serialized = {}
+    for key, value in data.items():
+        if isinstance(value, datetime):
+            serialized[key] = value.isoformat()
+        elif isinstance(value, dict):
+            serialized[key] = serialize_datetime_values(value)
+        elif isinstance(value, list):
+            serialized[key] = [
+                item.isoformat() if isinstance(item, datetime) 
+                else serialize_datetime_values(item) if isinstance(item, dict)
+                else item
+                for item in value
+            ]
+        else:
+            serialized[key] = value
+    return serialized
+
+
 class RedisGraphConnection:
     """Redis connection manager for graph operations."""
     
@@ -88,14 +108,23 @@ class RedisGraphStorage:
         """Store a node as a JSON document."""
         try:
             key = f"node:{node_type}:{node_id}"
+            
+            # Serialize any datetime objects in data
+            serialized_data = {}
+            for field, value in data.items():
+                if isinstance(value, datetime):
+                    serialized_data[field] = value.isoformat()
+                else:
+                    serialized_data[field] = value
+            
             # Add metadata
-            data['_type'] = node_type
-            data['_id'] = node_id
-            data['_created_at'] = data.get('_created_at', datetime.utcnow().isoformat())
-            data['_updated_at'] = datetime.utcnow().isoformat()
+            serialized_data['_type'] = node_type
+            serialized_data['_id'] = node_id
+            serialized_data['_created_at'] = serialized_data.get('_created_at', datetime.utcnow().isoformat())
+            serialized_data['_updated_at'] = datetime.utcnow().isoformat()
             
             # Store as JSON
-            self.redis.json().set(key, '$', data)
+            self.redis.json().set(key, '$', serialized_data)
             
             # Add to type index
             self.redis.sadd(f"index:type:{node_type}", node_id)
@@ -205,12 +234,15 @@ class RedisGraphStorage:
                           to_type: str, to_id: str, properties: Dict[str, Any] = None) -> bool:
         """Create a relationship between two nodes."""
         try:
+            # Serialize any datetime objects in properties
+            serialized_properties = serialize_datetime_values(properties or {})
+            
             # Store forward relationship
             forward_key = f"rel:{from_type}:{from_id}:{relationship}"
             rel_data = {
                 'to_type': to_type,
                 'to_id': to_id,
-                'properties': properties or {},
+                'properties': serialized_properties,
                 'created_at': datetime.utcnow().isoformat()
             }
             self.redis.sadd(forward_key, json.dumps(rel_data))
@@ -220,7 +252,7 @@ class RedisGraphStorage:
             reverse_data = {
                 'from_type': from_type,
                 'from_id': from_id,
-                'properties': properties or {},
+                'properties': serialized_properties,
                 'created_at': datetime.utcnow().isoformat()
             }
             self.redis.sadd(reverse_key, json.dumps(reverse_data))

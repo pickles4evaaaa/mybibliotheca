@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Custom Metadata - {{ book.title }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1>Edit Custom Metadata</h1>
+                    <h4 class="text-muted">{{ book.title }}</h4>
+                    {% if book.authors %}
+                        <p class="text-muted">by {{ book.authors[0].name }}</p>
+                    {% endif %}
+                </div>
+                <div>
+                    <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left"></i> Back to Book
+                    </a>
+                </div>
+            </div>
+            
+            <form method="POST">
+                <div class="row">
+                    <!-- Global Metadata -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-globe"></i> Global Metadata
+                                </h5>
+                                <small class="text-muted">Shared with all users of this book</small>
+                            </div>
+                            <div class="card-body">
+                                {% if global_fields %}
+                                    {% for field in global_fields %}
+                                    <div class="mb-3">
+                                        {{ render_custom_field(field, global_metadata.get(field.name, ''), 'global_' + field.name) }}
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="text-center py-4">
+                                        <i class="fas fa-plus-circle fa-2x text-muted mb-2"></i>
+                                        <p class="text-muted">No global custom fields available.</p>
+                                        <a href="{{ url_for('metadata.create_field') }}" class="btn btn-outline-primary btn-sm">
+                                            Create Global Field
+                                        </a>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Personal Metadata -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-user"></i> Personal Metadata
+                                </h5>
+                                <small class="text-muted">Only visible to you</small>
+                            </div>
+                            <div class="card-body">
+                                {% if personal_fields %}
+                                    {% for field in personal_fields %}
+                                    <div class="mb-3">
+                                        {{ render_custom_field(field, personal_metadata.get(field.name, ''), 'personal_' + field.name) }}
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="text-center py-4">
+                                        <i class="fas fa-plus-circle fa-2x text-muted mb-2"></i>
+                                        <p class="text-muted">No personal custom fields available.</p>
+                                        <a href="{{ url_for('metadata.create_field') }}" class="btn btn-outline-primary btn-sm">
+                                            Create Personal Field
+                                        </a>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                {% if global_fields or personal_fields %}
+                <div class="row">
+                    <div class="col-12">
+                        <div class="d-flex justify-content-between">
+                            <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" class="btn btn-secondary">
+                                Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Save Custom Metadata
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Macro for rendering custom fields -->
+{% macro render_custom_field(field, current_value, input_name) %}
+    <div class="custom-field-group">
+        <label for="{{ input_name }}" class="form-label">
+            {{ field.display_name }}
+            {% if field.description %}
+                <i class="fas fa-info-circle text-muted" title="{{ field.description }}" data-bs-toggle="tooltip"></i>
+            {% endif %}
+        </label>
+        
+        {% if field.field_type.value == 'text' %}
+            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+        
+        {% elif field.field_type.value == 'textarea' %}
+            <textarea class="form-control" id="{{ input_name }}" name="{{ input_name }}" rows="3"
+                      placeholder="{{ field.placeholder_text or '' }}">{{ current_value }}</textarea>
+        
+        {% elif field.field_type.value == 'number' %}
+            <input type="number" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" step="any" placeholder="{{ field.placeholder_text or '' }}">
+        
+        {% elif field.field_type.value == 'boolean' %}
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="{{ input_name }}" name="{{ input_name }}"
+                       {% if current_value %}checked{% endif %}>
+                <label class="form-check-label" for="{{ input_name }}">
+                    {{ field.help_text or 'Yes' }}
+                </label>
+            </div>
+        
+        {% elif field.field_type.value == 'date' %}
+            <input type="date" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}">
+        
+        {% elif field.field_type.value in ['rating_5', 'rating_10'] %}
+            {% set max_rating = 5 if field.field_type.value == 'rating_5' else 10 %}
+            <div class="rating-input">
+                <select class="form-select" id="{{ input_name }}" name="{{ input_name }}">
+                    <option value="">No rating</option>
+                    {% for i in range(1, max_rating + 1) %}
+                        <option value="{{ i }}" {% if current_value == i %}selected{% endif %}>
+                            {{ i }}/{{ max_rating }}
+                            {% if field.rating_labels.get(i) %}
+                                - {{ field.rating_labels[i] }}
+                            {% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+        
+        {% elif field.field_type.value in ['list', 'tags'] %}
+            {% if field.predefined_options %}
+                <div class="predefined-options mb-2">
+                    {% for option in field.predefined_options %}
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" 
+                                   id="{{ input_name }}_{{ loop.index }}" 
+                                   value="{{ option }}"
+                                   {% if option in (current_value if current_value is iterable and current_value is not string else []) %}checked{% endif %}>
+                            <label class="form-check-label" for="{{ input_name }}_{{ loop.index }}">
+                                {{ option }}
+                            </label>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+            
+            {% if field.allow_custom_options or not field.predefined_options %}
+                <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                       value="{% if current_value is iterable and current_value is not string %}{{ current_value | join(', ') }}{% else %}{{ current_value }}{% endif %}"
+                       placeholder="{{ field.placeholder_text or 'Enter comma-separated values' }}">
+            {% endif %}
+        
+        {% elif field.field_type.value == 'url' %}
+            <input type="url" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or 'https://...' }}">
+        
+        {% elif field.field_type.value == 'email' %}
+            <input type="email" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or 'user@example.com' }}">
+        
+        {% else %}
+            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+        {% endif %}
+        
+        {% if field.help_text and field.field_type.value != 'boolean' %}
+            <div class="form-text">{{ field.help_text }}</div>
+        {% endif %}
+    </div>
+{% endmacro %}
+
+<script>
+// Initialize tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+    
+    // Handle predefined option checkboxes for list/tags fields
+    const checkboxes = document.querySelectorAll('.predefined-options input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const fieldName = this.id.split('_').slice(0, -1).join('_');
+            const textInput = document.getElementById(fieldName);
+            
+            if (textInput) {
+                const checkedOptions = Array.from(document.querySelectorAll(`input[id^="${fieldName}_"]:checked`))
+                    .map(cb => cb.value);
+                textInput.value = checkedOptions.join(', ');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

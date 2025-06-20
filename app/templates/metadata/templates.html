@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Import Templates{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1>Import Templates</h1>
+                <a href="{{ url_for('main.import_books') }}" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Import Books
+                </a>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Your Saved Templates</h5>
+                </div>
+                <div class="card-body">
+                    {% if user_templates %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Source Type</th>
+                                        <th>Fields Mapped</th>
+                                        <th>Usage</th>
+                                        <th>Last Used</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for template in user_templates %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ template.name }}</strong>
+                                            {% if template.description %}
+                                            <br><small class="text-muted">{{ template.description }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <span class="badge badge-secondary">{{ template.source_type|title }}</span>
+                                        </td>
+                                        <td>{{ template.field_mappings|length }} fields</td>
+                                        <td>{{ template.times_used }}</td>
+                                        <td>
+                                            {% if template.last_used %}
+                                                {{ template.last_used.strftime('%Y-%m-%d') }}
+                                            {% else %}
+                                                <span class="text-muted">Never</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button type="button" class="btn btn-outline-info" 
+                                                        onclick="viewTemplate('{{ template.id }}')">
+                                                    View
+                                                </button>
+                                                <button type="button" class="btn btn-outline-danger" 
+                                                        onclick="confirmDeleteTemplate('{{ template.id }}', '{{ template.name }}')">
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="fas fa-file-import fa-3x text-muted mb-3"></i>
+                            <h5>No Import Templates Yet</h5>
+                            <p class="text-muted">Import templates are automatically created when you import books and map CSV columns.</p>
+                            <p class="text-muted">They save your field mappings so you don't have to re-map the same CSV format each time.</p>
+                            <a href="{{ url_for('main.import_books') }}" class="btn btn-primary">
+                                Start Your First Import
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            {% if user_templates %}
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="mb-0">Template Usage Tips</h6>
+                </div>
+                <div class="card-body">
+                    <ul class="mb-0">
+                        <li><strong>Automatic Detection:</strong> When importing, we'll automatically suggest templates that match your CSV headers</li>
+                        <li><strong>Reusable Mappings:</strong> Templates save how you mapped columns to fields, including custom field definitions</li>
+                        <li><strong>Time Saving:</strong> Use templates to quickly import similar CSV files without re-mapping everything</li>
+                        <li><strong>Shareable:</strong> In the future, you'll be able to share useful templates with other users</li>
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Template View Modal -->
+<div class="modal fade" id="templateViewModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Template Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="templateDetails">
+                    <!-- Template details will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteTemplateModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the template "<span id="deleteTemplateName"></span>"?</p>
+                <p><strong>Note:</strong> This will only delete the template, not any books that were imported using it.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteTemplateForm" method="POST" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">Delete Template</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function viewTemplate(templateId) {
+    // TODO: Load and display template details
+    alert('Template view functionality will be implemented in the next phase');
+}
+
+function confirmDeleteTemplate(templateId, templateName) {
+    document.getElementById('deleteTemplateName').textContent = templateName;
+    document.getElementById('deleteTemplateForm').action = "{{ url_for('metadata.delete_template', template_id='TEMPLATE_ID') }}".replace('TEMPLATE_ID', templateId);
+    
+    // Show modal (Bootstrap 5 syntax)
+    const modal = new bootstrap.Modal(document.getElementById('deleteTemplateModal'));
+    modal.show();
+}
+</script>
+{% endblock %}

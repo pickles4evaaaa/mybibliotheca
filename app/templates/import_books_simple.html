@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Import Books - Custom Metadata Demo</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">📚 Custom Metadata Demo</a>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2>📚 Import Books with Custom Metadata</h2>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="row">
+            <div class="col-lg-8">
+                <!-- Upload CSV File -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h3 class="card-title">📁 Upload CSV File</h3>
+                        <p class="card-text">Upload a CSV file to see our enhanced mapping interface with custom metadata support.</p>
+                        
+                        <div class="alert alert-info">
+                            <h6 class="alert-heading">📝 Demo Features:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Custom Field Mapping:</strong> Map CSV columns to custom metadata fields</li>
+                                <li><strong>Dynamic Field Creation:</strong> Create new custom fields during import</li>
+                                <li><strong>Import Templates:</strong> Save and reuse field mappings</li>
+                                <li><strong>Auto-Detection:</strong> Smart field suggestions</li>
+                            </ul>
+                        </div>
+                        
+                        <form method="POST" enctype="multipart/form-data">
+                            <div class="mb-3">
+                                <label for="csv_file" class="form-label">Choose CSV File</label>
+                                <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                                <div class="form-text">Supported formats: CSV files with headers</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-upload"></i> Upload and Map Fields
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Sample Data -->
+                <div class="card">
+                    <div class="card-body">
+                        <h3 class="card-title">📊 Try with Sample Data</h3>
+                        <p>Don't have a CSV file? <a href="/sample_books.csv" download>Download our sample CSV</a> with custom metadata fields to test the system.</p>
+                        
+                        <p><strong>Sample CSV includes:</strong></p>
+                        <ul>
+                            <li>Standard fields: Title, Author, ISBN, Rating</li>
+                            <li>Custom fields: Reading Pace, Emotional Impact, Personal Tags</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-title">🎯 What You'll See</h6>
+                        <p class="small">After uploading, you'll see our enhanced mapping interface featuring:</p>
+                        <ul class="small">
+                            <li><strong>Smart Auto-Detection:</strong> Automatically suggests field mappings</li>
+                            <li><strong>Custom Field Options:</strong> Map to existing custom fields or create new ones</li>
+                            <li><strong>Template Support:</strong> Save mappings for future imports</li>
+                            <li><strong>Field Validation:</strong> Ensures data integrity</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-body">
+                        <h6 class="card-title">🌟 Custom Field Types</h6>
+                        <div class="small">
+                            <p><strong>Global Fields (shared):</strong></p>
+                            <ul>
+                                <li>Reading Pace (Text)</li>
+                                <li>Book Condition (Text)</li>
+                                <li>Purchase Price (Number)</li>
+                            </ul>
+                            
+                            <p><strong>Personal Fields (private):</strong></p>
+                            <ul>
+                                <li>Emotional Impact (Rating 1-5)</li>
+                                <li>Reread Likelihood (Rating 1-5)</li>
+                                <li>Personal Tags (Tags)</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

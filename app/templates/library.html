@@ -10,11 +10,30 @@
     --gold: #DAA520;
     --shadow: rgba(0,0,0,0.1);
     --hover-shadow: rgba(0,0,0,0.2);
+    --text-color: #333;
+    --header-text: white;
+    --card-bg: white;
+    --card-text: #333;
+  }
+
+  /* Dark mode overrides */
+  [data-theme="dark"] {
+    --primary-brown: #6b5b73;
+    --light-brown: #8a7ca8;
+    --cream: #2d2d2d;
+    --warm-white: #1e1e1e;
+    --gold: #f0c674;
+    --shadow: rgba(0,0,0,0.3);
+    --hover-shadow: rgba(0,0,0,0.5);
+    --text-color: #e0e0e0;
+    --header-text: #f0c674;
+    --card-bg: #2d2d2d;
+    --card-text: #e0e0e0;
   }
 
   .library-header {
     background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
-    color: white;
+    color: var(--header-text);
     padding: 2rem 0;
     margin-bottom: 2rem;
     border-radius: 15px;
@@ -44,6 +63,61 @@
 
   .library-header p {
     font-size: clamp(0.9rem, 2vw, 1.25rem);
+  }
+
+  /* Dark mode styling */
+  [data-theme="dark"] .library-header h1 {
+    color: var(--header-text) !important;
+  }
+
+  [data-theme="dark"] .library-header p {
+    color: var(--header-text) !important;
+    opacity: 0.9;
+  }
+
+  [data-theme="dark"] .library-stats {
+    background: var(--card-bg) !important;
+    border-color: #404040 !important;
+    color: var(--card-text) !important;
+  }
+
+  [data-theme="dark"] .filter-section {
+    background: var(--card-bg) !important;
+    border-color: #404040 !important;
+    color: var(--card-text) !important;
+  }
+
+  [data-theme="dark"] .card {
+    background-color: var(--card-bg) !important;
+    border-color: #404040 !important;
+    color: var(--card-text) !important;
+  }
+
+  [data-theme="dark"] .card-body {
+    background-color: var(--card-bg) !important;
+    color: var(--card-text) !important;
+  }
+
+  [data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+  }
+
+  [data-theme="dark"] .filter-title {
+    color: var(--gold) !important;
+  }
+
+  [data-theme="dark"] .btn-outline-primary {
+    border-color: #6ea8fe;
+    color: #6ea8fe;
+  }
+
+  [data-theme="dark"] .btn-outline-secondary {
+    border-color: #6c757d;
+    color: #6c757d;
+  }
+
+  [data-theme="dark"] h5 {
+    color: var(--card-text) !important;
   }
 
   .library-stats {

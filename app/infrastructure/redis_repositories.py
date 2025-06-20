@@ -11,8 +11,8 @@ from datetime import datetime, date
 from dataclasses import asdict
 from enum import Enum
 
-from ..domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingStatus, OwnershipStatus, MediaType
-from ..domain.repositories import BookRepository, UserRepository, AuthorRepository, UserBookRepository
+from ..domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingStatus, OwnershipStatus, MediaType, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
+from ..domain.repositories import BookRepository, UserRepository, AuthorRepository, UserBookRepository, CustomFieldRepository, ImportMappingRepository
 from .redis_graph import RedisGraphStorage
 
 
@@ -713,3 +713,237 @@ class RedisUserBookRepository(UserBookRepository):
             # Add more filter criteria as needed
         
         return True
+
+
+class RedisCustomFieldRepository(CustomFieldRepository):
+    """Redis-based implementation of CustomFieldRepository."""
+    
+    def __init__(self, storage: RedisGraphStorage):
+        self.storage = storage
+    
+    async def create(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Create a new custom field definition."""
+        if not field_def.id:
+            field_def.id = str(uuid.uuid4())
+        
+        field_data = asdict(field_def)
+        field_data = _serialize_for_json(field_data)
+        
+        success = self.storage.store_node('custom_field', field_def.id, field_data)
+        if not success:
+            raise Exception(f"Failed to create custom field {field_def.id}")
+        
+        return field_def
+    
+    async def get_by_id(self, field_id: str) -> Optional[CustomFieldDefinition]:
+        """Get a custom field definition by ID."""
+        field_data = self.storage.get_node('custom_field', field_id)
+        if not field_data:
+            return None
+        
+        return self._data_to_custom_field(field_data)
+    
+    async def get_by_user(self, user_id: str) -> List[CustomFieldDefinition]:
+        """Get all custom field definitions created by a user."""
+        search_results = self.storage.search_nodes('custom_field', {'created_by_user_id': user_id})
+        return [self._data_to_custom_field(data) for data in search_results]
+    
+    async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Get all shareable custom field definitions."""
+        search_results = self.storage.search_nodes('custom_field', {'is_shareable': True})
+        fields = [self._data_to_custom_field(data) for data in search_results]
+        
+        if exclude_user_id:
+            fields = [f for f in fields if f.created_by_user_id != exclude_user_id]
+        
+        return sorted(fields, key=lambda x: x.usage_count, reverse=True)
+    
+    async def search(self, query: str, user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Search custom field definitions."""
+        # For now, simple text matching - could be enhanced with fuzzy search
+        all_fields = []
+        
+        if user_id:
+            user_fields = await self.get_by_user(user_id)
+            all_fields.extend(user_fields)
+        
+        shareable_fields = await self.get_shareable(exclude_user_id=user_id)
+        all_fields.extend(shareable_fields)
+        
+        query_lower = query.lower()
+        matching_fields = [
+            field for field in all_fields
+            if query_lower in field.name.lower() or 
+               query_lower in field.display_name.lower() or
+               (field.description and query_lower in field.description.lower())
+        ]
+        
+        return matching_fields
+    
+    async def update(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Update an existing custom field definition."""
+        field_def.updated_at = datetime.utcnow()
+        field_data = asdict(field_def)
+        field_data = _serialize_for_json(field_data)
+        
+        success = self.storage.store_node('custom_field', field_def.id, field_data)
+        if not success:
+            raise Exception(f"Failed to update custom field {field_def.id}")
+        
+        return field_def
+    
+    async def delete(self, field_id: str) -> bool:
+        """Delete a custom field definition."""
+        return self.storage.delete_node('custom_field', field_id)
+    
+    async def increment_usage(self, field_id: str) -> None:
+        """Increment usage count for a field definition."""
+        field_def = await self.get_by_id(field_id)
+        if field_def:
+            field_def.usage_count += 1
+            await self.update(field_def)
+    
+    async def get_popular(self, limit: int = 20) -> List[CustomFieldDefinition]:
+        """Get most popular shareable custom field definitions."""
+        shareable_fields = await self.get_shareable()
+        return sorted(shareable_fields, key=lambda x: x.usage_count, reverse=True)[:limit]
+    
+    def _data_to_custom_field(self, data: Dict[str, Any]) -> CustomFieldDefinition:
+        """Convert stored data to CustomFieldDefinition object."""
+        # Parse datetime fields
+        created_at = datetime.fromisoformat(data['created_at']) if data.get('created_at') else datetime.utcnow()
+        updated_at = datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else datetime.utcnow()
+        
+        # Parse enum
+        field_type = CustomFieldType(data.get('field_type', 'text'))
+        
+        return CustomFieldDefinition(
+            id=data.get('id'),
+            name=data.get('name', ''),
+            display_name=data.get('display_name', ''),
+            field_type=field_type,
+            description=data.get('description'),
+            created_by_user_id=data.get('created_by_user_id', ''),
+            is_shareable=data.get('is_shareable', False),
+            is_global=data.get('is_global', False),
+            default_value=data.get('default_value'),
+            placeholder_text=data.get('placeholder_text'),
+            help_text=data.get('help_text'),
+            predefined_options=data.get('predefined_options', []),
+            allow_custom_options=data.get('allow_custom_options', True),
+            rating_min=data.get('rating_min', 1),
+            rating_max=data.get('rating_max', 5),
+            rating_labels=data.get('rating_labels', {}),
+            usage_count=data.get('usage_count', 0),
+            created_at=created_at,
+            updated_at=updated_at
+        )
+
+
+class RedisImportMappingRepository(ImportMappingRepository):
+    """Redis-based implementation of ImportMappingRepository."""
+    
+    def __init__(self, storage: RedisGraphStorage):
+        self.storage = storage
+    
+    async def create(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Create a new import mapping template."""
+        if not template.id:
+            template.id = str(uuid.uuid4())
+        
+        template_data = asdict(template)
+        template_data = _serialize_for_json(template_data)
+        
+        success = self.storage.store_node('import_mapping', template.id, template_data)
+        if not success:
+            raise Exception(f"Failed to create import mapping template {template.id}")
+        
+        return template
+    
+    async def get_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
+        """Get an import mapping template by ID."""
+        template_data = self.storage.get_node('import_mapping', template_id)
+        if not template_data:
+            return None
+        
+        return self._data_to_import_mapping(template_data)
+    
+    async def get_by_user(self, user_id: str) -> List[ImportMappingTemplate]:
+        """Get all import mapping templates for a user."""
+        search_results = self.storage.search_nodes('import_mapping', {'user_id': user_id})
+        return [self._data_to_import_mapping(data) for data in search_results]
+    
+    async def detect_template(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
+        """Detect matching template based on CSV headers."""
+        user_templates = await self.get_by_user(user_id)
+        
+        # Find template with best header match
+        best_template = None
+        best_match_score = 0
+        
+        for template in user_templates:
+            if not template.sample_headers:
+                continue
+            
+            # Calculate match score based on header overlap
+            header_set = set(headers)
+            sample_set = set(template.sample_headers)
+            
+            # Intersection over union
+            intersection = len(header_set & sample_set)
+            union = len(header_set | sample_set)
+            
+            if union > 0:
+                match_score = intersection / union
+                if match_score > best_match_score and match_score > 0.7:  # 70% similarity threshold
+                    best_match_score = match_score
+                    best_template = template
+        
+        return best_template
+    
+    async def update(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Update an existing import mapping template."""
+        template.updated_at = datetime.utcnow()
+        template_data = asdict(template)
+        template_data = _serialize_for_json(template_data)
+        
+        success = self.storage.store_node('import_mapping', template.id, template_data)
+        if not success:
+            raise Exception(f"Failed to update import mapping template {template.id}")
+        
+        return template
+    
+    async def delete(self, template_id: str) -> bool:
+        """Delete an import mapping template."""
+        return self.storage.delete_node('import_mapping', template_id)
+    
+    async def increment_usage(self, template_id: str) -> None:
+        """Increment usage count and update last used timestamp."""
+        template = await self.get_by_id(template_id)
+        if template:
+            template.times_used += 1
+            template.last_used = datetime.utcnow()
+            await self.update(template)
+    
+    def _data_to_import_mapping(self, data: Dict[str, Any]) -> ImportMappingTemplate:
+        """Convert stored data to ImportMappingTemplate object."""
+        # Parse datetime fields
+        created_at = datetime.fromisoformat(data['created_at']) if data.get('created_at') else datetime.utcnow()
+        updated_at = datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else datetime.utcnow()
+        last_used = None
+        if data.get('last_used'):
+            last_used = datetime.fromisoformat(data['last_used'])
+        
+        return ImportMappingTemplate(
+            id=data.get('id'),
+            user_id=data.get('user_id', ''),
+            name=data.get('name', ''),
+            description=data.get('description'),
+            source_type=data.get('source_type', ''),
+            sample_headers=data.get('sample_headers', []),
+            field_mappings=data.get('field_mappings', {}),
+            times_used=data.get('times_used', 0),
+            last_used=last_used,
+            created_at=created_at,
+            updated_at=updated_at
+        )

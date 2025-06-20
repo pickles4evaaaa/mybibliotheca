@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}Create Custom Field{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">Create Custom Field</h4>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="name" class="form-label">Field Name *</label>
+                                <input type="text" class="form-control" id="name" name="name" required
+                                       placeholder="e.g., reading_pace">
+                                <div class="form-text">Internal name (lowercase, underscores only)</div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="display_name" class="form-label">Display Name *</label>
+                                <input type="text" class="form-control" id="display_name" name="display_name" required
+                                       placeholder="e.g., Reading Pace">
+                                <div class="form-text">User-friendly name shown in UI</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="field_type" class="form-label">Field Type *</label>
+                            <select class="form-select" id="field_type" name="field_type" required onchange="toggleFieldOptions()">
+                                {% for field_type in field_types %}
+                                <option value="{{ field_type.value }}">{{ field_type.value|title }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="2"
+                                      placeholder="Brief description of what this field is for"></textarea>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="is_global" name="is_global">
+                                    <label class="form-check-label" for="is_global">
+                                        Global Field
+                                    </label>
+                                    <div class="form-text">Applied to book data shared by all users (vs. personal to you)</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="is_shareable" name="is_shareable">
+                                    <label class="form-check-label" for="is_shareable">
+                                        Share with Community
+                                    </label>
+                                    <div class="form-text">Allow other users to see and use this field definition</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Rating field options -->
+                        <div id="rating_options" class="mb-3" style="display: none;">
+                            <label class="form-label">Rating Labels (Optional)</label>
+                            <div id="rating_labels_container">
+                                <!-- Rating labels will be populated by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <!-- List/Tags field options -->
+                        <div id="list_options" class="mb-3" style="display: none;">
+                            <label for="predefined_options" class="form-label">Predefined Options</label>
+                            <textarea class="form-control" id="predefined_options" name="predefined_options" rows="2"
+                                      placeholder="Enter comma-separated options (e.g., slow, medium, fast)"></textarea>
+                            <div class="form-text">Leave empty to allow free-form input</div>
+                            
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="allow_custom_options" name="allow_custom_options" checked>
+                                <label class="form-check-label" for="allow_custom_options">
+                                    Allow custom values beyond predefined options
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="default_value" class="form-label">Default Value</label>
+                                <input type="text" class="form-control" id="default_value" name="default_value"
+                                       placeholder="Default value for new books">
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="placeholder_text" class="form-label">Placeholder Text</label>
+                                <input type="text" class="form-control" id="placeholder_text" name="placeholder_text"
+                                       placeholder="Hint text shown in empty fields">
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="help_text" class="form-label">Help Text</label>
+                            <textarea class="form-control" id="help_text" name="help_text" rows="2"
+                                      placeholder="Additional help text to guide users"></textarea>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between">
+                            <a href="{{ url_for('metadata.fields') }}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary">Create Custom Field</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleFieldOptions() {
+    const fieldType = document.getElementById('field_type').value;
+    const ratingOptions = document.getElementById('rating_options');
+    const listOptions = document.getElementById('list_options');
+    
+    // Hide all options first
+    ratingOptions.style.display = 'none';
+    listOptions.style.display = 'none';
+    
+    // Show relevant options
+    if (fieldType === 'rating_5' || fieldType === 'rating_10') {
+        ratingOptions.style.display = 'block';
+        setupRatingLabels(fieldType === 'rating_5' ? 5 : 10);
+    } else if (fieldType === 'list' || fieldType === 'tags') {
+        listOptions.style.display = 'block';
+    }
+}
+
+function setupRatingLabels(maxRating) {
+    const container = document.getElementById('rating_labels_container');
+    container.innerHTML = '';
+    
+    for (let i = 1; i <= maxRating; i++) {
+        const div = document.createElement('div');
+        div.className = 'row mb-2';
+        div.innerHTML = `
+            <div class="col-2">
+                <label class="form-label">${i}:</label>
+            </div>
+            <div class="col-10">
+                <input type="text" class="form-control form-control-sm" 
+                       name="rating_label_${i}" placeholder="Label for ${i} (optional)">
+            </div>
+        `;
+        container.appendChild(div);
+    }
+}
+
+// Update field name based on display name
+document.getElementById('display_name').addEventListener('input', function(e) {
+    const displayName = e.target.value;
+    const nameField = document.getElementById('name');
+    
+    // Only auto-update if name field is empty
+    if (!nameField.value) {
+        const autoName = displayName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        nameField.value = autoName;
+    }
+});
+
+// Initialize field options on page load
+document.addEventListener('DOMContentLoaded', function() {
+    toggleFieldOptions();
+});
+</script>
+{% endblock %}

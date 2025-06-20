@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Custom Field{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">Edit Custom Field: {{ field_def.display_name }}</h4>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="name" class="form-label">Field Name</label>
+                                <input type="text" class="form-control" id="name" name="name" 
+                                       value="{{ field_def.name }}" readonly>
+                                <div class="form-text">Field name cannot be changed after creation</div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="display_name" class="form-label">Display Name *</label>
+                                <input type="text" class="form-control" id="display_name" name="display_name" 
+                                       value="{{ field_def.display_name }}" required>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="field_type" class="form-label">Field Type</label>
+                            <select class="form-select" id="field_type" name="field_type" disabled>
+                                {% for field_type in field_types %}
+                                <option value="{{ field_type.value }}" 
+                                        {% if field_type == field_def.field_type %}selected{% endif %}>
+                                    {{ field_type.value|title }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Field type cannot be changed after creation</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="2">{{ field_def.description or '' }}</textarea>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="is_global" name="is_global"
+                                           {% if field_def.is_global %}checked{% endif %}>
+                                    <label class="form-check-label" for="is_global">
+                                        Global Field
+                                    </label>
+                                    <div class="form-text">Applied to book data shared by all users</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="is_shareable" name="is_shareable"
+                                           {% if field_def.is_shareable %}checked{% endif %}>
+                                    <label class="form-check-label" for="is_shareable">
+                                        Share with Community
+                                    </label>
+                                    <div class="form-text">Allow other users to see and use this field definition</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Rating field options -->
+                        {% if field_def.field_type.value in ['rating_5', 'rating_10'] %}
+                        <div class="mb-3">
+                            <label class="form-label">Rating Labels (Optional)</label>
+                            <div id="rating_labels_container">
+                                {% set max_rating = 5 if field_def.field_type.value == 'rating_5' else 10 %}
+                                {% for i in range(1, max_rating + 1) %}
+                                <div class="row mb-2">
+                                    <div class="col-2">
+                                        <label class="form-label">{{ i }}:</label>
+                                    </div>
+                                    <div class="col-10">
+                                        <input type="text" class="form-control form-control-sm" 
+                                               name="rating_label_{{ i }}" 
+                                               value="{{ field_def.rating_labels.get(i, '') }}"
+                                               placeholder="Label for {{ i }} (optional)">
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- List/Tags field options -->
+                        {% if field_def.field_type.value in ['list', 'tags'] %}
+                        <div class="mb-3">
+                            <label for="predefined_options" class="form-label">Predefined Options</label>
+                            <textarea class="form-control" id="predefined_options" name="predefined_options" rows="2">{{ field_def.predefined_options | join(', ') }}</textarea>
+                            <div class="form-text">Comma-separated options</div>
+                            
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="allow_custom_options" name="allow_custom_options"
+                                       {% if field_def.allow_custom_options %}checked{% endif %}>
+                                <label class="form-check-label" for="allow_custom_options">
+                                    Allow custom values beyond predefined options
+                                </label>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="default_value" class="form-label">Default Value</label>
+                                <input type="text" class="form-control" id="default_value" name="default_value"
+                                       value="{{ field_def.default_value or '' }}">
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="placeholder_text" class="form-label">Placeholder Text</label>
+                                <input type="text" class="form-control" id="placeholder_text" name="placeholder_text"
+                                       value="{{ field_def.placeholder_text or '' }}">
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="help_text" class="form-label">Help Text</label>
+                            <textarea class="form-control" id="help_text" name="help_text" rows="2">{{ field_def.help_text or '' }}</textarea>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body py-2">
+                                        <small class="text-muted">
+                                            <strong>Usage Statistics:</strong><br>
+                                            Used {{ field_def.usage_count }} times<br>
+                                            Created: {{ field_def.created_at.strftime('%Y-%m-%d') }}
+                                            {% if field_def.updated_at != field_def.created_at %}
+                                            <br>Last updated: {{ field_def.updated_at.strftime('%Y-%m-%d') }}
+                                            {% endif %}
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <a href="{{ url_for('metadata.fields') }}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary">Update Custom Field</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

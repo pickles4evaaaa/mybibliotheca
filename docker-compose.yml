@@ -18,9 +18,8 @@ services:
     ports:
       - "5054:5054"
     volumes:
-      # To change the data directory, change bibliotheca_data to your desired location on your local machine
-      # and ensure the application has write permissions to that directory.
-      - bibliotheca_data:/app/data
+      # Mount local data directory for migration support
+      - ./data:/app/data
     environment:
       # Security - MUST be set via .env file or environment
       - SECRET_KEY=${SECRET_KEY}
@@ -33,11 +32,11 @@ services:
       # Application settings
       - TIMEZONE=${TIMEZONE:-UTC}
       - WORKERS=${WORKERS:-4}
+      
+      # Migration settings (DISABLED for manual migration)
+      - AUTO_MIGRATE=false
+      # - MIGRATION_DEFAULT_USER=admin
     restart: unless-stopped
     depends_on:
       redis-graph:
         condition: service_healthy
-
-volumes:
-  bibliotheca_data:
-    driver: local

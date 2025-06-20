@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block title %}Database Migration Wizard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="mb-0">
+                        <i class="fas fa-database me-2"></i>
+                        Database Migration Wizard
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Migration Detected!</strong> We found SQLite databases that can be migrated to your new Redis-based MyBibliotheca installation.
+                    </div>
+
+                    <!-- Progress Steps -->
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between">
+                            <div class="step-item active">
+                                <div class="step-number">1</div>
+                                <div class="step-title">Select Databases</div>
+                            </div>
+                            <div class="step-item">
+                                <div class="step-number">2</div>
+                                <div class="step-title">Configure</div>
+                            </div>
+                            <div class="step-item">
+                                <div class="step-number">3</div>
+                                <div class="step-title">Migrate</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form method="POST" action="{{ url_for('migration.configure_migration') }}" id="migrationForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        
+                        <div class="alert alert-info mb-4">
+                            <h5><i class="fas fa-user-cog me-2"></i>Migration Target</h5>
+                            <p class="mb-2">You are logged in as: <strong>{{ display_user_id or 'Current Admin User' }}</strong></p>
+                            <p class="mb-0">All migrated books will be associated with your account. This is perfect for personal libraries or if you want to consolidate multiple users' books under your admin account.</p>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <h4>Found Databases</h4>
+                            <p class="text-muted">Select which databases you'd like to migrate:</p>
+                            
+                            {% for db in databases %}
+                            <div class="card mb-3 database-card">
+                                <div class="card-body">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" 
+                                               value="{{ db.path }}" 
+                                               id="db_{{ loop.index }}"
+                                               name="selected_databases"
+                                               checked>
+                                        <label class="form-check-label w-100" for="db_{{ loop.index }}">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div>
+                                                    <h5 class="mb-1">{{ db.filename }}</h5>
+                                                    <p class="mb-1 text-muted">Version: {{ db.version|title }}</p>
+                                                    <small class="text-muted">{{ db.path }}</small>
+                                                </div>
+                                                <div class="text-end">
+                                                    <div class="badge bg-primary mb-1">{{ db.books }} books</div>
+                                                    {% if db.users > 0 %}
+                                                    <div class="badge bg-secondary mb-1">{{ db.users }} users</div>
+                                                    {% endif %}
+                                                    {% if db.reading_logs > 0 %}
+                                                    <div class="badge bg-info mb-1">{{ db.reading_logs }} reading logs</div>
+                                                    {% endif %}
+                                                    <div class="text-muted small">{{ db.size_mb }} MB</div>
+                                                </div>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <div class="mb-4">
+                            <h4>Migration Settings</h4>
+                            
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="mb-3">
+                                        <label for="migration_user_id" class="form-label">Target User</label>
+                                        <input type="text" class="form-control" id="migration_user_display" 
+                                               name="migration_user_display" value="{{ display_user_id or 'Current Admin User' }}"
+                                               readonly>
+                                        <!-- Hidden field with actual user ID -->
+                                        <input type="hidden" name="migration_user_id" value="{{ current_user_id }}">
+                                        <div class="form-text">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            All migrated books will be associated with your current account (<strong>{{ display_user_id or 'Current Admin User' }}</strong>). 
+                                            If your SQLite databases contain multiple users, all their books will be consolidated under your account.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" 
+                                                   id="create_backup" name="create_backup" checked>
+                                            <label class="form-check-label" for="create_backup">
+                                                Create backup before migration
+                                            </label>
+                                            <div class="form-text">
+                                                Recommended: Creates a backup copy of your databases
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" 
+                                                   id="create_backup" name="create_backup" checked>
+                                            <label class="form-check-label" for="create_backup">
+                                                Create backup before migration
+                                            </label>
+                                            <div class="form-text">
+                                                Recommended: Creates a backup copy of your databases
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" 
+                                           id="delete_after_migration" name="delete_after_migration">
+                                    <label class="form-check-label" for="delete_after_migration">
+                                        Delete SQLite databases after successful migration
+                                    </label>
+                                    <div class="form-text text-warning">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>
+                                        Caution: This will permanently delete the SQLite files after migration
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <button type="button" class="btn btn-outline-secondary" onclick="dismissMigration()">
+                                    <i class="fas fa-times me-2"></i>Dismiss Migration
+                                </button>
+                            </div>
+                            <div>
+                                <button type="submit" class="btn btn-primary btn-lg" id="continueBtn">
+                                    <i class="fas fa-arrow-right me-2"></i>Continue to Review
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.step-item {
+    text-align: center;
+    position: relative;
+    flex: 1;
+}
+
+.step-item:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 15px;
+    right: -50%;
+    width: 100%;
+    height: 2px;
+    background-color: #dee2e6;
+    z-index: 1;
+}
+
+.step-item.active:not(:last-child)::after {
+    background-color: #0d6efd;
+}
+
+.step-number {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background-color: #dee2e6;
+    color: #6c757d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 8px;
+    font-weight: bold;
+    position: relative;
+    z-index: 2;
+}
+
+.step-item.active .step-number {
+    background-color: #0d6efd;
+    color: white;
+}
+
+.step-title {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.step-item.active .step-title {
+    color: #0d6efd;
+    font-weight: 600;
+}
+
+.database-card {
+    border: 2px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.database-card:has(.form-check-input:checked) {
+    border-color: #0d6efd;
+    background-color: #f8f9ff;
+}
+</style>
+
+<script>
+function dismissMigration() {
+    if (confirm('Are you sure you want to dismiss the migration? You can always access it later from the admin panel.')) {
+        fetch('{{ url_for("migration.dismiss_migration") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            }
+        }).then(() => {
+            window.location.href = '{{ url_for("main.index") }}';
+        });
+    }
+}
+
+// Validate form
+document.getElementById('migrationForm').addEventListener('submit', function(e) {
+    const checked = document.querySelectorAll('input[name="selected_databases"]:checked');
+    if (checked.length === 0) {
+        e.preventDefault();
+        alert('Please select at least one database to migrate.');
+    }
+});
+</script>
+{% endblock %}

@@ -11,7 +11,8 @@ from datetime import datetime
 
 from .models import (
     Book, User, Author, Publisher, Series, Category, 
-    UserBookRelationship, ReadingLog, ImportTask
+    UserBookRelationship, ReadingLog, ImportTask,
+    CustomFieldDefinition, ImportMappingTemplate
 )
 
 
@@ -313,4 +314,92 @@ class GraphQueryService(ABC):
     @abstractmethod
     async def analyze_reading_patterns(self, user_id: str) -> Dict[str, Any]:
         """Analyze user's reading patterns."""
+        pass
+
+
+class CustomFieldRepository(ABC):
+    """Repository interface for CustomFieldDefinition operations."""
+    
+    @abstractmethod
+    async def create(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Create a new custom field definition."""
+        pass
+    
+    @abstractmethod
+    async def get_by_id(self, field_id: str) -> Optional[CustomFieldDefinition]:
+        """Get a custom field definition by ID."""
+        pass
+    
+    @abstractmethod
+    async def get_by_user(self, user_id: str) -> List[CustomFieldDefinition]:
+        """Get all custom field definitions created by a user."""
+        pass
+    
+    @abstractmethod
+    async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Get all shareable custom field definitions."""
+        pass
+    
+    @abstractmethod
+    async def search(self, query: str, user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
+        """Search custom field definitions."""
+        pass
+    
+    @abstractmethod
+    async def update(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
+        """Update an existing custom field definition."""
+        pass
+    
+    @abstractmethod
+    async def delete(self, field_id: str) -> bool:
+        """Delete a custom field definition."""
+        pass
+    
+    @abstractmethod
+    async def increment_usage(self, field_id: str) -> None:
+        """Increment usage count for a field definition."""
+        pass
+    
+    @abstractmethod
+    async def get_popular(self, limit: int = 20) -> List[CustomFieldDefinition]:
+        """Get most popular shareable custom field definitions."""
+        pass
+
+
+class ImportMappingRepository(ABC):
+    """Repository interface for ImportMappingTemplate operations."""
+    
+    @abstractmethod
+    async def create(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Create a new import mapping template."""
+        pass
+    
+    @abstractmethod
+    async def get_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
+        """Get an import mapping template by ID."""
+        pass
+    
+    @abstractmethod
+    async def get_by_user(self, user_id: str) -> List[ImportMappingTemplate]:
+        """Get all import mapping templates for a user."""
+        pass
+    
+    @abstractmethod
+    async def detect_template(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
+        """Detect matching template based on CSV headers."""
+        pass
+    
+    @abstractmethod
+    async def update(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Update an existing import mapping template."""
+        pass
+    
+    @abstractmethod
+    async def delete(self, template_id: str) -> bool:
+        """Delete an import mapping template."""
+        pass
+    
+    @abstractmethod
+    async def increment_usage(self, template_id: str) -> None:
+        """Increment usage count and update last used timestamp."""
         pass

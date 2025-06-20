@@ -93,6 +93,10 @@ def create_development_admin():
         print("🔍 No development admin credentials provided")
     return False
 
+def _check_for_sqlite_migration():
+    """Disabled: Manual migration preferred over automatic migration."""
+    pass
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -103,6 +107,9 @@ def create_app():
     with app.app_context():
         setup_debug_logging()
         print_debug_banner()
+        
+        # Check for SQLite migration needs
+        _check_for_sqlite_migration()
 
     # Initialize extensions (no SQLAlchemy)
     csrf.init_app(app)
@@ -133,6 +140,29 @@ def create_app():
             site_name = 'MyBibliotheca'
         return dict(site_name=site_name)
 
+    @app.context_processor
+    def inject_theme_preference():
+        """Make theme preference available in all templates."""
+        from flask_login import current_user
+        try:
+            if current_user.is_authenticated:
+                # Try to get user's theme preference from Redis
+                from .infrastructure.redis_graph import get_graph_storage
+                redis_client = get_graph_storage().redis
+                theme_key = f'user_theme:{current_user.id}'
+                theme = redis_client.get(theme_key)
+                if theme:
+                    theme = theme.decode('utf-8') if isinstance(theme, bytes) else theme
+                else:
+                    theme = 'light'  # Default to light theme
+            else:
+                # For non-authenticated users, check session or default to light
+                from flask import session
+                theme = session.get('theme', 'light')
+        except Exception:
+            theme = 'light'
+        return dict(current_theme=theme)
+
     # CSRF error handler
     @app.errorhandler(400)
     def handle_csrf_error(e):
@@ -152,6 +182,12 @@ def create_app():
                 return redirect(request.referrer or url_for('main.index'))
         return e
 
+    def check_for_migration_reminder():
+        """Migration reminder disabled - now available only through admin panel."""
+        # SQLite migration detection disabled to prevent startup issues
+        # Migration is available through the admin panel -> /admin/migration
+        pass
+
     # REDIS DATABASE INITIALIZATION
     with app.app_context():
         print("🚀 Initializing Redis-only MyBibliotheca...")
@@ -170,6 +206,9 @@ def create_app():
         print("🔧 Development mode: Use the setup page to create your admin user")
         
         print("🎉 Redis-only initialization completed successfully!")
+        
+        # Check for SQLite databases that might need migration
+        check_for_migration_reminder()
 
     # Add middleware to check for setup requirements
     @app.before_request
@@ -211,12 +250,24 @@ def create_app():
             'auth.forced_password_change',
             'auth.logout',
             'auth.setup',
+            'migration.check_migration_status',
+            'migration.migration_wizard',
+            'migration.configure_migration',
+            'migration.execute_migration',
+            'migration.run_migration',
+            'migration.migration_success',
+            'migration.dismiss_migration',
             'static'
         ]
         
         # Allow API and AJAX requests, and skip for static files
         if request.endpoint in allowed_endpoints or (request.endpoint and request.endpoint.startswith('static')):
             return
+        
+        # Check for migration needs (DISABLED - migration now manual only)
+        # Automatic migration detection disabled to prevent redirect loops
+        # Migration is now available only through admin panel -> /admin/migration
+        pass
         
         # Check if user must change password
         if hasattr(current_user, 'password_must_change') and current_user.password_must_change:
@@ -232,6 +283,18 @@ def create_app():
         app.register_blueprint(locations_bp)
     except ImportError as e:
         print(f"⚠️  Could not import location routes: {e}")
+    
+    try:
+        from .metadata_routes import metadata_bp
+        app.register_blueprint(metadata_bp)
+    except ImportError as e:
+        print(f"⚠️  Could not import metadata routes: {e}")
+    
+    try:
+        from .migration_routes import migration_bp
+        app.register_blueprint(migration_bp)
+    except ImportError as e:
+        print(f"⚠️  Could not import migration routes: {e}")
     
     app.register_blueprint(bp)
     app.register_blueprint(auth, url_prefix='/auth')

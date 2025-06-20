@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}Custom Fields{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1>Custom Fields</h1>
+                <a href="{{ url_for('metadata.create_field') }}" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> Create Custom Field
+                </a>
+            </div>
+            
+            <div class="row">
+                <div class="col-lg-8 mb-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">Your Custom Fields</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if user_fields %}
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Type</th>
+                                                <th>Scope</th>
+                                                <th>Usage</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for field in user_fields %}
+                                            <tr>
+                                                <td>
+                                                    <strong>{{ field.display_name }}</strong>
+                                                    {% if field.description %}
+                                                    <br><small class="text-muted">{{ field.description }}</small>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-secondary">{{ field.field_type.value|title }}</span>
+                                                </td>
+                                                <td>
+                                                    {% if field.is_global %}
+                                                        <span class="badge badge-info">Global</span>
+                                                    {% else %}
+                                                        <span class="badge badge-light">Personal</span>
+                                                    {% endif %}
+                                                    {% if field.is_shareable %}
+                                                        <span class="badge badge-success">Shareable</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ field.usage_count }}</td>
+                                                <td>
+                                                    <div class="btn-group btn-group-sm">
+                                                        <a href="{{ url_for('metadata.edit_field', field_id=field.id) }}" 
+                                                           class="btn btn-outline-primary">Edit</a>
+                                                        <button type="button" class="btn btn-outline-danger" 
+                                                                onclick="confirmDelete('{{ field.id }}', '{{ field.display_name }}')">
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-4">
+                                    <i class="fas fa-tags fa-3x text-muted mb-3"></i>
+                                    <h5>No Custom Fields Yet</h5>
+                                    <p class="text-muted">Create custom fields to add any metadata you want to your books.</p>
+                                    <a href="{{ url_for('metadata.create_field') }}" class="btn btn-primary">
+                                        Create Your First Custom Field
+                                    </a>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-4 mb-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Community Fields</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <input type="text" class="form-control" id="searchFields" 
+                                       placeholder="Search community fields...">
+                            </div>
+                            
+                            {% if shareable_fields %}
+                                <div id="shareableFieldsList">
+                                    {% for field in shareable_fields[:10] %}
+                                    <div class="card mb-2 shareable-field-item" 
+                                         data-name="{{ field.name }}" 
+                                         data-display="{{ field.display_name }}"
+                                         data-type="{{ field.field_type.value }}">
+                                        <div class="card-body py-2">
+                                            <h6 class="mb-1">{{ field.display_name }}</h6>
+                                            <small class="text-muted">
+                                                {{ field.field_type.value|title }}
+                                                {% if field.description %} • {{ field.description }}{% endif %}
+                                                <br>Used by {{ field.usage_count }} users
+                                            </small>
+                                            <div class="mt-2">
+                                                <button class="btn btn-sm btn-outline-primary" 
+                                                        onclick="copyFieldDefinition('{{ field.id }}')">
+                                                    Copy to My Fields
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                
+                                {% if shareable_fields|length > 10 %}
+                                <div class="text-center mt-2">
+                                    <small class="text-muted">{{ shareable_fields|length - 10 }} more available</small>
+                                </div>
+                                {% endif %}
+                            {% else %}
+                                <p class="text-muted">No community fields available yet.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h6 class="mb-0">Field Types</h6>
+                        </div>
+                        <div class="card-body">
+                            <small class="text-muted">
+                                <strong>Text:</strong> Short text input<br>
+                                <strong>Textarea:</strong> Long text input<br>
+                                <strong>Number:</strong> Numeric values<br>
+                                <strong>Boolean:</strong> True/false checkbox<br>
+                                <strong>Date:</strong> Date picker<br>
+                                <strong>Rating 5:</strong> 1-5 star rating<br>
+                                <strong>Rating 10:</strong> 1-10 rating<br>
+                                <strong>List:</strong> Multiple values<br>
+                                <strong>Tags:</strong> Tag-style input<br>
+                                <strong>URL:</strong> Web address<br>
+                                <strong>Email:</strong> Email address
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the custom field "<span id="deleteFieldName"></span>"?</p>
+                <p><strong>Warning:</strong> This will remove the field definition, but any existing data in books using this field will be preserved.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">Delete Field</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmDelete(fieldId, fieldName) {
+    document.getElementById('deleteFieldName').textContent = fieldName;
+    document.getElementById('deleteForm').action = "{{ url_for('metadata.delete_field', field_id='FIELD_ID') }}".replace('FIELD_ID', fieldId);
+    
+    // Show modal (Bootstrap 5 syntax)
+    const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+    modal.show();
+}
+
+function copyFieldDefinition(fieldId) {
+    // TODO: Implement copying field definition
+    alert('Copy field functionality will be implemented in the next phase');
+}
+
+// Search functionality
+document.getElementById('searchFields').addEventListener('input', function(e) {
+    const query = e.target.value.toLowerCase();
+    const fieldItems = document.querySelectorAll('.shareable-field-item');
+    
+    fieldItems.forEach(item => {
+        const name = item.dataset.name.toLowerCase();
+        const display = item.dataset.display.toLowerCase();
+        const type = item.dataset.type.toLowerCase();
+        
+        if (name.includes(query) || display.includes(query) || type.includes(query)) {
+            item.style.display = 'block';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+});
+</script>
+{% endblock %}

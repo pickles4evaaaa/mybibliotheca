@@ -1,7 +1,7 @@
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash, send_file, abort, make_response
 from flask_login import login_required, current_user
-from .domain.models import Book as DomainBook, Author, Publisher, User, ReadingStatus, OwnershipStatus
-from .services import book_service, user_service, reading_log_service
+from .domain.models import Book as DomainBook, Author, Publisher, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
+from .services import book_service, user_service, reading_log_service, custom_metadata_service, import_mapping_service
 from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image
 from datetime import datetime, date, timedelta
 import secrets
@@ -445,9 +445,32 @@ def view_book_enhanced(uid):
     if not user_book:
         abort(404)
     
-    # For now, redirect to enhanced template with existing data
-    # TODO: Update service layer to provide enhanced status data
-    return render_template('view_book_enhanced.html', book=user_book)
+    # Get the actual book data for global metadata
+    book = book_service.get_book_by_uid_sync(uid)
+    
+    # Get custom metadata for display
+    global_metadata_display = []
+    personal_metadata_display = []
+    
+    try:
+        if book and hasattr(book, 'custom_metadata') and book.custom_metadata:
+            global_metadata_display = custom_metadata_service.get_custom_metadata_for_display(
+                book.custom_metadata, current_user.id, is_global=True
+            )
+        
+        if hasattr(user_book, 'custom_metadata') and user_book.custom_metadata:
+            personal_metadata_display = custom_metadata_service.get_custom_metadata_for_display(
+                user_book.custom_metadata, current_user.id, is_global=False
+            )
+    except Exception as e:
+        print(f"Error loading custom metadata for display: {e}")
+    
+    return render_template(
+        'view_book_enhanced.html', 
+        book=user_book,
+        global_metadata_display=global_metadata_display,
+        personal_metadata_display=personal_metadata_display
+    )
 
 
 @bp.route('/book/<uid>/update_details', methods=['POST'])
@@ -594,6 +617,98 @@ def update_book_notes(uid):
         flash(f'Error updating notes: {str(e)}', 'error')
     
     return redirect(url_for('main.view_book_enhanced', uid=uid))
+
+
+@bp.route('/book/<uid>/custom_metadata', methods=['GET', 'POST'])
+@login_required
+def edit_book_custom_metadata(uid):
+    """Edit custom metadata for a book."""
+    try:
+        # Get book and user's relationship
+        book = book_service.get_book_by_uid_sync(uid)
+        if not book:
+            flash('Book not found.', 'error')
+            return redirect(url_for('main.library'))
+        
+        user_book = book_service.get_user_book_sync(str(current_user.id), uid)
+        if not user_book:
+            flash('Book not found in your library.', 'error')
+            return redirect(url_for('main.library'))
+        
+        if request.method == 'POST':
+            # Process form data for custom metadata
+            global_metadata = {}
+            personal_metadata = {}
+            
+            # Get available fields
+            global_fields = custom_metadata_service.get_available_fields(current_user.id, is_global=True)
+            personal_fields = custom_metadata_service.get_available_fields(current_user.id, is_global=False)
+            
+            # Process global fields
+            for field in global_fields:
+                value = request.form.get(f'global_{field.name}', '').strip()
+                if value:
+                    global_metadata[field.name] = value
+            
+            # Process personal fields  
+            for field in personal_fields:
+                value = request.form.get(f'personal_{field.name}', '').strip()
+                if value:
+                    personal_metadata[field.name] = value
+            
+            # Validate metadata
+            global_valid, global_errors = custom_metadata_service.validate_and_save_metadata(
+                global_metadata, current_user.id, is_global=True
+            )
+            personal_valid, personal_errors = custom_metadata_service.validate_and_save_metadata(
+                personal_metadata, current_user.id, is_global=False
+            )
+            
+            if global_valid and personal_valid:
+                # Update book with global metadata
+                if global_metadata:
+                    book.custom_metadata.update(global_metadata)
+                    book_service.update_book_sync(book)
+                
+                # Update user book relationship with personal metadata
+                if personal_metadata:
+                    user_book.custom_metadata.update(personal_metadata)
+                    book_service.update_user_book_sync(user_book)
+                
+                flash('Custom metadata updated successfully!', 'success')
+                return redirect(url_for('main.view_book_enhanced', uid=uid))
+            else:
+                # Show validation errors
+                all_errors = global_errors + personal_errors
+                for error in all_errors:
+                    flash(f'Validation error: {error}', 'error')
+        
+        # Get display data for template
+        global_fields = custom_metadata_service.get_available_fields(current_user.id, is_global=True)
+        personal_fields = custom_metadata_service.get_available_fields(current_user.id, is_global=False)
+        
+        global_metadata_display = custom_metadata_service.get_custom_metadata_for_display(
+            book.custom_metadata, current_user.id, is_global=True
+        )
+        personal_metadata_display = custom_metadata_service.get_custom_metadata_for_display(
+            user_book.custom_metadata, current_user.id, is_global=False
+        )
+        
+        return render_template(
+            'edit_book_custom_metadata.html',
+            book=book,
+            user_book=user_book,
+            global_fields=global_fields,
+            personal_fields=personal_fields,
+            global_metadata=book.custom_metadata,
+            personal_metadata=user_book.custom_metadata,
+            global_metadata_display=global_metadata_display,
+            personal_metadata_display=personal_metadata_display
+        )
+        
+    except Exception as e:
+        flash(f'Error loading custom metadata: {str(e)}', 'error')
+        return redirect(url_for('main.view_book_enhanced', uid=uid))
 
 
 @bp.route('/month_review/<int:year>/<int:month>.jpg')
@@ -1278,14 +1393,33 @@ def import_books():
                         total_rows = len(all_lines)
             
             # Auto-detect field mappings
-            suggested_mappings = auto_detect_fields(headers)
+            suggested_mappings = auto_detect_fields(headers, current_user.id)
+            
+            # Get custom fields for the user
+            try:
+                global_custom_fields = custom_metadata_service.get_available_fields(current_user.id, is_global=True)
+                personal_custom_fields = custom_metadata_service.get_available_fields(current_user.id, is_global=False)
+            except Exception as e:
+                current_app.logger.error(f"Error loading custom fields: {e}")
+                global_custom_fields = []
+                personal_custom_fields = []
+            
+            # Get import templates for the user
+            try:
+                import_templates = import_mapping_service.get_user_templates(current_user.id)
+            except Exception as e:
+                current_app.logger.error(f"Error loading import templates: {e}")
+                import_templates = []
             
             return render_template('import_books_mapping.html',
                                  csv_file_path=temp_path,
                                  csv_headers=headers,
                                  csv_preview=preview_rows,
                                  total_rows=total_rows,
-                                 suggested_mappings=suggested_mappings)
+                                 suggested_mappings=suggested_mappings,
+                                 global_custom_fields=global_custom_fields,
+                                 personal_custom_fields=personal_custom_fields,
+                                 import_templates=import_templates)
                                  
         except Exception as e:
             current_app.logger.error(f"Error processing CSV file: {e}")
@@ -1303,15 +1437,83 @@ def import_books_execute():
     
     # Extract mapping from form data
     mappings = {}
+    new_fields_to_create = {}
+    
     for key, value in field_mapping.items():
         if key.startswith('field_mapping[') and value:
             csv_field = key[14:-1]  # Remove 'field_mapping[' and ']'
-            mappings[csv_field] = value
+            
+            # Handle new field creation
+            if value in ['create_global_field', 'create_personal_field']:
+                label_key = f'new_field_label[{csv_field}]'
+                type_key = f'new_field_type[{csv_field}]'
+                
+                field_label = request.form.get(label_key, '').strip()
+                field_type = request.form.get(type_key, 'text')
+                
+                if not field_label:
+                    flash(f'Field label is required for CSV column "{csv_field}"', 'error')
+                    return redirect(url_for('main.import_books'))
+                
+                # Create the custom field
+                try:
+                    is_global = (value == 'create_global_field')
+                    field_name = field_label.lower().replace(' ', '_').replace('-', '_')
+                    
+                    # Check if field already exists
+                    existing_fields = custom_metadata_service.get_available_fields(current_user.id, is_global)
+                    if any(f.name == field_name for f in existing_fields):
+                        flash(f'A custom field with name "{field_name}" already exists', 'error')
+                        return redirect(url_for('main.import_books'))
+                    
+                    field_definition = CustomFieldDefinition(
+                        name=field_name,
+                        display_name=field_label,
+                        field_type=field_type,
+                        is_global=is_global,
+                        created_by_user_id=current_user.id,
+                        created_at=datetime.utcnow(),
+                        description=f'Created during CSV import for column "{csv_field}"'
+                    )
+                    
+                    custom_metadata_service.create_field(field_definition)
+                    
+                    # Update mapping to use the new field
+                    mappings[csv_field] = f'custom_{"global" if is_global else "personal"}_{field_name}'
+                    
+                    flash(f'Created new {"global" if is_global else "personal"} field: {field_label}', 'success')
+                    
+                except Exception as e:
+                    flash(f'Error creating custom field: {str(e)}', 'error')
+                    return redirect(url_for('main.import_books'))
+            else:
+                mappings[csv_field] = value
+    
+    # Handle template saving
+    save_as_template = request.form.get('save_as_template') == 'on'
+    template_name = request.form.get('template_name', '').strip()
+    
+    if save_as_template and template_name:
+        try:
+            template = ImportMappingTemplate(
+                name=template_name,
+                user_id=current_user.id,
+                field_mappings=mappings,
+                description=f'Template created from import on {datetime.now().strftime("%Y-%m-%d")}',
+                created_at=datetime.utcnow()
+            )
+            
+            import_mapping_service.create_template(template)
+            flash(f'Import template "{template_name}" saved successfully!', 'success')
+            
+        except Exception as e:
+            flash(f'Error saving template: {str(e)}', 'warning')
+            # Continue with import even if template saving fails
     
     default_reading_status = request.form.get('default_reading_status', 'library_only')
     duplicate_handling = request.form.get('duplicate_handling', 'skip')
     
-    # Create import job
+    # Create import job with enhanced data
     task_id = str(uuid.uuid4())
     job_data = {
         'task_id': task_id,
@@ -1320,6 +1522,7 @@ def import_books_execute():
         'field_mappings': mappings,
         'default_reading_status': default_reading_status,
         'duplicate_handling': duplicate_handling,
+        'custom_fields_enabled': True,  # Flag to enable custom metadata processing
         'status': 'pending',
         'processed': 0,
         'success': 0,
@@ -1458,13 +1661,45 @@ def debug_import_jobs():
         }
     })
 
-def auto_detect_fields(headers):
+def auto_detect_fields(headers, user_id=None):
     """Auto-detect field mappings based on header names."""
     mappings = {}
+    
+    # Get custom fields for auto-detection if user_id is provided
+    custom_fields = []
+    if user_id:
+        try:
+            global_fields = custom_metadata_service.get_available_fields(user_id, is_global=True)
+            personal_fields = custom_metadata_service.get_available_fields(user_id, is_global=False)
+            custom_fields = [(f, True) for f in global_fields] + [(f, False) for f in personal_fields]
+        except Exception as e:
+            print(f"Error loading custom fields for auto-detection: {e}")
     
     for header in headers:
         header_lower = header.lower().strip()
         
+        # Check for custom field matches first (exact and partial matches)
+        custom_match_found = False
+        for field, is_global in custom_fields:
+            field_name_lower = field.name.lower()
+            field_display_name_lower = field.display_name.lower()
+            
+            # Exact match on name or display_name
+            if header_lower == field_name_lower or header_lower == field_display_name_lower:
+                mappings[header] = f'custom_{"global" if is_global else "personal"}_{field.name}'
+                custom_match_found = True
+                break
+            
+            # Partial match on display_name
+            elif any(word in header_lower for word in field_display_name_lower.split()) and len(field_display_name_lower.split()) > 1:
+                mappings[header] = f'custom_{"global" if is_global else "personal"}_{field.name}'
+                custom_match_found = True
+                break
+        
+        if custom_match_found:
+            continue
+        
+        # Standard field detection if no custom field match
         # Title mappings
         if any(word in header_lower for word in ['title', 'book', 'name']):
             mappings[header] = 'title'
@@ -1598,6 +1833,8 @@ def start_import_job(task_id):
                     
                     # Extract book data based on mappings
                     book_data = {}
+                    global_custom_metadata = {}
+                    personal_custom_metadata = {}
                     
                     if has_headers:
                         # Use field mappings for CSV with headers
@@ -1608,7 +1845,19 @@ def start_import_job(task_id):
                                 if book_field == 'isbn':
                                     value = value.replace('="', '').replace('"', '').replace('=', '').strip()
                                     print(f"Cleaned ISBN: '{value}' (length: {len(value)})")
-                                book_data[book_field] = value
+                                    book_data[book_field] = value
+                                elif book_field.startswith('custom_global_'):
+                                    # Extract custom global field name
+                                    field_name = book_field[14:]  # Remove 'custom_global_' prefix
+                                    global_custom_metadata[field_name] = value
+                                    print(f"Added global custom metadata: {field_name} = {value}")
+                                elif book_field.startswith('custom_personal_'):
+                                    # Extract custom personal field name  
+                                    field_name = book_field[16:]  # Remove 'custom_personal_' prefix
+                                    personal_custom_metadata[field_name] = value
+                                    print(f"Added personal custom metadata: {field_name} = {value}")
+                                else:
+                                    book_data[book_field] = value
                     else:
                         # For headerless CSV, assume it's ISBN-only
                         isbn_value = row.get('isbn', '').strip()
@@ -1761,6 +2010,7 @@ def start_import_job(task_id):
                         average_rating=average_rating,
                         rating_count=rating_count,
                         published_date=published_date,
+                        custom_metadata=global_custom_metadata,  # Add global custom metadata
                         created_at=datetime.now(),
                         updated_at=datetime.now()
                     )
@@ -1787,7 +2037,7 @@ def start_import_job(task_id):
                                     reading_status_enum = ReadingStatus.ON_HOLD
                                 elif reading_status == 'did_not_finish':
                                     reading_status_enum = ReadingStatus.DID_NOT_FINISH
-                            
+
                             # Add to user's library
                             success = book_service.add_book_to_user_library_sync(
                                 user_id=user_id,
@@ -1795,6 +2045,31 @@ def start_import_job(task_id):
                                 reading_status=reading_status_enum,
                                 ownership_status=OwnershipStatus.OWNED
                             )
+                            
+                            # Add personal custom metadata if available
+                            if success and personal_custom_metadata:
+                                try:
+                                    print(f"Adding personal custom metadata: {personal_custom_metadata}")
+                                    # Validate and save personal metadata
+                                    validated, errors = custom_metadata_service.validate_and_save_metadata(
+                                        personal_custom_metadata, user_id, is_global=False
+                                    )
+                                    if validated:
+                                        # Update the user-book relationship with custom metadata
+                                        user_book = book_service.get_user_book_sync(user_id, created_book.id)
+                                        if user_book:
+                                            user_book.custom_metadata.update(personal_custom_metadata)
+                                            book_service.update_user_book_sync(user_book)
+                                            print(f"Successfully added personal custom metadata")
+                                        else:
+                                            print(f"Could not find user-book relationship to add metadata")
+                                    else:
+                                        print(f"Personal metadata validation errors: {errors}")
+                                        job['recent_activity'].append(f"Row {row_num}: Custom metadata validation errors")
+                                except Exception as metadata_error:
+                                    print(f"Error processing personal custom metadata: {metadata_error}")
+                                    job['recent_activity'].append(f"Row {row_num}: Custom metadata error - {str(metadata_error)}")
+                            
                             if success:
                                 print(f"Successfully added book to user library")
                             else:
@@ -1909,3 +2184,28 @@ def update_job_in_redis(task_id: str, updates: dict):
             store_job_in_redis(task_id, job_data)
     except Exception as e:
         print(f"Error updating job in Redis: {e}")
+
+
+@bp.route('/toggle-theme', methods=['POST'])
+def toggle_theme():
+    """Toggle between light and dark theme."""
+    from flask import session, request, jsonify
+    from flask_login import current_user
+    
+    try:
+        current_theme = request.json.get('current_theme', 'light')
+        new_theme = 'dark' if current_theme == 'light' else 'light'
+        
+        if current_user.is_authenticated:
+            # Store theme preference in Redis for authenticated users
+            from .infrastructure.redis_graph import get_graph_storage
+            redis_client = get_graph_storage().redis
+            theme_key = f'user_theme:{current_user.id}'
+            redis_client.set(theme_key, new_theme)
+        else:
+            # Store in session for non-authenticated users
+            session['theme'] = new_theme
+        
+        return jsonify({'success': True, 'new_theme': new_theme})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

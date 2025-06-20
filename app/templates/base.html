@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{ current_theme }}">
 <head>
   <meta charset="utf-8">
   <title>{% block title %}{{ site_name }}{% endblock %}</title>
@@ -10,13 +10,44 @@
   <!-- Bootstrap Icons (local) -->
   <link href="{{ url_for('static', filename='bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet">
   <style>
+    :root {
+      /* Light theme variables */
+      --bg-color: #f5f5f5;
+      --bg-gradient: linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+      --overlay-background: rgba(255, 255, 255, 0.15);
+      --container-background: rgba(255,255,255,0.95);
+      --navbar-background: rgba(255,255,255,0.95);
+      --text-color: #333;
+      --heading-color: #5a3e1b;
+      --link-color: #8d5524;
+      --link-hover-color: #c68642;
+      --border-color: #e0c9a6;
+      --bookshelf-bg: url("{{ url_for('static', filename='bookshelf.png') }}");
+    }
+    
+    [data-theme="dark"] {
+      /* Dark theme variables */
+      --bg-color: #1a1a1a;
+      --bg-gradient: linear-gradient(to bottom, #1a1a1a, #0d0d0d);
+      --overlay-background: rgba(0, 0, 0, 0.25);
+      --container-background: rgba(30, 30, 30, 0.95);
+      --navbar-background: rgba(20, 20, 20, 0.95);
+      --text-color: #e0e0e0;
+      --heading-color: #d4af7a;
+      --link-color: #d4af7a;
+      --link-hover-color: #f0c674;
+      --border-color: #404040;
+      --bookshelf-bg: none;
+    }
+    
     body {
-      background-image: url("{{ url_for('static', filename='bookshelf.png') }}"), linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+      background-image: var(--bookshelf-bg), var(--bg-gradient);
       background-size: cover;
       background-repeat: no-repeat;
       background-attachment: fixed;
       min-height: 100vh;
       font-family: 'Georgia', serif;
+      color: var(--text-color);
     }
     .overlay {
       background: var(--overlay-background);
@@ -29,8 +60,9 @@
       margin: 0 auto;
       border-radius: clamp(8px, 2vw, 16px);
       box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-      background: rgba(255,255,255,0.95);
+      background: var(--container-background);
       padding: clamp(12px, 3vw, 40px);
+      color: var(--text-color);
     }
     
     /* Responsive design improvements */
@@ -85,22 +117,22 @@
     }
     h1, h2, h3 {
       font-family: 'Georgia', serif;
-      color: #5a3e1b;
+      color: var(--heading-color);
     }
     a {
-      color: #8d5524;
+      color: var(--link-color);
       text-decoration: none;
     }
     a:hover {
-      color: #c68642;
+      color: var(--link-hover-color);
       text-decoration: underline;
     }
     .btn-link {
-      color: #8d5524;
+      color: var(--link-color);
       text-decoration: none;
     }
     .btn-link:hover {
-      color: #c68642;
+      color: var(--link-hover-color);
       text-decoration: underline;
     }
     .book-cover {
@@ -110,8 +142,8 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     .navbar {
-      background: rgba(255,255,255,0.95);
-      border-bottom: 1px solid #e0c9a6;
+      background: var(--navbar-background);
+      border-bottom: 1px solid var(--border-color);
       margin-bottom: 32px;
     }
     
@@ -185,6 +217,159 @@
       height: 40px !important;
       display: block;
     }
+    
+    /* Dark mode specific styles */
+    [data-theme="dark"] .navbar-light .navbar-brand {
+      color: var(--text-color) !important;
+    }
+    
+    [data-theme="dark"] .navbar-light .navbar-nav .nav-link {
+      color: var(--text-color) !important;
+    }
+    
+    [data-theme="dark"] .navbar-light .navbar-toggler {
+      border-color: var(--border-color);
+    }
+    
+    [data-theme="dark"] .navbar-text {
+      color: var(--text-color) !important;
+    }
+    
+    [data-theme="dark"] .alert {
+      background-color: rgba(40, 40, 40, 0.9);
+      border-color: var(--border-color);
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] .btn-outline-primary {
+      border-color: #6ea8fe;
+      color: #6ea8fe;
+    }
+    
+    [data-theme="dark"] .btn-outline-primary:hover {
+      background-color: #6ea8fe;
+      border-color: #6ea8fe;
+    }
+    
+    [data-theme="dark"] .btn-outline-secondary {
+      border-color: #6c757d;
+      color: #6c757d;
+    }
+    
+    [data-theme="dark"] .btn-outline-secondary:hover {
+      background-color: #6c757d;
+      border-color: #6c757d;
+    }
+    
+    [data-theme="dark"] .btn-outline-success {
+      border-color: #51cf66;
+      color: #51cf66;
+    }
+    
+    [data-theme="dark"] .btn-outline-success:hover {
+      background-color: #51cf66;
+      border-color: #51cf66;
+    }
+    
+    [data-theme="dark"] .btn-outline-info {
+      border-color: #74c0fc;
+      color: #74c0fc;
+    }
+    
+    [data-theme="dark"] .btn-outline-info:hover {
+      background-color: #74c0fc;
+      border-color: #74c0fc;
+    }
+    
+    [data-theme="dark"] .btn-outline-warning {
+      border-color: #ffd43b;
+      color: #ffd43b;
+    }
+    
+    [data-theme="dark"] .btn-outline-warning:hover {
+      background-color: #ffd43b;
+      border-color: #ffd43b;
+    }
+    
+    [data-theme="dark"] .btn-outline-danger {
+      border-color: #ff6b6b;
+      color: #ff6b6b;
+    }
+    
+    [data-theme="dark"] .btn-outline-danger:hover {
+      background-color: #ff6b6b;
+      border-color: #ff6b6b;
+    }
+    
+    [data-theme="dark"] .badge {
+      background-color: #495057 !important;
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] .form-control {
+      background-color: #2d2d2d;
+      border-color: var(--border-color);
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] .form-control:focus {
+      background-color: #2d2d2d;
+      border-color: #86b7fe;
+      color: var(--text-color);
+      box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+    
+    [data-theme="dark"] .form-select {
+      background-color: #2d2d2d;
+      border-color: var(--border-color);
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] .table {
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] .table-striped > tbody > tr:nth-of-type(odd) > td {
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+    
+    [data-theme="dark"] .card {
+      background-color: rgba(40, 40, 40, 0.8);
+      border-color: var(--border-color);
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] .card-header {
+      background-color: rgba(60, 60, 60, 0.8);
+      border-bottom-color: var(--border-color);
+    }
+    
+    /* Additional dark mode text styling */
+    [data-theme="dark"] p {
+      color: var(--text-color) !important;
+    }
+    
+    [data-theme="dark"] .lead {
+      color: var(--text-color) !important;
+    }
+    
+    [data-theme="dark"] div {
+      color: var(--text-color);
+    }
+    
+    [data-theme="dark"] span {
+      color: var(--text-color);
+    }
+    
+    /* Ensure heading colors are properly applied */
+    [data-theme="dark"] h1,
+    [data-theme="dark"] h2,
+    [data-theme="dark"] h3,
+    [data-theme="dark"] h4,
+    [data-theme="dark"] h5,
+    [data-theme="dark"] h6 {
+      color: var(--heading-color) !important;
+    }
   </style>
 </head>
 <body>
@@ -204,14 +389,20 @@
               <a class="btn btn-outline-primary me-2" href="{{ url_for('main.library') }}">Library</a>
               <a class="btn btn-outline-success me-2" href="{{ url_for('main.stats') }}">Stats</a>
               <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
+              <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>
               <a class="btn btn-outline-secondary me-2" href="{{ url_for('auth.privacy_settings') }}">Settings</a>
               {% if current_user.is_admin %}
-                <a class="btn btn-outline-warning me-2" href="{{ url_for('admin.settings') }}">Admin</a>
+                <a class="btn btn-outline-danger me-2" href="{{ url_for('admin.settings') }}">Admin</a>
               {% endif %}
             {% endif %}
           </div>
           
           <div class="navbar-nav">
+            <!-- Dark mode toggle -->
+            <button id="theme-toggle" class="btn btn-outline-secondary me-2" title="Toggle dark mode">
+              <i class="bi bi-moon-fill" id="theme-icon"></i>
+            </button>
+            
             {% if current_user.is_authenticated %}
               <span class="navbar-text me-3">
                 Welcome, {{ current_user.username }}
@@ -295,7 +486,59 @@
     document.addEventListener('DOMContentLoaded', function() {
       const forms = document.querySelectorAll('form[method="post"], form[method="POST"]');
       forms.forEach(addCSRFToForm);
+      
+      // Initialize theme toggle
+      initThemeToggle();
     });
+    
+    // Theme toggle functionality
+    function initThemeToggle() {
+      const themeToggle = document.getElementById('theme-toggle');
+      const themeIcon = document.getElementById('theme-icon');
+      const htmlElement = document.documentElement;
+      
+      // Update icon based on current theme
+      function updateThemeIcon(theme) {
+        if (theme === 'dark') {
+          themeIcon.className = 'bi bi-sun-fill';
+        } else {
+          themeIcon.className = 'bi bi-moon-fill';
+        }
+      }
+      
+      // Initialize icon
+      const currentTheme = htmlElement.getAttribute('data-theme') || 'light';
+      updateThemeIcon(currentTheme);
+      
+      // Theme toggle click handler
+      themeToggle.addEventListener('click', function() {
+        const currentTheme = htmlElement.getAttribute('data-theme') || 'light';
+        
+        // Send theme toggle request
+        csrfFetch('{{ url_for("main.toggle_theme") }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            current_theme: currentTheme
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            // Update theme immediately
+            htmlElement.setAttribute('data-theme', data.new_theme);
+            updateThemeIcon(data.new_theme);
+          } else {
+            console.error('Failed to toggle theme:', data.error);
+          }
+        })
+        .catch(error => {
+          console.error('Error toggling theme:', error);
+        });
+      });
+    }
   </script>
 </body>
 </html>

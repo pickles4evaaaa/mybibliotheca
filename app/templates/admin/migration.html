@@ -1,0 +1,154 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Database Migration{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Database Migration</h1>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        {% if migration_info.migration_available %}
+        <div class="card border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h4 class="mb-0">
+                    <i class="fas fa-database me-2"></i>
+                    SQLite Databases Detected
+                </h4>
+            </div>
+            <div class="card-body">
+                <p class="lead">We found {{ migration_info.databases_found }} SQLite database(s) that can be migrated to Redis.</p>
+                
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Database</th>
+                                <th>Version</th>
+                                <th>Books</th>
+                                <th>Users</th>
+                                <th>Reading Logs</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for db in migration_info.databases %}
+                            <tr>
+                                <td>
+                                    <strong>{{ db.filename }}</strong>
+                                    <br><small class="text-muted">{{ db.path }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{{ 'primary' if db.version == 'v2' else 'secondary' }}">
+                                        {{ db.version|title }}
+                                    </span>
+                                </td>
+                                <td>{{ db.books }}</td>
+                                <td>{{ db.users }}</td>
+                                <td>{{ db.reading_logs }}</td>
+                                <td>{{ db.size_mb }} MB</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="d-flex gap-2 mt-3">
+                    <a href="{{ url_for('migration.migration_wizard') }}" class="btn btn-warning">
+                        <i class="fas fa-magic me-2"></i>Start Migration Wizard
+                    </a>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#manualMigrationModal">
+                        <i class="fas fa-terminal me-2"></i>Manual Migration Instructions
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <h4 class="mb-0">
+                    <i class="fas fa-check-circle me-2"></i>
+                    No Migration Needed
+                </h4>
+            </div>
+            <div class="card-body">
+                <p class="mb-0">No SQLite databases were found that need migration. Your system is running on Redis.</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Migration Information</h5>
+            </div>
+            <div class="card-body">
+                <h6>What gets migrated:</h6>
+                <ul class="mb-3">
+                    <li><i class="fas fa-book text-primary me-1"></i> All books with metadata</li>
+                    <li><i class="fas fa-users text-success me-1"></i> User accounts and preferences</li>
+                    <li><i class="fas fa-chart-line text-info me-1"></i> Reading logs and progress</li>
+                    <li><i class="fas fa-star text-warning me-1"></i> Ratings and reviews</li>
+                    <li><i class="fas fa-tags text-secondary me-1"></i> Categories and tags</li>
+                </ul>
+                
+                <h6>Migration Process:</h6>
+                <ol class="mb-3">
+                    <li>Backup original databases</li>
+                    <li>Analyze and validate data</li>
+                    <li>Transfer to Redis format</li>
+                    <li>Verify migration success</li>
+                    <li>Optional cleanup</li>
+                </ol>
+                
+                <div class="alert alert-info small">
+                    <i class="fas fa-info-circle me-1"></i>
+                    Migration is safe and non-destructive. Original databases are preserved unless you choose to delete them.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Manual Migration Instructions Modal -->
+<div class="modal fade" id="manualMigrationModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Manual Migration Instructions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>If you prefer to run migration from the command line:</p>
+                
+                <h6>Docker Users:</h6>
+                <pre class="bg-light p-3 rounded"><code># Check migration status
+docker exec -it bibliotheca-bibliotheca-1 python3 scripts/detect_migration.py
+
+# Run migration (replace 'admin' with your user ID)
+docker exec -it bibliotheca-bibliotheca-1 python3 scripts/quick_migrate.py --user-id admin
+
+# Or use the helper script
+./migrate.sh</code></pre>
+                
+                <h6>Local Installation:</h6>
+                <pre class="bg-light p-3 rounded"><code># Check migration status
+python3 scripts/detect_migration.py
+
+# Run migration
+python3 scripts/quick_migrate.py --user-id admin</code></pre>
+                
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    Replace <code>admin</code> with your actual user ID for single-user (v1) database migrations.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -325,6 +325,66 @@
                         </div>
                     </div>
                 </div>
+                
+                <!-- Custom Metadata -->
+                <div class="accordion-item shadow-sm mb-2">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseCustomMetadata" 
+                                aria-expanded="false" aria-controls="collapseCustomMetadata">
+                            <i class="bi bi-tags me-2"></i>Custom Metadata
+                        </button>
+                    </h2>
+                    <div id="collapseCustomMetadata" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
+                        <div class="accordion-body">
+                            <!-- Global Metadata -->
+                            {% if global_metadata_display %}
+                            <div class="mb-3">
+                                <h6 class="text-muted">
+                                    <i class="bi bi-globe me-1"></i>Global Metadata
+                                </h6>
+                                {% for meta in global_metadata_display %}
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <span class="fw-medium">{{ meta.display_name }}:</span>
+                                    <span class="text-end">{{ meta.display_value | safe }}</span>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Personal Metadata -->
+                            {% if personal_metadata_display %}
+                            <div class="mb-3">
+                                {% if global_metadata_display %}<hr>{% endif %}
+                                <h6 class="text-muted">
+                                    <i class="bi bi-person me-1"></i>Personal Metadata
+                                </h6>
+                                {% for meta in personal_metadata_display %}
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <span class="fw-medium">{{ meta.display_name }}:</span>
+                                    <span class="text-end">{{ meta.display_value | safe }}</span>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Edit Button -->
+                            <div class="d-grid">
+                                <a href="{{ url_for('main.edit_book_custom_metadata', uid=book.uid) }}" class="btn btn-warning">
+                                    <i class="bi bi-pencil me-1"></i>Edit Custom Metadata
+                                </a>
+                            </div>
+                            
+                            {% if not global_metadata_display and not personal_metadata_display %}
+                            <div class="text-center text-muted py-3">
+                                <i class="bi bi-plus-circle mb-2" style="font-size: 2rem;"></i>
+                                <p class="mb-0">No custom metadata yet.</p>
+                                <p class="small">Add custom fields to track additional book information.</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <!-- Actions -->
@@ -461,6 +521,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
 .accordion-button.bg-info:not(.collapsed) {
     background-color: var(--bs-info) !important;
+}
+
+.accordion-button.bg-warning:not(.collapsed) {
+    background-color: var(--bs-warning) !important;
 }
 
 .accordion-button:focus {
