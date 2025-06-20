@@ -50,7 +50,7 @@
 <a href="{{ url_for('main.index') }}">Back to list</a>
 
 <!-- QuaggaJS -->
-<script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.min.js"></script>
+<script src="{{ url_for('static', filename='quagga.min.js') }}"></script>
 <script>
 let quaggaStarted = false;
 

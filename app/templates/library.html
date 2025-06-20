@@ -29,7 +29,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+    background: url('{{ url_for('static', filename='paper-fibers.png') }}');
     opacity: 0.3;
   }
 
@@ -100,7 +100,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: url('https://www.transparenttextures.com/patterns/wood-pattern.png');
+    background: url('{{ url_for('static', filename='wood-pattern.png') }}');
     opacity: 0.2;
     border-radius: 20px;
   }
