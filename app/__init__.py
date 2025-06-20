@@ -128,9 +128,9 @@ def create_app():
             if site_name:
                 site_name = site_name.decode('utf-8') if isinstance(site_name, bytes) else site_name
             else:
-                site_name = 'Bibliotheca'
+                site_name = 'MyBibliotheca'
         except Exception:
-            site_name = 'Bibliotheca'
+            site_name = 'MyBibliotheca'
         return dict(site_name=site_name)
 
     # CSRF error handler
@@ -154,7 +154,7 @@ def create_app():
 
     # REDIS DATABASE INITIALIZATION
     with app.app_context():
-        print("🚀 Initializing Redis-only Bibliotheca...")
+        print("🚀 Initializing Redis-only MyBibliotheca...")
         
         # Test Redis connection
         try:
