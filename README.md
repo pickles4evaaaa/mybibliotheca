@@ -1,12 +1,17 @@
 # 📚 MyBibliotheca
 
-**MyBibliotheca** is a self-hosted personal library and reading tracker web app built with Flask. It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
+**MyBibliotheca** is a self-hosted personal library and reading-tracker—your open-source alternative to Goodreads, StoryGraph, and Fable! It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
 
 
 🆕 **Multi-User Features**: Multi-user authentication, user data isolation, admin management, and secure password handling.
 
-=======
-[**Join us on Discord!**](https://discord.gg/Hc8C5eRm7Q)
+
+[![Documentation](https://img.shields.io/badge/Documentation-MyBibliotheca-4a90e2?style=for-the-badge&logo=read-the-docs&logoColor=white)](https://mybibliotheca.org)
+
+
+[![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white&labelColor=7289DA&style=for-the-badge)](https://discord.gg/Hc8C5eRm7Q)
+
+
 
 ---
 
@@ -53,7 +58,7 @@ docker run -d \
   -e TIMEZONE=America/Chicago \
   -e WORKERS=6 \
   --restart unless-stopped \
-  pickles4evaaaa/mybibliotheca:latest
+  pickles4evaaaa/mybibliotheca:1.1.0
 ```
 
 ---
@@ -66,8 +71,8 @@ Create a `docker-compose.yml` file:
 version: '3.8'
 
 services:
-  bibliotheca:
-    image: pickles4evaaaa/mybibliotheca:latest
+  MyBibliotheca:
+    image: pickles4evaaaa/mybibliotheca:1.1.0
     container_name: mybibliotheca
     ports:
       - "5054:5054"
@@ -122,16 +127,16 @@ Use the built-in admin tools for password management:
 
 ```bash
 # Reset admin password (interactive)
-docker exec -it bibliotheca python3 admin_tools.py reset-admin-password
+docker exec -it mybibliotheca python3 admin_tools.py reset-admin-password
 
 # Create additional admin user
-docker exec -it bibliotheca python3 admin_tools.py create-admin
+docker exec -it mybibliotheca python3 admin_tools.py create-admin
 
 # List all users
-docker exec -it bibliotheca python3 admin_tools.py list-users
+docker exec -it mybibliotheca python3 admin_tools.py list-users
 
 # System statistics
-docker exec -it bibliotheca python3 admin_tools.py system-stats
+docker exec -it mybibliotheca python3 admin_tools.py system-stats
 ```
 
 ### Migration from V1.x
@@ -166,7 +171,7 @@ Existing single-user installations are **automatically migrated** to multi-user:
 
    ```bash
    git clone https://github.com/pickles4evaaaa/mybibliotheca.git
-   cd bibliotheca
+   cd mybibliotheca
    ```
 
 2. **Create a Python virtual environment**
@@ -200,8 +205,6 @@ Existing single-user installations are **automatically migrated** to multi-user:
 
    This step creates the `data` directory and database file with proper permissions for your platform.
 
-   This step creates the `data` directory and database file with proper permissions for your platform.
-
 5. **Run the app**
 
    **On Linux/macOS:**
@@ -226,11 +229,11 @@ Existing single-user installations are **automatically migrated** to multi-user:
 
 ### ⚙️ Configuration
 
-* By default, uses Redis for data storage and a secure auto-generated secret key.
+* By default, uses SQLite (`books.db`) and a simple dev secret key.
 * For production, you can configure:
 
   * `SECRET_KEY`
-  * `REDIS_URL`
+  * `DATABASE_URI`
     via environment variables or `.env`.
 
 ---
@@ -241,7 +244,7 @@ Existing single-user installations are **automatically migrated** to multi-user:
 
 1. **Clone and configure**:
 ```bash
-git clone https://github.com/pickles4evaaaa/mybibliotheca.git
+git clone https://github.com/your-username/mybibliotheca.git
 cd mybibliotheca
 cp .env.example .env
 ```
@@ -289,7 +292,7 @@ For development and testing, use the development compose file:
 docker compose -f docker-compose.dev.yml up -d
 
 # Run tests
-docker compose -f docker-compose.dev.yml --profile test up bibliotheca-test
+docker compose -f docker-compose.dev.yml --profile test up MyBibliotheca-test
 ```
 
 ---
@@ -297,7 +300,7 @@ docker compose -f docker-compose.dev.yml --profile test up bibliotheca-test
 ## 🗂️ Project Structure
 
 ```
-mybibliotheca/
+MyBibliotheca/
 ├── app/
 │   ├── __init__.py
 │   ├── models.py
