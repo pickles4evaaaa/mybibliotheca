@@ -53,6 +53,7 @@ def fetch_book_data(isbn):
         return None
 
 def get_google_books_cover(isbn, fetch_title_author=False):
+    """Get book cover from Google Books API with HTTPS enforcement."""
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
     try:
         resp = requests.get(url, timeout=5)
@@ -62,6 +63,10 @@ def get_google_books_cover(isbn, fetch_title_author=False):
             volume_info = items[0]["volumeInfo"]
             image_links = volume_info.get("imageLinks", {})
             cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+            
+            # Force HTTPS for cover URLs
+            if cover_url and cover_url.startswith('http://'):
+                cover_url = cover_url.replace('http://', 'https://')
             
             if fetch_title_author:
                 title = volume_info.get('title')
@@ -89,10 +94,11 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     'rating_count': rating_count
                 }
             return cover_url
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {e}")
         pass
     if fetch_title_author:
-        return None # Or return a dict with None values if preferred
+        return None
     return None
 
 def format_date(date):
