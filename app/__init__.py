@@ -8,10 +8,12 @@ import os
 from flask import Flask, session, request, jsonify, redirect, url_for
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
+from flask_session import Session
 from config import Config
 
 login_manager = LoginManager()
 csrf = CSRFProtect()
+sess = Session()
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -113,6 +115,7 @@ def create_app():
 
     # Initialize extensions (no SQLAlchemy)
     csrf.init_app(app)
+    sess.init_app(app)  # Initialize Flask-Session
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
     login_manager.login_message = 'Please log in to access this page.'
@@ -221,19 +224,25 @@ def create_app():
         # Run debug middleware if enabled
         debug_middleware()
         
-        # Special debugging for setup route POST requests
-        if request.endpoint == 'auth.setup' and request.method == 'POST':
-            debug_auth("🔍 BEFORE_REQUEST: Setup POST detected!")
-            debug_auth(f"Form keys in before_request: {list(request.form.keys())}")
-            debug_auth(f"Content type: {request.content_type}")
-            debug_auth(f"Has form data: {bool(request.form)}")
+        # Special debugging for setup route
+        if request.endpoint == 'auth.setup':
+            debug_auth("🔍 BEFORE_REQUEST: Setup route detected!")
+            if request.method == 'POST':
+                debug_auth(f"Form keys in before_request: {list(request.form.keys())}")
+                debug_auth(f"Content type: {request.content_type}")
+                debug_auth(f"Has form data: {bool(request.form)}")
+            
             debug_auth(f"Session keys before processing: {list(session.keys()) if 'session' in globals() else 'No session'}")
             
-            # Force session to be established
-            if 'csrf_token' not in session:
-                debug_auth("🔧 Forcing session establishment for CSRF")
-                session['_force_session'] = True
-                session.permanent = False
+            # Force session and CSRF token to be established on GET request
+            if request.method == 'GET':
+                if 'csrf_token' not in session:
+                    from flask_wtf.csrf import generate_csrf
+                    debug_csrf("🔧 No CSRF token in session for setup GET. Generating one now.")
+                    generate_csrf()
+                    # Explicitly mark the session as modified to ensure it's saved
+                    session.modified = True
+                    debug_csrf(f"🔧 Session marked as modified. Keys: {list(session.keys())}")
         
         # Check if setup is needed (no users exist)
         try:

@@ -29,7 +29,12 @@ data_dir = ensure_data_directory()
 
 class Config:
     # Security
-    SECRET_KEY = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
+    SECRET_KEY = os.environ.get('SECRET_KEY')
+    if not SECRET_KEY:
+        # In a multi-worker setup (like Gunicorn), it's critical that all workers
+        # share the same secret key. Generating a random key per worker will
+        # lead to session corruption and CSRF failures.
+        raise ValueError("No SECRET_KEY set for Flask application. Please set it in your .env file.")
     
     # CSRF Settings with better defaults
     WTF_CSRF_ENABLED = True
