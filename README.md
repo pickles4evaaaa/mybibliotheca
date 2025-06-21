@@ -108,12 +108,60 @@ When you first run MyBibliotheca, you'll be prompted to complete a one-time setu
 
 1. **Access the application** at `http://localhost:5054` (or your configured port)
 2. **Complete the setup form** to create your administrator account:
-   - Choose an admin username
+   - Choose an admin username (3-20 characters)
    - Provide an admin email address  
-   - Set a secure password (must meet security requirements)
+   - Set a secure password (minimum 8 characters with requirements)
+   - Confirm your password
 3. **Start using MyBibliotheca** - you'll be automatically logged in after setup
 
 ✅ **Secure by Design**: No default credentials - you control your admin account from the start!
+
+#### Setup Troubleshooting
+
+If you encounter issues during setup:
+
+**🔧 Quick Diagnostics:**
+```bash
+# Run the diagnostic tool
+python3 test_setup_diagnostic.py
+
+# Or check setup status manually
+curl http://localhost:5054/auth/setup/status
+```
+
+**Common Issues & Solutions:**
+
+| Issue | Solution |
+|-------|----------|
+| "Security token expired" | Refresh the page and try again |
+| Button does nothing | Check browser console for errors, ensure JavaScript is enabled |
+| "Setup already completed" | Users already exist - go to `/auth/login` |
+| Form validation errors | Check that all fields meet requirements |
+| Database errors | Ensure Redis is running and accessible |
+| Email validation errors | Use standard domains (avoid .local, .test, etc.) |
+
+**🐛 Enable Debug Mode:**
+```bash
+# For detailed troubleshooting
+export BIBLIOTHECA_DEBUG=true
+export BIBLIOTHECA_DEBUG_AUTH=true
+export BIBLIOTHECA_DEBUG_CSRF=true
+
+# Restart the application and check logs
+```
+
+**📋 Manual Setup Check:**
+- Username: 3-20 characters, letters/numbers only
+- Email: Valid email format required
+- Password: Minimum 8 characters with uppercase, lowercase, number
+- JavaScript: Must be enabled in your browser
+- CSRF: Form session expires after 1 hour
+
+**🔄 Reset for Fresh Setup:**
+```bash
+# Clear all data to start fresh (⚠️ WARNING: Deletes all data)
+docker exec -it mybibliotheca-redis redis-cli FLUSHDB
+```
 
 ### Password Security
 

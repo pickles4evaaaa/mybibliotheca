@@ -215,11 +215,25 @@ def create_app():
     def check_setup_and_password_requirements():
         from flask import request, redirect, url_for
         from flask_login import current_user
-        from .debug_utils import debug_middleware
+        from .debug_utils import debug_middleware, debug_auth
         from .services import user_service
         
         # Run debug middleware if enabled
         debug_middleware()
+        
+        # Special debugging for setup route POST requests
+        if request.endpoint == 'auth.setup' and request.method == 'POST':
+            debug_auth("🔍 BEFORE_REQUEST: Setup POST detected!")
+            debug_auth(f"Form keys in before_request: {list(request.form.keys())}")
+            debug_auth(f"Content type: {request.content_type}")
+            debug_auth(f"Has form data: {bool(request.form)}")
+            debug_auth(f"Session keys before processing: {list(session.keys()) if 'session' in globals() else 'No session'}")
+            
+            # Force session to be established
+            if 'csrf_token' not in session:
+                debug_auth("🔧 Forcing session establishment for CSRF")
+                session['_force_session'] = True
+                session.permanent = False
         
         # Check if setup is needed (no users exist)
         try:

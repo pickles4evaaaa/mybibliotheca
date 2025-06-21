@@ -30,8 +30,23 @@ data_dir = ensure_data_directory()
 class Config:
     # Security
     SECRET_KEY = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
+    
+    # CSRF Settings with better defaults
     WTF_CSRF_ENABLED = True
     WTF_CSRF_TIME_LIMIT = 3600  # 1 hour
+    WTF_CSRF_SSL_STRICT = False  # Allow CSRF over HTTP for development
+    
+    # Session settings for better reliability
+    # For development, disable secure cookies to allow HTTP sessions
+    SESSION_COOKIE_SECURE = False  # Set to True only in production with HTTPS
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    SESSION_PERMANENT = False  # Don't require permanent sessions for CSRF
+    PERMANENT_SESSION_LIFETIME = 86400  # 24 hours
+    
+    # Additional session settings to ensure sessions work properly
+    SESSION_TYPE = 'filesystem'  # Use filesystem sessions for reliability
+    SESSION_USE_SIGNER = True  # Sign session cookies for security
 
     # File uploads
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size

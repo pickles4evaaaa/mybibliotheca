@@ -141,6 +141,10 @@ class SetupForm(FlaskForm):
         user = user_service.get_user_by_email_sync(email.data)
         if user is not None:
             raise ValidationError('Please use a different email address.')
+        
+        # Check for .local domains and provide helpful message
+        if email.data and email.data.endswith('.local'):
+            raise ValidationError('Email addresses ending in .local are not supported. Please use a standard email domain like @gmail.com, @example.com, etc.')
 
 class ReadingStreakForm(FlaskForm):
     reading_streak_offset = IntegerField(

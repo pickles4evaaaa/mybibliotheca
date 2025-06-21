@@ -19,12 +19,26 @@
                     </p>
                 </div>
 
-                <form method="POST">
+                <!-- Progress indicator -->
+                <div class="progress mb-4" style="height: 3px;">
+                    <div class="progress-bar" role="progressbar" style="width: 33%;" aria-valuenow="33" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+                <small class="text-muted">Step 1 of 3: Create Administrator Account</small>
+
+                <form method="POST" id="setup-form">
                     {{ form.hidden_tag() }}
+                    
+                    <!-- Add visual feedback for CSRF token -->
+                    {% if form.csrf_token.errors %}
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <strong>Security Error:</strong> The form session has expired. Please refresh the page and try again.
+                        </div>
+                    {% endif %}
                     
                     <div class="mb-3">
                         {{ form.username.label(class="form-label") }}
-                        {{ form.username(class="form-control" + (" is-invalid" if form.username.errors else "")) }}
+                        {{ form.username(class="form-control" + (" is-invalid" if form.username.errors else ""), required=true, autocomplete="username") }}
                         {% if form.username.errors %}
                             <div class="invalid-feedback">
                                 {% for error in form.username.errors %}
@@ -32,12 +46,12 @@
                                 {% endfor %}
                             </div>
                         {% endif %}
-                        <small class="form-text text-muted">This will be your administrator username</small>
+                        <small class="form-text text-muted">This will be your administrator username (3-20 characters)</small>
                     </div>
 
                     <div class="mb-3">
                         {{ form.email.label(class="form-label") }}
-                        {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
+                        {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else ""), required=true, autocomplete="email") }}
                         {% if form.email.errors %}
                             <div class="invalid-feedback">
                                 {% for error in form.email.errors %}
@@ -83,7 +97,7 @@
                     </div>
 
                     <div class="d-grid">
-                        {{ form.submit(class="btn btn-primary btn-lg") }}
+                        {{ form.submit(class="btn btn-primary btn-lg", id="setup-submit-btn") }}
                     </div>
                 </form>
 
@@ -99,4 +113,94 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('setup-form');
+    const submitBtn = document.getElementById('setup-submit-btn');
+    let isSubmitting = false;
+    
+    // Add form validation
+    form.addEventListener('submit', function(e) {
+        if (isSubmitting) {
+            e.preventDefault();
+            return false;
+        }
+        
+        // Basic client-side validation
+        const username = form.querySelector('[name="username"]').value.trim();
+        const email = form.querySelector('[name="email"]').value.trim();
+        const password = form.querySelector('[name="password"]').value;
+        const password2 = form.querySelector('[name="password2"]').value;
+        
+        if (username.length < 3) {
+            alert('Username must be at least 3 characters long.');
+            e.preventDefault();
+            return false;
+        }
+        
+        if (!email.includes('@')) {
+            alert('Please enter a valid email address.');
+            e.preventDefault();
+            return false;
+        }
+        
+        if (password.length < 8) {
+            alert('Password must be at least 8 characters long.');
+            e.preventDefault();
+            return false;
+        }
+        
+        if (password !== password2) {
+            alert('Passwords do not match.');
+            e.preventDefault();
+            return false;
+        }
+        
+        isSubmitting = true;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Creating Admin Account...';
+        
+        // Re-enable after 30 seconds as a safety fallback
+        setTimeout(function() {
+            if (isSubmitting) {
+                isSubmitting = false;
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'Complete Setup';
+            }
+        }, 30000);
+    });
+    
+    // Handle browser back/forward navigation
+    window.addEventListener('pageshow', function(event) {
+        if (event.persisted || (window.performance && window.performance.navigation.type === 2)) {
+            isSubmitting = false;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Complete Setup';
+        }
+    });
+    
+    // Auto-refresh CSRF token if page is idle for too long (25 minutes)
+    let idleTimer;
+    function resetIdleTimer() {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(function() {
+            if (!isSubmitting) {
+                // Warn user about potential CSRF expiration
+                const warningDiv = document.createElement('div');
+                warningDiv.className = 'alert alert-warning mt-3';
+                warningDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> This form has been open for a while. If you encounter errors, please refresh the page.';
+                form.insertBefore(warningDiv, form.firstChild);
+            }
+        }, 25 * 60 * 1000); // 25 minutes
+    }
+    
+    // Reset timer on user activity
+    ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(function(event) {
+        document.addEventListener(event, resetIdleTimer, true);
+    });
+    
+    resetIdleTimer();
+});
+</script>
 {% endblock %}
