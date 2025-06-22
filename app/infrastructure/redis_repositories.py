@@ -354,7 +354,9 @@ class RedisBookRepository(BookRepository):
         # Handle datetime fields
         if 'published_date' in book_data and isinstance(book_data['published_date'], str):
             try:
-                book_data['published_date'] = datetime.fromisoformat(book_data['published_date'])
+                # Convert to date object (not datetime) for published_date
+                parsed_date = datetime.fromisoformat(book_data['published_date'])
+                book_data['published_date'] = parsed_date.date()
             except:
                 book_data['published_date'] = None
                 
@@ -590,9 +592,12 @@ class RedisUserBookRepository(UserBookRepository):
             'locations': relationship.locations,
             'user_tags': relationship.user_tags,
             'source': relationship.source,
+            'custom_metadata': relationship.custom_metadata,  # ✅ ADD THIS LINE
             'created_at': relationship.created_at.isoformat(),
             'updated_at': relationship.updated_at.isoformat()
         }
+        
+        print(f"🔍 [REPO] Storing relationship with custom_metadata: {relationship.custom_metadata}")
         
         # Create relationship in Redis graph
         success = self.storage.create_relationship(
@@ -605,6 +610,7 @@ class RedisUserBookRepository(UserBookRepository):
         )
         
         if success:
+            print(f"✅ [REPO] Relationship stored successfully")
             return relationship
         else:
             raise Exception(f"Failed to create user-book relationship for user {relationship.user_id} and book {relationship.book_id}")
@@ -684,6 +690,10 @@ class RedisUserBookRepository(UserBookRepository):
         reading_status = ReadingStatus(data.get('reading_status', 'plan_to_read'))
         ownership_status = OwnershipStatus(data.get('ownership_status', 'owned'))
         
+        # Get custom metadata
+        custom_metadata = data.get('custom_metadata', {})
+        print(f"🔍 [REPO] Loading relationship custom_metadata from storage: {custom_metadata}")
+        
         return UserBookRelationship(
             user_id=user_id,
             book_id=book_id,
@@ -697,6 +707,7 @@ class RedisUserBookRepository(UserBookRepository):
             locations=data.get('locations', []),
             user_tags=data.get('user_tags', []),
             source=data.get('source', 'manual'),
+            custom_metadata=custom_metadata,  # ✅ ADD THIS LINE
             created_at=created_at,
             updated_at=updated_at
         )
@@ -726,6 +737,9 @@ class RedisCustomFieldRepository(CustomFieldRepository):
         if not field_def.id:
             field_def.id = str(uuid.uuid4())
         
+        print(f"🔍 [CUSTOM_FIELD_REPO] Creating field: {field_def.name}")
+        print(f"   📊 Field properties: is_global={field_def.is_global}, is_shareable={field_def.is_shareable}, created_by={field_def.created_by_user_id}")
+        
         field_data = asdict(field_def)
         field_data = _serialize_for_json(field_data)
         
@@ -733,6 +747,7 @@ class RedisCustomFieldRepository(CustomFieldRepository):
         if not success:
             raise Exception(f"Failed to create custom field {field_def.id}")
         
+        print(f"✅ [CUSTOM_FIELD_REPO] Field {field_def.name} created successfully with ID {field_def.id}")
         return field_def
     
     async def get_by_id(self, field_id: str) -> Optional[CustomFieldDefinition]:
@@ -745,18 +760,30 @@ class RedisCustomFieldRepository(CustomFieldRepository):
     
     async def get_by_user(self, user_id: str) -> List[CustomFieldDefinition]:
         """Get all custom field definitions created by a user."""
+        print(f"🔍 [CUSTOM_FIELD_REPO] Getting fields for user {user_id}")
         search_results = self.storage.search_nodes('custom_field', {'created_by_user_id': user_id})
-        return [self._data_to_custom_field(data) for data in search_results]
+        fields = [self._data_to_custom_field(data) for data in search_results]
+        print(f"📋 [CUSTOM_FIELD_REPO] Found {len(fields)} user-specific fields:")
+        for field in fields:
+            print(f"   👤 {field.name} (is_global: {field.is_global}, is_shareable: {field.is_shareable}, created_by: {field.created_by_user_id})")
+        return fields
     
     async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
         """Get all shareable custom field definitions."""
+        print(f"🔍 [CUSTOM_FIELD_REPO] Getting shareable fields (exclude_user_id: {exclude_user_id})")
         search_results = self.storage.search_nodes('custom_field', {'is_shareable': True})
         fields = [self._data_to_custom_field(data) for data in search_results]
+        print(f"📋 [CUSTOM_FIELD_REPO] Found {len(fields)} shareable fields before filtering:")
+        for field in fields:
+            print(f"   🌐 {field.name} (is_global: {field.is_global}, is_shareable: {field.is_shareable}, created_by: {field.created_by_user_id})")
         
         if exclude_user_id:
+            original_count = len(fields)
             fields = [f for f in fields if f.created_by_user_id != exclude_user_id]
+            print(f"📋 [CUSTOM_FIELD_REPO] After excluding user {exclude_user_id}: {len(fields)} fields (removed {original_count - len(fields)})")
         
-        return sorted(fields, key=lambda x: x.usage_count, reverse=True)
+        sorted_fields = sorted(fields, key=lambda x: x.usage_count, reverse=True)
+        return sorted_fields
     
     async def search(self, query: str, user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
         """Search custom field definitions."""
@@ -807,6 +834,11 @@ class RedisCustomFieldRepository(CustomFieldRepository):
         """Get most popular shareable custom field definitions."""
         shareable_fields = await self.get_shareable()
         return sorted(shareable_fields, key=lambda x: x.usage_count, reverse=True)[:limit]
+    
+    async def get_all(self) -> List[CustomFieldDefinition]:
+        """Get all custom field definitions."""
+        all_data = self.storage.find_nodes_by_type('custom_field', limit=1000)  # Large limit to get all
+        return [self._data_to_custom_field(data) for data in all_data]
     
     def _data_to_custom_field(self, data: Dict[str, Any]) -> CustomFieldDefinition:
         """Convert stored data to CustomFieldDefinition object."""
@@ -869,19 +901,28 @@ class RedisImportMappingRepository(ImportMappingRepository):
         return self._data_to_import_mapping(template_data)
     
     async def get_by_user(self, user_id: str) -> List[ImportMappingTemplate]:
-        """Get all import mapping templates for a user."""
-        search_results = self.storage.search_nodes('import_mapping', {'user_id': user_id})
-        return [self._data_to_import_mapping(data) for data in search_results]
+        """Get all import mapping templates for a user (includes system defaults)."""
+        # Get user's own templates
+        user_search_results = self.storage.search_nodes('import_mapping', {'user_id': user_id})
+        user_templates = [self._data_to_import_mapping(data) for data in user_search_results]
+        
+        # Get system default templates
+        system_search_results = self.storage.search_nodes('import_mapping', {'user_id': '__system__'})
+        system_templates = [self._data_to_import_mapping(data) for data in system_search_results]
+        
+        # Return system templates first, then user templates
+        return system_templates + user_templates
     
     async def detect_template(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
         """Detect matching template based on CSV headers."""
-        user_templates = await self.get_by_user(user_id)
+        # Get all templates (user + system)
+        all_templates = await self.get_by_user(user_id)
         
         # Find template with best header match
         best_template = None
         best_match_score = 0
         
-        for template in user_templates:
+        for template in all_templates:
             if not template.sample_headers:
                 continue
             
@@ -901,6 +942,12 @@ class RedisImportMappingRepository(ImportMappingRepository):
         
         return best_template
     
+    async def get_all(self) -> List[ImportMappingTemplate]:
+        """Get all import mapping templates."""
+        # Get all templates by searching with empty criteria
+        all_template_data = self.storage.search_nodes('import_mapping', {})
+        return [self._data_to_import_mapping(data) for data in all_template_data]
+
     async def update(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
         """Update an existing import mapping template."""
         template.updated_at = datetime.utcnow()

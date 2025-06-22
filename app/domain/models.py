@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 from enum import Enum
+import json
 
 
 class ReadingStatus(Enum):
@@ -124,6 +125,42 @@ class ImportMappingTemplate:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
+    def to_dict(self):
+        """Convert template to a dictionary for Redis storage."""
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "name": self.name,
+            "description": self.description,
+            "source_type": self.source_type,
+            "sample_headers": json.dumps(self.sample_headers),
+            "field_mappings": json.dumps(self.field_mappings),
+            "times_used": self.times_used,
+            "last_used": self.last_used.isoformat() if self.last_used else None,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Create a template from a dictionary (e.g., from Redis)."""
+        # Decode byte strings from Redis
+        decoded_data = {k.decode('utf-8') if isinstance(k, bytes) else k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
+        
+        return cls(
+            id=decoded_data.get("id"),
+            user_id=decoded_data.get("user_id"),
+            name=decoded_data.get("name"),
+            description=decoded_data.get("description"),
+            source_type=decoded_data.get("source_type"),
+            sample_headers=json.loads(decoded_data.get("sample_headers", '[]')),
+            field_mappings=json.loads(decoded_data.get("field_mappings", '{}')),
+            times_used=int(decoded_data.get("times_used", 0)),
+            last_used=datetime.fromisoformat(decoded_data["last_used"]) if decoded_data.get("last_used") else None,
+            created_at=datetime.fromisoformat(decoded_data["created_at"]),
+            updated_at=datetime.fromisoformat(decoded_data["updated_at"])
+        )
+
 
 @dataclass
 class Author:
@@ -222,7 +259,7 @@ class Book:
     isbn10: Optional[str] = None
     asin: Optional[str] = None
     description: Optional[str] = None
-    published_date: Optional[datetime] = None
+    published_date: Optional[date] = None
     page_count: Optional[int] = None
     language: str = "en"
     cover_url: Optional[str] = None
@@ -251,6 +288,10 @@ class Book:
     def __post_init__(self):
         if not self.normalized_title and self.title:
             self.normalized_title = self._normalize_title(self.title)
+        
+        # Ensure published_date is a date object, not datetime
+        if self.published_date and isinstance(self.published_date, datetime):
+            self.published_date = self.published_date.date()
     
     @staticmethod
     def _normalize_title(title: str) -> str:

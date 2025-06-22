@@ -96,13 +96,21 @@
                         </div>
                         <div class="card-body">
                             {% if import_templates %}
-                                <p class="text-muted">You have {{ import_templates|length }} saved import template(s)</p>
+                                <p class="text-muted">
+                                    You have {{ import_templates|length }} available import template(s), including 
+                                    <span class="text-success">default templates</span> for popular services like Goodreads and StoryGraph.
+                                </p>
                                 <div class="row">
                                     {% for template in import_templates[:4] %}
                                     <div class="col-md-6 col-lg-3 mb-3">
                                         <div class="card">
                                             <div class="card-body">
-                                                <h6 class="card-title">{{ template.name }}</h6>
+                                                <h6 class="card-title">
+                                                    {{ template.name }}
+                                                    {% if template.user_id == '__system__' %}
+                                                    <span class="badge bg-primary badge-sm">Default</span>
+                                                    {% endif %}
+                                                </h6>
                                                 <p class="card-text small text-muted">
                                                     {{ template.source_type|title }} format<br>
                                                     Used {{ template.times_used }} times
@@ -121,8 +129,15 @@
                                 </div>
                                 {% endif %}
                             {% else %}
-                                <p class="text-muted">No import templates saved yet.</p>
-                                <p class="small">Import templates save your field mappings so you don't have to re-map the same CSV format each time.</p>
+                                <p class="text-muted">Import templates help you quickly map CSV columns to book fields.</p>
+                                <p class="small">
+                                    <span class="text-success">✨ Default templates</span> are automatically available for popular services:
+                                </p>
+                                <ul class="small mb-3">
+                                    <li><strong>Goodreads Export:</strong> Maps ratings, reading status, categories, and reviews</li>
+                                    <li><strong>StoryGraph Export:</strong> Includes moods, pace, and content warnings</li>
+                                </ul>
+                                <p class="small">You can also create custom templates by importing books and saving your field mappings.</p>
                             {% endif %}
                             
                             <div class="mt-3">

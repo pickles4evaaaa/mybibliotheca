@@ -36,6 +36,9 @@
                                     <tr>
                                         <td>
                                             <strong>{{ template.name }}</strong>
+                                            {% if template.user_id == '__system__' %}
+                                            <span class="badge bg-primary ms-2">System Default</span>
+                                            {% endif %}
                                             {% if template.description %}
                                             <br><small class="text-muted">{{ template.description }}</small>
                                             {% endif %}
@@ -58,10 +61,16 @@
                                                         onclick="viewTemplate('{{ template.id }}')">
                                                     View
                                                 </button>
+                                                {% if template.user_id != '__system__' %}
                                                 <button type="button" class="btn btn-outline-danger" 
                                                         onclick="confirmDeleteTemplate('{{ template.id }}', '{{ template.name }}')">
                                                     Delete
                                                 </button>
+                                                {% else %}
+                                                <button type="button" class="btn btn-outline-secondary" disabled title="System templates cannot be deleted">
+                                                    System
+                                                </button>
+                                                {% endif %}
                                             </div>
                                         </td>
                                     </tr>

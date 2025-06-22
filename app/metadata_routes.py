@@ -20,11 +20,14 @@ metadata_bp = Blueprint('metadata', __name__, url_prefix='/metadata')
 def index():
     """Metadata management dashboard."""
     try:
-        # Get user's custom fields
-        user_fields = custom_field_service.get_user_fields_sync(current_user.id)
+        # Get user's custom fields with calculated usage
+        user_fields = custom_field_service.get_user_fields_with_calculated_usage_sync(current_user.id)
         
-        # Get popular shareable fields
-        popular_fields = custom_field_service.get_popular_fields_sync(limit=10)
+        # Get popular shareable fields with calculated usage
+        popular_fields = custom_field_service.get_shareable_fields_with_calculated_usage_sync(exclude_user_id=current_user.id)
+        # Sort by usage count to get most popular first
+        popular_fields.sort(key=lambda x: x.usage_count or 0, reverse=True)
+        popular_fields = popular_fields[:10]  # Limit to top 10
         
         # Get user's import templates
         import_templates = import_mapping_service.get_user_templates_sync(current_user.id)
@@ -45,11 +48,11 @@ def index():
 def fields():
     """Custom fields management page."""
     try:
-        # Get user's custom fields
-        user_fields = custom_field_service.get_user_fields_sync(current_user.id)
+        # Get user's custom fields with calculated usage
+        user_fields = custom_field_service.get_user_fields_with_calculated_usage_sync(current_user.id)
         
-        # Get shareable fields from other users
-        shareable_fields = custom_field_service.get_shareable_fields_sync(exclude_user_id=current_user.id)
+        # Get shareable fields from other users with calculated usage
+        shareable_fields = custom_field_service.get_shareable_fields_with_calculated_usage_sync(exclude_user_id=current_user.id)
         
         return render_template(
             'metadata/fields.html',
@@ -290,6 +293,11 @@ def delete_template(template_id):
         template = import_mapping_service.get_template_by_id_sync(template_id)
         if not template:
             flash('Template not found', 'error')
+            return redirect(url_for('metadata.templates'))
+        
+        # Prevent deletion of system templates
+        if template.user_id == '__system__':
+            flash('System default templates cannot be deleted', 'error')
             return redirect(url_for('metadata.templates'))
         
         # Check ownership

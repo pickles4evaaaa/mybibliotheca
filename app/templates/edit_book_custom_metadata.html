@@ -2,6 +2,99 @@
 
 {% block title %}Edit Custom Metadata - {{ book.title }}{% endblock %}
 
+<!-- Macro for rendering custom fields -->
+{% macro render_custom_field(field, current_value, input_name) %}
+    <div class="custom-field-group">
+        <label for="{{ input_name }}" class="form-label">
+            {{ field.display_name }}
+            {% if field.description %}
+                <i class="fas fa-info-circle text-muted" title="{{ field.description }}" data-bs-toggle="tooltip"></i>
+            {% endif %}
+        </label>
+        
+        {% if field.field_type.value == 'text' %}
+            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+        
+        {% elif field.field_type.value == 'textarea' %}
+            <textarea class="form-control" id="{{ input_name }}" name="{{ input_name }}" rows="3"
+                      placeholder="{{ field.placeholder_text or '' }}">{{ current_value }}</textarea>
+        
+        {% elif field.field_type.value == 'number' %}
+            <input type="number" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" step="any" placeholder="{{ field.placeholder_text or '' }}">
+        
+        {% elif field.field_type.value == 'boolean' %}
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="{{ input_name }}" name="{{ input_name }}"
+                       {% if current_value %}checked{% endif %}>
+                <label class="form-check-label" for="{{ input_name }}">
+                    {{ field.help_text or 'Yes' }}
+                </label>
+            </div>
+        
+        {% elif field.field_type.value == 'date' %}
+            <input type="date" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}">
+        
+        {% elif field.field_type.value in ['rating_5', 'rating_10'] %}
+            {% set max_rating = 5 if field.field_type.value == 'rating_5' else 10 %}
+            <div class="rating-input">
+                <select class="form-select" id="{{ input_name }}" name="{{ input_name }}">
+                    <option value="">No rating</option>
+                    {% for i in range(1, max_rating + 1) %}
+                        <option value="{{ i }}" {% if current_value == i %}selected{% endif %}>
+                            {{ i }}/{{ max_rating }}
+                            {% if field.rating_labels.get(i) %}
+                                - {{ field.rating_labels[i] }}
+                            {% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+        
+        {% elif field.field_type.value in ['list', 'tags'] %}
+            {% if field.predefined_options %}
+                <div class="predefined-options mb-2">
+                    {% for option in field.predefined_options %}
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" 
+                                   id="{{ input_name }}_{{ loop.index }}" 
+                                   value="{{ option }}"
+                                   {% if option in (current_value if current_value is iterable and current_value is not string else []) %}checked{% endif %}>
+                            <label class="form-check-label" for="{{ input_name }}_{{ loop.index }}">
+                                {{ option }}
+                            </label>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+            
+            {% if field.allow_custom_options or not field.predefined_options %}
+                <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                       value="{% if current_value is iterable and current_value is not string %}{{ current_value | join(', ') }}{% else %}{{ current_value }}{% endif %}"
+                       placeholder="{{ field.placeholder_text or 'Enter comma-separated values' }}">
+            {% endif %}
+        
+        {% elif field.field_type.value == 'url' %}
+            <input type="url" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or 'https://...' }}">
+        
+        {% elif field.field_type.value == 'email' %}
+            <input type="email" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or 'user@example.com' }}">
+        
+        {% else %}
+            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+        {% endif %}
+        
+        {% if field.help_text and field.field_type.value != 'boolean' %}
+            <div class="form-text">{{ field.help_text }}</div>
+        {% endif %}
+    </div>
+{% endmacro %}
+
 {% block content %}
 <div class="container mt-4">
     <div class="row">
@@ -100,99 +193,6 @@
         </div>
     </div>
 </div>
-
-<!-- Macro for rendering custom fields -->
-{% macro render_custom_field(field, current_value, input_name) %}
-    <div class="custom-field-group">
-        <label for="{{ input_name }}" class="form-label">
-            {{ field.display_name }}
-            {% if field.description %}
-                <i class="fas fa-info-circle text-muted" title="{{ field.description }}" data-bs-toggle="tooltip"></i>
-            {% endif %}
-        </label>
-        
-        {% if field.field_type.value == 'text' %}
-            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
-        
-        {% elif field.field_type.value == 'textarea' %}
-            <textarea class="form-control" id="{{ input_name }}" name="{{ input_name }}" rows="3"
-                      placeholder="{{ field.placeholder_text or '' }}">{{ current_value }}</textarea>
-        
-        {% elif field.field_type.value == 'number' %}
-            <input type="number" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                   value="{{ current_value }}" step="any" placeholder="{{ field.placeholder_text or '' }}">
-        
-        {% elif field.field_type.value == 'boolean' %}
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="{{ input_name }}" name="{{ input_name }}"
-                       {% if current_value %}checked{% endif %}>
-                <label class="form-check-label" for="{{ input_name }}">
-                    {{ field.help_text or 'Yes' }}
-                </label>
-            </div>
-        
-        {% elif field.field_type.value == 'date' %}
-            <input type="date" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                   value="{{ current_value }}">
-        
-        {% elif field.field_type.value in ['rating_5', 'rating_10'] %}
-            {% set max_rating = 5 if field.field_type.value == 'rating_5' else 10 %}
-            <div class="rating-input">
-                <select class="form-select" id="{{ input_name }}" name="{{ input_name }}">
-                    <option value="">No rating</option>
-                    {% for i in range(1, max_rating + 1) %}
-                        <option value="{{ i }}" {% if current_value == i %}selected{% endif %}>
-                            {{ i }}/{{ max_rating }}
-                            {% if field.rating_labels.get(i) %}
-                                - {{ field.rating_labels[i] }}
-                            {% endif %}
-                        </option>
-                    {% endfor %}
-                </select>
-            </div>
-        
-        {% elif field.field_type.value in ['list', 'tags'] %}
-            {% if field.predefined_options %}
-                <div class="predefined-options mb-2">
-                    {% for option in field.predefined_options %}
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="checkbox" 
-                                   id="{{ input_name }}_{{ loop.index }}" 
-                                   value="{{ option }}"
-                                   {% if option in (current_value if current_value is iterable and current_value is not string else []) %}checked{% endif %}>
-                            <label class="form-check-label" for="{{ input_name }}_{{ loop.index }}">
-                                {{ option }}
-                            </label>
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-            
-            {% if field.allow_custom_options or not field.predefined_options %}
-                <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                       value="{% if current_value is iterable and current_value is not string %}{{ current_value | join(', ') }}{% else %}{{ current_value }}{% endif %}"
-                       placeholder="{{ field.placeholder_text or 'Enter comma-separated values' }}">
-            {% endif %}
-        
-        {% elif field.field_type.value == 'url' %}
-            <input type="url" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or 'https://...' }}">
-        
-        {% elif field.field_type.value == 'email' %}
-            <input type="email" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or 'user@example.com' }}">
-        
-        {% else %}
-            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
-                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
-        {% endif %}
-        
-        {% if field.help_text and field.field_type.value != 'boolean' %}
-            <div class="form-text">{{ field.help_text }}</div>
-        {% endif %}
-    </div>
-{% endmacro %}
 
 <script>
 // Initialize tooltips

@@ -7,6 +7,12 @@
     <div class="alert alert-info">
         <h6 class="alert-heading">Field Mapping</h6>
         <p class="mb-0">Map your CSV columns to book fields. We've auto-detected some fields for you, but you can adjust any mappings below.</p>
+        {% if detected_template %}
+        <div class="alert alert-success mt-2 mb-0">
+            <i class="fas fa-magic"></i> <strong>Template Auto-Detected:</strong> {{ detected_template.name }}
+            <br><small>{{ detected_template.description }}</small>
+        </div>
+        {% endif %}
     </div>
 
     <div class="row">
@@ -54,13 +60,27 @@
                             <select class="form-select" id="import_template" name="import_template" onchange="applyTemplate()">
                                 <option value="">-- No Template (Map Manually) --</option>
                                 {% for template in import_templates %}
-                                <option value="{{ template.name }}" data-mappings="{{ template.field_mappings | tojson | e }}">
+                                <option value="{{ template.name }}" 
+                                        data-mappings="{{ template.field_mappings | tojson | e }}"
+                                        {% if detected_template_name and template.name == detected_template_name %}selected{% endif %}>
                                     {{ template.name }}
-                                    <span class="text-muted">({{ template.description }})</span>
+                                    {% if template.user_id == '__system__' and '(Default)' not in template.name %}
+                                    <span class="text-success">(Default)</span>
+                                    {% elif template.user_id == '__system__' %}
+                                    <span class="text-success"></span>
+                                    {% else %}
+                                    <span class="text-muted">(Custom)</span>
+                                    {% endif %}
+                                    {% if template.description %}
+                                    - {{ template.description }}
+                                    {% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
-                            <div class="form-text">Import templates save your field mappings for reuse with similar CSV files.</div>
+                            <div class="form-text">
+                                Import templates save your field mappings for reuse with similar CSV files. 
+                                <span class="text-success">Default templates</span> are provided for common formats like Goodreads and StoryGraph.
+                            </div>
                         </div>
 
                         <div class="row">
@@ -248,7 +268,13 @@ function applyTemplate() {
         try {
             const mappings = JSON.parse(selectedOption.dataset.mappings);
             
-            // Apply mappings to form
+            // Clear all mappings first, then apply template mappings
+            document.querySelectorAll('.mapping-select').forEach(select => {
+                select.value = '';
+                handleFieldSelection(select);
+            });
+            
+            // Apply mappings from template
             document.querySelectorAll('.mapping-select').forEach(select => {
                 const csvField = select.dataset.csvField;
                 if (mappings[csvField]) {
@@ -259,6 +285,12 @@ function applyTemplate() {
         } catch (e) {
             console.error('Error applying template:', e);
         }
+    } else {
+        // If no template selected, clear all mappings
+        document.querySelectorAll('.mapping-select').forEach(select => {
+            select.value = '';
+            handleFieldSelection(select);
+        });
     }
 }
 
@@ -290,6 +322,12 @@ document.querySelectorAll('.mapping-select').forEach(select => {
     select.addEventListener('change', function() {
         handleFieldSelection(this);
     });
+});
+
+// Auto-apply detected template on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // No longer needed - backend handles template mappings via suggested_mappings
+    // when a template is detected
 });
 
 // Form submission handling

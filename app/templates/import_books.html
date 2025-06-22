@@ -25,8 +25,8 @@
                     <div class="alert alert-info">
                         <h6 class="alert-heading">📝 Supported Formats:</h6>
                         <ul class="mb-0">
-                            <li><strong>Goodreads Export:</strong> Standard Goodreads library export CSV</li>
-                            <li><strong>StoryGraph Export:</strong> StoryGraph library export CSV</li>
+                            <li><strong>Goodreads Export:</strong> Standard Goodreads library export CSV <span class="badge bg-success">Default Template Available</span></li>
+                            <li><strong>StoryGraph Export:</strong> StoryGraph library export CSV <span class="badge bg-success">Default Template Available</span></li>
                             <li><strong>Simple ISBN List:</strong> Single column with ISBNs/UPCs</li>
                             <li><strong>Custom CSV:</strong> Any CSV with book data (Title, Author, ISBN, etc.)</li>
                         </ul>
@@ -47,6 +47,30 @@
             </div>
         </div>
         
+        <div class="col-lg-4">
+            <!-- Quick Import for Goodreads/StoryGraph -->
+            <div class="card mb-4 border-success">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="fas fa-bolt me-2"></i>Quick Import</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">For Goodreads or StoryGraph exports, skip the mapping step entirely!</p>
+                    <div class="alert alert-info alert-sm mb-3">
+                        <small><i class="fas fa-magic me-1"></i><strong>Auto-detection:</strong> Goodreads/StoryGraph files uploaded above will automatically redirect to direct import!</small>
+                    </div>
+                    <a href="{{ url_for('main.direct_import') }}" class="btn btn-success w-100">
+                        <i class="fas fa-rocket me-2"></i>Direct Import
+                    </a>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="fas fa-check-circle me-1"></i>Automatic field detection<br>
+                            <i class="fas fa-check-circle me-1"></i>Custom metadata creation<br>
+                            <i class="fas fa-check-circle me-1"></i>No mapping required
+                        </small>
+                    </div>
+                </div>
+            </div>
+            
         <div class="col-lg-4">
             <!-- Help Section -->
             <div class="card">

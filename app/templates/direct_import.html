@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Direct Import - MyBibliotheca{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0"><i class="fas fa-file-import me-2"></i>Direct Import - Goodreads & StoryGraph</h4>
+                </div>
+                <div class="card-body">
+                    {% if suggested and suggested_filename %}
+                    <div class="alert alert-success">
+                        <h5><i class="fas fa-magic me-2"></i>{{ import_type.title() }} File Detected!</h5>
+                        <p class="mb-2">We detected that <strong>{{ suggested_filename }}</strong> is a {{ import_type.title() }} export file. 
+                           You can proceed with the direct import below for the fastest experience.</p>
+                    </div>
+                    
+                    <form method="POST" enctype="multipart/form-data" class="mt-4">
+                        <input type="hidden" name="use_suggested_file" value="true">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="alert alert-light border">
+                                    <i class="fas fa-file-csv me-2 text-success"></i>
+                                    <strong>Ready to import:</strong> {{ suggested_filename }}
+                                    <br>
+                                    <small class="text-muted">{{ import_type.title() }} format detected automatically</small>
+                                </div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-center">
+                                <button type="submit" class="btn btn-success btn-lg w-100">
+                                    <i class="fas fa-bolt me-2"></i>Quick Import Now
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                    
+                    <hr class="my-4">
+                    
+                    <h6 class="text-muted">Or upload a different file:</h6>
+                    {% endif %}
+                    
+                    {% if not suggested %}
+                    <div class="alert alert-info">
+                        <h5><i class="fas fa-info-circle me-2"></i>Streamlined Import</h5>
+                        <p class="mb-2">This tool directly imports your Goodreads or StoryGraph CSV exports without requiring field mapping.</p>
+                        <ul class="mb-0">
+                            <li><strong>Goodreads:</strong> Export your library from Settings → Import/Export → Export Library</li>
+                            <li><strong>StoryGraph:</strong> Export your library from Settings → Data Export</li>
+                            <li>Custom metadata fields will be automatically created for platform-specific data</li>
+                            <li>Duplicate books will be detected and skipped</li>
+                        </ul>
+                    </div>
+                    {% endif %}
+                    
+                    <form method="POST" enctype="multipart/form-data" class="mt-4">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="csv_file" class="form-label">
+                                        <i class="fas fa-file-csv me-2"></i>Select your CSV export file
+                                    </label>
+                                    <input type="file" class="form-control" id="csv_file" name="csv_file" 
+                                           accept=".csv" required>
+                                    <div class="form-text">
+                                        Only CSV files from Goodreads or StoryGraph are supported.
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-end">
+                                <button type="submit" class="btn btn-primary btn-lg w-100">
+                                    <i class="fas fa-upload me-2"></i>Import Books
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fab fa-goodreads me-2"></i>Goodreads Data Imported</h6>
+                            <ul class="list-unstyled small">
+                                <li>• Book details (title, author, ISBN, pages, publisher)</li>
+                                <li>• Your ratings and reviews</li>
+                                <li>• Reading dates and status</li>
+                                <li>• Bookshelves/categories as tags</li>
+                                <li>• Average community rating</li>
+                                <li>• Read count and owned copies</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-book me-2"></i>StoryGraph Data Imported</h6>
+                            <ul class="list-unstyled small">
+                                <li>• Book details (title, author, ISBN, format)</li>
+                                <li>• Your ratings and reviews</li>
+                                <li>• Reading dates and status</li>
+                                <li>• Mood tags and reading pace</li>
+                                <li>• Character/plot analysis</li>
+                                <li>• Content warnings</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <p class="text-muted small">
+                            <i class="fas fa-shield-alt me-1"></i>
+                            Your files are processed locally and not stored permanently. 
+                            Need more control? Use the <a href="{{ url_for('main.import_books') }}">advanced import tool</a> instead.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

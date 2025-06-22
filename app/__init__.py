@@ -99,6 +99,117 @@ def _check_for_sqlite_migration():
     """Disabled: Manual migration preferred over automatic migration."""
     pass
 
+def _initialize_default_templates():
+    """Initialize default import templates for Goodreads and StoryGraph if they don't exist."""
+    try:
+        from datetime import datetime
+        from .domain.models import ImportMappingTemplate
+        from .services import import_mapping_service
+        
+        # Check if default templates already exist
+        goodreads_template = None
+        storygraph_template = None
+        try:
+            goodreads_template = import_mapping_service.get_template_by_id_sync("default_goodreads")
+            storygraph_template = import_mapping_service.get_template_by_id_sync("default_storygraph")
+            
+            if goodreads_template and storygraph_template:
+                print("✅ Default import templates already exist")
+                return
+        except:
+            pass  # Templates don't exist, we'll create them
+        
+        print("🔄 Creating default import templates...")
+        
+        # Create Goodreads template
+        if not goodreads_template:
+            goodreads_template = ImportMappingTemplate(
+                id="default_goodreads",
+                user_id="__system__",
+                name="Goodreads Export (Default)",
+                description="Default template for standard Goodreads library export CSV files",
+                source_type="goodreads",
+                sample_headers=[
+                    "Book Id", "Title", "Author", "Author l-f", "Additional Authors", 
+                    "ISBN", "ISBN13", "My Rating", "Average Rating", "Publisher", 
+                    "Binding", "Number of Pages", "Year Published", "Original Publication Year", 
+                    "Date Read", "Date Added", "Bookshelves", "Bookshelves with positions", 
+                    "Exclusive Shelf", "My Review", "Spoiler", "Private Notes", "Read Count", "Owned Copies"
+                ],
+                field_mappings={
+                    "Title": {"action": "map_existing", "target_field": "title"},
+                    "Author": {"action": "map_existing", "target_field": "author"},
+                    "Additional Authors": {"action": "map_existing", "target_field": "additional_authors"},
+                    "ISBN13": {"action": "map_existing", "target_field": "isbn"},
+                    "ISBN": {"action": "map_existing", "target_field": "isbn"},
+                    "My Rating": {"action": "map_existing", "target_field": "rating"},
+                    "Average Rating": {"action": "map_existing", "target_field": "average_rating"},
+                    "Publisher": {"action": "map_existing", "target_field": "publisher"},
+                    "Number of Pages": {"action": "map_existing", "target_field": "page_count"},
+                    "Year Published": {"action": "map_existing", "target_field": "publication_year"},
+                    "Original Publication Year": {"action": "map_existing", "target_field": "original_publication_year"},
+                    "Date Read": {"action": "map_existing", "target_field": "date_read"},
+                    "Date Added": {"action": "map_existing", "target_field": "date_added"},
+                    "Bookshelves": {"action": "map_existing", "target_field": "categories"},
+                    "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},
+                    "My Review": {"action": "map_existing", "target_field": "notes"},
+                    "Private Notes": {"action": "map_existing", "target_field": "private_notes"}
+                },
+                times_used=0,
+                last_used=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            import_mapping_service.create_template_sync(goodreads_template)
+            print("✅ Created Goodreads default template")
+        
+        # Create StoryGraph template
+        if not storygraph_template:
+            storygraph_template = ImportMappingTemplate(
+                id="default_storygraph",
+                user_id="__system__",
+                name="StoryGraph Export (Default)",
+                description="Default template for standard StoryGraph library export CSV files",
+                source_type="storygraph", 
+                sample_headers=[
+                    "Title", "Authors", "Contributors", "ISBN/UID", "Format",
+                    "Read Status", "Date Added", "Last Date Read", "Dates Read", 
+                    "Read Count", "Moods", "Pace", "Character- or Plot-Driven?",
+                    "Strong Character Development?", "Loveable Characters?", 
+                    "Diverse Characters?", "Flawed Characters?", "Star Rating",
+                    "Review", "Content Warnings", "Content Warning Description", 
+                    "Tags", "Owned?"
+                ],
+                field_mappings={
+                    "Title": {"action": "map_existing", "target_field": "title"},
+                    "Authors": {"action": "map_existing", "target_field": "author"},
+                    "Contributors": {"action": "map_existing", "target_field": "additional_authors"},
+                    "ISBN/UID": {"action": "map_existing", "target_field": "isbn"},
+                    "Format": {"action": "map_existing", "target_field": "format"},
+                    "Read Status": {"action": "map_existing", "target_field": "reading_status"},
+                    "Date Added": {"action": "map_existing", "target_field": "date_added"},
+                    "Last Date Read": {"action": "map_existing", "target_field": "date_read"},
+                    "Dates Read": {"action": "map_existing", "target_field": "date_ranges"},
+                    "Read Count": {"action": "map_existing", "target_field": "read_count"},
+                    "Star Rating": {"action": "map_existing", "target_field": "rating"},
+                    "Review": {"action": "map_existing", "target_field": "notes"},
+                    "Tags": {"action": "map_existing", "target_field": "categories"}
+                },
+                times_used=0,
+                last_used=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            import_mapping_service.create_template_sync(storygraph_template)
+            print("✅ Created StoryGraph default template")
+            
+        print("🎉 Default import templates initialized successfully!")
+        
+    except Exception as e:
+        print(f"⚠️  Warning: Could not initialize default templates: {e}")
+        # Don't fail app startup if templates can't be created
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -201,6 +312,27 @@ def create_app():
             storage = get_graph_storage()
             # Simple connection test
             print("✅ Redis connection successful")
+            
+            # Initialize services and attach to app
+            from .services import (
+                RedisBookService, RedisUserService, RedisReadingLogService,
+                RedisCustomFieldService, RedisImportMappingService, RedisDirectImportService
+            )
+            
+            try:
+                app.book_service = RedisBookService()
+                app.user_service = RedisUserService()
+                app.reading_log_service = RedisReadingLogService()
+                app.custom_field_service = RedisCustomFieldService()
+                app.import_mapping_service = RedisImportMappingService()
+                app.direct_import_service = RedisDirectImportService()
+                print("📦 Services initialized successfully")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not initialize some services: {e}")
+            
+            # Initialize default import templates
+            _initialize_default_templates()
+            
         except Exception as e:
             print(f"❌ Redis connection failed: {e}")
             print("🔧 Make sure Redis is running and accessible")

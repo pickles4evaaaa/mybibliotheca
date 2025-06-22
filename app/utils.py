@@ -95,7 +95,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 }
             return cover_url
     except Exception as e:
-        logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {e}")
+        current_app.logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {e}")
         pass
     if fetch_title_author:
         return None

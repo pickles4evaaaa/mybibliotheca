@@ -18,6 +18,7 @@ from flask import current_app
 from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus
 from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository
 from .infrastructure.redis_graph import get_graph_storage
+from app.domain.models import ImportMappingTemplate, ReadingStatus
 
 
 def run_async(async_func):
@@ -491,3 +492,75 @@ class RedisBookService:
 
 # Create service instances
 redis_book_service = RedisBookService()
+
+class RedisImportMappingRepository:
+    """Repository for managing import mapping templates in Redis."""
+    
+    def __init__(self, redis):
+        self.redis = redis
+    
+    async def create(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Create a new import mapping template."""
+        template.id = str(uuid.uuid4())  # Generate a new ID for the template
+        template.created_at = datetime.utcnow()
+        template.updated_at = datetime.utcnow()
+        
+        template_key = f"template:{template.id}"
+        
+        # Serialize the template data
+        template_data = template.to_dict()
+        
+        # Save to Redis
+        await self.redis.hset(template_key, mapping=template_data)
+        
+        return template
+
+    async def get_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
+        """Get an import mapping template by ID."""
+        template_key = f"template:{template_id}"
+        template_data = await self.redis.hgetall(template_key)
+        
+        if not template_data:
+            return None
+        
+        # Deserialize the template data
+        template_data['id'] = template_id
+        template = ImportMappingTemplate(**template_data)
+        return template
+
+    async def update(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
+        """Update an existing template."""
+        template_key = f"template:{template.id}"
+        
+        # Check if the template exists
+        if not await self.redis.exists(template_key):
+            raise ValueError(f"Template with id {template.id} not found")
+
+        # Serialize the updated template data
+        template.updated_at = datetime.utcnow()
+        template_data = template.to_dict()
+
+        # Save the updated data to Redis
+        await self.redis.hset(template_key, mapping=template_data)
+        
+        return template
+
+    async def delete(self, template_id: str) -> bool:
+        """Delete an import mapping template by ID."""
+        template_key = f"template:{template_id}"
+        result = await self.redis.delete(template_key)
+        return result > 0
+
+    async def get_all(self) -> List[ImportMappingTemplate]:
+        """Get all import mapping templates."""
+        template_keys = await self.redis.scan_keys("template:*")
+        templates = []
+        
+        for key in template_keys:
+            template_data = await self.redis.hgetall(key)
+            if template_data:
+                template_data['id'] = key.split(':')[1]  # Extract ID from key
+                template = ImportMappingTemplate(**template_data)
+                templates.append(template)
+        
+        return templates

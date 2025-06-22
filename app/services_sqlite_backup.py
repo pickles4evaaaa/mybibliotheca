@@ -95,12 +95,13 @@ class DualWriteBookService:
         # Create series if needed (for future enhancement)
         series = None
         
-        # Convert string published_date to datetime if present
+        # Convert string published_date to date if present
         published_date = None
         if sqlite_book.published_date:
             try:
-                # Try to parse as ISO format first
-                published_date = datetime.fromisoformat(sqlite_book.published_date.replace('Z', '+00:00'))
+                # Try to parse as ISO format first and convert to date
+                parsed_datetime = datetime.fromisoformat(sqlite_book.published_date.replace('Z', '+00:00'))
+                published_date = parsed_datetime.date()  # Convert to date object
             except (ValueError, AttributeError):
                 # If that fails, it might already be a datetime or invalid
                 published_date = None

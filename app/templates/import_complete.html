@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Import Complete - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            {% if success %}
+                <div class="card border-success">
+                    <div class="card-header bg-success text-white">
+                        <h4 class="mb-0">
+                            <i class="fas fa-check-circle me-2"></i>
+                            Import Completed Successfully!
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center mb-4">
+                            <div class="col-md-4">
+                                <div class="display-4 text-success">{{ imported_count }}</div>
+                                <p class="text-muted">Books Imported</p>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="display-4 text-info">{{ total_rows }}</div>
+                                <p class="text-muted">Total Rows</p>
+                            </div>
+                            <div class="col-md-4">
+                                {% set success_rate = ((imported_count / total_rows) * 100) | round(1) if total_rows > 0 else 0 %}
+                                <div class="display-4 text-primary">{{ success_rate }}%</div>
+                                <p class="text-muted">Success Rate</p>
+                            </div>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="text-muted">Import Progress</span>
+                                <span class="text-muted">{{ success_rate }}%</span>
+                            </div>
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar bg-success" 
+                                     role="progressbar" 
+                                     style="width: {{ success_rate }}%"
+                                     aria-valuenow="{{ success_rate }}" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-success" role="alert">
+                            <h5 class="alert-heading">🎉 Great job!</h5>
+                            <p class="mb-0">
+                                Successfully imported <strong>{{ imported_count }}</strong> out of <strong>{{ total_rows }}</strong> 
+                                books from your <strong>{{ import_type }}</strong> export.
+                            </p>
+                        </div>
+
+                        {% if errors %}
+                            <div class="alert alert-warning" role="alert">
+                                <h6 class="alert-heading">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    Some Issues Found
+                                </h6>
+                                <p><strong>{{ errors|length }}</strong> rows had errors and were skipped:</p>
+                                <div class="collapse" id="errorDetails">
+                                    <ul class="mb-0">
+                                        {% for error in errors[:10] %}
+                                            <li><small>{{ error }}</small></li>
+                                        {% endfor %}
+                                        {% if errors|length > 10 %}
+                                            <li><small>... and {{ errors|length - 10 }} more errors</small></li>
+                                        {% endif %}
+                                    </ul>
+                                </div>
+                                <button class="btn btn-sm btn-outline-warning mt-2" 
+                                        type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#errorDetails">
+                                    <i class="fas fa-list me-1"></i>
+                                    Show Error Details
+                                </button>
+                            </div>
+                        {% endif %}
+
+                        <!-- Action Buttons -->
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-center mt-4">
+                            <a href="{{ url_for('main.library') }}" class="btn btn-primary btn-lg">
+                                <i class="fas fa-books me-2"></i>
+                                View Your Library
+                            </a>
+                            <a href="{{ url_for('main.direct_import') }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-upload me-2"></i>
+                                Import More Books
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            {% else %}
+                <div class="card border-danger">
+                    <div class="card-header bg-danger text-white">
+                        <h4 class="mb-0">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            Import Failed
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-danger" role="alert">
+                            <h5 class="alert-heading">Something went wrong</h5>
+                            <p class="mb-0">{{ error_message or "An unknown error occurred during import." }}</p>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                            <a href="{{ url_for('main.direct_import') }}" class="btn btn-primary">
+                                <i class="fas fa-redo me-2"></i>
+                                Try Again
+                            </a>
+                            <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-books me-2"></i>
+                                Go to Library
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+    .progress {
+        box-shadow: inset 0 1px 2px rgba(0,0,0,.1);
+    }
+    
+    .display-4 {
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    
+    .card {
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .btn-lg {
+        padding: 0.75rem 1.5rem;
+        font-size: 1.1rem;
+    }
+</style>
+{% endblock %}

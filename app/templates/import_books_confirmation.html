@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Confirm Import - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h4 class="mb-0">
+                        <i class="bi bi-check-circle me-2"></i>
+                        {{ detected_template.source_type|title }} Import Detected
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-success" role="alert">
+                        <h5 class="alert-heading">
+                            <i class="bi bi-magic me-2"></i>
+                            Automatic Import Configuration
+                        </h5>
+                        <p class="mb-2">
+                            We've detected that your CSV file is a <strong>{{ detected_template.source_type|title }}</strong> export 
+                            and have automatically configured the optimal field mappings for you.
+                        </p>
+                        <hr>
+                        <p class="mb-0">
+                            <strong>{{ total_rows }}</strong> books will be imported using the 
+                            <strong>"{{ detected_template.name }}"</strong> template.
+                        </p>
+                    </div>
+
+                    <!-- Template Info -->
+                    <div class="mb-4">
+                        <h5>Template Details</h5>
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <h6 class="card-title">{{ detected_template.name }}</h6>
+                                <p class="card-text text-muted">{{ detected_template.description }}</p>
+                                <small class="text-muted">
+                                    This template will automatically create custom fields for platform-specific metadata 
+                                    like ratings, publication dates, and reading progress.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CSV Preview -->
+                    <div class="mb-4">
+                        <h5>Preview (First 3 rows)</h5>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered">
+                                <thead>
+                                    <tr>
+                                        {% for header in csv_headers %}
+                                        <th>{{ header }}</th>
+                                        {% endfor %}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in csv_preview %}
+                                    <tr>
+                                        {% for cell in row %}
+                                        <td>{{ cell[:50] }}{% if cell|length > 50 %}...{% endif %}</td>
+                                        {% endfor %}
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <a href="{{ url_for('main.import_books') }}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left me-2"></i>
+                                Back to Upload
+                            </a>
+                        </div>
+                        
+                        <div>
+                            <form method="post" action="{{ url_for('main.import_books_execute') }}" class="d-inline me-2">
+                                <input type="hidden" name="csv_file_path" value="{{ csv_file_path }}">
+                                <input type="hidden" name="use_template" value="{{ detected_template.id }}">
+                                <input type="hidden" name="skip_mapping" value="true">
+                                <button type="submit" class="btn btn-success btn-lg">
+                                    <i class="bi bi-upload me-2"></i>
+                                    Import {{ total_rows }} Books
+                                </button>
+                            </form>
+                            
+                            <form method="post" action="{{ url_for('main.import_books') }}" class="d-inline">
+                                <input type="hidden" name="csv_file_path" value="{{ csv_file_path }}">
+                                <input type="hidden" name="force_custom" value="true">
+                                <button type="submit" class="btn btn-outline-primary">
+                                    <i class="bi bi-gear me-2"></i>
+                                    Custom Mapping
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Want to customize field mappings? Use the "Custom Mapping" button to manually configure how each column is imported.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

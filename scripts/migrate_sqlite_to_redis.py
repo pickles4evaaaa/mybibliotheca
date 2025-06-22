@@ -308,9 +308,11 @@ class WebBasedSQLiteToRedisMigrator:
                 if published_date:
                     try:
                         if isinstance(published_date, str):
-                            published_date_obj = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+                            parsed_datetime = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+                            published_date_obj = parsed_datetime.date()  # Convert to date object
                         elif isinstance(published_date, (int, float)):
-                            published_date_obj = datetime.fromtimestamp(published_date)
+                            parsed_datetime = datetime.fromtimestamp(published_date)
+                            published_date_obj = parsed_datetime.date()  # Convert to date object
                     except (ValueError, TypeError):
                         logger.warning(f"Could not parse published_date: {published_date}")
                 

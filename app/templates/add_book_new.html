@@ -165,6 +165,42 @@
         </div>
       </div>
 
+      <!-- Custom Metadata Section -->
+      <div class="row mb-3">
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header">
+              <h6 class="mb-0">
+                <i class="bi bi-tags me-2"></i>Custom Metadata (Optional)
+              </h6>
+            </div>
+            <div class="card-body">
+              <div id="custom-metadata-fields">
+                <div class="row mb-2">
+                  <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm" placeholder="Field name (e.g., Genre)" name="custom_field_name[]">
+                  </div>
+                  <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm" placeholder="Value (e.g., Science Fiction)" name="custom_field_value[]">
+                  </div>
+                  <div class="col-md-2">
+                    <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeCustomField(this)" style="display: none;">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="btn btn-outline-primary btn-sm" onclick="addCustomField()">
+                <i class="bi bi-plus"></i> Add Another Field
+              </button>
+              <div class="small text-muted mt-2">
+                Add custom metadata like genre, mood, content warnings, or any other information you want to track.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <button type="submit" class="btn btn-primary">Add Book to Library</button>
     </form>
   </div>
@@ -233,6 +269,46 @@ function fetchBookData() {
       console.error('Error fetching book data:', error);
       alert('Failed to fetch book data. Please try again.');
     });
+}
+
+function addCustomField() {
+  const container = document.getElementById('custom-metadata-fields');
+  const newRow = document.createElement('div');
+  newRow.className = 'row mb-2';
+  newRow.innerHTML = `
+    <div class="col-md-4">
+      <input type="text" class="form-control form-control-sm" placeholder="Field name" name="custom_field_name[]">
+    </div>
+    <div class="col-md-6">
+      <input type="text" class="form-control form-control-sm" placeholder="Value" name="custom_field_value[]">
+    </div>
+    <div class="col-md-2">
+      <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeCustomField(this)">
+        <i class="bi bi-trash"></i>
+      </button>
+    </div>
+  `;
+  container.appendChild(newRow);
+  
+  // Show remove buttons on all rows if there's more than one
+  updateRemoveButtons();
+}
+
+function removeCustomField(button) {
+  button.closest('.row').remove();
+  updateRemoveButtons();
+}
+
+function updateRemoveButtons() {
+  const rows = document.querySelectorAll('#custom-metadata-fields .row');
+  rows.forEach((row, index) => {
+    const removeBtn = row.querySelector('.btn-outline-danger');
+    if (rows.length > 1) {
+      removeBtn.style.display = 'inline-block';
+    } else {
+      removeBtn.style.display = 'none';
+    }
+  });
 }
 </script>
 
