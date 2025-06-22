@@ -295,6 +295,9 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
             errors = 0
             batch_size = 10
             
+            def should_update_progress_batch(index, total_items):
+                return (index + 1) % batch_size == 0 or (index + 1) == total_items
+            
             for i, row in enumerate(rows):
                 try:
                     title = row.get('Title')
@@ -322,8 +325,7 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
                     if not title or not author or not isbn or isbn == "":
                         continue
                         
-                    # Update progress in batches to reduce database overhead
-                    if (i + 1) % batch_size == 0 or i + 1 == len(rows):
+                    if should_update_progress_batch(i, len(rows)):
                         task.update_progress(
                             processed=i+1,
                             current_item=f"Processing: {title}"
@@ -376,14 +378,12 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
                         db.session.add(book)
                         imported += 1
                         
-                        # Update success count in batches to reduce database overhead
-                        if (i + 1) % batch_size == 0 or i + 1 == len(rows):
+                        if should_update_progress_batch(i, len(rows)):
                             task.update_progress(success_count=imported, error_count=errors)
                     
                 except Exception as e:
                     errors += 1
-                    # Update error count in batches to reduce database overhead
-                    if (i + 1) % batch_size == 0 or i + 1 == len(rows):
+                    if should_update_progress_batch(i, len(rows)):
                         task.update_progress(error_count=errors)
                     current_app.logger.warning(f"Error processing book {i}: {e}")
                     continue
