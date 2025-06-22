@@ -248,64 +248,254 @@
       color: var(--text-color);
     }
     
-    [data-theme="dark"] .btn-outline-primary {
-      border-color: #6ea8fe;
-      color: #6ea8fe;
+    /* Contemporary Navbar Button Styling for Light Mode */
+    .navbar .btn-outline-primary {
+      border-color: #4A90E2 !important;
+      color: #4A90E2 !important;
+      background: rgba(74, 144, 226, 0.08) !important;
+      font-weight: 500;
+      transition: all 0.2s ease;
     }
     
-    [data-theme="dark"] .btn-outline-primary:hover {
-      background-color: #6ea8fe;
-      border-color: #6ea8fe;
+    .navbar .btn-outline-primary:hover {
+      background-color: #4A90E2 !important;
+      border-color: #4A90E2 !important;
+      color: white !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
     }
     
-    [data-theme="dark"] .btn-outline-secondary {
-      border-color: #6c757d;
-      color: #6c757d;
+    .navbar .btn-outline-success {
+      border-color: #00C851 !important;
+      color: #00C851 !important;
+      background: rgba(0, 200, 81, 0.08) !important;
+      font-weight: 500;
+      transition: all 0.2s ease;
     }
     
-    [data-theme="dark"] .btn-outline-secondary:hover {
-      background-color: #6c757d;
-      border-color: #6c757d;
+    .navbar .btn-outline-success:hover {
+      background-color: #00C851 !important;
+      border-color: #00C851 !important;
+      color: white !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0, 200, 81, 0.3);
     }
     
-    [data-theme="dark"] .btn-outline-success {
-      border-color: #51cf66;
-      color: #51cf66;
+    .navbar .btn-outline-info {
+      border-color: #17A2B8 !important;
+      color: #17A2B8 !important;
+      background: rgba(23, 162, 184, 0.08) !important;
+      font-weight: 500;
+      transition: all 0.2s ease;
     }
     
-    [data-theme="dark"] .btn-outline-success:hover {
-      background-color: #51cf66;
-      border-color: #51cf66;
+    .navbar .btn-outline-info:hover {
+      background-color: #17A2B8 !important;
+      border-color: #17A2B8 !important;
+      color: white !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(23, 162, 184, 0.3);
     }
     
-    [data-theme="dark"] .btn-outline-info {
-      border-color: #74c0fc;
-      color: #74c0fc;
+    .navbar .btn-outline-warning {
+      border-color: #FF8800 !important;
+      color: #FF8800 !important;
+      background: rgba(255, 136, 0, 0.08) !important;
+      font-weight: 500;
+      transition: all 0.2s ease;
     }
     
-    [data-theme="dark"] .btn-outline-info:hover {
-      background-color: #74c0fc;
-      border-color: #74c0fc;
+    .navbar .btn-outline-warning:hover {
+      background-color: #FF8800 !important;
+      border-color: #FF8800 !important;
+      color: white !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(255, 136, 0, 0.3);
     }
     
-    [data-theme="dark"] .btn-outline-warning {
-      border-color: #ffd43b;
-      color: #ffd43b;
+    .navbar .btn-outline-secondary {
+      border-color: #6C757D !important;
+      color: #6C757D !important;
+      background: rgba(108, 117, 125, 0.08) !important;
+      font-weight: 500;
+      transition: all 0.2s ease;
     }
     
-    [data-theme="dark"] .btn-outline-warning:hover {
-      background-color: #ffd43b;
-      border-color: #ffd43b;
+    .navbar .btn-outline-secondary:hover {
+      background-color: #6C757D !important;
+      border-color: #6C757D !important;
+      color: white !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(108, 117, 125, 0.3);
     }
     
-    [data-theme="dark"] .btn-outline-danger {
-      border-color: #ff6b6b;
-      color: #ff6b6b;
+    .navbar .btn-outline-danger {
+      border-color: #DC3545 !important;
+      color: #DC3545 !important;
+      background: rgba(220, 53, 69, 0.08) !important;
+      font-weight: 500;
+      transition: all 0.2s ease;
     }
     
-    [data-theme="dark"] .btn-outline-danger:hover {
-      background-color: #ff6b6b;
-      border-color: #ff6b6b;
+    .navbar .btn-outline-danger:hover {
+      background-color: #DC3545 !important;
+      border-color: #DC3545 !important;
+      color: white !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+    }
+
+    /* Contemporary Dark Mode Navbar Button Styling */
+    [data-theme="dark"] .navbar .btn-outline-primary {
+      border-color: #5A9EFF !important;
+      color: #5A9EFF !important;
+      background: rgba(90, 158, 255, 0.12) !important;
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-primary:hover {
+      background-color: #5A9EFF !important;
+      border-color: #5A9EFF !important;
+      color: #000 !important;
+      box-shadow: 0 2px 12px rgba(90, 158, 255, 0.4);
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-success {
+      border-color: #00E676 !important;
+      color: #00E676 !important;
+      background: rgba(0, 230, 118, 0.12) !important;
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-success:hover {
+      background-color: #00E676 !important;
+      border-color: #00E676 !important;
+      color: #000 !important;
+      box-shadow: 0 2px 12px rgba(0, 230, 118, 0.4);
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-info {
+      border-color: #26C6DA !important;
+      color: #26C6DA !important;
+      background: rgba(38, 198, 218, 0.12) !important;
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-info:hover {
+      background-color: #26C6DA !important;
+      border-color: #26C6DA !important;
+      color: #000 !important;
+      box-shadow: 0 2px 12px rgba(38, 198, 218, 0.4);
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-warning {
+      border-color: #FFB74D !important;
+      color: #FFB74D !important;
+      background: rgba(255, 183, 77, 0.12) !important;
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-warning:hover {
+      background-color: #FFB74D !important;
+      border-color: #FFB74D !important;
+      color: #000 !important;
+      box-shadow: 0 2px 12px rgba(255, 183, 77, 0.4);
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-secondary {
+      border-color: #9E9E9E !important;
+      color: #9E9E9E !important;
+      background: rgba(158, 158, 158, 0.12) !important;
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-secondary:hover {
+      background-color: #9E9E9E !important;
+      border-color: #9E9E9E !important;
+      color: #000 !important;
+      box-shadow: 0 2px 12px rgba(158, 158, 158, 0.4);
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-danger {
+      border-color: #FF5252 !important;
+      color: #FF5252 !important;
+      background: rgba(255, 82, 82, 0.12) !important;
+    }
+    
+    [data-theme="dark"] .navbar .btn-outline-danger:hover {
+      background-color: #FF5252 !important;
+      border-color: #FF5252 !important;
+      color: #000 !important;
+      box-shadow: 0 2px 12px rgba(255, 82, 82, 0.4);
+    }
+    
+    /* Improved Library Status Box Styling - Fix for hover washout issue */
+    .filter-btn.btn-outline-warning:hover,
+    .filter-btn.btn-outline-success:hover,
+    .filter-btn.btn-outline-info:hover,
+    .filter-btn.btn-outline-primary:hover,
+    .filter-btn.btn-outline-secondary:hover,
+    .filter-btn.btn-outline-dark:hover {
+      transform: translateY(-1px) !important;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+      border-width: 2px !important;
+    }
+    
+    /* Ensure text remains readable on hover for filter buttons */
+    .filter-btn.btn-outline-warning:hover .h4,
+    .filter-btn.btn-outline-warning:hover small {
+      color: #000 !important;
+    }
+    
+    .filter-btn.btn-outline-success:hover .h4,
+    .filter-btn.btn-outline-success:hover small {
+      color: #fff !important;
+    }
+    
+    .filter-btn.btn-outline-info:hover .h4,
+    .filter-btn.btn-outline-info:hover small {
+      color: #fff !important;
+    }
+    
+    .filter-btn.btn-outline-primary:hover .h4,
+    .filter-btn.btn-outline-primary:hover small {
+      color: #fff !important;
+    }
+    
+    .filter-btn.btn-outline-secondary:hover .h4,
+    .filter-btn.btn-outline-secondary:hover small {
+      color: #fff !important;
+    }
+    
+    .filter-btn.btn-outline-dark:hover .h4,
+    .filter-btn.btn-outline-dark:hover small {
+      color: #fff !important;
+    }
+    
+    /* Dark mode improvements for filter buttons */
+    [data-theme="dark"] .filter-btn.btn-outline-warning:hover .h4,
+    [data-theme="dark"] .filter-btn.btn-outline-warning:hover small {
+      color: #000 !important;
+    }
+    
+    [data-theme="dark"] .filter-btn.btn-outline-success:hover .h4,
+    [data-theme="dark"] .filter-btn.btn-outline-success:hover small {
+      color: #000 !important;
+    }
+    
+    [data-theme="dark"] .filter-btn.btn-outline-info:hover .h4,
+    [data-theme="dark"] .filter-btn.btn-outline-info:hover small {
+      color: #000 !important;
+    }
+    
+    [data-theme="dark"] .filter-btn.btn-outline-primary:hover .h4,
+    [data-theme="dark"] .filter-btn.btn-outline-primary:hover small {
+      color: #000 !important;
+    }
+    
+    [data-theme="dark"] .filter-btn.btn-outline-secondary:hover .h4,
+    [data-theme="dark"] .filter-btn.btn-outline-secondary:hover small {
+      color: #000 !important;
+    }
+    
+    [data-theme="dark"] .filter-btn.btn-outline-dark:hover .h4,
+    [data-theme="dark"] .filter-btn.btn-outline-dark:hover small {
+      color: #fff !important;
     }
     
     [data-theme="dark"] .badge {
