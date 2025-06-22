@@ -321,10 +321,12 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
                     if not title or not author or not isbn or isbn == "":
                         continue
                         
-                    task.update_progress(
-                        processed=i+1,
-                        current_item=f"Processing: {title}"
-                    )
+                    # Update progress in batches to reduce database overhead
+                    if (i + 1) % 10 == 0 or i + 1 == total_records:
+                        task.update_progress(
+                            processed=i+1,
+                            current_item=f"Processing: {title}"
+                        )
                     
                     if not Book.query.filter_by(isbn=isbn, user_id=user_id).first():
                         google_data = get_google_books_cover(isbn, fetch_title_author=True)
