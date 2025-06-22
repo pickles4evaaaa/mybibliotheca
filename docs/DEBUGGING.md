@@ -1,0 +1,43 @@
+# Debugging Guide
+
+The MyBibliotheca application includes a powerful and flexible debugging system designed to help you troubleshoot issues without needing to modify the core application code. By enabling specific environment variables, you can get detailed, real-time insights into different components of the application, such as authentication, session management, and CSRF protection.
+
+## How to Enable Debugging
+
+Debugging is controlled through environment variables, which you can set in your `.env` file. To enable a specific debug feature, simply set the corresponding variable to `true`.
+
+Here are the available debug flags:
+
+| Environment Variable        | Description                                                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `BIBLIOTHECA_DEBUG`         | This is the master switch for all debugging. If this is set to `false`, no debug messages will be printed, regardless of the other flags. |
+| `BIBLIOTHECA_DEBUG_AUTH`    | Enables detailed logging for authentication-related events. This includes user login attempts, session loading, and the initial setup process. |
+| `BIBLIOTHECA_DEBUG_CSRF`    | Provides verbose output for Cross-Site Request Forgery (CSRF) token generation and validation. This is extremely useful for debugging form submission issues. |
+| `BIBLIOTHECA_DEBUG_SESSION` | Logs detailed information about the user's session, such as when a session is created, modified, or accessed.                               |
+| `BIBLIOTHECA_DEBUG_REQUESTS`| Prints information about incoming web requests, including the request method, path, and form data.                                         |
+
+### Example `.env` Configuration
+
+To enable all debugging features, you would add the following to your `.env` file:
+
+```env
+BIBLIOTHECA_DEBUG=true
+BIBLIOTHECA_DEBUG_AUTH=true
+BIBLIOTHECA_DEBUG_CSRF=true
+BIBLIOTHECA_DEBUG_SESSION=true
+BIBLIOTHECA_DEBUG_REQUESTS=true
+```
+
+## How It Works
+
+The application's debugging functionality is implemented in the `app/debug_utils.py` module. This module provides a set of specialized logging functions (e.g., `debug_auth`, `debug_csrf`) that are used throughout the application.
+
+When one of these functions is called, it first checks if the master `BIBLIOTHECA_DEBUG` flag is enabled. If it is, the function then checks its own specific flag (e.g., `BIBLIOTHECA_DEBUG_AUTH`). If both are enabled, a detailed log message is printed to the console.
+
+This approach allows you to selectively enable logging for only the parts of the application you are interested in, keeping your console output clean and focused.
+
+## Common Use Cases
+
+- **Troubleshooting Login Issues:** If users are unable to log in or register, enabling `BIBLIOTHECA_DEBUG_AUTH` can provide step-by-step details of the authentication process, helping you pinpoint the cause of the failure.
+- **Fixing Form Submission Errors:** If you are encountering "CSRF token missing" or other form-related errors, `BIBLIOTHECA_DEBUG_CSRF` and `BIBLIOTHECA_DEBUG_SESSION` are invaluable for understanding how the CSRF token and session are being managed.
+- **Understanding Application Flow:** `BIBLIOTHECA_DEBUG_REQUESTS` can help you trace the flow of a request through the application, which is useful for understanding how different parts of the code interact.
