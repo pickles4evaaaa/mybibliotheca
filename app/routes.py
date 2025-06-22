@@ -1,6 +1,6 @@
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash, send_file
 from flask_login import login_required, current_user
-from .models import Book, db, ReadingLog, User
+from .models import Book, db, ReadingLog, User, Task
 from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image
 from datetime import datetime, date, timedelta
 import secrets
@@ -934,8 +934,6 @@ def assign_book(uid):
 @login_required
 def list_tasks():
     """List user's background tasks"""
-    from .models import Task
-    
     tasks = Task.query.filter_by(user_id=current_user.id).order_by(Task.created_at.desc()).limit(20).all()
     return render_template('task_list.html', tasks=tasks)
 
@@ -943,8 +941,6 @@ def list_tasks():
 @login_required
 def task_status(task_id):
     """Show task status page"""
-    from .models import Task
-    
     task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
     return render_template('task_status.html', task=task)
 
@@ -952,8 +948,6 @@ def task_status(task_id):
 @login_required
 def api_task_status(task_id):
     """API endpoint for task status updates"""
-    from .models import Task
-    
     task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
     
     return {

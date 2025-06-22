@@ -7,7 +7,9 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import requests
 import os
-from flask import current_app
+from flask import current_app, url_for
+import threading
+import csv
 
 def fetch_book_data(isbn):
     """Fetch book data with timeout and error handling"""
@@ -268,11 +270,6 @@ def process_book_data(book_data):
         book_data['thumbnail_url'] = ensure_https_url(book_data['thumbnail_url'])
     
     return book_data
-
-import threading
-import csv
-from datetime import datetime
-from flask import url_for
 
 def process_goodreads_import_background(task_id, csv_content, user_id):
     """Process Goodreads import in background thread"""
