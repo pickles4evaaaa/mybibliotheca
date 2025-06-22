@@ -268,3 +268,150 @@ def process_book_data(book_data):
         book_data['thumbnail_url'] = ensure_https_url(book_data['thumbnail_url'])
     
     return book_data
+
+import threading
+import csv
+from datetime import datetime
+from flask import url_for
+
+def process_goodreads_import_background(task_id, csv_content, user_id):
+    """Process Goodreads import in background thread"""
+    from .models import Task, Book, db
+    from . import create_app
+    
+    app = create_app()
+    
+    with app.app_context():
+        task = Task.query.get(task_id)
+        if not task:
+            return
+            
+        try:
+            task.mark_started()
+            
+            reader = csv.DictReader(csv_content.splitlines())
+            rows = list(reader)
+            task.total_items = len(rows)
+            task.update_progress(processed=0)
+            
+            imported = 0
+            errors = 0
+            
+            for i, row in enumerate(rows):
+                try:
+                    title = row.get('Title')
+                    author = row.get('Author')
+                    
+                    def clean_isbn(val):
+                        if not val:
+                            return ""
+                        val = val.strip()
+                        if val.startswith('="') and val.endswith('"'):
+                            val = val[2:-1]
+                        return val.strip()
+                    
+                    isbn = clean_isbn(row.get('ISBN13')) or clean_isbn(row.get('ISBN'))
+                    date_read = row.get('Date Read')
+                    want_to_read = 'to-read' in (row.get('Bookshelves') or '')
+                    
+                    finish_date = None
+                    if date_read:
+                        try:
+                            finish_date = datetime.strptime(date_read, "%Y/%m/%d").date()
+                        except Exception:
+                            pass
+                    
+                    if not title or not author or not isbn or isbn == "":
+                        continue
+                        
+                    task.update_progress(
+                        processed=i+1,
+                        current_item=f"Processing: {title}"
+                    )
+                    
+                    if not Book.query.filter_by(isbn=isbn, user_id=user_id).first():
+                        google_data = get_google_books_cover(isbn, fetch_title_author=True)
+                        if google_data:
+                            cover_url = google_data.get('cover')
+                            description = google_data.get('description')
+                            published_date = google_data.get('published_date')
+                            page_count = google_data.get('page_count')
+                            categories = google_data.get('categories')
+                            publisher = google_data.get('publisher')
+                            language = google_data.get('language')
+                            average_rating = google_data.get('average_rating')
+                            rating_count = google_data.get('rating_count')
+                        else:
+                            book_data = fetch_book_data(isbn)
+                            if book_data:
+                                cover_url = book_data.get('cover')
+                                description = book_data.get('description')
+                                published_date = book_data.get('published_date')
+                                page_count = book_data.get('page_count')
+                                categories = book_data.get('categories')
+                                publisher = book_data.get('publisher')
+                                language = book_data.get('language')
+                                average_rating = rating_count = None
+                            else:
+                                cover_url = url_for('static', filename='bookshelf.png')
+                                description = published_date = page_count = categories = publisher = language = average_rating = rating_count = None
+                        
+                        book = Book(
+                            title=title,
+                            author=author,
+                            isbn=isbn,
+                            user_id=user_id,
+                            finish_date=finish_date,
+                            want_to_read=want_to_read,
+                            cover_url=cover_url,
+                            description=description,
+                            published_date=published_date,
+                            page_count=page_count,
+                            categories=categories,
+                            publisher=publisher,
+                            language=language,
+                            average_rating=average_rating,
+                            rating_count=rating_count
+                        )
+                        db.session.add(book)
+                        imported += 1
+                        
+                        task.update_progress(success_count=imported, error_count=errors)
+                    
+                except Exception as e:
+                    errors += 1
+                    task.update_progress(error_count=errors)
+                    current_app.logger.warning(f"Error processing book {i}: {e}")
+                    continue
+            
+            db.session.commit()
+            task.mark_completed({
+                'message': f'Imported {imported} books from Goodreads.',
+                'imported': imported,
+                'errors': errors
+            })
+            
+        except Exception as e:
+            task.mark_failed(str(e))
+            current_app.logger.error(f"Background task failed: {e}")
+
+def start_goodreads_import_task(csv_content, user_id):
+    """Start a background Goodreads import task"""
+    from .models import Task, db
+    
+    task = Task(
+        name="Goodreads Import",
+        description="Importing books from Goodreads CSV file",
+        user_id=user_id
+    )
+    db.session.add(task)
+    db.session.commit()
+    
+    thread = threading.Thread(
+        target=process_goodreads_import_background,
+        args=(task.id, csv_content, user_id)
+    )
+    thread.daemon = True
+    thread.start()
+    
+    return task

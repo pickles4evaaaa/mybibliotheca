@@ -598,88 +598,18 @@ def add_book_from_search():
 @bp.route('/import_goodreads', methods=['POST'])
 @login_required
 def import_goodreads():
+    from .utils import start_goodreads_import_task
+    
     file = request.files.get('goodreads_csv')
     if not file or not file.filename.endswith('.csv'):
         flash('Please upload a valid Goodreads CSV file.', 'danger')
         return redirect(url_for('main.add_book'))
 
-    stream = file.stream.read().decode('utf-8').splitlines()
-    reader = csv.DictReader(stream)
-    imported = 0
-    for row in reader:
-        title = row.get('Title')
-        author = row.get('Author')
-        # Goodreads CSV sometimes has ISBN/ISBN13 as ='978...'
-        def clean_isbn(val):
-            if not val:
-                return ""
-            val = val.strip()
-            if val.startswith('="') and val.endswith('"'):
-                val = val[2:-1]
-            return val.strip()
-        isbn = clean_isbn(row.get('ISBN13')) or clean_isbn(row.get('ISBN'))
-        date_read = row.get('Date Read')
-        want_to_read = 'to-read' in (row.get('Bookshelves') or '')
-        finish_date = None
-        if date_read:
-            try:
-                finish_date = datetime.strptime(date_read, "%Y/%m/%d").date()
-            except Exception:
-                pass
-        # Skip books with missing or blank ISBN
-        if not title or not author or not isbn or isbn == "":
-            continue
-        if not Book.query.filter_by(isbn=isbn, user_id=current_user.id).first():
-            # Try Google Books first for comprehensive metadata
-            google_data = get_google_books_cover(isbn, fetch_title_author=True)
-            if google_data:
-                cover_url = google_data.get('cover')
-                description = google_data.get('description')
-                published_date = google_data.get('published_date')
-                page_count = google_data.get('page_count')
-                categories = google_data.get('categories')
-                publisher = google_data.get('publisher')
-                language = google_data.get('language')
-                average_rating = google_data.get('average_rating')
-                rating_count = google_data.get('rating_count')
-            else:
-                # Fallback to OpenLibrary if Google Books fails
-                book_data = fetch_book_data(isbn)
-                if book_data:
-                    cover_url = book_data.get('cover')
-                    description = book_data.get('description')
-                    published_date = book_data.get('published_date')
-                    page_count = book_data.get('page_count')
-                    categories = book_data.get('categories')
-                    publisher = book_data.get('publisher')
-                    language = book_data.get('language')
-                    average_rating = rating_count = None
-                else:
-                    cover_url = url_for('static', filename='bookshelf.png')
-                    description = published_date = page_count = categories = publisher = language = average_rating = rating_count = None
-            
-            book = Book(
-                title=title,
-                author=author,
-                isbn=isbn,
-                user_id=current_user.id,  # Add user_id for multi-user support
-                finish_date=finish_date,
-                want_to_read=want_to_read,
-                cover_url=cover_url,
-                description=description,
-                published_date=published_date,
-                page_count=page_count,
-                categories=categories,
-                publisher=publisher,
-                language=language,
-                average_rating=average_rating,
-                rating_count=rating_count
-            )
-            db.session.add(book)
-            imported += 1
-    db.session.commit()
-    flash(f'Imported {imported} books from Goodreads.', 'success')
-    return redirect(url_for('main.add_book'))
+    csv_content = file.stream.read().decode('utf-8')
+    task = start_goodreads_import_task(csv_content, current_user.id)
+    
+    flash('Goodreads import started in background. You can monitor the progress below.', 'info')
+    return redirect(url_for('main.task_status', task_id=task.id))
 
 @bp.route('/download_db', methods=['GET'])
 @login_required
@@ -999,3 +929,43 @@ def assign_book(uid):
     db.session.commit()
     flash(f'Book "{book.title}" assigned to {user.username}.', 'success')
     return redirect(url_for('main.library'))
+
+@bp.route('/tasks')
+@login_required
+def list_tasks():
+    """List user's background tasks"""
+    from .models import Task
+    
+    tasks = Task.query.filter_by(user_id=current_user.id).order_by(Task.created_at.desc()).limit(20).all()
+    return render_template('task_list.html', tasks=tasks)
+
+@bp.route('/task/<task_id>')
+@login_required
+def task_status(task_id):
+    """Show task status page"""
+    from .models import Task
+    
+    task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
+    return render_template('task_status.html', task=task)
+
+@bp.route('/api/task/<task_id>')
+@login_required
+def api_task_status(task_id):
+    """API endpoint for task status updates"""
+    from .models import Task
+    
+    task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
+    
+    return {
+        'id': task.id,
+        'name': task.name,
+        'status': task.status,
+        'progress': task.progress,
+        'total_items': task.total_items,
+        'processed_items': task.processed_items,
+        'success_count': task.success_count,
+        'error_count': task.error_count,
+        'current_item': task.current_item,
+        'error_message': task.error_message,
+        'result': task.result
+    }
