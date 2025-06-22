@@ -293,6 +293,7 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
             
             imported = 0
             errors = 0
+            batch_size = 10
             
             for i, row in enumerate(rows):
                 try:
@@ -322,7 +323,7 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
                         continue
                         
                     # Update progress in batches to reduce database overhead
-                    if (i + 1) % 10 == 0 or i + 1 == len(rows):
+                    if (i + 1) % batch_size == 0 or i + 1 == len(rows):
                         task.update_progress(
                             processed=i+1,
                             current_item=f"Processing: {title}"
@@ -375,11 +376,15 @@ def process_goodreads_import_background(task_id, csv_content, user_id):
                         db.session.add(book)
                         imported += 1
                         
-                        task.update_progress(success_count=imported, error_count=errors)
+                        # Update success count in batches to reduce database overhead
+                        if (i + 1) % batch_size == 0 or i + 1 == len(rows):
+                            task.update_progress(success_count=imported, error_count=errors)
                     
                 except Exception as e:
                     errors += 1
-                    task.update_progress(error_count=errors)
+                    # Update error count in batches to reduce database overhead
+                    if (i + 1) % batch_size == 0 or i + 1 == len(rows):
+                        task.update_progress(error_count=errors)
                     current_app.logger.warning(f"Error processing book {i}: {e}")
                     continue
             
