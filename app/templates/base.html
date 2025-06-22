@@ -318,6 +318,10 @@
       color: var(--text-color);
       box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
     }
+
+    [data-theme="dark"] .form-control::placeholder {
+      color: #999;
+    }
     
     [data-theme="dark"] .form-select {
       background-color: #2d2d2d;
@@ -342,6 +346,21 @@
     [data-theme="dark"] .card-header {
       background-color: rgba(60, 60, 60, 0.8);
       border-bottom-color: var(--border-color);
+    }
+
+    [data-theme="dark"] .stat-card,
+    [data-theme="dark"] .community-stat-card,
+    [data-theme="dark"] .reading-activity {
+        background: rgba(40, 40, 40, 0.8) !important;
+        border-color: var(--border-color) !important;
+    }
+
+    [data-theme="dark"] .stat-number {
+        color: var(--heading-color) !important;
+    }
+
+    [data-theme="dark"] .stat-label {
+        color: var(--text-color) !important;
     }
     
     /* Additional dark mode text styling */
@@ -447,7 +466,7 @@
             </svg>
           </a>
         </div>
-        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">MyBibliotheca v0.1.0 | It is highly recommended to backup your database regularly.</div>
+        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">MyBibliotheca db-upgrade0.1 | It is highly recommended to backup your database regularly.</div>
       </div>
       {% block footer %}
       <footer class="text-center mt-4">
