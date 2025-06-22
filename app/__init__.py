@@ -218,7 +218,7 @@ def create_app():
     def check_setup_and_password_requirements():
         from flask import request, redirect, url_for
         from flask_login import current_user
-        from .debug_utils import debug_middleware, debug_auth
+        from .debug_utils import debug_middleware, debug_auth, debug_csrf
         from .services import user_service
         
         # Run debug middleware if enabled
