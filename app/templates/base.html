@@ -554,6 +554,27 @@
       const themeIcon = document.getElementById('theme-icon');
       const htmlElement = document.documentElement;
       
+      // Check if localStorage has a different theme than server-side
+      const serverTheme = htmlElement.getAttribute('data-theme') || 'light';
+      const localStorageTheme = localStorage.getItem('mybibliotheca_theme');
+      
+      // If localStorage has a different theme, use that and sync with server
+      if (localStorageTheme && localStorageTheme !== serverTheme) {
+        htmlElement.setAttribute('data-theme', localStorageTheme);
+        // Sync with server in background
+        csrfFetch('{{ url_for("main.toggle_theme") }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            current_theme: serverTheme
+          })
+        }).catch(error => {
+          console.log('Failed to sync theme with server:', error);
+        });
+      }
+      
       // Update icon based on current theme
       function updateThemeIcon(theme) {
         if (theme === 'dark') {
@@ -587,12 +608,20 @@
             // Update theme immediately
             htmlElement.setAttribute('data-theme', data.new_theme);
             updateThemeIcon(data.new_theme);
+            
+            // Store theme preference in localStorage as backup
+            localStorage.setItem('mybibliotheca_theme', data.new_theme);
           } else {
             console.error('Failed to toggle theme:', data.error);
           }
         })
         .catch(error => {
           console.error('Error toggling theme:', error);
+          // If server request fails, toggle locally and store in localStorage
+          const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+          htmlElement.setAttribute('data-theme', newTheme);
+          updateThemeIcon(newTheme);
+          localStorage.setItem('mybibliotheca_theme', newTheme);
         });
       });
     }

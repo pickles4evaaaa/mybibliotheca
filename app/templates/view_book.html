@@ -1,6 +1,109 @@
 {% extends "base.html" %}
 {% block title %}{{ book.title }} - Bibliotheca{% endblock %}
 {% block content %}
+<style>
+/* Dark mode enhancements for View Book (Simple) */
+[data-theme="dark"] .form-check-label {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .form-control {
+    background-color: #2d2d2d !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .form-control:focus {
+    background-color: #2d2d2d !important;
+    border-color: #86b7fe !important;
+    color: #e0e0e0 !important;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+}
+
+[data-theme="dark"] input[type="date"] {
+    background-color: #2d2d2d !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+/* Enhanced text readability for dark mode */
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+
+[data-theme="dark"] small.text-muted {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .form-text {
+    color: #c0c0c0 !important;
+}
+
+/* Book metadata labels and secondary text */
+[data-theme="dark"] p strong {
+    color: #f0f0f0 !important;
+}
+
+[data-theme="dark"] p {
+    color: #e0e0e0 !important;
+}
+
+/* Rating text readability */
+[data-theme="dark"] .rating-count {
+    color: #b0b0b0 !important;
+}
+
+/* Badge styling for categories */
+[data-theme="dark"] .badge.bg-secondary {
+    background-color: #495057 !important;
+    color: #e0e0e0 !important;
+}
+
+/* Form labels and text */
+[data-theme="dark"] label {
+    color: #e0e0e0 !important;
+}
+
+/* Button styling improvements */
+[data-theme="dark"] .btn-outline-secondary {
+    border-color: #6c757d !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .btn-outline-secondary:hover {
+    background-color: #6c757d !important;
+    border-color: #6c757d !important;
+    color: #fff !important;
+}
+
+/* Link styling */
+[data-theme="dark"] a {
+    color: #86b7fe !important;
+}
+
+[data-theme="dark"] a:hover {
+    color: #b3d1ff !important;
+}
+
+/* Reading log list styling */
+[data-theme="dark"] ul {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] li {
+    color: #e0e0e0 !important;
+}
+
+/* Header styling */
+[data-theme="dark"] h1,
+[data-theme="dark"] h2,
+[data-theme="dark"] h3,
+[data-theme="dark"] h4,
+[data-theme="dark"] h5,
+[data-theme="dark"] h6 {
+    color: #f0f0f0 !important;
+}
+</style>
 <h1>{{ book.title }}</h1>
 {% if book.cover_url %}
   <img src="{{ book.cover_url }}" alt="Book Cover" class="book-cover mb-3"

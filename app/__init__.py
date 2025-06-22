@@ -268,7 +268,9 @@ def create_app():
                 if theme:
                     theme = theme.decode('utf-8') if isinstance(theme, bytes) else theme
                 else:
-                    theme = 'light'  # Default to light theme
+                    # Check session as fallback for Redis
+                    from flask import session
+                    theme = session.get('theme', 'light')
             else:
                 # For non-authenticated users, check session or default to light
                 from flask import session

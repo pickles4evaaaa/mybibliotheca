@@ -2574,7 +2574,14 @@ def toggle_theme():
         # Toggle theme
         new_theme = 'dark' if current_theme == 'light' else 'light'
         
-        # Store theme preference in session
+        # Store theme preference in Redis for authenticated users
+        if current_user.is_authenticated:
+            from .infrastructure.redis_graph import get_graph_storage
+            redis_client = get_graph_storage().redis
+            theme_key = f'user_theme:{current_user.id}'
+            redis_client.set(theme_key, new_theme)
+        
+        # Also store in session as fallback
         session['theme'] = new_theme
         
         return jsonify({

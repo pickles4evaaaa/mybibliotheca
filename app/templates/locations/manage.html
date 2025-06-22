@@ -51,6 +51,34 @@
     transform: translateY(-2px);
     box-shadow: 0 8px 25px var(--hover-shadow);
   }
+
+  /* Dark mode styling for About Locations box */
+  [data-theme="dark"] .card.bg-light {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+  }
+
+  [data-theme="dark"] .card.bg-light .card-header {
+    background-color: rgba(60, 60, 60, 0.8) !important;
+    border-bottom-color: #404040 !important;
+    color: #e0e0e0 !important;
+  }
+
+  [data-theme="dark"] .card.bg-light .card-body {
+    color: #e0e0e0 !important;
+  }
+
+  [data-theme="dark"] .card.bg-light .card-body p,
+  [data-theme="dark"] .card.bg-light .card-body li {
+    color: #e0e0e0 !important;
+  }
+
+  [data-theme="dark"] .card.bg-light .alert-info {
+    background-color: rgba(13, 110, 253, 0.1) !important;
+    border-color: rgba(13, 110, 253, 0.3) !important;
+    color: #6ea8fe !important;
+  }
 </style>
 
 <div class="container mt-4">

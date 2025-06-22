@@ -1,8 +1,61 @@
 {% extends "base.html" %}
 
-{% block title %}Edit Custom Field{% endblock %}
+{% block title %}Edit Custom Field - Bibliotheca{% endblock %}
 
 {% block content %}
+<style>
+/* Dark mode enhancements for Metadata Edit Field */
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+
+[data-theme="dark"] small.text-muted {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .form-text {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .card {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card.bg-light {
+    background-color: rgba(50, 50, 50, 0.8) !important;
+    border-color: #404040 !important;
+}
+
+[data-theme="dark"] .card-body {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-body strong {
+    color: #f0f0f0 !important;
+}
+
+[data-theme="dark"] .form-label {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .form-check-label {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .alert-info {
+    background-color: rgba(13, 110, 253, 0.1) !important;
+    border-color: rgba(13, 110, 253, 0.3) !important;
+    color: #6ea8fe !important;
+}
+
+[data-theme="dark"] .alert-warning {
+    background-color: rgba(255, 193, 7, 0.1) !important;
+    border-color: rgba(255, 193, 7, 0.3) !important;
+    color: #ffd43b !important;
+}
+</style>
 <div class="container mt-4">
     <div class="row justify-content-center">
         <div class="col-lg-8">

@@ -1,6 +1,54 @@
 {% extends "base.html" %}
 {% block title %}Import Books - Bibliotheca{% endblock %}
 {% block content %}
+<style>
+/* Dark mode enhancements for Import Books */
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+
+[data-theme="dark"] small.text-muted {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .form-text {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .card {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-header {
+    background-color: rgba(60, 60, 60, 0.8) !important;
+    border-bottom-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-body {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-text {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .alert-info {
+    background-color: rgba(13, 110, 253, 0.1) !important;
+    border-color: rgba(13, 110, 253, 0.3) !important;
+    color: #6ea8fe !important;
+}
+
+[data-theme="dark"] .list-unstyled li small {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .badge {
+    color: #000 !important;
+}
+</style>
 <div class="container mt-4">
     <h2>📚 Import Books</h2>
     {% with messages = get_flashed_messages(with_categories=true) %}
