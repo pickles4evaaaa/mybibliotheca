@@ -23,6 +23,13 @@
       --link-hover-color: #c68642;
       --border-color: #e0c9a6;
       --bookshelf-bg: url("{{ url_for('static', filename='bookshelf.png') }}");
+      --primary-brown: #8B4513;
+      --light-brown: #D2B48C;
+      --cream: #F5F5DC;
+      --warm-white: #FEFEFE;
+      --gold: #FFC107; /* Changed from #DAA520 for better contrast */
+      --shadow: rgba(0,0,0,0.1);
+      --hover-shadow: rgba(0,0,0,0.2);
     }
     
     [data-theme="dark"] {
@@ -360,7 +367,26 @@
     }
 
     [data-theme="dark"] .stat-label {
-        color: var(--text-color) !important;
+        color: #aaa !important;
+    }
+
+    /* Add Book Page Dark Mode Styles */
+    [data-theme="dark"] .tab-content {
+      background: #2c2c2c;
+      border-color: #444;
+    }
+    [data-theme="dark"] .nav-tabs .nav-link {
+      color: #ccc;
+    }
+    [data-theme="dark"] .nav-tabs .nav-link.active {
+      color: #fff;
+    }
+    [data-theme="dark"] .card {
+      background-color: #333;
+    }
+    [data-theme="dark"] pre {
+      background-color: #222 !important;
+      color: #eee;
     }
     
     /* Additional dark mode text styling */
@@ -388,6 +414,18 @@
     [data-theme="dark"] h5,
     [data-theme="dark"] h6 {
       color: var(--heading-color) !important;
+    }
+    
+    .btn-success {
+      background-color: var(--gold);
+      border-color: var(--gold);
+      color: #000; /* Changed from #333 for better contrast */
+    }
+
+    .btn-success:hover {
+      background-color: #FFA000; /* Darker gold for hover */
+      border-color: #FFA000;
+      color: #000;
     }
   </style>
 </head>
