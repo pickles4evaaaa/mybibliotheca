@@ -467,18 +467,84 @@ def edit_book(uid):
             if contrib.get('name'):
                 from .domain.models import Person, BookContribution, ContributionType
                 
-                # Create or get person
-                person_id = contrib.get('id')
-                if person_id:
-                    person = book_service.get_person_by_id_sync(person_id)
-                else:
-                    # Create new person
-                    person = Person(
-                        id=str(uuid.uuid4()),
-                        name=contrib['name'],
-                        created_at=datetime.now(),
-                        updated_at=datetime.now()
-                    )
+                person_name = contrib['name']
+                
+                try:
+                    # Always use find_or_create approach - the most reliable method
+                    print(f"🔍 [DEBUG] Finding or creating person: {person_name}")
+                    
+                    # Use the same logic as the repository's find_or_create_person method
+                    from .infrastructure.redis_graph import get_graph_storage
+                    storage = get_graph_storage()
+                    
+                    # Search for existing person by name (same as repository method)
+                    normalized_name = person_name.strip().lower()
+                    all_persons = storage.find_nodes_by_type('person')
+                    person = None
+                    
+                    for person_data in all_persons:
+                        existing_name = person_data.get('name', '').strip().lower()
+                        existing_normalized = person_data.get('normalized_name', '').strip().lower()
+                        
+                        if existing_name == normalized_name or existing_normalized == normalized_name:
+                            print(f"✅ [DEBUG] Found existing person: {person_data.get('name')} (ID: {person_data.get('_id')})")
+                            # Convert back to Person object
+                            person = Person(
+                                id=person_data.get('_id'),
+                                name=person_data.get('name', ''),
+                                normalized_name=person_data.get('normalized_name', ''),
+                                birth_year=person_data.get('birth_year'),
+                                death_year=person_data.get('death_year'),
+                                birth_place=person_data.get('birth_place'),
+                                bio=person_data.get('bio'),
+                                website=person_data.get('website'),
+                                created_at=datetime.now(),  # Set defaults for dates
+                                updated_at=datetime.now()
+                            )
+                            break
+                    
+                    # If not found, create new person
+                    if not person:
+                        print(f"📝 [DEBUG] Creating new person: {person_name}")
+                        person = Person(
+                            id=str(uuid.uuid4()),
+                            name=person_name,
+                            normalized_name=normalized_name,
+                            created_at=datetime.now(),
+                            updated_at=datetime.now()
+                        )
+                        
+                        # Store the new person (same as repository method)
+                        person_data = {
+                            '_id': person.id,
+                            'name': person.name,
+                            'normalized_name': person.normalized_name,
+                            'birth_year': person.birth_year,
+                            'death_year': person.death_year,
+                            'birth_place': person.birth_place,
+                            'bio': person.bio,
+                            'website': person.website,
+                            'created_at': person.created_at.isoformat(),
+                            'updated_at': person.updated_at.isoformat()
+                        }
+                        
+                        success = storage.store_node('person', person.id, person_data)
+                        if not success:
+                            print(f"❌ [DEBUG] Failed to create person: {person_name}")
+                            continue
+                            
+                        print(f"✅ [DEBUG] Created new person: {person.name} (ID: {person.id})")
+                    
+                    # Validate person has valid ID
+                    if not person or not person.id:
+                        print(f"❌ [DEBUG] Person has invalid ID: {person}")
+                        continue
+                    
+                except Exception as e:
+                    print(f"❌ [DEBUG] Error processing person {person_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
                 
                 # Map contribution type
                 contrib_type_map = {
@@ -905,6 +971,7 @@ def add_book_from_search():
             return redirect(url_for('main.search_books'))
 
     # Get additional metadata if available
+    google_data = None  # Initialize google_data
     if normalized_isbn:
         google_data = get_google_books_cover(normalized_isbn, fetch_title_author=True)
         if google_data:
@@ -923,7 +990,23 @@ def add_book_from_search():
 
     # Create contributors from author data
     contributors = []
-    if author:
+    
+    # Check if we have individual authors from Google Books API
+    if google_data and google_data.get('authors_list'):
+        # Use individual authors from Google Books API for better Person separation
+        for i, author_name in enumerate(google_data['authors_list']):
+            author_name = author_name.strip()
+            if author_name:
+                person = Person(name=author_name)
+                contribution = BookContribution(
+                    person=person,
+                    contribution_type=ContributionType.AUTHORED,
+                    order=i  # Maintain author order
+                )
+                contributors.append(contribution)
+                print(f"Added author from Google Books API: {author_name}")
+    elif author:
+        # Fallback to manual/form author entry
         person = Person(name=author)
         contribution = BookContribution(
             person=person,
@@ -931,6 +1014,7 @@ def add_book_from_search():
             order=0
         )
         contributors.append(contribution)
+        print(f"Added author from form: {author}")
 
     # Create a domain book object
     domain_book = DomainBook(
@@ -1452,6 +1536,8 @@ def add_book_manual():
 
     # Get additional metadata if ISBN is provided
     description = published_date = page_count = categories = publisher = language = average_rating = rating_count = None
+    google_data = None  # Initialize google_data
+    ol_data = None  # Initialize ol_data
     
     if normalized_isbn:
         google_data = get_google_books_cover(normalized_isbn, fetch_title_author=True)
@@ -1478,7 +1564,36 @@ def add_book_manual():
     try:
         # Create contributors from author data
         contributors = []
-        if author:
+        
+        # Prioritize individual authors from Google Books API
+        if google_data and google_data.get('authors_list'):
+            # Use individual authors from Google Books API for better Person separation
+            for i, author_name in enumerate(google_data['authors_list']):
+                author_name = author_name.strip()
+                if author_name:
+                    person = Person(id=str(uuid.uuid4()), name=author_name)
+                    contribution = BookContribution(
+                        person=person,
+                        contribution_type=ContributionType.AUTHORED,
+                        order=i  # Maintain author order
+                    )
+                    contributors.append(contribution)
+                    print(f"Added author from Google Books API: {author_name}")
+        elif ol_data and ol_data.get('authors_list'):
+            # Use individual authors from OpenLibrary API
+            for i, author_name in enumerate(ol_data['authors_list']):
+                author_name = author_name.strip()
+                if author_name:
+                    person = Person(id=str(uuid.uuid4()), name=author_name)
+                    contribution = BookContribution(
+                        person=person,
+                        contribution_type=ContributionType.AUTHORED,
+                        order=i  # Maintain author order
+                    )
+                    contributors.append(contribution)
+                    print(f"Added author from OpenLibrary API: {author_name}")
+        elif author:
+            # Fallback to manual form entry
             person = Person(id=str(uuid.uuid4()), name=author)
             contribution = BookContribution(
                 person=person,
@@ -1486,6 +1601,7 @@ def add_book_manual():
                 order=0
             )
             contributors.append(contribution)
+            print(f"Added author from form: {author}")
             
         # Create domain book object
         domain_book = DomainBook(
@@ -2431,6 +2547,7 @@ def start_import_job(task_id):
                     rating_count = None
                     published_date = None
                     google_data = None  # Initialize google_data
+                    ol_data = None  # Initialize ol_data
                     
                     # Override with API data if available (prioritize API data for richer metadata)
                     # Use the cleaned ISBN for API calls
@@ -2493,15 +2610,17 @@ def start_import_job(task_id):
                         print("No valid ISBN available for API lookup")
                     
                     # Rebuild authors list with updated author data
-                    # Build contributors from author data
+                    # Build contributors from author data with deduplication
                     contributors = []
+                    added_author_names = set()  # Track added authors to prevent duplicates
+                    
                     if csv_author:
                         # Handle primary author(s) from Google Books API
                         if google_data and google_data.get('authors_list'):
                             # Use individual authors from Google Books API
                             for i, author_name in enumerate(google_data['authors_list']):
                                 author_name = author_name.strip()
-                                if author_name:
+                                if author_name and author_name.lower() not in added_author_names:
                                     person = Person(name=author_name)
                                     contribution = BookContribution(
                                         person=person,
@@ -2509,24 +2628,47 @@ def start_import_job(task_id):
                                         order=i  # First author is primary
                                     )
                                     contributors.append(contribution)
+                                    added_author_names.add(author_name.lower())
                                     print(f"Added author from Google Books: {author_name}")
+                                elif author_name and author_name.lower() in added_author_names:
+                                    print(f"Skipping duplicate author from Google Books: {author_name}")
+                        elif ol_data and ol_data.get('authors_list'):
+                            # Use individual authors from OpenLibrary API
+                            for i, author_name in enumerate(ol_data['authors_list']):
+                                author_name = author_name.strip()
+                                if author_name and author_name.lower() not in added_author_names:
+                                    person = Person(name=author_name)
+                                    contribution = BookContribution(
+                                        person=person,
+                                        contribution_type=ContributionType.AUTHORED,
+                                        order=i  # First author is primary
+                                    )
+                                    contributors.append(contribution)
+                                    added_author_names.add(author_name.lower())
+                                    print(f"Added author from OpenLibrary: {author_name}")
+                                elif author_name and author_name.lower() in added_author_names:
+                                    print(f"Skipping duplicate author from OpenLibrary: {author_name}")
                         else:
-                            # Fallback to CSV author
-                            person = Person(name=csv_author)
-                            contribution = BookContribution(
-                                person=person,
-                                contribution_type=ContributionType.AUTHORED,
-                                order=0
-                            )
-                            contributors.append(contribution)
-                            print(f"Added primary author: {csv_author}")
+                            # Fallback to CSV author or joined API author string (only if no API authors)
+                            if csv_author.lower() not in added_author_names:
+                                person = Person(name=csv_author)
+                                contribution = BookContribution(
+                                    person=person,
+                                    contribution_type=ContributionType.AUTHORED,
+                                    order=0
+                                )
+                                contributors.append(contribution)
+                                added_author_names.add(csv_author.lower())
+                                print(f"Added primary author: {csv_author}")
+                            else:
+                                print(f"Skipping duplicate primary author: {csv_author}")
                         
-                        # Handle additional authors if present in CSV
+                        # Handle additional authors from CSV - always check for duplicates regardless of API data
                         if book_data.get('additional_authors'):
                             additional_names = book_data['additional_authors'].split(',')
-                            for i, name in enumerate(additional_names):
+                            for name in additional_names:
                                 name = name.strip()
-                                if name:
+                                if name and name.lower() not in added_author_names:
                                     person = Person(name=name)
                                     contribution = BookContribution(
                                         person=person,
@@ -2534,9 +2676,12 @@ def start_import_job(task_id):
                                         order=len(contributors)  # Continue ordering
                                     )
                                     contributors.append(contribution)
+                                    added_author_names.add(name.lower())
                                     print(f"Added additional author: {name}")
+                                elif name and name.lower() in added_author_names:
+                                    print(f"Skipping duplicate additional author: {name}")
                     
-                    # Handle Contributors column from StoryGraph
+                    # Handle Contributors column from StoryGraph with deduplication
                     contributors_str = book_data.get('contributors', '').strip()
                     if contributors_str and contributors_str != '""' and contributors_str != '':
                         print(f"Processing Contributors field: '{contributors_str}'")
@@ -2573,14 +2718,19 @@ def start_import_job(task_id):
                                     
                                     print(f"Parsed contributor: name='{name}', role='{role}', type={contribution_type.value}")
                                 
-                                person = Person(name=name)
-                                contribution = BookContribution(
-                                    person=person,
-                                    contribution_type=contribution_type,
-                                    order=len(contributors)  # Continue ordering after authors
-                                )
-                                contributors.append(contribution)
-                                print(f"Added contributor: {name} ({contribution_type.value})")
+                                # Check for duplicates before adding
+                                if name.lower() not in added_author_names:
+                                    person = Person(name=name)
+                                    contribution = BookContribution(
+                                        person=person,
+                                        contribution_type=contribution_type,
+                                        order=len(contributors)  # Continue ordering after authors
+                                    )
+                                    contributors.append(contribution)
+                                    added_author_names.add(name.lower())  # Track this contributor too
+                                    print(f"Added contributor: {name} ({contribution_type.value})")
+                                else:
+                                    print(f"Skipping duplicate contributor: {name}")
                     else:
                         print(f"No contributors found or empty contributors field: '{contributors_str}'")
                     
@@ -3420,6 +3570,201 @@ def delete_person(person_id):
         return redirect(url_for('main.people'))
 
 
+@bp.route('/persons/bulk_delete', methods=['POST'])
+@login_required
+def bulk_delete_persons():
+    """Delete multiple persons selected from the people view."""
+    print(f"Bulk delete persons route called by user {current_user.id}")
+    print(f"Form data: {request.form}")
+    
+    selected_person_ids = request.form.getlist('selected_persons')
+    force_delete = request.form.get('force_delete') == 'true'
+    print(f"Selected person IDs: {selected_person_ids}")
+    print(f"Force delete: {force_delete}")
+    
+    if not selected_person_ids:
+        print("No persons selected for deletion")
+        flash('No persons selected for deletion.', 'warning')
+        return redirect(url_for('main.people'))
+    
+    deleted_count = 0
+    failed_count = 0
+    failed_persons = []
+    
+    for person_id in selected_person_ids:
+        try:
+            print(f"Attempting to delete person {person_id}")
+            
+            # Get person details first for the name - inline implementation
+            person = None
+            try:
+                person = book_service.get_person_by_id_sync(person_id)
+            except Exception as e:
+                print(f"Error getting person {person_id}: {e}")
+            
+            person_name = getattr(person, 'name', f'Person {person_id}') if person else f'Person {person_id}'
+            
+            # Check if person has associated books - handle coroutine properly
+            books_by_type = None
+            try:
+                result = book_service.get_books_by_person_sync(person_id, str(current_user.id))
+                # Handle potential coroutine return
+                import inspect
+                if inspect.iscoroutine(result):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if not loop.is_running():
+                            books_by_type = loop.run_until_complete(result)
+                    except Exception:
+                        books_by_type = {}
+                else:
+                    books_by_type = result
+            except Exception as e:
+                print(f"Error getting books for person {person_id}: {e}")
+                books_by_type = {}
+            
+            total_books = 0
+            if books_by_type:
+                if isinstance(books_by_type, dict):
+                    for book_list in books_by_type.values():
+                        if book_list and hasattr(book_list, '__len__'):
+                            total_books += len(book_list)
+                elif hasattr(books_by_type, '__len__'):
+                    try:
+                        total_books = len(books_by_type)
+                    except (TypeError, AttributeError):
+                        total_books = 0
+            
+            # Skip deletion if person has books and force_delete is False
+            if total_books > 0 and not force_delete:
+                print(f"Skipping person {person_id} ({person_name}) - has {total_books} associated books (force_delete={force_delete})")
+                failed_count += 1
+                failed_persons.append(f"{person_name} (has {total_books} books)")
+                continue
+            
+            # If force_delete is True and person has books, remove book associations first
+            if total_books > 0 and force_delete:
+                print(f"Force deleting person {person_id} ({person_name}) - removing {total_books} book associations")
+                try:
+                    # Get the storage instance for cleanup
+                    from .infrastructure.redis_graph import get_graph_storage
+                    storage = get_graph_storage()
+                    
+                    # Clean up all relationships TO this person
+                    print(f"🗑️ [FORCE_DELETE] Removing all relationships to person {person_id}")
+                    
+                    # Get all book nodes to check for relationships
+                    all_book_nodes = storage.find_nodes_by_type('book')
+                    relationships_removed = 0
+                    
+                    for book_data in all_book_nodes:
+                        if not book_data or not book_data.get('_id'):
+                            continue
+                        
+                        book_id = book_data.get('_id')
+                        # Get all relationships from this book
+                        book_relationships = []
+                        
+                        # Check different relationship types
+                        for rel_type in ['WRITTEN_BY', 'NARRATED_BY', 'EDITED_BY', 'CONTRIBUTED_BY']:
+                            rels = storage.get_relationships('book', book_id, rel_type)
+                            book_relationships.extend(rels)
+                        
+                        # Remove relationships that point to our person
+                        for rel in book_relationships:
+                            to_type = rel.get('to_type')
+                            to_id = rel.get('to_id')
+                            rel_type = rel.get('relationship')
+                            
+                            if (to_type == 'person' and to_id == person_id) or \
+                               (to_type == 'author' and to_id == person_id):
+                                try:
+                                    storage.remove_relationship('book', book_id, rel_type, to_type, to_id)
+                                    relationships_removed += 1
+                                    print(f"🗑️ [FORCE_DELETE] Removed relationship: book {book_id} -> {rel_type} -> {to_type}:{to_id}")
+                                except Exception as cleanup_error:
+                                    print(f"⚠️ [FORCE_DELETE] Failed to remove relationship: {cleanup_error}")
+                    
+                    print(f"🗑️ [FORCE_DELETE] Removed {relationships_removed} book relationships for person {person_id}")
+                    
+                except Exception as cleanup_error:
+                    print(f"❌ [FORCE_DELETE] Error cleaning up book associations for {person_id}: {cleanup_error}")
+                    # Continue with deletion even if cleanup partially failed
+            
+            # Perform the deletion manually like the individual delete
+            from .infrastructure.redis_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            deletion_success = False
+            try:
+                # Get all keys for this person
+                person_key = f"node:person:{person_id}"
+                author_key = f"node:author:{person_id}"
+                
+                keys_to_delete = []
+                if storage.redis.exists(person_key):
+                    keys_to_delete.append(person_key)
+                if storage.redis.exists(author_key):
+                    keys_to_delete.append(author_key)
+                
+                # Delete the keys
+                deleted_keys_count = 0
+                for key in keys_to_delete:
+                    if storage.redis.delete(key):
+                        deleted_keys_count += 1
+                
+                if deleted_keys_count > 0:
+                    deletion_success = True
+                    print(f"✅ [BULK_DELETE_PERSONS] Deleted {deleted_keys_count} keys for {person_id}")
+                else:
+                    print(f"⚠️ [BULK_DELETE_PERSONS] No keys found to delete for {person_id}")
+                    # Still count as success if no keys were found (person might have been already deleted)
+                    deletion_success = True
+                
+            except Exception as delete_error:
+                print(f"❌ [BULK_DELETE_PERSONS] Error deleting person {person_id}: {delete_error}")
+                deletion_success = False
+            
+            if deletion_success:
+                deleted_count += 1
+                print(f"✅ [BULK_DELETE_PERSONS] Successfully deleted {person_name}")
+            else:
+                failed_count += 1
+                failed_persons.append(person_name)
+                print(f"❌ [BULK_DELETE_PERSONS] Failed to delete {person_name}")
+                
+        except Exception as e:
+            print(f"Error deleting person {person_id}: {e}")
+            failed_count += 1
+            failed_persons.append(f"Person {person_id}")
+    
+    print(f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed")
+    
+    # Provide feedback to user
+    if deleted_count > 0:
+        flash(f'Successfully deleted {deleted_count} person(s).', 'success')
+    
+    if failed_count > 0:
+        # Categorize failures
+        books_related_failures = [name for name in failed_persons if 'books' in name]
+        other_failures = [name for name in failed_persons if 'books' not in name]
+        
+        if books_related_failures:
+            if len(books_related_failures) <= 3:
+                flash(f'Cannot delete: {", ".join(books_related_failures)}. Use "Merge People" to consolidate entries with books.', 'warning')
+            else:
+                flash(f'Cannot delete {len(books_related_failures)} person(s) because they have associated books. Use "Merge People" to consolidate entries.', 'warning')
+        
+        if other_failures:
+            if len(other_failures) <= 3:
+                flash(f'Failed to delete: {", ".join(other_failures)}. Please try again.', 'error')
+            else:
+                flash(f'Failed to delete {len(other_failures)} person(s). Please try again.', 'error')
+    
+    return redirect(url_for('main.people'))
+
+
 @bp.route('/person/merge', methods=['GET', 'POST'])
 @login_required
 def merge_persons():
@@ -3576,6 +3921,7 @@ def merge_persons():
 def api_search_persons():
     """API endpoint for searching persons (used in autocomplete)."""
     query = request.args.get('q', '').strip()
+    
     if len(query) < 2:
         return jsonify([])
     
@@ -3591,12 +3937,10 @@ def api_search_persons():
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         # Can't use loop.run_until_complete if loop is already running
-                        print(f"⚠️ [SEARCH_API] Loop is running, method {method.__name__} returned coroutine")
                         return []  # Return empty list as fallback
                     else:
                         return loop.run_until_complete(result)
                 except Exception as e:
-                    print(f"⚠️ [SEARCH_API] Error running coroutine for {method.__name__}: {e}")
                     return []
             return result
         
@@ -3804,7 +4148,7 @@ def get_goodreads_field_mappings():
     return {
         'Title': 'title',
         'Author': 'author',
-        'Author l-f': 'author',  # Fallback for "last, first" format
+        # Note: 'Author l-f' is ignored - it's just the same author in "Last, First" format
         'Additional Authors': 'additional_authors',
         'ISBN': 'isbn',
         'ISBN13': 'isbn',

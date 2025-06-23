@@ -391,9 +391,9 @@
           <span id="selection-count">0</span> book(s) selected
         </div>
         <div>
-          <button type="button" class="btn btn-outline-light btn-sm" onclick="selectAll(); console.log('Select All clicked');">Select All</button>
-          <button type="button" class="btn btn-outline-light btn-sm" onclick="clearSelection(); console.log('Clear Selection clicked');">Clear Selection</button>
-          <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected(); console.log('Delete Selected clicked');">Delete Selected</button>
+          <button type="button" class="btn btn-outline-light btn-sm" onclick="selectAll();">Select All</button>
+          <button type="button" class="btn btn-outline-light btn-sm" onclick="clearSelection();">Clear Selection</button>
+          <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected();">Delete Selected</button>
         </div>
       </div>
     </div>
@@ -479,13 +479,13 @@ function openBook(uid) {
 }
 
 function updateSelection() {
-    console.log('updateSelection called'); // Debug
+     // Debug
     const checkboxes = document.querySelectorAll('.book-checkbox');
     const selectedBoxes = document.querySelectorAll('.book-checkbox:checked');
     const toolbar = document.getElementById('selection-toolbar');
     const count = document.getElementById('selection-count');
     
-    console.log(`Found ${checkboxes.length} checkboxes, ${selectedBoxes.length} selected`); // Debug
+     // Debug
     
     // Update visual state of book cards
     checkboxes.forEach(checkbox => {
@@ -511,9 +511,9 @@ function updateSelection() {
 }
 
 function selectAll() {
-    console.log('selectAll called'); // Debug
+     // Debug
     const checkboxes = document.querySelectorAll('.book-checkbox');
-    console.log(`Selecting ${checkboxes.length} checkboxes`); // Debug
+     // Debug
     checkboxes.forEach(checkbox => {
         checkbox.checked = true;
     });
@@ -521,9 +521,9 @@ function selectAll() {
 }
 
 function clearSelection() {
-    console.log('clearSelection called'); // Debug
+     // Debug
     const checkboxes = document.querySelectorAll('.book-checkbox');
-    console.log(`Clearing ${checkboxes.length} checkboxes`); // Debug
+     // Debug
     checkboxes.forEach(checkbox => {
         checkbox.checked = false;
     });
@@ -531,19 +531,19 @@ function clearSelection() {
 }
 
 function deleteSelected() {
-    console.log('deleteSelected called'); // Debug
+     // Debug
     const selectedBoxes = document.querySelectorAll('.book-checkbox:checked');
-    console.log(`Found ${selectedBoxes.length} selected books`); // Debug
+     // Debug
     
     if (selectedBoxes.length === 0) {
-        console.log('No books selected, showing alert'); // Debug
+         // Debug
         alert('No books selected for deletion.');
         return;
     }
     
-    console.log('Showing confirmation dialog'); // Debug
+     // Debug
     if (!confirm(`Are you sure you want to delete ${selectedBoxes.length} selected book(s)? This action cannot be undone.`)) {
-        console.log('User cancelled deletion'); // Debug
+         // Debug
         return;
     }
     
@@ -555,7 +555,7 @@ function deleteSelected() {
         return;
     }
     
-    console.log('Form found, preparing submission'); // Debug
+     // Debug
     
     // Clear form and let automatic CSRF protection handle the token
     form.innerHTML = '';
@@ -566,33 +566,33 @@ function deleteSelected() {
         input.name = 'selected_books';
         input.value = checkbox.value;
         form.appendChild(input);
-        console.log(`Added book ${index + 1}: ${checkbox.value} to form`); // Debug
+         // Debug
     });
     
     // Ensure CSRF token is added (the global script will handle this automatically)
     addCSRFToForm(form);
-    console.log('CSRF token automatically added'); // Debug
+     // Debug
     
-    console.log('Submitting form with method:', form.method, 'to action:', form.action); // Debug
-    console.log('Form elements:', form.elements.length); // Debug
+     // Debug
+     // Debug
     form.submit();
 }
 
 // Add some interactive enhancements
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded'); // Debug
+     // Debug
     
     // Test if elements exist
     const toolbar = document.getElementById('selection-toolbar');
     const form = document.getElementById('bulk-delete-form');
     const checkboxes = document.querySelectorAll('.book-checkbox');
     
-    console.log(`Found toolbar: ${!!toolbar}, form: ${!!form}, checkboxes: ${checkboxes.length}`); // Debug
+     // Debug
     
     // Add event listeners to checkboxes using event delegation
     document.addEventListener('change', function(e) {
         if (e.target.classList.contains('book-checkbox')) {
-            console.log('Checkbox changed:', e.target.value, e.target.checked); // Debug
+             // Debug
             updateSelection();
         }
     });
@@ -601,7 +601,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('click', function(e) {
         if (e.target.classList.contains('book-checkbox') || e.target.closest('.book-selection')) {
             e.stopPropagation();
-            console.log('Stopped propagation for checkbox click'); // Debug
+             // Debug
         }
     });
     

@@ -20,7 +20,19 @@ def fetch_book_data(isbn):
         if book_key in data:
             book = data[book_key]
             title = book.get('title', '')
-            authors = ', '.join([a['name'] for a in book.get('authors', [])])
+            
+            # Extract individual authors for better Person entity creation
+            authors_list = []
+            authors_data = book.get('authors', [])
+            for author in authors_data:
+                if isinstance(author, dict) and 'name' in author:
+                    authors_list.append(author['name'])
+                elif isinstance(author, str):
+                    authors_list.append(author)
+            
+            # Keep backward compatibility with joined authors string
+            authors = ', '.join(authors_list) if authors_list else ''
+            
             cover_url = book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
             
             # Extract additional metadata
@@ -36,7 +48,8 @@ def fetch_book_data(isbn):
             
             return {
                 'title': title,
-                'author': authors,
+                'author': authors,  # Keep for backward compatibility
+                'authors_list': authors_list,  # New: Individual authors for better Person creation
                 'cover': cover_url,
                 'description': description,
                 'published_date': published_date,

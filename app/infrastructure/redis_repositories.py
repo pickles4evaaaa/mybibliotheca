@@ -60,30 +60,20 @@ class RedisBookRepository(BookRepository):
         # Process authors and create new AUTHORED contributions
         for author in book.authors:
             if author.name:  # Only process authors with names
-                # Find or create the author
-                existing_author = await self.find_or_create_author(author.name)
+                # Find or create the person (unified approach)
+                existing_person = await self.find_or_create_person(author.name)
                 
-                # Ensure author has an ID
-                if not existing_author.id:
-                    print(f"❌ [REPO] Author {existing_author.name} has no ID")
+                # Ensure person has an ID
+                if not existing_person.id:
+                    print(f"❌ [REPO] Person {existing_person.name} has no ID")
                     continue
-                
-                # Convert Author to Person for BookContribution
-                person = Person(
-                    id=existing_author.id,
-                    name=existing_author.name,
-                    normalized_name=existing_author.normalized_name,
-                    birth_year=existing_author.birth_year,
-                    death_year=existing_author.death_year,
-                    bio=existing_author.bio
-                )
                 
                 # Create BookContribution
                 contribution = BookContribution(
-                    person_id=existing_author.id,
+                    person_id=existing_person.id,
                     book_id=book.id or "",  # Ensure book.id is not None
                     contribution_type=ContributionType.AUTHORED,
-                    person=person
+                    person=existing_person
                 )
                 updated_contributors.append(contribution)
             else:
@@ -116,11 +106,16 @@ class RedisBookRepository(BookRepository):
             raise Exception(f"Failed to create book {book.id}")
         print(f"✅ [REPO] Book {book.title} stored successfully")
             
-        # Create relationships
-        for author in book.authors:
-            if author.id:
-                print(f"🔗 [REPO] Creating relationship: book {book.id} -> author {author.id} ({author.name})")
-                self.storage.create_relationship('book', book.id, 'WRITTEN_BY', 'author', author.id)
+        # Create relationships - now using person nodes for all contributors
+        for contributor in book.contributors:
+            if contributor.person and contributor.person.id:
+                print(f"🔗 [REPO] Creating relationship: book {book.id} -> person {contributor.person.id} ({contributor.person.name}) as {contributor.contribution_type.value}")
+                # Create relationship with contribution type information
+                relationship_properties = {
+                    'contribution_type': contributor.contribution_type.value,
+                    'order': contributor.order or 0
+                }
+                self.storage.create_relationship('book', book.id, 'WRITTEN_BY', 'person', contributor.person.id, relationship_properties)
                 
         if book.publisher and book.publisher.id:
             self.storage.create_relationship('book', book.id, 'PUBLISHED_BY', 'publisher', book.publisher.id)
@@ -140,10 +135,121 @@ class RedisBookRepository(BookRepository):
         return book
     
     async def get_by_id(self, book_id: str) -> Optional[Book]:
-        """Get a book by ID."""
+        """Get a book by ID with contributors loaded from relationships."""
         book_data = self.storage.get_node('book', book_id)
         if not book_data:
             return None
+        
+        # Load contributors from relationships
+        try:
+            print(f"🔍 [REPO] Loading contributors for book {book_id}")
+            # Test if storage is working
+            try:
+                test_key = f"rel:book:{book_id}:WRITTEN_BY"
+                test_exists = self.storage.redis.exists(test_key)
+                print(f"🧪 [REPO] Test key '{test_key}' exists: {test_exists}")
+                if test_exists:
+                    test_members = self.storage.redis.smembers(test_key)
+                    print(f"🧪 [REPO] Test key members: {test_members}")
+            except Exception as e:
+                print(f"❌ [REPO] Error testing storage: {e}")
+            
+            # Get all WRITTEN_BY relationships for this book
+            relationships = self.storage.get_relationships('book', book_id, 'WRITTEN_BY')
+            print(f"📊 [REPO] Found {len(relationships) if relationships else 0} WRITTEN_BY relationships")
+            contributors = []
+            
+            for rel in relationships:
+                print(f"🔗 [REPO] Processing relationship: {rel}")
+                target_id = rel.get('to_id')  # Fixed: Redis uses 'to_id' not 'target_id'
+                if target_id:
+                    print(f"👤 [REPO] Loading person {target_id}")
+                    # Get the person data
+                    person_data = self.storage.get_node('person', target_id)
+                    if person_data:
+                        print(f"✅ [REPO] Found person data for {target_id}: {person_data.get('name', 'Unknown')}")
+                        
+                        # Filter person_data to only include fields expected by Person model
+                        valid_fields = {
+                            'id', 'name', 'normalized_name', 'birth_year', 'death_year', 
+                            'birth_place', 'bio', 'website', 'created_at', 'updated_at'
+                        }
+                        
+                        # Create clean person data
+                        clean_person_data = {}
+                        for field in valid_fields:
+                            if field in person_data:
+                                clean_person_data[field] = person_data[field]
+                        
+                        # Map _id to id if needed
+                        if 'id' not in clean_person_data and '_id' in person_data:
+                            clean_person_data['id'] = person_data['_id']
+                        
+                        # Convert datetime strings
+                        if 'created_at' in clean_person_data and isinstance(clean_person_data['created_at'], str):
+                            try:
+                                clean_person_data['created_at'] = datetime.fromisoformat(clean_person_data['created_at'])
+                            except:
+                                clean_person_data['created_at'] = datetime.utcnow()
+                                
+                        if 'updated_at' in clean_person_data and isinstance(clean_person_data['updated_at'], str):
+                            try:
+                                clean_person_data['updated_at'] = datetime.fromisoformat(clean_person_data['updated_at'])
+                            except:
+                                clean_person_data['updated_at'] = datetime.utcnow()
+                        
+                        person = Person(**clean_person_data)
+                        
+                        # Get contribution type from relationship properties
+                        contribution_type = ContributionType.AUTHORED  # Default
+                        rel_props = rel.get('properties', {})
+                        if 'contribution_type' in rel_props:
+                            try:
+                                contribution_type = ContributionType(rel_props['contribution_type'])
+                            except:
+                                contribution_type = ContributionType.AUTHORED
+                        
+                        contribution = BookContribution(
+                            person=person,
+                            contribution_type=contribution_type,
+                            created_at=datetime.utcnow()
+                        )
+                        contributors.append(contribution)
+                        print(f"📚 [REPO] Added contributor: {person.name} ({contribution_type.value})")
+                    else:
+                        print(f"❌ [REPO] No person data found for {target_id}")
+                else:
+                    print(f"⚠️ [REPO] Relationship missing to_id: {rel}")
+            
+            # Add contributors to book_data
+            if contributors:
+                print(f"📋 [REPO] Adding {len(contributors)} contributors to book data")
+                book_data['contributors'] = []
+                for contrib in contributors:
+                    contrib_data = {
+                        'person': {
+                            'id': contrib.person.id,
+                            'name': contrib.person.name,
+                            'normalized_name': contrib.person.normalized_name,
+                            'birth_year': contrib.person.birth_year,
+                            'death_year': contrib.person.death_year,
+                            'birth_place': contrib.person.birth_place,
+                            'bio': contrib.person.bio,
+                            'website': contrib.person.website,
+                            'created_at': contrib.person.created_at,
+                            'updated_at': contrib.person.updated_at
+                        },
+                        'contribution_type': contrib.contribution_type.value,
+                        'created_at': contrib.created_at
+                    }
+                    book_data['contributors'].append(contrib_data)
+            else:
+                print(f"⚪ [REPO] No contributors found for book {book_id}")
+                    
+        except Exception as e:
+            print(f"⚠️ [REPO] Error loading contributors for book {book_id}: {e}")
+            import traceback
+            traceback.print_exc()
             
         return self._data_to_book(book_data)
     
@@ -359,54 +465,72 @@ class RedisBookRepository(BookRepository):
         
         return target_book
     
-    async def find_or_create_author(self, author_name: str) -> Author:
-        """Find existing author by name or create a new one."""
+    async def find_or_create_person(self, person_name: str) -> Person:
+        """Find existing person by name or create a new one."""
         try:
-            print(f"🔍 [REPO] Looking for existing author: {author_name}")
+            print(f"🔍 [REPO] Looking for existing person: {person_name}")
             
-            # Search for existing author by name
-            normalized_name = author_name.strip().lower()
+            # Search for existing person by name
+            normalized_name = person_name.strip().lower()
             
-            # Get all authors and check for matches
-            all_authors = self.storage.find_nodes_by_type('author')
-            for author_data in all_authors:
-                existing_name = author_data.get('name', '').strip().lower()
-                existing_normalized = author_data.get('normalized_name', '').strip().lower()
+            # Get all persons and check for matches
+            all_persons = self.storage.find_nodes_by_type('person')
+            for person_data in all_persons:
+                existing_name = person_data.get('name', '').strip().lower()
+                existing_normalized = person_data.get('normalized_name', '').strip().lower()
                 
                 if existing_name == normalized_name or existing_normalized == normalized_name:
-                    print(f"✅ [REPO] Found existing author: {author_data.get('name')} (ID: {author_data.get('_id')})")
-                    # Convert back to Author object
-                    author = Author(
-                        id=author_data.get('_id'),
-                        name=author_data.get('name', ''),
-                        normalized_name=author_data.get('normalized_name', ''),
-                        birth_year=author_data.get('birth_year'),
-                        death_year=author_data.get('death_year'),
-                        bio=author_data.get('bio')
+                    print(f"✅ [REPO] Found existing person: {person_data.get('name')} (ID: {person_data.get('_id')})")
+                    # Convert back to Person object
+                    from ..domain.models import Person
+                    person = Person(
+                        id=person_data.get('_id'),
+                        name=person_data.get('name', ''),
+                        normalized_name=person_data.get('normalized_name', ''),
+                        birth_year=person_data.get('birth_year'),
+                        death_year=person_data.get('death_year'),
+                        birth_place=person_data.get('birth_place'),
+                        bio=person_data.get('bio'),
+                        website=person_data.get('website'),
+                        created_at=datetime.utcnow(),  # Set defaults for dates
+                        updated_at=datetime.utcnow()
                     )
-                    return author
+                    return person
             
-            # If not found, create new author
-            print(f"📝 [REPO] Creating new author: {author_name}")
-            author = Author(
+            # If not found, create new person
+            print(f"📝 [REPO] Creating new person: {person_name}")
+            from ..domain.models import Person
+            person = Person(
                 id=str(uuid.uuid4()),
-                name=author_name,
-                normalized_name=normalized_name
+                name=person_name,
+                normalized_name=normalized_name,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
             )
             
-            # Store the new author
-            author_data = asdict(author)
-            author_data = _serialize_for_json(author_data)
+            # Store the new person
+            person_data = {
+                '_id': person.id,
+                'name': person.name,
+                'normalized_name': person.normalized_name,
+                'birth_year': person.birth_year,
+                'death_year': person.death_year,
+                'birth_place': person.birth_place,
+                'bio': person.bio,
+                'website': person.website,
+                'created_at': person.created_at.isoformat(),
+                'updated_at': person.updated_at.isoformat()
+            }
             
-            success = self.storage.store_node('author', author.id, author_data)
+            success = self.storage.store_node('person', person.id, person_data)
             if success:
-                print(f"✅ [REPO] New author created: {author.name} (ID: {author.id})")
-                return author
+                print(f"✅ [REPO] New person created: {person.name} (ID: {person.id})")
+                return person
             else:
-                raise Exception(f"Failed to create author {author_name}")
+                raise Exception(f"Failed to create person {person_name}")
                 
         except Exception as e:
-            print(f"❌ [REPO] Error finding/creating author {author_name}: {e}")
+            print(f"❌ [REPO] Error finding/creating person {person_name}: {e}")
             import traceback
             traceback.print_exc()
             raise

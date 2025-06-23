@@ -57,8 +57,8 @@ def normalize_isbn_upc(isbn_or_upc: Optional[str]) -> Optional[str]:
         if length in [10, 12, 13]:
             return normalized
         else:
-            print(f"⚠️ [ISBN/UPC] Unusual length ({length} digits): {normalized}")
-            return normalized  # Still return it, might be valid
+            # Unusual length, but might still be valid
+            return normalized
     
     return None
 
@@ -120,24 +120,17 @@ class RedisBookService:
     
     async def create_book(self, domain_book: Book) -> Book:
         """Create a book in Redis (global, not user-specific)."""
-        try:
-            print(f"[SERVICE] Creating global book: {domain_book.title}")
-            
+        try:            
             # Generate ID if not set
             if not domain_book.id:
                 import uuid
                 domain_book.id = str(uuid.uuid4())
-                print(f"[SERVICE] Generated book ID: {domain_book.id}")
             
             # Store book in Redis (globally)
-            print(f"[SERVICE] Storing book in Redis...")
             await self.redis_book_repo.create(domain_book)
-            print(f"[SERVICE] Book stored successfully")
             
-            print(f"[SERVICE] Book {domain_book.id} successfully created in Redis")
             return domain_book
         except Exception as e:
-            print(f"[SERVICE] Failed to create book in Redis: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -154,14 +147,10 @@ class RedisBookService:
                                      finish_date: Optional[date] = None,
                                      date_added: Optional[date] = None) -> bool:
         """Add a book to a user's library by creating a relationship."""
-        try:
-            print(f"[SERVICE] Adding book {book_id} to user {user_id}'s library")
-            print(f"[SERVICE] Custom metadata passed: {custom_metadata}")
-            
+        try:            
             # Check if relationship already exists
             existing_rel = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
             if existing_rel:
-                print(f"[SERVICE] Relationship already exists")
                 return True
             
             # Create user-book relationship
@@ -184,16 +173,11 @@ class RedisBookService:
                 updated_at=datetime.now()
             )
             
-            print(f"[SERVICE] Created relationship with custom_metadata: {relationship.custom_metadata}")
-            
             # Store relationship in Redis
-            print(f"[SERVICE] Creating relationship...")
             await self.redis_user_book_repo.create_relationship(relationship)
-            print(f"[SERVICE] Relationship created successfully")
             
             return True
         except Exception as e:
-            print(f"[SERVICE] Failed to add book to user library: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -230,20 +214,16 @@ class RedisBookService:
     async def get_user_books(self, user_id: str) -> List[Book]:
         """Get all books for a user."""
         try:
-            print(f"[SERVICE] Getting user books for user_id: {user_id}")
             
             # Get all UserBookRelationships for this user from Redis
             relationships = await self.redis_user_book_repo.get_user_library(str(user_id))
-            print(f"[SERVICE] Found {len(relationships)} relationships")
             
             # Convert to Book objects with user-specific attributes stored as dynamic attributes
             books = []
             for rel in relationships:
-                print(f"[SERVICE] Processing relationship for book_id: {rel.book_id}")
                 # Get the book data
                 book = await self.redis_book_repo.get_by_id(rel.book_id)
                 if book:
-                    print(f"[SERVICE] Found book: {book.title}")
                     # Store user-specific attributes as dynamic attributes (for backward compatibility)
                     # Note: These are not part of the Book domain model but added for view layer compatibility
                     setattr(book, 'reading_status', rel.reading_status.value)
@@ -258,12 +238,9 @@ class RedisBookService:
                     setattr(book, 'custom_metadata', rel.custom_metadata or {})
                     books.append(book)
                 else:
-                    print(f"[SERVICE] Could not find book with ID: {rel.book_id}")
             
-            print(f"[SERVICE] Returning {len(books)} books")
             return books
         except Exception as e:
-            print(f"[SERVICE] Error getting user books: {e}")
             import traceback
             traceback.print_exc()
             return []
@@ -278,6 +255,9 @@ class RedisBookService:
             book = await self.redis_book_repo.get_by_id(uid)
             if not book:
                 return None
+            
+            # Handle contributors separately
+            contributors = kwargs.pop('contributors', None)
             
             # Separate relationship fields from book fields
             relationship_fields = {'personal_notes', 'user_rating', 'reading_status', 'ownership_status', 
@@ -297,6 +277,10 @@ class RedisBookService:
                     setattr(book, field, value)
                 await self.redis_book_repo.update(book)
                 current_app.logger.info(f"Book {uid} updated in Redis")
+            
+            # Handle contributors if provided
+            if contributors is not None:
+                await self._update_book_contributors(book, contributors)
             
             # Update relationship fields if any
             if rel_fields:
@@ -340,6 +324,94 @@ class RedisBookService:
             current_app.logger.error(f"Failed to update book {uid}: {e}")
             return None
     
+    async def _update_book_contributors(self, book, contributors: List):
+        """Update book contributors by removing all existing relationships and creating new ones."""
+        try:
+            from .domain.models import ContributionType
+            
+            book_id = book.id
+            print(f"🔄 [SERVICE] Updating contributors for book {book_id}")
+            print(f"📝 [SERVICE] New contributors: {[c.person.name + ' (' + c.contribution_type.value + ')' for c in contributors]}")
+            
+            # First, remove all existing relationships for this book
+            # Get all existing contribution relationships
+            existing_relationships = self.storage.get_relationships('book', book_id, 'WRITTEN_BY')
+            existing_relationships.extend(self.storage.get_relationships('book', book_id, 'NARRATED_BY'))
+            existing_relationships.extend(self.storage.get_relationships('book', book_id, 'EDITED_BY'))
+            existing_relationships.extend(self.storage.get_relationships('book', book_id, 'CONTRIBUTED_BY'))
+            
+            print(f"🗑️ [SERVICE] Found {len(existing_relationships)} existing contributor relationships to remove")
+            
+            # Remove all existing contribution relationships
+            for rel in existing_relationships:
+                try:
+                    # The relationship data structure from get_relationships includes:
+                    # - to_type: target node type
+                    # - to_id: target node id  
+                    # - relationship: relationship type
+                    self.storage.delete_relationship('book', book_id, rel['relationship'], rel['to_type'], rel['to_id'])
+                    print(f"✅ [SERVICE] Removed relationship: book -> {rel['relationship']} -> {rel['to_id']}")
+                except Exception as e:
+                    print(f"⚠️ [SERVICE] Error removing relationship {rel}: {e}")
+            
+            # Now add the new contributors
+            for contribution in contributors:
+                person = contribution.person
+                contrib_type = contribution.contribution_type
+                
+                # Ensure person exists in storage
+                if person:
+                    try:
+                        # Check if person exists, create if not
+                        existing_person = self.storage.get_node('person', person.id)
+                        if not existing_person:
+                            print(f"📝 [SERVICE] Creating new person: {person.name}")
+                            person_data = {
+                                'id': person.id,
+                                'name': person.name,
+                                'normalized_name': person.name.lower(),
+                                'created_at': person.created_at.isoformat() if person.created_at else datetime.utcnow().isoformat(),
+                                'updated_at': person.updated_at.isoformat() if person.updated_at else datetime.utcnow().isoformat()
+                            }
+                            if hasattr(person, 'bio') and person.bio:
+                                person_data['bio'] = person.bio
+                            if hasattr(person, 'birth_year') and person.birth_year:
+                                person_data['birth_year'] = person.birth_year
+                            if hasattr(person, 'death_year') and person.death_year:
+                                person_data['death_year'] = person.death_year
+                            
+                            self.storage.store_node('person', person.id, person_data)
+                        
+                        # Create the appropriate relationship
+                        relationship_type = {
+                            ContributionType.AUTHORED: 'WRITTEN_BY',
+                            ContributionType.NARRATED: 'NARRATED_BY', 
+                            ContributionType.EDITED: 'EDITED_BY',
+                            ContributionType.CONTRIBUTED: 'CONTRIBUTED_BY'
+                        }.get(contrib_type, 'CONTRIBUTED_BY')
+                        
+                        # Create relationship from book to person
+                        success = self.storage.create_relationship(
+                            'book', book_id, relationship_type, 'person', person.id
+                        )
+                        
+                        if success:
+                            print(f"✅ [SERVICE] Created relationship: book {book_id} -> {relationship_type} -> person {person.id} ({person.name})")
+                        else:
+                            print(f"❌ [SERVICE] Failed to create relationship: book {book_id} -> {relationship_type} -> person {person.id}")
+                            
+                    except Exception as e:
+                        print(f"❌ [SERVICE] Error updating contributor {person.name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+            
+            print(f"✅ [SERVICE] Finished updating contributors for book {book_id}")
+            
+        except Exception as e:
+            print(f"❌ [SERVICE] Error updating book contributors: {e}")
+            import traceback
+            traceback.print_exc()
+    
     async def delete_book(self, uid: str, user_id: str) -> bool:
         """Delete a book from user's library (remove relationship, not the global book)."""
         try:
@@ -356,25 +428,20 @@ class RedisBookService:
                     break
             
             if not book_to_remove:
-                print(f"[SERVICE] Book with UID {uid} not found in user {user_id}'s library")
                 return False
             
             # Check if book has an ID
             if not book_to_remove.id:
-                print(f"[SERVICE] Book {book_to_remove.title} has no ID")
                 return False
             
             # Delete the user-book relationship
             success = await self.redis_user_book_repo.delete_relationship(str(user_id), book_to_remove.id)
             if success:
-                print(f"[SERVICE] Successfully removed book {book_to_remove.title} from user {user_id}'s library")
                 return True
             else:
-                print(f"[SERVICE] Failed to remove relationship for book {book_to_remove.id}")
                 return False
                 
         except Exception as e:
-            print(f"[SERVICE] Error deleting book from user library: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -387,7 +454,6 @@ class RedisBookService:
             matching_books = await self.redis_book_repo.get_books_by_isbn(isbn)
             return matching_books
         except Exception as e:
-            print(f"[SERVICE] Error getting books by ISBN: {e}")
             return []
     
     async def search_books(self, query: str, user_id: str, filter_params: Optional[Dict] = None) -> List[Book]:
@@ -423,13 +489,11 @@ class RedisBookService:
             existing_books = await self.get_books_by_isbn(domain_book.isbn13)
             if existing_books:
                 existing_book = existing_books[0]
-                print(f"[SERVICE] Found existing book by ISBN13: {existing_book.title}")
         
         if not existing_book and domain_book.isbn10:
             existing_books = await self.get_books_by_isbn(domain_book.isbn10)
             if existing_books:
                 existing_book = existing_books[0]
-                print(f"[SERVICE] Found existing book by ISBN10: {existing_book.title}")
         
         if existing_book:
             # Check if the new book data contains additional information (like cover_url)
@@ -440,34 +504,28 @@ class RedisBookService:
             if domain_book.cover_url and not existing_book.cover_url:
                 existing_book.cover_url = domain_book.cover_url
                 needs_update = True
-                print(f"[SERVICE] Adding cover URL to existing book: {domain_book.cover_url}")
             
             # Update other missing fields
             if domain_book.description and not existing_book.description:
                 existing_book.description = domain_book.description
                 needs_update = True
-                print(f"[SERVICE] Adding description to existing book")
             
             if domain_book.published_date and not existing_book.published_date:
                 existing_book.published_date = domain_book.published_date
                 needs_update = True
-                print(f"[SERVICE] Adding published date to existing book")
             
             if domain_book.page_count and not existing_book.page_count:
                 existing_book.page_count = domain_book.page_count
                 needs_update = True
-                print(f"[SERVICE] Adding page count to existing book")
             
             # Update the book in storage if changes were made
             if needs_update:
                 existing_book.updated_at = datetime.now()
                 await self.redis_book_repo.update(existing_book)
-                print(f"[SERVICE] Updated existing book with new information")
             
             return existing_book
         
         # If no existing book found, create new one
-        print(f"[SERVICE] No existing book found, creating new book")
         return await self.create_book(domain_book)
 
     async def get_user_book(self, user_id: str, book_identifier: str) -> Optional[Book]:
@@ -478,7 +536,6 @@ class RedisBookService:
             book_identifier: Either book_id or book UID
         """
         try:
-            print(f"[SERVICE] Getting user book: user_id={user_id}, book_identifier={book_identifier}")
             
             # First try to get by exact book_id
             relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book_identifier)
@@ -496,14 +553,11 @@ class RedisBookService:
                     relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book.id)
             
             if not relationship:
-                print(f"[SERVICE] No relationship found for user {user_id} and book {book_identifier}")
                 return None
             
             if not book:
-                print(f"[SERVICE] Book {book_identifier} not found")
                 return None
             
-            print(f"[SERVICE] Found book: {book.title}")
             
             # Add user-specific attributes to the book object
             setattr(book, 'reading_status', relationship.reading_status.value)
@@ -517,13 +571,9 @@ class RedisBookService:
             setattr(book, 'locations', relationship.locations)
             setattr(book, 'custom_metadata', relationship.custom_metadata or {})
             
-            print(f"[SERVICE] Relationship custom_metadata: {relationship.custom_metadata}")
-            print(f"[SERVICE] Book custom_metadata after assignment: {book.custom_metadata}")
-            print(f"[SERVICE] User book loaded successfully with {len(book.custom_metadata)} custom metadata entries")
             return book
             
         except Exception as e:
-            print(f"[SERVICE] Error getting user book: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -664,20 +714,31 @@ class RedisBookService:
             
             if person_data:
                 from .domain.models import Person
+                # Filter person_data to only include fields that Person model expects
+                valid_person_fields = {
+                    'id', 'name', 'normalized_name', 'birth_year', 'death_year', 
+                    'birth_place', 'bio', 'website', 'created_at', 'updated_at'
+                }
+                clean_person_data = {k: v for k, v in person_data.items() if k in valid_person_fields}
+                
+                # Map _id to id if needed (Redis stores as _id, Person model expects id)
+                if 'id' not in clean_person_data and '_id' in person_data:
+                    clean_person_data['id'] = person_data['_id']
+                
                 # Convert datetime strings back to datetime objects
-                if 'created_at' in person_data and isinstance(person_data['created_at'], str):
+                if 'created_at' in clean_person_data and isinstance(clean_person_data['created_at'], str):
                     try:
-                        person_data['created_at'] = datetime.fromisoformat(person_data['created_at'])
+                        clean_person_data['created_at'] = datetime.fromisoformat(clean_person_data['created_at'])
                     except:
-                        person_data['created_at'] = datetime.utcnow()
+                        clean_person_data['created_at'] = datetime.utcnow()
                 
-                if 'updated_at' in person_data and isinstance(person_data['updated_at'], str):
+                if 'updated_at' in clean_person_data and isinstance(clean_person_data['updated_at'], str):
                     try:
-                        person_data['updated_at'] = datetime.fromisoformat(person_data['updated_at'])
+                        clean_person_data['updated_at'] = datetime.fromisoformat(clean_person_data['updated_at'])
                     except:
-                        person_data['updated_at'] = datetime.utcnow()
+                        clean_person_data['updated_at'] = datetime.utcnow()
                 
-                person = Person(**person_data)
+                person = Person(**clean_person_data)
                 return person
             
             # If not found as person, try looking as author (for backward compatibility)
@@ -728,20 +789,31 @@ class RedisBookService:
                     
                     if query.lower() in name or query.lower() in normalized_name:
                         from .domain.models import Person
+                        # Filter person_data to only include fields that Person model expects
+                        valid_person_fields = {
+                            'id', 'name', 'normalized_name', 'birth_year', 'death_year', 
+                            'birth_place', 'bio', 'website', 'created_at', 'updated_at'
+                        }
+                        clean_person_data = {k: v for k, v in person_data.items() if k in valid_person_fields}
+                        
+                        # Map _id to id if needed (Redis stores as _id, Person model expects id)
+                        if 'id' not in clean_person_data and '_id' in person_data:
+                            clean_person_data['id'] = person_data['_id']
+                        
                         # Convert datetime strings
-                        if 'created_at' in person_data and isinstance(person_data['created_at'], str):
+                        if 'created_at' in clean_person_data and isinstance(clean_person_data['created_at'], str):
                             try:
-                                person_data['created_at'] = datetime.fromisoformat(person_data['created_at'])
+                                clean_person_data['created_at'] = datetime.fromisoformat(clean_person_data['created_at'])
                             except:
-                                person_data['created_at'] = datetime.utcnow()
+                                clean_person_data['created_at'] = datetime.utcnow()
                         
-                        if 'updated_at' in person_data and isinstance(person_data['updated_at'], str):
+                        if 'updated_at' in clean_person_data and isinstance(clean_person_data['updated_at'], str):
                             try:
-                                person_data['updated_at'] = datetime.fromisoformat(person_data['updated_at'])
+                                clean_person_data['updated_at'] = datetime.fromisoformat(clean_person_data['updated_at'])
                             except:
-                                person_data['updated_at'] = datetime.utcnow()
+                                clean_person_data['updated_at'] = datetime.utcnow()
                         
-                        person = Person(**person_data)
+                        person = Person(**clean_person_data)
                         results.append(person)
                         
                         if len(results) >= limit:
@@ -871,6 +943,52 @@ class RedisBookService:
     def list_all_persons_sync(self):
         """Sync wrapper for list_all_persons."""
         return self.list_all_persons()
+
+    async def create_person(self, person):
+        """Create a new person in Redis storage."""
+        try:
+            from dataclasses import asdict
+            from .domain.models import Person
+            
+            # Convert Person object to dict for storage
+            if isinstance(person, Person):
+                person_data = asdict(person)
+            else:
+                person_data = person
+            
+            # Ensure we have a valid ID
+            if not person.id:
+                import uuid
+                person.id = str(uuid.uuid4())
+                person_data['id'] = person.id
+            
+            # Store the person node
+            success = self.storage.store_node('person', str(person.id), person_data)
+            if success:
+                print(f"✅ [SERVICE] Created person: {person.name} (ID: {person.id})")
+                return person
+            else:
+                print(f"❌ [SERVICE] Failed to create person: {person.name}")
+                return None
+        except Exception as e:
+            print(f"❌ [SERVICE] Error creating person: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    @run_async
+    def create_person_sync(self, person):
+        """Sync wrapper for create_person."""
+        return self.create_person(person)
+
+    async def find_or_create_person(self, person_name):
+        """Find existing person by name or create a new one."""
+        return await self.redis_book_repo.find_or_create_person(person_name)
+    
+    @run_async
+    def find_or_create_person_sync(self, person_name):
+        """Sync wrapper for find_or_create_person."""
+        return self.find_or_create_person(person_name)
 
 
 class RedisUserService:

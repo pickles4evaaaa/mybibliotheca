@@ -84,6 +84,68 @@
                 </div>
             </div>
 
+            <!-- Selection toolbar -->
+            <div id="selection-toolbar" class="selection-toolbar" style="display: none;">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <span id="selection-count">0</span> person(s) selected
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-outline-light btn-sm" onclick="selectAll()">Select All</button>
+                        <button type="button" class="btn btn-outline-light btn-sm" onclick="clearSelection()">Clear Selection</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected()">Delete Selected</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bulk Delete Form (hidden) -->
+            <form id="bulk-delete-form" method="POST" action="{{ url_for('main.bulk_delete_persons') }}" style="display: none;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            </form>
+
+            <!-- Custom Confirmation Modal -->
+            <div id="deleteConfirmationModal" class="modal fade" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="bi bi-exclamation-triangle text-warning"></i>
+                                Confirm Deletion
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="deletion-summary"></div>
+                            
+                            <!-- Options for people with books -->
+                            <div id="deletion-options" style="display: none;">
+                                <hr>
+                                <h6><i class="bi bi-gear"></i> Deletion Options:</h6>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="deletionMode" id="deleteOnlyWithoutBooks" value="safe" checked>
+                                    <label class="form-check-label" for="deleteOnlyWithoutBooks">
+                                        <strong>Safe Delete</strong> - Only delete people without book associations
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="deletionMode" id="forceDeleteAll" value="force">
+                                    <label class="form-check-label" for="forceDeleteAll">
+                                        <strong class="text-danger">Force Delete All</strong> - Delete all selected people AND remove their book associations
+                                        <br><small class="text-muted">⚠️ This will permanently remove these people from all books in your library</small>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+                                <i class="bi bi-trash"></i> <span id="deleteButtonText">Delete Selected</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- People Grid/List -->
             <div id="peopleContainer">
                 {% if not persons %}
@@ -99,9 +161,13 @@
                     <!-- Grid View -->
                     <div id="gridViewContainer" class="row">
                         {% for person in persons %}
-                        <div class="col-lg-3 col-md-4 col-sm-6 mb-4 person-card" data-name="{{ person.name | lower }}" data-bio="{{ person.bio | lower if person.bio else '' }}">
+                        <div class="col-lg-3 col-md-4 col-sm-6 mb-4 person-card" data-name="{{ person.name | lower }}" data-bio="{{ person.bio | lower if person.bio else '' }}" data-person-id="{{ person.id }}">
                             <div class="card h-100">
-                                <div class="card-body">
+                                <!-- Selection checkbox -->
+                                <div class="person-selection">
+                                    <input type="checkbox" class="person-checkbox" value="{{ person.id }}" data-book-count="{{ person.book_count }}">
+                                </div>
+                                <div class="card-body" onclick="openPerson('{{ person.id }}')">
                                     <h5 class="card-title">
                                         <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
                                             {{ person.name }}
@@ -173,6 +239,9 @@
                             <table class="table table-hover">
                                 <thead>
                                     <tr>
+                                        <th width="40">
+                                            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()">
+                                        </th>
                                         <th>Name</th>
                                         <th>Years</th>
                                         <th>Books</th>
@@ -182,7 +251,10 @@
                                 </thead>
                                 <tbody>
                                     {% for person in persons %}
-                                    <tr class="person-row" data-name="{{ person.name | lower }}" data-bio="{{ person.bio | lower if person.bio else '' }}">
+                                    <tr class="person-row" data-name="{{ person.name | lower }}" data-bio="{{ person.bio | lower if person.bio else '' }}" data-person-id="{{ person.id }}">
+                                        <td>
+                                            <input type="checkbox" class="person-checkbox" value="{{ person.id }}" data-book-count="{{ person.book_count }}">
+                                        </td>
                                         <td>
                                             <div>
                                                 <strong>
@@ -298,6 +370,68 @@
 .hidden {
     display: none !important;
 }
+
+/* Selection functionality styles */
+.selection-toolbar {
+    background: linear-gradient(135deg, #6c757d, #495057);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.person-selection {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 4px;
+    padding: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.person-card {
+    position: relative;
+}
+
+.person-card.selected .card {
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+}
+
+.person-checkbox {
+    cursor: pointer;
+    transform: scale(1.1);
+    margin: 0;
+    border: 2px solid #6c757d;
+    border-radius: 3px;
+    background: white;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    width: 16px;
+    height: 16px;
+    position: relative;
+    outline: none;
+    box-shadow: none;
+}
+
+.person-checkbox:checked {
+    background: #007bff;
+    border-color: #007bff;
+}
+
+.person-checkbox:checked::after {
+    content: '✓';
+    position: absolute;
+    top: -2px;
+    left: 1px;
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
+}
 </style>
 
 <script>
@@ -345,6 +479,312 @@ document.addEventListener('DOMContentLoaded', function() {
             listContainer.classList.remove('d-none');
         }
     });
+
+    // Selection functionality
+    const checkboxes = document.querySelectorAll('.person-checkbox');
+    const selectionToolbar = document.getElementById('selection-toolbar');
+    const selectionCount = document.getElementById('selection-count');
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+
+    // Add event listeners to checkboxes using event delegation
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('person-checkbox')) {
+            updateSelection();
+        }
+    });
+
+    // Prevent checkbox clicks from triggering card/row actions
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('person-checkbox') || e.target.closest('.person-selection')) {
+            e.stopPropagation();
+        }
+    });
+
+    function updateSelection() {
+        const checkboxes = document.querySelectorAll('.person-checkbox');
+        const selectedBoxes = document.querySelectorAll('.person-checkbox:checked');
+        
+        // Update visual state of person cards
+        checkboxes.forEach(checkbox => {
+            const personCard = checkbox.closest('.person-card');
+            if (personCard) {
+                if (checkbox.checked) {
+                    personCard.classList.add('selected');
+                } else {
+                    personCard.classList.remove('selected');
+                }
+            }
+        });
+        
+        // Update selection count and toolbar visibility
+        if (selectionCount) {
+            selectionCount.textContent = selectedBoxes.length;
+        }
+        
+        if (selectionToolbar) {
+            if (selectedBoxes.length > 0) {
+                selectionToolbar.style.display = 'block';
+            } else {
+                selectionToolbar.style.display = 'none';
+            }
+        }
+
+        // Update select all checkbox state
+        if (selectAllCheckbox) {
+            if (selectedBoxes.length === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (selectedBoxes.length === checkboxes.length) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+            }
+        }
+    }
 });
+
+// Global functions for toolbar buttons
+function selectAll() {
+    const checkboxes = document.querySelectorAll('.person-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = true;
+    });
+    updateSelection();
+}
+
+function clearSelection() {
+    const checkboxes = document.querySelectorAll('.person-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    updateSelection();
+}
+
+function toggleSelectAll() {
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    const checkboxes = document.querySelectorAll('.person-checkbox');
+    
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = selectAllCheckbox.checked;
+    });
+    updateSelection();
+}
+
+function deleteSelected() {
+    const selectedBoxes = document.querySelectorAll('.person-checkbox:checked');
+    
+    if (selectedBoxes.length === 0) {
+        alert('No people selected for deletion.');
+        return;
+    }
+    
+    // Analyze selected people for book associations
+    let peopleWithBooks = [];
+    let peopleWithoutBooks = [];
+    let totalBooks = 0;
+    
+    selectedBoxes.forEach(checkbox => {
+        const bookCount = parseInt(checkbox.dataset.bookCount) || 0;
+        const personCard = checkbox.closest('.person-card, .person-row');
+        const personName = personCard ? personCard.querySelector('a').textContent.trim() : 'Unknown';
+        
+        if (bookCount > 0) {
+            peopleWithBooks.push({ name: personName, books: bookCount });
+            totalBooks += bookCount;
+        } else {
+            peopleWithoutBooks.push(personName);
+        }
+    });
+    
+    // Build modal content
+    let modalContent = `<p><strong>You are about to delete ${selectedBoxes.length} person(s):</strong></p>`;
+    
+    if (peopleWithoutBooks.length > 0) {
+        modalContent += `<div class="alert alert-success mb-3">
+            <h6><i class="bi bi-check-circle"></i> ${peopleWithoutBooks.length} person(s) can be safely deleted:</h6>
+            <ul class="mb-0">`;
+        peopleWithoutBooks.slice(0, 8).forEach(name => {
+            modalContent += `<li>${name}</li>`;
+        });
+        if (peopleWithoutBooks.length > 8) {
+            modalContent += `<li><em>... and ${peopleWithoutBooks.length - 8} more</em></li>`;
+        }
+        modalContent += `</ul></div>`;
+    }
+    
+    if (peopleWithBooks.length > 0) {
+        modalContent += `<div class="alert alert-warning mb-3">
+            <h6><i class="bi bi-exclamation-triangle"></i> ${peopleWithBooks.length} person(s) have associated books (${totalBooks} total):</h6>
+            <ul class="mb-2">`;
+        peopleWithBooks.slice(0, 8).forEach(person => {
+            modalContent += `<li>${person.name} <span class="badge bg-secondary">${person.books} book${person.books > 1 ? 's' : ''}</span></li>`;
+        });
+        if (peopleWithBooks.length > 8) {
+            modalContent += `<li><em>... and ${peopleWithBooks.length - 8} more</em></li>`;
+        }
+        modalContent += `</ul>
+            <p class="mb-0 text-muted">
+                <strong>These people CANNOT be deleted until their book associations are removed.</strong> 
+                Consider using "Merge People" to consolidate duplicate entries instead.
+            </p></div>`;
+    }
+    
+    // Show message if no people can be deleted safely
+    if (peopleWithoutBooks.length === 0 && peopleWithBooks.length > 0) {
+        modalContent += `<div class="alert alert-danger">
+            <strong>No people can be deleted because they all have associated books.</strong>
+        </div>`;
+    }
+    
+    document.getElementById('deletion-summary').innerHTML = modalContent;
+    
+    // Show/hide deletion options and update button text
+    const deletionOptions = document.getElementById('deletion-options');
+    const deleteButton = document.getElementById('confirmDeleteBtn');
+    const deleteButtonText = document.getElementById('deleteButtonText');
+    
+    if (peopleWithBooks.length > 0) {
+        deletionOptions.style.display = 'block';
+        
+        // Update button text based on radio selection
+        const radioButtons = document.querySelectorAll('input[name="deletionMode"]');
+        radioButtons.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'safe') {
+                    if (peopleWithoutBooks.length > 0) {
+                        deleteButtonText.textContent = `Delete ${peopleWithoutBooks.length} Without Books`;
+                        deleteButton.className = 'btn btn-warning';
+                        deleteButton.disabled = false;
+                    } else {
+                        deleteButtonText.textContent = 'No People Can Be Deleted';
+                        deleteButton.className = 'btn btn-secondary';
+                        deleteButton.disabled = true;
+                    }
+                } else if (this.value === 'force') {
+                    deleteButtonText.textContent = `Force Delete All ${selectedBoxes.length}`;
+                    deleteButton.className = 'btn btn-danger';
+                    deleteButton.disabled = false;
+                }
+            });
+        });
+        
+        // Set initial button text
+        if (peopleWithoutBooks.length > 0) {
+            deleteButtonText.textContent = `Delete ${peopleWithoutBooks.length} Without Books`;
+            deleteButton.className = 'btn btn-warning';
+            deleteButton.disabled = false;
+        } else {
+            deleteButtonText.textContent = 'No People Can Be Deleted';
+            deleteButton.className = 'btn btn-secondary';
+            deleteButton.disabled = true;
+        }
+    } else {
+        deletionOptions.style.display = 'none';
+        deleteButtonText.textContent = `Delete ${selectedBoxes.length} Selected`;
+        deleteButton.className = 'btn btn-danger';
+        deleteButton.disabled = false;
+    }
+    
+    deleteButton.style.display = 'inline-block';
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmationModal'));
+    modal.show();
+    
+    // Handle confirm button click
+    document.getElementById('confirmDeleteBtn').onclick = function() {
+        modal.hide();
+        
+        // Determine deletion mode
+        const forceDelete = document.getElementById('forceDeleteAll').checked;
+        submitDeletion(selectedBoxes, forceDelete);
+    };
+}
+
+function submitDeletion(selectedBoxes, forceDelete = false) {
+    // Create form and submit
+    const form = document.getElementById('bulk-delete-form');
+    if (!form) {
+        alert('Error: Could not find delete form. Please refresh the page.');
+        return;
+    }
+    
+    // Clear form but keep CSRF token
+    const existingCsrfToken = form.querySelector('input[name="csrf_token"]');
+    form.innerHTML = '';
+    if (existingCsrfToken) {
+        form.appendChild(existingCsrfToken);
+    }
+    
+    // Add force delete flag if needed
+    if (forceDelete) {
+        const forceInput = document.createElement('input');
+        forceInput.type = 'hidden';
+        forceInput.name = 'force_delete';
+        forceInput.value = 'true';
+        form.appendChild(forceInput);
+    }
+    
+    selectedBoxes.forEach((checkbox) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'selected_persons';
+        input.value = checkbox.value;
+        form.appendChild(input);
+    });
+    
+    form.submit();
+}
+
+function openPerson(personId) {
+    window.location.href = `/person/${personId}`;
+}
+
+function updateSelection() {
+    const checkboxes = document.querySelectorAll('.person-checkbox');
+    const selectedBoxes = document.querySelectorAll('.person-checkbox:checked');
+    const selectionToolbar = document.getElementById('selection-toolbar');
+    const selectionCount = document.getElementById('selection-count');
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    
+    // Update visual state of person cards
+    checkboxes.forEach(checkbox => {
+        const personCard = checkbox.closest('.person-card');
+        if (personCard) {
+            if (checkbox.checked) {
+                personCard.classList.add('selected');
+            } else {
+                personCard.classList.remove('selected');
+            }
+        }
+    });
+    
+    // Update selection count and toolbar visibility
+    if (selectionCount) {
+        selectionCount.textContent = selectedBoxes.length;
+    }
+    
+    if (selectionToolbar) {
+        if (selectedBoxes.length > 0) {
+            selectionToolbar.style.display = 'block';
+        } else {
+            selectionToolbar.style.display = 'none';
+        }
+    }
+
+    // Update select all checkbox state
+    if (selectAllCheckbox) {
+        if (selectedBoxes.length === 0) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = false;
+        } else if (selectedBoxes.length === checkboxes.length) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = true;
+        } else {
+            selectAllCheckbox.indeterminate = true;
+        }
+    }
+}
 </script>
 {% endblock %}

@@ -14,15 +14,18 @@
     background: white;
     border: 1px solid #ddd;
     border-top: none;
-    max-height: 200px;
+    border-radius: 0 0 4px 4px;
+    max-height: 250px;
     overflow-y: auto;
     z-index: 1000;
     display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 .autocomplete-item {
-    padding: 8px 12px;
+    padding: 10px 12px;
     cursor: pointer;
     border-bottom: 1px solid #eee;
+    transition: background-color 0.1s ease;
 }
 .autocomplete-item:hover,
 .autocomplete-item.selected {
@@ -33,11 +36,23 @@
 }
 .autocomplete-item .name {
     font-weight: 500;
+    color: #212529;
 }
 .autocomplete-item .bio {
     font-size: 0.85em;
     color: #666;
     margin-top: 2px;
+    max-height: 2.4em;
+    overflow: hidden;
+    line-height: 1.2;
+}
+.autocomplete-item.create-new {
+    background-color: #f8f9fa;
+    border-top: 2px solid #dee2e6;
+    color: #198754;
+}
+.autocomplete-item.create-new:hover {
+    background-color: #e9f7ef;
 }
 .contributor-tag {
     display: inline-block;
@@ -263,6 +278,8 @@
 </div>
 
 <script>
+// JavaScript loaded for edit_book_enhanced.html
+
 let searchTimeout;
 let activeDropdown = null;
 
@@ -270,14 +287,19 @@ let activeDropdown = null;
 document.addEventListener('DOMContentLoaded', function() {
     const contributorInputs = document.querySelectorAll('.contributor-input');
     
-    contributorInputs.forEach(input => {
+    contributorInputs.forEach((input, index) => {
         input.addEventListener('input', handleInput);
         input.addEventListener('keydown', handleKeydown);
         input.addEventListener('blur', handleBlur);
     });
     
     // Update hidden inputs on form submission
-    document.getElementById('editBookForm').addEventListener('submit', updateHiddenInputs);
+    const form = document.getElementById('editBookForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            updateHiddenInputs();
+        });
+    }
     
     // Update hidden inputs on page load
     updateHiddenInputs();
@@ -297,9 +319,10 @@ function handleInput(e) {
         return;
     }
     
+    // Reduced timeout for more responsive search
     searchTimeout = setTimeout(() => {
         searchPersons(query, dropdown, input);
-    }, 300);
+    }, 150);
 }
 
 function handleKeydown(e) {
@@ -345,25 +368,48 @@ function handleBlur(e) {
 }
 
 function searchPersons(query, dropdown, input) {
-    fetch(`/api/search_persons?q=${encodeURIComponent(query)}`)
-        .then(response => response.json())
+    // Show loading indicator
+    dropdown.innerHTML = `
+        <div class="autocomplete-item">
+            <div class="name text-muted">
+                <i class="bi bi-hourglass-split"></i> Searching...
+            </div>
+        </div>
+    `;
+    dropdown.style.display = 'block';
+    
+    fetch(`/api/person/search?q=${encodeURIComponent(query)}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(persons => {
             showDropdown(dropdown, persons, input);
         })
         .catch(error => {
             console.error('Error searching persons:', error);
+            // Show create option if search fails
+            showDropdown(dropdown, [], input);
         });
 }
 
 function showDropdown(dropdown, persons, input) {
+    if (!dropdown) {
+        return;
+    }
+    
     dropdown.innerHTML = '';
     
-    persons.forEach(person => {
+    // Show existing persons
+    persons.forEach((person, index) => {
         const item = document.createElement('div');
         item.className = 'autocomplete-item';
         item.innerHTML = `
             <div class="name">${person.name}</div>
             ${person.bio ? `<div class="bio">${person.bio}</div>` : ''}
+            ${person.book_count > 0 ? `<div class="bio text-muted">${person.book_count} book${person.book_count > 1 ? 's' : ''}</div>` : ''}
         `;
         item.dataset.id = person.id;
         item.dataset.name = person.name;
@@ -371,12 +417,15 @@ function showDropdown(dropdown, persons, input) {
         dropdown.appendChild(item);
     });
     
-    // Add "Create new" option
+    // Add "Create new" option at the bottom if query exists
     if (input.value.trim()) {
         const createItem = document.createElement('div');
-        createItem.className = 'autocomplete-item';
+        createItem.className = 'autocomplete-item create-new';
         createItem.innerHTML = `
-            <div class="name"><i class="bi bi-plus-circle"></i> Create "${input.value.trim()}"</div>
+            <div class="name">
+                <i class="bi bi-plus-circle me-1"></i> 
+                Add "${input.value.trim()}" as new person
+            </div>
         `;
         createItem.dataset.name = input.value.trim();
         createItem.dataset.new = 'true';
@@ -399,16 +448,35 @@ function selectPerson(item) {
     const section = input.closest('.contributor-section');
     const display = section.querySelector('.contributors-display');
     
-    const personId = item.dataset.id || '';
+    let personId = item.dataset.id || '';
     const personName = item.dataset.name;
+    const isNew = item.dataset.new === 'true';
+    
+    // If this is a new person, we'll handle creation during form submission
+    // For now, just add it to the UI without an ID
+    if (isNew) {
+        personId = ''; // Will be created when form is submitted
+    }
+    
+    // Check if person is already added
+    const existingTags = display.querySelectorAll('.contributor-tag');
+    for (let tag of existingTags) {
+        if (tag.dataset.name === personName) {
+            input.value = '';
+            hideDropdown(item.closest('.autocomplete-dropdown'));
+            return; // Person already added
+        }
+    }
     
     // Add contributor tag
     const tag = document.createElement('div');
     tag.className = 'contributor-tag';
     tag.dataset.id = personId;
     tag.dataset.name = personName;
+    tag.dataset.new = isNew ? 'true' : 'false';
     tag.innerHTML = `
         ${personName}
+        ${isNew ? '<small class="text-muted"> (new)</small>' : ''}
         <span class="remove" onclick="removeContributor(this)">×</span>
     `;
     
@@ -433,8 +501,12 @@ function createNewPerson(input) {
 }
 
 function removeContributor(removeBtn) {
-    removeBtn.closest('.contributor-tag').remove();
-    updateHiddenInputs();
+    const contributorTag = removeBtn.closest('.contributor-tag');
+    
+    if (contributorTag) {
+        contributorTag.remove();
+        updateHiddenInputs();
+    }
 }
 
 function updateHiddenInputs() {
@@ -442,35 +514,46 @@ function updateHiddenInputs() {
     hiddenContainer.innerHTML = '';
     
     const sections = document.querySelectorAll('.contributor-section');
-    sections.forEach(section => {
+    let contributorIndex = 0;
+    
+    sections.forEach((section, sectionIndex) => {
         const type = section.dataset.type;
         const tags = section.querySelectorAll('.contributor-tag');
         
-        tags.forEach((tag, index) => {
+        tags.forEach((tag, tagIndex) => {
             const id = tag.dataset.id;
             const name = tag.dataset.name;
+            const isNew = tag.dataset.new === 'true';
             
             // Create hidden inputs for this contributor
             const typeInput = document.createElement('input');
             typeInput.type = 'hidden';
-            typeInput.name = `contributors[${index}][type]`;
+            typeInput.name = `contributors[${contributorIndex}][type]`;
             typeInput.value = type;
             
             const nameInput = document.createElement('input');
             nameInput.type = 'hidden';
-            nameInput.name = `contributors[${index}][name]`;
+            nameInput.name = `contributors[${contributorIndex}][name]`;
             nameInput.value = name;
             
-            if (id) {
+            const isNewInput = document.createElement('input');
+            isNewInput.type = 'hidden';
+            isNewInput.name = `contributors[${contributorIndex}][is_new]`;
+            isNewInput.value = isNew ? 'true' : 'false';
+            
+            if (id && !isNew) {
                 const idInput = document.createElement('input');
                 idInput.type = 'hidden';
-                idInput.name = `contributors[${index}][id]`;
+                idInput.name = `contributors[${contributorIndex}][id]`;
                 idInput.value = id;
                 hiddenContainer.appendChild(idInput);
             }
             
             hiddenContainer.appendChild(typeInput);
             hiddenContainer.appendChild(nameInput);
+            hiddenContainer.appendChild(isNewInput);
+            
+            contributorIndex++;
         });
     });
 }
