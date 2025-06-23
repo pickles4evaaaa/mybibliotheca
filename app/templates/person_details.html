@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}{{ person.name }} - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Person Details Header -->
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h1 class="h2 mb-2">{{ person.name }}</h1>
+                            {% if person.bio %}
+                                <p class="text-muted mb-3">{{ person.bio }}</p>
+                            {% endif %}
+                            
+                            <div class="row">
+                                {% if person.birth_year %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted">
+                                        <i class="bi bi-calendar-event"></i> 
+                                        Born: {{ person.birth_year }}
+                                        {% if person.death_year %} - {{ person.death_year }}{% endif %}
+                                    </small>
+                                </div>
+                                {% endif %}
+                                
+                                {% if person.birth_place %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted">
+                                        <i class="bi bi-geo-alt"></i> 
+                                        {{ person.birth_place }}
+                                    </small>
+                                </div>
+                                {% endif %}
+                            </div>
+                            
+                            {% if person.website %}
+                            <div class="mt-2">
+                                <a href="{{ person.website }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-globe"></i> Website
+                                </a>
+                            </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-4 text-md-end">
+                            <div class="d-flex flex-column align-items-md-end">
+                                {% set total_books = contributions_by_type.values() | map('length') | sum %}
+                                <span class="badge bg-secondary mb-2">
+                                    {{ total_books | default(0) }} 
+                                    book{{ 's' if (total_books | default(0)) != 1 else '' }}
+                                </span>
+                                
+                                {% if contributions_by_type %}
+                                <div class="d-flex flex-wrap gap-1">
+                                    {% for contrib_type in contributions_by_type.keys() %}
+                                        <span class="badge bg-light text-dark">
+                                            {{ contrib_type.replace('_', ' ').title() }} ({{ contributions_by_type[contrib_type] | length }})
+                                        </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                
+                                <!-- Action Buttons -->
+                                <div class="mt-3">
+                                    <a href="{{ url_for('main.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary me-2">
+                                        <i class="bi bi-pencil"></i> Edit
+                                    </a>
+                                    <a href="{{ url_for('main.people') }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-arrow-left"></i> Back to People
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Contributions by Type -->
+    {% if contributions_by_type %}
+        {% for contrib_type, books in contributions_by_type.items() %}
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 class="h5 mb-0">
+                            <i class="bi bi-{{ 'book' if contrib_type == 'authored' else 'mic' if contrib_type == 'narrated' else 'pencil' if contrib_type == 'edited' else 'journal' }}"></i>
+                            {{ contrib_type.replace('_', ' ').title() }} ({{ books | length }})
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% for book in books %}
+                            <div class="col-md-6 col-lg-4 mb-3">
+                                <div class="card h-100">
+                                    <div class="row g-0 h-100">
+                                        <div class="col-4">
+                                            {% if book.cover_url %}
+                                                <img src="{{ book.cover_url }}" 
+                                                     alt="{{ book.title }}" 
+                                                     class="img-fluid rounded-start h-100"
+                                                     style="object-fit: cover; max-height: 160px;">
+                                            {% else %}
+                                                <div class="bg-light rounded-start h-100 d-flex align-items-center justify-content-center" 
+                                                     style="min-height: 160px;">
+                                                    <i class="bi bi-book text-muted" style="font-size: 2rem;"></i>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-8">
+                                            <div class="card-body p-3">
+                                                <h6 class="card-title mb-2">
+                                                    <a href="{{ url_for('main.view_book', uid=book.id) }}" 
+                                                       class="text-decoration-none">
+                                                        {{ book.title }}
+                                                    </a>
+                                                </h6>
+                                                
+                                                {% if book.published_date %}
+                                                <small class="text-muted d-block mb-2">
+                                                    <i class="bi bi-calendar3"></i> 
+                                                    {{ book.published_date.year if book.published_date.year is defined else book.published_date }}
+                                                </small>
+                                                {% endif %}
+                                                
+                                                {% if book.publisher %}
+                                                <small class="text-muted d-block">
+                                                    <i class="bi bi-building"></i> 
+                                                    {{ book.publisher.name if book.publisher.name is defined else book.publisher }}
+                                                </small>
+                                                {% endif %}
+                                                
+                                                <!-- User-specific info if available -->
+                                                {% if book.reading_status is defined %}
+                                                <div class="mt-2">
+                                                    <span class="badge bg-{{ 'success' if book.reading_status == 'read' else 'warning' if book.reading_status == 'reading' else 'secondary' }}">
+                                                        {{ book.reading_status.replace('_', ' ').title() }}
+                                                    </span>
+                                                </div>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="row">
+            <div class="col-12">
+                <div class="text-center py-5">
+                    <i class="bi bi-book display-1 text-muted"></i>
+                    <h3 class="mt-3 text-muted">No Books Found</h3>
+                    <p class="text-muted">
+                        No books by {{ person.name }} were found in your library.
+                    </p>
+                    <a href="{{ url_for('main.add') }}" class="btn btn-success">
+                        <i class="bi bi-plus-circle"></i> Add Books
+                    </a>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+.card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.badge {
+    font-size: 0.75rem;
+}
+
+.stat-card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: 8px;
+}
+</style>
+{% endblock %}

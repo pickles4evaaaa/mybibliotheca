@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ person.name }} - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2 mb-0">
+                    <i class="bi bi-pencil me-2"></i>Edit Person
+                </h1>
+                <div>
+                    <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-outline-primary me-2">
+                        <i class="bi bi-eye"></i> View Details
+                    </a>
+                    <a href="{{ url_for('main.people') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to People
+                    </a>
+                </div>
+            </div>
+
+            <!-- Form -->
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST">
+                        <!-- Name -->
+                        <div class="mb-3">
+                            <label for="name" class="form-label">
+                                <i class="bi bi-person"></i> Name <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control" id="name" name="name" 
+                                   value="{{ person.name }}" required autofocus>
+                            <div class="form-text">
+                                The full name of the person (first name, last name, etc.)
+                            </div>
+                        </div>
+
+                        <!-- Bio -->
+                        <div class="mb-3">
+                            <label for="bio" class="form-label">
+                                <i class="bi bi-file-text"></i> Biography
+                            </label>
+                            <textarea class="form-control" id="bio" name="bio" rows="4" 
+                                      placeholder="Brief biography or description...">{{ person.bio or '' }}</textarea>
+                            <div class="form-text">
+                                Optional biographical information about this person
+                            </div>
+                        </div>
+
+                        <!-- Years -->
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="birth_year" class="form-label">
+                                        <i class="bi bi-calendar-event"></i> Birth Year
+                                    </label>
+                                    <input type="number" class="form-control" id="birth_year" name="birth_year" 
+                                           min="1" max="{{ current_year }}" 
+                                           value="{{ person.birth_year or '' }}" placeholder="e.g., 1947">
+                                    <div class="form-text">
+                                        Year of birth (optional)
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="death_year" class="form-label">
+                                        <i class="bi bi-calendar-x"></i> Death Year
+                                    </label>
+                                    <input type="number" class="form-control" id="death_year" name="death_year" 
+                                           min="1" max="{{ current_year }}" 
+                                           value="{{ person.death_year or '' }}" placeholder="e.g., 2021">
+                                    <div class="form-text">
+                                        Year of death (if applicable)
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Birth Place -->
+                        <div class="mb-3">
+                            <label for="birth_place" class="form-label">
+                                <i class="bi bi-geo-alt"></i> Birth Place
+                            </label>
+                            <input type="text" class="form-control" id="birth_place" name="birth_place" 
+                                   value="{{ person.birth_place or '' }}" placeholder="e.g., Portland, Maine, USA">
+                            <div class="form-text">
+                                Place of birth (optional)
+                            </div>
+                        </div>
+
+                        <!-- Website -->
+                        <div class="mb-3">
+                            <label for="website" class="form-label">
+                                <i class="bi bi-globe"></i> Website
+                            </label>
+                            <input type="url" class="form-control" id="website" name="website" 
+                                   value="{{ person.website or '' }}" placeholder="https://example.com">
+                            <div class="form-text">
+                                Official website or relevant URL (optional)
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-check-circle"></i> Update Person
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="mt-4">
+                <div class="card border-danger">
+                    <div class="card-header bg-danger text-white">
+                        <h6 class="mb-0">
+                            <i class="bi bi-exclamation-triangle"></i> Danger Zone
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">
+                            Once you delete a person, there is no going back. Please be certain.
+                        </p>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>Delete this person</strong>
+                                <br>
+                                <small class="text-muted">
+                                    {% if person.book_count is defined and person.book_count > 0 %}
+                                        This person has {{ person.book_count }} associated books and cannot be deleted.
+                                        Consider merging with another person instead.
+                                    {% else %}
+                                        This person has no associated books and can be safely deleted.
+                                    {% endif %}
+                                </small>
+                            </div>
+                            {% if not (person.book_count is defined and person.book_count > 0) %}
+                            <form method="POST" action="{{ url_for('main.delete_person', person_id=person.id) }}" 
+                                  onsubmit="return confirm('Are you absolutely sure? This action cannot be undone.')">
+                                <button type="submit" class="btn btn-danger">
+                                    <i class="bi bi-trash"></i> Delete Person
+                                </button>
+                            </form>
+                            {% else %}
+                            <a href="{{ url_for('main.merge_persons') }}" class="btn btn-warning">
+                                <i class="bi bi-arrow-down-up"></i> Merge Instead
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const birthYearInput = document.getElementById('birth_year');
+    const deathYearInput = document.getElementById('death_year');
+    
+    // Validate death year is not before birth year
+    function validateYears() {
+        const birthYear = parseInt(birthYearInput.value);
+        const deathYear = parseInt(deathYearInput.value);
+        
+        if (birthYear && deathYear && deathYear < birthYear) {
+            deathYearInput.setCustomValidity('Death year cannot be before birth year');
+        } else {
+            deathYearInput.setCustomValidity('');
+        }
+    }
+    
+    birthYearInput.addEventListener('input', validateYears);
+    deathYearInput.addEventListener('input', validateYears);
+    
+    // Set max year to current year
+    const currentYear = new Date().getFullYear();
+    birthYearInput.max = currentYear;
+    deathYearInput.max = currentYear;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+
+{% block title %}People - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <!-- Page Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2 mb-0">
+                    <i class="bi bi-people-fill me-2"></i>People
+                </h1>
+                <div>
+                    <a href="{{ url_for('main.add_person') }}" class="btn btn-success me-2">
+                        <i class="bi bi-person-plus"></i> Add Person
+                    </a>
+                    <a href="{{ url_for('main.merge_persons') }}" class="btn btn-warning">
+                        <i class="bi bi-arrow-down-up"></i> Merge People
+                    </a>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" id="searchInput" class="form-control" placeholder="Search people...">
+                    </div>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <div class="btn-group" role="group">
+                        <input type="radio" class="btn-check" name="viewMode" id="gridView" checked>
+                        <label class="btn btn-outline-secondary" for="gridView">
+                            <i class="bi bi-grid-3x3-gap"></i> Grid
+                        </label>
+                        <input type="radio" class="btn-check" name="viewMode" id="listView">
+                        <label class="btn btn-outline-secondary" for="listView">
+                            <i class="bi bi-list-ul"></i> List
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <h3 class="stat-number">{{ persons | length }}</h3>
+                            <p class="stat-label mb-0">Total People</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            {% set authors_count = persons | selectattr('contributions.authored', 'defined') | list | length %}
+                            <h3 class="stat-number">{{ authors_count }}</h3>
+                            <p class="stat-label mb-0">Authors</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            {% set total_books = persons | map(attribute='book_count') | sum %}
+                            <h3 class="stat-number">{{ total_books }}</h3>
+                            <p class="stat-label mb-0">Total Books</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            {% set active_people = persons | selectattr('book_count', 'greaterthan', 0) | list | length %}
+                            <h3 class="stat-number">{{ active_people }}</h3>
+                            <p class="stat-label mb-0">With Books</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- People Grid/List -->
+            <div id="peopleContainer">
+                {% if not persons %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-people display-1 text-muted"></i>
+                        <h3 class="mt-3 text-muted">No People Found</h3>
+                        <p class="text-muted">Start by adding some people to your library.</p>
+                        <a href="{{ url_for('main.add_person') }}" class="btn btn-success">
+                            <i class="bi bi-person-plus"></i> Add Your First Person
+                        </a>
+                    </div>
+                {% else %}
+                    <!-- Grid View -->
+                    <div id="gridViewContainer" class="row">
+                        {% for person in persons %}
+                        <div class="col-lg-3 col-md-4 col-sm-6 mb-4 person-card" data-name="{{ person.name | lower }}" data-bio="{{ person.bio | lower if person.bio else '' }}">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
+                                            {{ person.name }}
+                                        </a>
+                                    </h5>
+                                    
+                                    {% if person.bio %}
+                                    <p class="card-text text-muted small">
+                                        {{ person.bio[:100] }}
+                                        {% if person.bio | length > 100 %}...{% endif %}
+                                    </p>
+                                    {% endif %}
+                                    
+                                    <div class="row text-center small text-muted">
+                                        {% if person.birth_year %}
+                                        <div class="col-6">
+                                            <i class="bi bi-calendar-event"></i>
+                                            {{ person.birth_year }}
+                                            {% if person.death_year %} - {{ person.death_year }}{% endif %}
+                                        </div>
+                                        {% endif %}
+                                        <div class="col-{{ '6' if person.birth_year else '12' }}">
+                                            <i class="bi bi-book"></i>
+                                            {{ person.book_count }} book{{ 's' if person.book_count != 1 else '' }}
+                                        </div>
+                                    </div>
+                                    
+                                    {% if person.contributions %}
+                                    <div class="mt-2">
+                                        {% for contrib_type, books in person.contributions.items() %}
+                                            {% if books %}
+                                            <span class="badge bg-light text-dark me-1">
+                                                {{ contrib_type.replace('_', ' ').title() }} ({{ books | length }})
+                                            </span>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                
+                                <div class="card-footer bg-transparent">
+                                    <div class="d-flex justify-content-between">
+                                        <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i> View
+                                        </a>
+                                        <div class="btn-group">
+                                            <a href="{{ url_for('main.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary">
+                                                <i class="bi bi-pencil"></i>
+                                            </a>
+                                            {% if person.book_count == 0 %}
+                                            <form method="POST" action="{{ url_for('main.delete_person', person_id=person.id) }}" 
+                                                  class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ person.name }}?')">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- List View -->
+                    <div id="listViewContainer" class="d-none">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Years</th>
+                                        <th>Books</th>
+                                        <th>Contributions</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for person in persons %}
+                                    <tr class="person-row" data-name="{{ person.name | lower }}" data-bio="{{ person.bio | lower if person.bio else '' }}">
+                                        <td>
+                                            <div>
+                                                <strong>
+                                                    <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
+                                                        {{ person.name }}
+                                                    </a>
+                                                </strong>
+                                                {% if person.bio %}
+                                                <br>
+                                                <small class="text-muted">
+                                                    {{ person.bio[:80] }}
+                                                    {% if person.bio | length > 80 %}...{% endif %}
+                                                </small>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            {% if person.birth_year %}
+                                                {{ person.birth_year }}
+                                                {% if person.death_year %} - {{ person.death_year }}{% endif %}
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">{{ person.book_count }}</span>
+                                        </td>
+                                        <td>
+                                            {% if person.contributions %}
+                                                {% for contrib_type, books in person.contributions.items() %}
+                                                    {% if books %}
+                                                    <span class="badge bg-light text-dark me-1">
+                                                        {{ contrib_type.replace('_', ' ').title() }} ({{ books | length }})
+                                                    </span>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            {% else %}
+                                                <span class="text-muted">None</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group">
+                                                <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-sm btn-outline-primary">
+                                                    <i class="bi bi-eye"></i>
+                                                </a>
+                                                <a href="{{ url_for('main.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary">
+                                                    <i class="bi bi-pencil"></i>
+                                                </a>
+                                                {% if person.book_count == 0 %}
+                                                <form method="POST" action="{{ url_for('main.delete_person', person_id=person.id) }}" 
+                                                      class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ person.name }}?')">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </form>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.stat-card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--heading-color);
+    margin-bottom: 0;
+}
+
+.stat-label {
+    color: #6c757d;
+    font-size: 0.9rem;
+}
+
+.person-card .card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.person-card .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.person-row {
+    transition: background-color 0.2s;
+}
+
+.person-row:hover {
+    background-color: rgba(0,0,0,0.05);
+}
+
+.hidden {
+    display: none !important;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    const gridView = document.getElementById('gridView');
+    const listView = document.getElementById('listView');
+    const gridContainer = document.getElementById('gridViewContainer');
+    const listContainer = document.getElementById('listViewContainer');
+    
+    // Search functionality
+    searchInput.addEventListener('input', function() {
+        const query = this.value.toLowerCase();
+        
+        // Search in grid view
+        const gridCards = document.querySelectorAll('.person-card');
+        gridCards.forEach(card => {
+            const name = card.dataset.name;
+            const bio = card.dataset.bio;
+            const matches = name.includes(query) || bio.includes(query);
+            card.style.display = matches ? 'block' : 'none';
+        });
+        
+        // Search in list view
+        const listRows = document.querySelectorAll('.person-row');
+        listRows.forEach(row => {
+            const name = row.dataset.name;
+            const bio = row.dataset.bio;
+            const matches = name.includes(query) || bio.includes(query);
+            row.style.display = matches ? 'table-row' : 'none';
+        });
+    });
+    
+    // View mode toggle
+    gridView.addEventListener('change', function() {
+        if (this.checked) {
+            gridContainer.classList.remove('d-none');
+            listContainer.classList.add('d-none');
+        }
+    });
+    
+    listView.addEventListener('change', function() {
+        if (this.checked) {
+            gridContainer.classList.add('d-none');
+            listContainer.classList.remove('d-none');
+        }
+    });
+});
+</script>
+{% endblock %}

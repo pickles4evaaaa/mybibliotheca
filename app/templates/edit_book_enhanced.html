@@ -1,0 +1,478 @@
+{% extends "base.html" %}
+{% block title %}Edit Book - Bibliotheca{% endblock %}
+
+{% block extra_head %}
+<style>
+.contributor-autocomplete {
+    position: relative;
+}
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ddd;
+    border-top: none;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+}
+.autocomplete-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+    background-color: #f8f9fa;
+}
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+.autocomplete-item .name {
+    font-weight: 500;
+}
+.autocomplete-item .bio {
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 2px;
+}
+.contributor-tag {
+    display: inline-block;
+    background: #e9ecef;
+    border: 1px solid #dee2e6;
+    border-radius: 16px;
+    padding: 4px 12px;
+    margin: 2px;
+    font-size: 0.875em;
+}
+.contributor-tag .remove {
+    color: #dc3545;
+    cursor: pointer;
+    margin-left: 5px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">Edit Book</h1>
+                <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Book
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <form method="post" id="editBookForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        
+        <div class="row">
+            <!-- Basic Information -->
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Basic Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="title" name="title" value="{{ book.title }}" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="subtitle" class="form-label">Subtitle</label>
+                            <input type="text" class="form-control" id="subtitle" name="subtitle" value="{{ book.subtitle or '' }}">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="4">{{ book.description or '' }}</textarea>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="isbn13" class="form-label">ISBN-13</label>
+                                    <input type="text" class="form-control" id="isbn13" name="isbn13" value="{{ book.isbn13 or '' }}">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="isbn10" class="form-label">ISBN-10</label>
+                                    <input type="text" class="form-control" id="isbn10" name="isbn10" value="{{ book.isbn10 or '' }}">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="published_date" class="form-label">Published Date</label>
+                                    <input type="text" class="form-control" id="published_date" name="published_date" 
+                                           value="{{ book.published_date or '' }}" placeholder="YYYY or YYYY-MM-DD">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="page_count" class="form-label">Page Count</label>
+                                    <input type="number" class="form-control" id="page_count" name="page_count" value="{{ book.page_count or '' }}">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="publisher" class="form-label">Publisher</label>
+                                    <input type="text" class="form-control" id="publisher" name="publisher" 
+                                           value="{{ book.publisher.name if book.publisher and book.publisher.name else book.publisher or '' }}">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="language" class="form-label">Language</label>
+                                    <input type="text" class="form-control" id="language" name="language" value="{{ book.language or 'en' }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Contributors -->
+            <div class="col-lg-4">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Contributors</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Authors -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-person-fill"></i> Authors
+                            </label>
+                            <div class="contributor-section" data-type="authored">
+                                <div class="contributors-display mb-2">
+                                    {% for author in book.authors %}
+                                    <div class="contributor-tag" data-id="{{ author.id or '' }}" data-name="{{ author.name }}">
+                                        {{ author.name }}
+                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="contributor-autocomplete">
+                                    <input type="text" class="form-control contributor-input" 
+                                           placeholder="Start typing author name..." data-type="authored">
+                                    <div class="autocomplete-dropdown"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Narrators -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-headphones"></i> Narrators
+                            </label>
+                            <div class="contributor-section" data-type="narrated">
+                                <div class="contributors-display mb-2">
+                                    {% for narrator in book.narrators %}
+                                    <div class="contributor-tag" data-id="{{ narrator.id or '' }}" data-name="{{ narrator.name }}">
+                                        {{ narrator.name }}
+                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="contributor-autocomplete">
+                                    <input type="text" class="form-control contributor-input" 
+                                           placeholder="Start typing narrator name..." data-type="narrated">
+                                    <div class="autocomplete-dropdown"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Editors -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-pencil"></i> Editors
+                            </label>
+                            <div class="contributor-section" data-type="edited">
+                                <div class="contributors-display mb-2">
+                                    {% for editor in book.editors %}
+                                    <div class="contributor-tag" data-id="{{ editor.id or '' }}" data-name="{{ editor.name }}">
+                                        {{ editor.name }}
+                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="contributor-autocomplete">
+                                    <input type="text" class="form-control contributor-input" 
+                                           placeholder="Start typing editor name..." data-type="edited">
+                                    <div class="autocomplete-dropdown"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Other Contributors -->
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <i class="bi bi-people"></i> Other Contributors
+                            </label>
+                            <div class="contributor-section" data-type="contributed">
+                                <div class="contributors-display mb-2">
+                                    {% for contributor in book.get_contributors_by_type('CONTRIBUTED') %}
+                                    <div class="contributor-tag" data-id="{{ contributor.id or '' }}" data-name="{{ contributor.name }}">
+                                        {{ contributor.name }}
+                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="contributor-autocomplete">
+                                    <input type="text" class="form-control contributor-input" 
+                                           placeholder="Start typing contributor name..." data-type="contributed">
+                                    <div class="autocomplete-dropdown"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Hidden inputs for contributors -->
+        <div id="contributorInputs"></div>
+        
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Save Changes
+                    </button>
+                    <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-secondary">
+                        Cancel
+                    </a>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+let searchTimeout;
+let activeDropdown = null;
+
+// Initialize contributor autocomplete
+document.addEventListener('DOMContentLoaded', function() {
+    const contributorInputs = document.querySelectorAll('.contributor-input');
+    
+    contributorInputs.forEach(input => {
+        input.addEventListener('input', handleInput);
+        input.addEventListener('keydown', handleKeydown);
+        input.addEventListener('blur', handleBlur);
+    });
+    
+    // Update hidden inputs on form submission
+    document.getElementById('editBookForm').addEventListener('submit', updateHiddenInputs);
+    
+    // Update hidden inputs on page load
+    updateHiddenInputs();
+});
+
+function handleInput(e) {
+    const input = e.target;
+    const query = input.value.trim();
+    const dropdown = input.nextElementSibling;
+    
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    if (query.length < 2) {
+        hideDropdown(dropdown);
+        return;
+    }
+    
+    searchTimeout = setTimeout(() => {
+        searchPersons(query, dropdown, input);
+    }, 300);
+}
+
+function handleKeydown(e) {
+    const dropdown = e.target.nextElementSibling;
+    const items = dropdown.querySelectorAll('.autocomplete-item');
+    const selected = dropdown.querySelector('.autocomplete-item.selected');
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (selected) {
+            selected.classList.remove('selected');
+            const next = selected.nextElementSibling || items[0];
+            next.classList.add('selected');
+        } else if (items.length > 0) {
+            items[0].classList.add('selected');
+        }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (selected) {
+            selected.classList.remove('selected');
+            const prev = selected.previousElementSibling || items[items.length - 1];
+            prev.classList.add('selected');
+        }
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (selected) {
+            selectPerson(selected);
+        } else {
+            // Create new person
+            createNewPerson(e.target);
+        }
+    } else if (e.key === 'Escape') {
+        hideDropdown(dropdown);
+    }
+}
+
+function handleBlur(e) {
+    // Delay hiding to allow click on dropdown items
+    setTimeout(() => {
+        const dropdown = e.target.nextElementSibling;
+        hideDropdown(dropdown);
+    }, 200);
+}
+
+function searchPersons(query, dropdown, input) {
+    fetch(`/api/search_persons?q=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(persons => {
+            showDropdown(dropdown, persons, input);
+        })
+        .catch(error => {
+            console.error('Error searching persons:', error);
+        });
+}
+
+function showDropdown(dropdown, persons, input) {
+    dropdown.innerHTML = '';
+    
+    persons.forEach(person => {
+        const item = document.createElement('div');
+        item.className = 'autocomplete-item';
+        item.innerHTML = `
+            <div class="name">${person.name}</div>
+            ${person.bio ? `<div class="bio">${person.bio}</div>` : ''}
+        `;
+        item.dataset.id = person.id;
+        item.dataset.name = person.name;
+        item.addEventListener('mousedown', () => selectPerson(item));
+        dropdown.appendChild(item);
+    });
+    
+    // Add "Create new" option
+    if (input.value.trim()) {
+        const createItem = document.createElement('div');
+        createItem.className = 'autocomplete-item';
+        createItem.innerHTML = `
+            <div class="name"><i class="bi bi-plus-circle"></i> Create "${input.value.trim()}"</div>
+        `;
+        createItem.dataset.name = input.value.trim();
+        createItem.dataset.new = 'true';
+        createItem.addEventListener('mousedown', () => selectPerson(createItem));
+        dropdown.appendChild(createItem);
+    }
+    
+    dropdown.style.display = 'block';
+    activeDropdown = dropdown;
+}
+
+function hideDropdown(dropdown) {
+    dropdown.style.display = 'none';
+    dropdown.innerHTML = '';
+    activeDropdown = null;
+}
+
+function selectPerson(item) {
+    const input = item.closest('.contributor-autocomplete').querySelector('.contributor-input');
+    const section = input.closest('.contributor-section');
+    const display = section.querySelector('.contributors-display');
+    
+    const personId = item.dataset.id || '';
+    const personName = item.dataset.name;
+    
+    // Add contributor tag
+    const tag = document.createElement('div');
+    tag.className = 'contributor-tag';
+    tag.dataset.id = personId;
+    tag.dataset.name = personName;
+    tag.innerHTML = `
+        ${personName}
+        <span class="remove" onclick="removeContributor(this)">×</span>
+    `;
+    
+    display.appendChild(tag);
+    
+    // Clear input
+    input.value = '';
+    hideDropdown(item.closest('.autocomplete-dropdown'));
+    
+    // Update hidden inputs
+    updateHiddenInputs();
+}
+
+function createNewPerson(input) {
+    const name = input.value.trim();
+    if (!name) return;
+    
+    selectPerson({
+        dataset: { name: name },
+        closest: () => input.closest('.contributor-autocomplete').querySelector('.contributor-input')
+    });
+}
+
+function removeContributor(removeBtn) {
+    removeBtn.closest('.contributor-tag').remove();
+    updateHiddenInputs();
+}
+
+function updateHiddenInputs() {
+    const hiddenContainer = document.getElementById('contributorInputs');
+    hiddenContainer.innerHTML = '';
+    
+    const sections = document.querySelectorAll('.contributor-section');
+    sections.forEach(section => {
+        const type = section.dataset.type;
+        const tags = section.querySelectorAll('.contributor-tag');
+        
+        tags.forEach((tag, index) => {
+            const id = tag.dataset.id;
+            const name = tag.dataset.name;
+            
+            // Create hidden inputs for this contributor
+            const typeInput = document.createElement('input');
+            typeInput.type = 'hidden';
+            typeInput.name = `contributors[${index}][type]`;
+            typeInput.value = type;
+            
+            const nameInput = document.createElement('input');
+            nameInput.type = 'hidden';
+            nameInput.name = `contributors[${index}][name]`;
+            nameInput.value = name;
+            
+            if (id) {
+                const idInput = document.createElement('input');
+                idInput.type = 'hidden';
+                idInput.name = `contributors[${index}][id]`;
+                idInput.value = id;
+                hiddenContainer.appendChild(idInput);
+            }
+            
+            hiddenContainer.appendChild(typeInput);
+            hiddenContainer.appendChild(nameInput);
+        });
+    });
+}
+</script>
+{% endblock %}

@@ -37,7 +37,10 @@ from dataclasses import asdict
 # Add the parent directory to the path so we can import our modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.domain.models import Book, User, UserBookRelationship, Author, Publisher, Category, ReadingStatus
+from app.domain.models import (
+    Book, User, UserBookRelationship, Author, Publisher, Category, 
+    ReadingStatus, Person, BookContribution, ContributionType
+)
 from app.infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository
 from app.infrastructure.redis_graph import RedisGraphStorage, RedisGraphConnection
 import redis
@@ -270,13 +273,18 @@ class WebBasedSQLiteToRedisMigrator:
                 
                 # Transform and create Book object with proper field mapping
                 
-                # Handle authors: convert string to list of Author objects
-                authors = []
+                # Handle authors: convert string to list of BookContribution objects
+                contributors = []
                 if author:
                     # Split multiple authors if they're comma/semicolon separated
                     author_names = [name.strip() for name in author.replace(';', ',').split(',') if name.strip()]
                     for author_name in author_names:
-                        authors.append(Author(name=author_name, normalized_name=author_name.strip().lower()))
+                        person = Person(name=author_name, normalized_name=author_name.strip().lower())
+                        contribution = BookContribution(
+                            person=person, 
+                            contribution_type=ContributionType.AUTHORED
+                        )
+                        contributors.append(contribution)
                 
                 # Handle publisher: convert string to Publisher object
                 publisher_obj = None
@@ -318,7 +326,7 @@ class WebBasedSQLiteToRedisMigrator:
                 
                 book = Book(
                     title=title or "",
-                    authors=authors,
+                    contributors=contributors,
                     isbn13=isbn13_val,
                     isbn10=isbn10_val,
                     cover_url=cover_url,
@@ -575,9 +583,14 @@ class WebBasedSQLiteToRedisMigrator:
         logger.info("🧪 Testing single book creation...")
         try:
             # Create a simple test book
+            test_person = Person(name="Test Author")
+            test_contribution = BookContribution(
+                person=test_person,
+                contribution_type=ContributionType.AUTHORED
+            )
             test_book = Book(
                 title="Test Book",
-                authors=[Author(name="Test Author")],
+                contributors=[test_contribution],
                 isbn13="9780000000000",
                 description="A test book for migration debugging"
             )

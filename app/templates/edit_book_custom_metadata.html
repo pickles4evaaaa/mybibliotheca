@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros/contributors.html' import display_authors %}
 
 {% block title %}Edit Custom Metadata - {{ book.title }}{% endblock %}
 
@@ -104,7 +105,7 @@
                     <h1>Edit Custom Metadata</h1>
                     <h4 class="text-muted">{{ book.title }}</h4>
                     {% if book.authors %}
-                        <p class="text-muted">by {{ book.authors[0].name }}</p>
+                        <p class="text-muted">by {{ display_authors(book, show_icon=false, style_class="text-muted") }}</p>
                     {% endif %}
                 </div>
                 <div>

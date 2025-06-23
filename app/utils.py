@@ -70,7 +70,10 @@ def get_google_books_cover(isbn, fetch_title_author=False):
             
             if fetch_title_author:
                 title = volume_info.get('title')
-                authors = ", ".join(volume_info.get('authors', []))
+                # Get individual authors instead of joining them
+                authors_list = volume_info.get('authors', [])
+                # Keep for backward compatibility
+                authors = ", ".join(authors_list) if authors_list else ""
                 description = volume_info.get('description', '')
                 published_date = volume_info.get('publishedDate', '')
                 page_count = volume_info.get('pageCount')
@@ -83,7 +86,8 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 return {
                     'cover': cover_url,
                     'title': title,
-                    'author': authors,
+                    'author': authors,  # Keep for backward compatibility
+                    'authors_list': authors_list,  # New: Individual authors
                     'description': description,
                     'published_date': published_date,
                     'page_count': page_count,

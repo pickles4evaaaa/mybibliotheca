@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from 'macros/contributors.html' import display_all_contributors %}
+
 {% block title %}My Library - Bibliotheca{% endblock %}
 {% block content %}
 <style>
@@ -18,7 +20,9 @@
 
   /* Dark mode overrides */
   [data-theme="dark"] {
-    --primary-brown: #6b5b73;
+    -                        <a href="{{ url_for('main.add_book') }}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle me-1"></i>Add Book
+                        </a>imary-brown: #6b5b73;
     --light-brown: #8a7ca8;
     --cream: #2d2d2d;
     --warm-white: #1e1e1e;
@@ -326,7 +330,7 @@
                             </div>
                         </div>
                         <div class="col-lg-2 col-md-3 text-center">
-                            <a href="{{ url_for('main.add_book_page') }}" class="btn btn-success btn-lg">
+                            <a href="{{ url_for('main.add_book') }}" class="btn btn-success btn-lg">
                                 <i class="bi bi-plus-circle me-1"></i>Add Books
                             </a>
                         </div>
@@ -463,9 +467,9 @@
                                 <!-- Book Info -->
                                 <div class="card-body p-2" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
                                     <h6 class="card-title mb-1 book-title">{{ book.title }}</h6>
-                                    {% if book.author %}
-                                        <p class="card-text text-muted small mb-2">{{ book.author }}</p>
-                                    {% endif %}
+                                    
+                                    <!-- Contributors (compact display) -->
+                                    {{ display_all_contributors(book, compact=true) }}
 
                                     <!-- Reading Status Badge -->
                                     <div class="mb-2">
@@ -540,7 +544,7 @@
                             <h4 class="mt-3">No books found</h4>
                             <p class="mb-4">Try adjusting your filters or add some books to your library!</p>
                         {% endif %}
-                        <a href="{{ url_for('main.add_book_page') }}" class="btn btn-primary btn-lg">
+                        <a href="{{ url_for('main.add_book') }}" class="btn btn-primary btn-lg">
                             <i class="bi bi-plus-circle me-1"></i>Add Books
                         </a>
                     </div>

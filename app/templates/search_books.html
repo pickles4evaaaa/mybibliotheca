@@ -18,13 +18,21 @@
         {% endif %}
         <div class="flex-grow-1">
           <strong>{{ book.title }}</strong><br>
-          <small>by {{ book.authors }}</small><br>
+          <small>by {% if book.authors %}
+            {% if book.authors is string %}
+              {{ book.authors }}
+            {% else %}
+              {% for author in book.authors %}
+                {{ author.name if author.name is defined else author }}{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% else %}Unknown Author{% endif %}</small><br>
           <small>ISBN: {{ book.isbn or 'N/A' }}</small>
         </div>
         <form method="post" action="{{ url_for('main.add_book_from_search') }}" class="ms-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
           <input type="hidden" name="title" value="{{ book.title }}">
-          <input type="hidden" name="author" value="{{ book.authors }}">
+          <input type="hidden" name="author" value="{% if book.authors %}{% if book.authors is string %}{{ book.authors }}{% else %}{% for author in book.authors %}{{ author.name if author.name is defined else author }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% endif %}">
           <input type="hidden" name="isbn" value="{{ book.isbn }}">
           <input type="hidden" name="cover_url" value="{{ book.image }}">
           <button type="submit" class="btn btn-success btn-sm">Add Book</button>

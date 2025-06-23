@@ -1,0 +1,137 @@
+<!-- Macros for displaying book contributors -->
+
+{% macro display_authors(book, show_icon=true, style_class="", max_display=3) %}
+  {% if book.authors %}
+    {% if show_icon %}<i class="bi bi-person-fill me-1"></i>{% endif %}
+    {% for author in book.authors[:max_display] %}
+      {% if author.id %}
+        <a href="{{ url_for('main.person_details', person_id=author.id) }}" class="text-decoration-none">
+          {% if style_class %}
+            <span class="{{ style_class }}">{{ author.name }}</span>
+          {% else %}
+            {{ author.name }}
+          {% endif %}
+        </a>
+      {% else %}
+        {% if style_class %}
+          <span class="{{ style_class }}">{{ author.name }}</span>
+        {% else %}
+          {{ author.name }}
+        {% endif %}
+      {% endif %}
+      {% if not loop.last %}, {% endif %}
+    {% endfor %}
+    {% if book.authors|length > max_display %}
+      <small class="text-muted"> and {{ book.authors|length - max_display }} more</small>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+
+{% macro display_narrators(book, show_icon=true, style_class="text-info", max_display=2) %}
+  {% if book.narrators %}
+    {% if show_icon %}<i class="bi bi-headphones me-1"></i>{% endif %}
+    Narrated by: 
+    {% for narrator in book.narrators[:max_display] %}
+      {% if narrator.id %}
+        <a href="{{ url_for('main.person_details', person_id=narrator.id) }}" class="text-decoration-none">
+          {% if style_class %}
+            <span class="{{ style_class }}">{{ narrator.name }}</span>
+          {% else %}
+            {{ narrator.name }}
+          {% endif %}
+        </a>
+      {% else %}
+        {% if style_class %}
+          <span class="{{ style_class }}">{{ narrator.name }}</span>
+        {% else %}
+          {{ narrator.name }}
+        {% endif %}
+      {% endif %}
+      {% if not loop.last %}, {% endif %}
+    {% endfor %}
+    {% if book.narrators|length > max_display %}
+      <small class="text-muted"> and {{ book.narrators|length - max_display }} more</small>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+
+{% macro display_editors(book, show_icon=true, style_class="text-secondary", max_display=2) %}
+  {% if book.editors %}
+    {% if show_icon %}<i class="bi bi-pencil me-1"></i>{% endif %}
+    Edited by: 
+    {% for editor in book.editors[:max_display] %}
+      {% if editor.id %}
+        <a href="{{ url_for('main.person_details', person_id=editor.id) }}" class="text-decoration-none">
+          {% if style_class %}
+            <span class="{{ style_class }}">{{ editor.name }}</span>
+          {% else %}
+            {{ editor.name }}
+          {% endif %}
+        </a>
+      {% else %}
+        {% if style_class %}
+          <span class="{{ style_class }}">{{ editor.name }}</span>
+        {% else %}
+          {{ editor.name }}
+        {% endif %}
+      {% endif %}
+      {% if not loop.last %}, {% endif %}
+    {% endfor %}
+    {% if book.editors|length > max_display %}
+      <small class="text-muted"> and {{ book.editors|length - max_display }} more</small>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+
+{% macro display_all_contributors(book, compact=false) %}
+  {% if compact %}
+    <!-- Compact display for library cards -->
+    {% if book.authors %}
+      <div class="mb-1">
+        {{ display_authors(book, show_icon=false, max_display=2) }}
+      </div>
+    {% endif %}
+    {% if book.narrators %}
+      <div class="mb-1 small text-info">
+        {{ display_narrators(book, show_icon=true, max_display=1) }}
+      </div>
+    {% endif %}
+  {% else %}
+    <!-- Full display for book details -->
+    {% if book.authors %}
+      <p class="mb-2">
+        <strong>Author{% if book.authors|length > 1 %}s{% endif %}:</strong>
+        {{ display_authors(book, show_icon=false) }}
+      </p>
+    {% endif %}
+    
+    {% if book.narrators %}
+      <p class="mb-2">
+        <strong>Narrator{% if book.narrators|length > 1 %}s{% endif %}:</strong>
+        {{ display_narrators(book, show_icon=false) }}
+      </p>
+    {% endif %}
+    
+    {% if book.editors %}
+      <p class="mb-2">
+        <strong>Editor{% if book.editors|length > 1 %}s{% endif %}:</strong>
+        {{ display_editors(book, show_icon=false) }}
+      </p>
+    {% endif %}
+    
+    <!-- Other contributors -->
+    {% if book.contributors %}
+      {% set other_contributors = book.contributors | selectattr('contribution_type.value', 'in', ['translated', 'illustrated', 'gave_foreword', 'gave_introduction', 'gave_afterword', 'compiled', 'contributed']) | list %}
+      {% if other_contributors %}
+        <p class="mb-2">
+          <strong>Other Contributors:</strong>
+        </p>
+        <ul class="list-unstyled ms-3">
+          {% for contrib in other_contributors %}
+            <li><small>{{ contrib.person.name }} - {{ contrib.contribution_type.value.replace('_', ' ').title() }}</small></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+{% endmacro %}

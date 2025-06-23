@@ -1,6 +1,6 @@
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash, send_file, abort, make_response, session
 from flask_login import login_required, current_user
-from .domain.models import Book as DomainBook, Author, Publisher, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
+from .domain.models import Book as DomainBook, Author, Person, BookContribution, ContributionType, Publisher, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
 from .services import book_service, user_service, reading_log_service, custom_field_service, import_mapping_service, direct_import_service
 from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image
 from datetime import datetime, date, timedelta
@@ -10,6 +10,9 @@ from io import BytesIO
 import pytz
 import tempfile
 import csv
+import threading
+import uuid
+import os
 from werkzeug.utils import secure_filename
 import csv # Ensure csv is imported
 import calendar
@@ -49,10 +52,20 @@ def log_book():
     
     try:
         # Create a basic book using the service
+        contributors = []
+        if author:
+            person = Person(id=str(uuid.uuid4()), name=author)
+            contribution = BookContribution(
+                person=person,
+                contribution_type=ContributionType.AUTHORED,
+                order=0
+            )
+            contributors.append(contribution)
+            
         domain_book = DomainBook(
             id=str(uuid.uuid4()),
             title=title,
-            authors=[Author(id=str(uuid.uuid4()), name=author)] if author else [],
+            contributors=contributors,
             isbn13=isbn if isbn and len(isbn.replace('-', '')) == 13 else None,
             isbn10=isbn if isbn and len(isbn.replace('-', '')) == 10 else None,
             created_at=datetime.now(),
@@ -140,8 +153,13 @@ def index():
 @bp.route('/add', methods=['GET', 'POST'])
 @login_required
 def add_book():
-    """Redirect to library page where Add Book functionality is now integrated"""
-    flash('Add Book functionality has been moved to the Library page for a better experience.', 'info')
+    """Add a new book to the library"""
+    if request.method == 'GET':
+        return render_template('add_book_new.html')
+    
+    # Handle POST request for adding book
+    # This would handle form submission for manual book entry
+    flash('Manual book addition is not implemented yet. Please use the Google Books search from the Library page.', 'info')
     return redirect(url_for('main.library'))
 
 @bp.route('/search', methods=['GET', 'POST'])
@@ -202,18 +220,13 @@ def log_reading(uid):
 @bp.route('/book/<uid>/delete', methods=['POST'])
 @login_required
 def delete_book(uid):
-    print(f"Individual delete route called for book {uid} by user {current_user.id}")
-    
     # Delete through service layer
     success = book_service.delete_book_sync(uid, str(current_user.id))
-    print(f"Individual delete result for {uid}: {success}")
     
     if success:
         flash('Book deleted successfully.')
-        print(f"Book {uid} deleted successfully")
     else:
         flash('Failed to delete book.', 'error')
-        print(f"Failed to delete book {uid}")
         
     return redirect(url_for('main.library'))
 
@@ -427,33 +440,88 @@ def edit_book(uid):
         abort(404)
         
     if request.method == 'POST':
-        new_isbn = request.form['isbn']
+        new_isbn13 = request.form.get('isbn13', '').strip() or None
+        new_isbn10 = request.form.get('isbn10', '').strip() or None
         
-        # TODO: Check for duplicate ISBN in Redis
-        # For now, skip duplicate check
+        # Process contributors
+        contributors = []
+        contributor_data = {}
+        
+        # Parse contributor form data
+        for key, value in request.form.items():
+            if key.startswith('contributors[') and '][' in key:
+                # Extract index and field from key like "contributors[0][name]"
+                parts = key.split('][')
+                if len(parts) == 2:
+                    index_part = parts[0].replace('contributors[', '')
+                    field = parts[1].replace(']', '')
+                    
+                    if index_part not in contributor_data:
+                        contributor_data[index_part] = {}
+                    contributor_data[index_part][field] = value
+        
+        # Create BookContribution objects
+        for contrib in contributor_data.values():
+            if contrib.get('name'):
+                from .domain.models import Person, BookContribution, ContributionType
+                
+                # Create or get person
+                person_id = contrib.get('id')
+                if person_id:
+                    person = book_service.get_person_by_id_sync(person_id)
+                else:
+                    # Create new person
+                    person = Person(
+                        id=str(uuid.uuid4()),
+                        name=contrib['name'],
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+                
+                # Map contribution type
+                contrib_type_map = {
+                    'authored': ContributionType.AUTHORED,
+                    'narrated': ContributionType.NARRATED,
+                    'edited': ContributionType.EDITED,
+                    'contributed': ContributionType.CONTRIBUTED
+                }
+                
+                contrib_type = contrib_type_map.get(contrib.get('type', 'authored'), ContributionType.AUTHORED)
+                
+                contribution = BookContribution(
+                    person=person,
+                    contribution_type=contrib_type,
+                    created_at=datetime.now()
+                )
+                contributors.append(contribution)
         
         update_data = {
             'title': request.form['title'],
+            'subtitle': request.form.get('subtitle', '').strip() or None,
             'description': request.form.get('description', '').strip() or None,
             'published_date': _convert_published_date_to_date(request.form.get('published_date', '').strip()) if request.form.get('published_date', '').strip() else None,
             'page_count': int(request.form.get('page_count')) if request.form.get('page_count', '').strip() else None,
-            'language': request.form.get('language', '').strip() or None,
+            'language': request.form.get('language', '').strip() or 'en',
             'cover_url': request.form.get('cover_url', '').strip() or None,
-            'isbn13': new_isbn if len(new_isbn.replace('-', '')) == 13 else None,
-            'isbn10': new_isbn if len(new_isbn.replace('-', '')) == 10 else None,
+            'isbn13': new_isbn13,
+            'isbn10': new_isbn10,
+            'contributors': contributors
         }
         
-        # Remove None values
-        update_data = {k: v for k, v in update_data.items() if v is not None}
+        # Remove None values except for specific fields
+        filtered_data = {}
+        for k, v in update_data.items():
+            if k in ['contributors'] or v is not None:
+                filtered_data[k] = v
         
-        success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
+        success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
         if success:
-            flash('Book updated.', 'success')
+            flash('Book updated successfully.', 'success')
         else:
             flash('Failed to update book.', 'error')
         return redirect(url_for('main.view_book', uid=uid))
         
-    return render_template('edit_book.html', book=user_book)
+    return render_template('edit_book_enhanced.html', book=user_book)
 
 
 @bp.route('/book/<uid>/enhanced')
@@ -680,9 +748,9 @@ def edit_book_custom_metadata(uid):
             personal_metadata = {}
             
             # Get available fields (treating all as personal for now)
-            personal_fields = custom_field_service.get_available_fields(current_user.id, is_global=False)
+            personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
             # Also get global fields but treat them as personal
-            global_fields = custom_field_service.get_available_fields(current_user.id, is_global=True)
+            global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
             all_fields = personal_fields + global_fields
             
             print(f"🔍 [EDIT_META] Found {len(personal_fields)} personal fields, {len(global_fields)} global fields")
@@ -727,8 +795,8 @@ def edit_book_custom_metadata(uid):
         
         # Get display data for template
         # For now, treat all fields as personal since that's how they're stored
-        personal_fields = custom_field_service.get_available_fields(current_user.id, is_global=False)
-        global_fields = custom_field_service.get_available_fields(current_user.id, is_global=True)
+        personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
+        global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
         
         print(f"🔍 [EDIT_META] Template data preparation:")
         print(f"   📋 [EDIT_META] Personal fields count: {len(personal_fields)}")
@@ -851,18 +919,29 @@ def add_book_from_search():
     else:
         description = published_date = page_count = categories = publisher = language = average_rating = rating_count = None
 
+    # Create contributors from author data
+    contributors = []
+    if author:
+        person = Person(name=author)
+        contribution = BookContribution(
+            person=person,
+            contribution_type=ContributionType.AUTHORED,
+            order=0
+        )
+        contributors.append(contribution)
+
     # Create a domain book object
     domain_book = DomainBook(
         title=title,
         isbn13=normalized_isbn if normalized_isbn and len(normalized_isbn) == 13 else None,
         isbn10=normalized_isbn if normalized_isbn and len(normalized_isbn) == 10 else None,
-        authors=[Author(name=author)] if author else [],
+        contributors=contributors,
         cover_url=cover_url,
         description=description,
         published_date=_convert_published_date_to_date(published_date),
         page_count=page_count,
         categories=categories.split(',') if categories else [],
-        publishers=[Publisher(name=publisher)] if publisher else [],
+        publisher=Publisher(name=publisher) if publisher else None,
         language=language,
         average_rating=average_rating,
         rating_count=rating_count
@@ -882,7 +961,7 @@ def add_book_from_search():
         current_app.logger.error(f"Error creating book: {e}")
         flash('Error adding book to library.', 'danger')
     
-    return redirect(url_for('main.add_book_page'))
+    return redirect(url_for('main.library'))
 
 
 @bp.route('/download_db', methods=['GET'])
@@ -1395,6 +1474,17 @@ def add_book_manual():
                 language = ol_data.get('language')
 
     try:
+        # Create contributors from author data
+        contributors = []
+        if author:
+            person = Person(id=str(uuid.uuid4()), name=author)
+            contribution = BookContribution(
+                person=person,
+                contribution_type=ContributionType.AUTHORED,
+                order=0
+            )
+            contributors.append(contribution)
+            
         # Create domain book object
         domain_book = DomainBook(
             id=str(uuid.uuid4()),
@@ -1408,7 +1498,7 @@ def add_book_manual():
             isbn10=normalized_isbn if normalized_isbn and len(normalized_isbn) == 10 else None,
             average_rating=average_rating,
             rating_count=rating_count,
-            authors=[Author(id=str(uuid.uuid4()), name=author)] if author else [],
+            contributors=contributors,
             publisher=Publisher(id=str(uuid.uuid4()), name=publisher) if publisher else None,
             categories=[],  # TODO: Parse categories
             created_at=datetime.now(),
@@ -1456,13 +1546,7 @@ def add_book_manual():
         current_app.logger.error(f"Error adding book manually: {e}")
         flash('An error occurred while adding the book. Please try again.', 'danger')
 
-    return redirect(url_for('main.add_book_page'))
-
-@bp.route('/add_book', methods=['GET'])
-@login_required
-def add_book_page():
-    """New dedicated page for adding books"""
-    return render_template('add_book_new.html')
+    return redirect(url_for('main.library'))
 
 @bp.route('/import-books', methods=['GET', 'POST'])
 @login_required
@@ -1615,8 +1699,8 @@ def import_books():
                     # Auto-create any custom fields referenced in the template
                     auto_create_custom_fields(suggested_mappings, current_user.id)
                     # Reload custom fields after creating new ones
-                    global_custom_fields = custom_field_service.get_available_fields(current_user.id, is_global=True)
-                    personal_custom_fields = custom_field_service.get_available_fields(current_user.id, is_global=False)
+                    global_custom_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
+                    personal_custom_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
                 else:
                     print(f"DEBUG: No template detected, using auto-detected mappings: {suggested_mappings}")
                 
@@ -1718,7 +1802,7 @@ def import_books_execute():
                         field_name = field_label.lower().replace(' ', '_').replace('-', '_')
                         
                         # Check if field already exists
-                        existing_fields = custom_field_service.get_available_fields(current_user.id, is_global)
+                        existing_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global)
                         if any(f.name == field_name for f in existing_fields):
                             flash(f'A custom field with name "{field_name}" already exists', 'error')
                             return redirect(url_for('main.import_books'))
@@ -1800,10 +1884,16 @@ def import_books_execute():
         job_data['total'] = 0
     
     # Store job data in Redis instead of memory
-    store_job_in_redis(task_id, job_data)
+    print(f"🏗️ [EXECUTE] Creating job {task_id} for user {current_user.id}")
+    redis_success = store_job_in_redis(task_id, job_data)
     
     # Also keep in memory for backward compatibility
     import_jobs[task_id] = job_data
+    
+    print(f"📊 [EXECUTE] Redis storage: {'✅' if redis_success else '❌'}")
+    print(f"💾 [EXECUTE] Memory storage: ✅")
+    print(f"🔧 [EXECUTE] Job status: {job_data['status']}")
+    print(f"📈 [EXECUTE] Total rows to process: {job_data['total']}")
     
     # Start the import in background thread
     app = current_app._get_current_object()  # Get the actual app instance
@@ -1829,15 +1919,29 @@ def import_books_execute():
 @login_required
 def import_books_progress(task_id):
     """Show import progress page."""
+    print(f"🔍 [PROGRESS] Looking for job {task_id}")
+    
     # Try Redis first, then fall back to memory
-    job = get_job_from_redis(task_id) or import_jobs.get(task_id)
+    redis_job = get_job_from_redis(task_id)
+    memory_job = import_jobs.get(task_id)
+    
+    print(f"📊 [PROGRESS] Redis job found: {bool(redis_job)}")
+    print(f"💾 [PROGRESS] Memory job found: {bool(memory_job)}")
+    
+    job = redis_job or memory_job
+    
     if not job:
+        print(f"❌ [PROGRESS] No job found for {task_id}")
+        print(f"📝 [PROGRESS] Available jobs in memory: {list(import_jobs.keys())}")
         flash('Import job not found. This may be due to a server restart. Please start a new import.', 'warning')
         return redirect(url_for('main.import_books'))
     
     if job['user_id'] != current_user.id:
+        print(f"🚫 [PROGRESS] Job belongs to user {job['user_id']}, current user is {current_user.id}")
         flash('Access denied to this import job.', 'danger')
         return redirect(url_for('main.import_books'))
+    
+    print(f"✅ [PROGRESS] Job found with status: {job.get('status', 'unknown')}")
     
     return render_template('import_books_progress.html',
                          task_id=task_id,
@@ -1926,10 +2030,16 @@ def auto_detect_fields(headers, user_id=None):
     custom_fields = []
     if user_id:
         try:
-            user_fields = custom_field_service.get_user_fields_sync(user_id)
-            custom_fields = [(f, False) for f in user_fields]  # All user fields for Redis version
+            # Use sync wrapper methods to avoid coroutine issues
+            personal_fields = custom_field_service.get_available_fields_sync(user_id, is_global=False)
+            global_fields = custom_field_service.get_available_fields_sync(user_id, is_global=True)
+            
+            # Combine and format for use in detection logic
+            custom_fields.extend([(f, False) for f in personal_fields])
+            custom_fields.extend([(f, True) for f in global_fields])
+            
         except Exception as e:
-            print(f"Error loading custom fields for auto-detection: {e}")
+            current_app.logger.error(f"Error loading custom fields for auto-detection: {e}")
     
     for header in headers:
         header_lower = header.lower().strip()
@@ -2040,8 +2150,8 @@ def auto_create_custom_fields(mappings, user_id):
     print(f"DEBUG: mappings type: {type(mappings)}")
     
     # Get existing fields
-    existing_global_fields = custom_field_service.get_available_fields(user_id, is_global=True)
-    existing_personal_fields = custom_field_service.get_available_fields(user_id, is_global=False)
+    existing_global_fields = custom_field_service.get_available_fields_sync(user_id, is_global=True)
+    existing_personal_fields = custom_field_service.get_available_fields_sync(user_id, is_global=False)
     
     existing_global_names = {f.name for f in existing_global_fields}
     existing_personal_names = {f.name for f in existing_personal_fields}
@@ -2143,12 +2253,21 @@ def start_import_job(task_id):
     from app.domain.models import Book as DomainBook, Author, Publisher
     from app.services import book_service
     
-    job = get_job_from_redis(task_id) or import_jobs.get(task_id)
+    print(f"🚀 [START] Starting import job {task_id}")
+    
+    # Try to get job from both sources
+    redis_job = get_job_from_redis(task_id)
+    memory_job = import_jobs.get(task_id)
+    
+    print(f"📊 [START] Redis job found: {bool(redis_job)}")
+    print(f"💾 [START] Memory job found: {bool(memory_job)}")
+    
+    job = redis_job or memory_job
     if not job:
-        print(f"Import job {task_id} not found in start_import_job")
+        print(f"❌ [START] Import job {task_id} not found in start_import_job")
         return
 
-    print(f"Starting import job {task_id} for user {job['user_id']}")
+    print(f"✅ [START] Starting import job {task_id} for user {job['user_id']}")
     job['status'] = 'running'
     update_job_in_redis(task_id, {'status': 'running'})
     if task_id in import_jobs:
@@ -2273,9 +2392,29 @@ def start_import_job(task_id):
                     
                     # Prepare ISBN fields
                     isbn_value = book_data.get('isbn', '')
-                    isbn13 = isbn_value if len(isbn_value) == 13 else None
-                    isbn10 = isbn_value if len(isbn_value) == 10 else None
-                    print(f"ISBN processing: original='{isbn_value}', isbn13='{isbn13}', isbn10='{isbn10}'")
+                    isbn13 = None
+                    isbn10 = None
+                    
+                    if isbn_value:
+                        # Clean ISBN (remove spaces, hyphens, etc.)
+                        clean_isbn = ''.join(c for c in isbn_value if c.isdigit() or c.upper() == 'X')
+                        print(f"ISBN processing: original='{isbn_value}', cleaned='{clean_isbn}', length={len(clean_isbn)}")
+                        
+                        if len(clean_isbn) == 13:
+                            isbn13 = clean_isbn
+                            print(f"Assigned to ISBN13: {isbn13}")
+                        elif len(clean_isbn) == 10:
+                            isbn10 = clean_isbn
+                            print(f"Assigned to ISBN10: {isbn10}")
+                        else:
+                            print(f"WARNING: ISBN '{clean_isbn}' has unexpected length {len(clean_isbn)}")
+                            # Still try to use it, in case it's a valid format we don't recognize
+                            if len(clean_isbn) > 10:
+                                isbn13 = clean_isbn
+                            else:
+                                isbn10 = clean_isbn
+                    
+                    print(f"Final ISBN assignment: isbn13='{isbn13}', isbn10='{isbn10}'")
                     
                     # Fetch additional metadata if ISBN is available
                     # Start with CSV data as base
@@ -2288,14 +2427,17 @@ def start_import_job(task_id):
                     cover_url = None
                     average_rating = None
                     rating_count = None
-                    published_date = None;
+                    published_date = None
+                    google_data = None  # Initialize google_data
                     
                     # Override with API data if available (prioritize API data for richer metadata)
-                    if isbn_value:
-                        print(f"Fetching metadata for ISBN: {isbn_value}")
+                    # Use the cleaned ISBN for API calls
+                    api_isbn = isbn13 or isbn10  # Prefer ISBN13, fallback to ISBN10
+                    if api_isbn:
+                        print(f"Fetching metadata for cleaned ISBN: {api_isbn}")
                         try:
                             # Try Google Books first
-                            google_data = get_google_books_cover(isbn_value, fetch_title_author=True)
+                            google_data = get_google_books_cover(api_isbn, fetch_title_author=True)
                             if google_data:
                                 print(f"Got Google Books data: {google_data.keys()}")
                                 # Prioritize API title over CSV title if available
@@ -2324,7 +2466,7 @@ def start_import_job(task_id):
                             else:
                                 # Fallback to OpenLibrary
                                 print("No Google Books data, trying OpenLibrary...")
-                                ol_data = fetch_book_data(isbn_value)
+                                ol_data = fetch_book_data(api_isbn)
                                 if ol_data:
                                     print(f"Got OpenLibrary data: {ol_data.keys()}")
                                     # Prioritize API title over CSV title if available
@@ -2344,24 +2486,103 @@ def start_import_job(task_id):
                                     language = language or ol_data.get('language', 'en')
                                     published_date = published_date or ol_data.get('published_date')
                         except Exception as api_error:
-                            print(f"Error fetching metadata for ISBN {isbn_value}: {api_error}")
+                            print(f"Error fetching metadata for ISBN {api_isbn}: {api_error}")
+                    else:
+                        print("No valid ISBN available for API lookup")
                     
                     # Rebuild authors list with updated author data
-                    authors = []
+                    # Build contributors from author data
+                    contributors = []
                     if csv_author:
-                        # Handle primary author
-                        authors.append(Author(name=csv_author))
-                        print(f"Added primary author: {csv_author}")
-                        # Handle additional authors if present
+                        # Handle primary author(s) from Google Books API
+                        if google_data and google_data.get('authors_list'):
+                            # Use individual authors from Google Books API
+                            for i, author_name in enumerate(google_data['authors_list']):
+                                author_name = author_name.strip()
+                                if author_name:
+                                    person = Person(name=author_name)
+                                    contribution = BookContribution(
+                                        person=person,
+                                        contribution_type=ContributionType.AUTHORED,
+                                        order=i  # First author is primary
+                                    )
+                                    contributors.append(contribution)
+                                    print(f"Added author from Google Books: {author_name}")
+                        else:
+                            # Fallback to CSV author
+                            person = Person(name=csv_author)
+                            contribution = BookContribution(
+                                person=person,
+                                contribution_type=ContributionType.AUTHORED,
+                                order=0
+                            )
+                            contributors.append(contribution)
+                            print(f"Added primary author: {csv_author}")
+                        
+                        # Handle additional authors if present in CSV
                         if book_data.get('additional_authors'):
                             additional_names = book_data['additional_authors'].split(',')
-                            for name in additional_names:
+                            for i, name in enumerate(additional_names):
                                 name = name.strip()
                                 if name:
-                                    authors.append(Author(name=name))
+                                    person = Person(name=name)
+                                    contribution = BookContribution(
+                                        person=person,
+                                        contribution_type=ContributionType.AUTHORED,
+                                        order=len(contributors)  # Continue ordering
+                                    )
+                                    contributors.append(contribution)
                                     print(f"Added additional author: {name}")
                     
-                    print(f"Final metadata - Title: {title}, Authors: {len(authors)}, Cover: {cover_url}, Publisher: {publisher_name}")
+                    # Handle Contributors column from StoryGraph
+                    contributors_str = book_data.get('contributors', '').strip()
+                    if contributors_str and contributors_str != '""' and contributors_str != '':
+                        print(f"Processing Contributors field: '{contributors_str}'")
+                        # Split contributors by comma and process each one
+                        contributor_names = [name.strip() for name in contributors_str.split(',')]
+                        for i, name_with_role in enumerate(contributor_names):
+                            if name_with_role and name_with_role != '""':  # Skip empty or quoted empty strings
+                                # Parse name and role - handle format like "David Wyatt (Contributor)"
+                                name = name_with_role
+                                contribution_type = ContributionType.CONTRIBUTED  # Default
+                                
+                                # Check if role is specified in parentheses
+                                if '(' in name_with_role and ')' in name_with_role:
+                                    # Extract name and role
+                                    name = name_with_role.split('(')[0].strip()
+                                    role = name_with_role.split('(')[1].split(')')[0].strip().lower()
+                                    
+                                    # Map role to contribution type
+                                    if 'translator' in role or 'translation' in role:
+                                        contribution_type = ContributionType.TRANSLATED
+                                    elif 'editor' in role or 'edited' in role:
+                                        contribution_type = ContributionType.EDITED
+                                    elif 'illustrator' in role or 'illustrated' in role:
+                                        contribution_type = ContributionType.ILLUSTRATED
+                                    elif 'narrator' in role or 'narrated' in role:
+                                        contribution_type = ContributionType.NARRATED
+                                    elif 'foreword' in role:
+                                        contribution_type = ContributionType.GAVE_FOREWORD
+                                    elif 'introduction' in role:
+                                        contribution_type = ContributionType.GAVE_INTRODUCTION
+                                    elif 'afterword' in role:
+                                        contribution_type = ContributionType.GAVE_AFTERWORD
+                                    # else: keep default CONTRIBUTED
+                                    
+                                    print(f"Parsed contributor: name='{name}', role='{role}', type={contribution_type.value}")
+                                
+                                person = Person(name=name)
+                                contribution = BookContribution(
+                                    person=person,
+                                    contribution_type=contribution_type,
+                                    order=len(contributors)  # Continue ordering after authors
+                                )
+                                contributors.append(contribution)
+                                print(f"Added contributor: {name} ({contribution_type.value})")
+                    else:
+                        print(f"No contributors found or empty contributors field: '{contributors_str}'")
+                    
+                    print(f"Final metadata - Title: {title}, Contributors: {len(contributors)}, Cover: {cover_url}, Publisher: {publisher_name}")
                     
                     # Clean publisher name one more time to be safe
                     if publisher_name:
@@ -2369,7 +2590,7 @@ def start_import_job(task_id):
                     
                     domain_book = DomainBook(
                         title=title,
-                        authors=authors,
+                        contributors=contributors,
                         isbn13=isbn13,
                         isbn10=isbn10,
                         description=description,
@@ -2385,7 +2606,7 @@ def start_import_job(task_id):
                         updated_at=datetime.now()
                     )
                     
-                    print(f"Created domain book: title='{domain_book.title}', authors={len(domain_book.authors)}, isbn13='{domain_book.isbn13}', isbn10='{domain_book.isbn10}'")
+                    print(f"Created domain book: title='{domain_book.title}', contributors={len(domain_book.contributors)}, isbn13='{domain_book.isbn13}', isbn10='{domain_book.isbn10}'")
                     
                     # Create book using the service (globally)
                     print(f"Creating book: {domain_book.title}")
@@ -2406,7 +2627,7 @@ def start_import_job(task_id):
                                 elif reading_status == 'on_hold':
                                     reading_status_enum = ReadingStatus.ON_HOLD
                                 elif reading_status == 'did_not_finish':
-                                    reading_status_enum = ReadingStatus.DID_NOT_FINISH
+                                    reading_status_enum = ReadingStatus.DNF
 
                             # Add to user's library
                             success = book_service.add_book_to_user_library_sync(
@@ -2550,18 +2771,758 @@ def normalize_goodreads_value(value, field_type='text'):
     
     return value.strip()
 
-# Placeholder Redis functions - these should be properly implemented
+# Redis functions for job storage
 def store_job_in_redis(task_id, job_data):
-    """Placeholder for Redis job storage."""
-    pass
+    """Store import job data in Redis."""
+    try:
+        from .infrastructure.redis_graph import get_graph_storage
+        redis_client = get_graph_storage().redis
+        job_key = f'import_job:{task_id}'
+        
+        # Convert job data to JSON and store with expiration (24 hours)
+        import json
+        redis_client.setex(job_key, 86400, json.dumps(job_data, default=str))
+        print(f"✅ Stored job {task_id} in Redis")
+        return True
+    except Exception as e:
+        print(f"❌ Error storing job {task_id} in Redis: {e}")
+        return False
 
 def get_job_from_redis(task_id):
-    """Placeholder for Redis job retrieval."""
-    return None
+    """Retrieve import job data from Redis."""
+    try:
+        from .infrastructure.redis_graph import get_graph_storage
+        redis_client = get_graph_storage().redis
+        job_key = f'import_job:{task_id}'
+        
+        job_data_str = redis_client.get(job_key)
+        if job_data_str:
+            import json
+            job_data = json.loads(job_data_str)
+            print(f"✅ Retrieved job {task_id} from Redis")
+            return job_data
+        else:
+            print(f"❌ Job {task_id} not found in Redis")
+            return None
+    except Exception as e:
+        print(f"❌ Error retrieving job {task_id} from Redis: {e}")
+        return None
 
 def update_job_in_redis(task_id, updates):
-    """Placeholder for Redis job updates."""
-    pass
+    """Update specific fields in an import job stored in Redis."""
+    try:
+        from .infrastructure.redis_graph import get_graph_storage
+        redis_client = get_graph_storage().redis
+        job_key = f'import_job:{task_id}'
+        
+        # Get existing job data
+        job_data_str = redis_client.get(job_key)
+        if job_data_str:
+            import json
+            job_data = json.loads(job_data_str)
+            
+            # Update with new values
+            job_data.update(updates)
+            
+            # Store back with same expiration
+            redis_client.setex(job_key, 86400, json.dumps(job_data, default=str))
+            print(f"✅ Updated job {task_id} in Redis with: {list(updates.keys())}")
+            return True
+        else:
+            print(f"❌ Job {task_id} not found in Redis for update")
+            return False
+    except Exception as e:
+        print(f"❌ Error updating job {task_id} in Redis: {e}")
+        return False
+
+# ========================================
+# PEOPLE MANAGEMENT ROUTES
+# ========================================
+
+@bp.route('/people')
+@login_required
+def people():
+    """Display all people with management options."""
+    try:
+        # Get all persons with error handling for async issues
+        
+        # Helper function to handle potential coroutine returns
+        def safe_call_sync_method(method, *args, **kwargs):
+            """Safely call a sync method that might return a coroutine."""
+            import inspect
+            result = method(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Can't use loop.run_until_complete if loop is already running
+                        print(f"⚠️ [PEOPLE] Loop is running, method {method.__name__} returned coroutine")
+                        return []  # Return empty list as fallback
+                    else:
+                        return loop.run_until_complete(result)
+                except Exception as e:
+                    print(f"⚠️ [PEOPLE] Error running coroutine for {method.__name__}: {e}")
+                    return []
+            return result
+        
+        all_persons = safe_call_sync_method(book_service.list_all_persons_sync)
+        
+        # Ensure we have a list
+        if not isinstance(all_persons, list):
+            print(f"⚠️ [PEOPLE] Expected list, got {type(all_persons)}")
+            all_persons = []
+        
+        # Add book counts for each person
+        for i, person in enumerate(all_persons):
+            # Initialize safe defaults
+            person.book_count = 0
+            person.contributions = {}
+            
+            try:
+                # Try to get books for this person with safe call
+                try:
+                    books_by_type = safe_call_sync_method(book_service.get_books_by_person_sync, person.id, str(current_user.id))
+                    
+                    # Safely handle the result
+                    if books_by_type and isinstance(books_by_type, dict):
+                        person.contributions = books_by_type
+                        # Calculate total books safely
+                        try:
+                            total_books = 0
+                            for book_list in books_by_type.values():
+                                if book_list and hasattr(book_list, '__len__'):
+                                    total_books += len(book_list)
+                            person.book_count = total_books
+                        except Exception as count_error:
+                            print(f"⚠️ [PEOPLE] Error counting books for {getattr(person, 'name', 'unknown')}: {count_error}")
+                            person.book_count = 0
+                    else:
+                        pass  # No books found
+                
+                except Exception as book_error:
+                    print(f"⚠️ [PEOPLE] Error getting books for person {getattr(person, 'name', 'unknown')}: {book_error}")
+                    # Keep defaults: book_count = 0, contributions = {}
+                
+            except Exception as person_error:
+                print(f"❌ [PEOPLE] Error processing person {getattr(person, 'name', 'unknown')} ({getattr(person, 'id', 'unknown')}): {person_error}")
+                import traceback
+                traceback.print_exc()
+                current_app.logger.error(f"Error processing person: {person_error}")
+                # Keep defaults: book_count = 0, contributions = {}
+        
+        # Sort by name safely
+        try:
+            all_persons.sort(key=lambda p: getattr(p, 'name', '').lower())
+        except Exception as sort_error:
+            print(f"⚠️ [PEOPLE] Error sorting persons: {sort_error}")
+        
+        return render_template('people.html', persons=all_persons)
+    
+    except Exception as e:
+        print(f"❌ [PEOPLE] Error loading people page: {e}")
+        import traceback
+        traceback.print_exc()
+        current_app.logger.error(f"Error loading people page: {e}")
+        flash('Error loading people page.', 'error')
+        return redirect(url_for('main.library'))
+
+
+@bp.route('/person/<person_id>')
+@login_required
+def person_details(person_id):
+    """Display detailed information about a person."""
+    try:
+        print(f"🔍 [PERSON] Starting person details page for person_id: {person_id}, user: {current_user.id}")
+        
+        # Get person details
+        print(f"🔍 [PERSON] Calling get_person_by_id_sync for person_id: {person_id}")
+        person = book_service.get_person_by_id_sync(person_id)
+        print(f"📊 [PERSON] Got person: {person}")
+        print(f"📊 [PERSON] Person type: {type(person)}")
+        
+        if not person:
+            print(f"❌ [PERSON] Person not found for ID: {person_id}")
+            flash('Person not found.', 'error')
+            return redirect(url_for('main.people'))
+        
+        print(f"✅ [PERSON] Found person: {person.name} (ID: {person.id})")
+        
+        # Get books by this person for current user
+        print(f"🔍 [PERSON] Getting books by person for user {current_user.id}")
+        books_by_type = book_service.get_books_by_person_sync(person_id, str(current_user.id))
+        print(f"📊 [PERSON] Got books_by_type: {type(books_by_type)}")
+        print(f"📊 [PERSON] Books by type keys: {list(books_by_type.keys()) if books_by_type else 'None'}")
+        
+        if books_by_type:
+            for contribution_type, books in books_by_type.items():
+                print(f"📋 [PERSON] {contribution_type}: {len(books)} books")
+        
+        print(f"✅ [PERSON] Rendering template")
+        return render_template('person_details.html', 
+                             person=person, 
+                             contributions_by_type=books_by_type)
+    
+    except Exception as e:
+        print(f"❌ [PERSON] Error loading person details for {person_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        current_app.logger.error(f"Error loading person details: {e}")
+        flash('Error loading person details.', 'error')
+        return redirect(url_for('main.people'))
+
+
+@bp.route('/person/add', methods=['GET', 'POST'])
+@login_required
+def add_person():
+    """Add a new person to the library"""
+    if request.method == 'POST':
+        try:
+            # Get form data
+            name = request.form.get('name', '').strip()
+            bio = request.form.get('bio', '').strip()
+            birth_year = request.form.get('birth_year')
+            death_year = request.form.get('death_year')
+            birth_place = request.form.get('birth_place', '').strip()
+            website = request.form.get('website', '').strip()
+            
+            if not name:
+                flash('Name is required.', 'error')
+                return render_template('add_person.html', current_year=datetime.now().year)
+            
+            # Convert years to integers if provided
+            birth_year_int = None
+            death_year_int = None
+            
+            if birth_year:
+                try:
+                    birth_year_int = int(birth_year)
+                except ValueError:
+                    flash('Birth year must be a valid number.', 'error')
+                    return render_template('add_person.html', current_year=datetime.now().year)
+            
+            if death_year:
+                try:
+                    death_year_int = int(death_year)
+                except ValueError:
+                    flash('Death year must be a valid number.', 'error')
+                    return render_template('add_person.html', current_year=datetime.now().year)
+            
+            # Validate year range
+            if birth_year_int and (birth_year_int < 0 or birth_year_int > datetime.now().year):
+                flash('Birth year must be valid.', 'error')
+                return render_template('add_person.html', current_year=datetime.now().year)
+            
+            if death_year_int and (death_year_int < 0 or death_year_int > datetime.now().year):
+                flash('Death year must be valid.', 'error')
+                return render_template('add_person.html', current_year=datetime.now().year)
+            
+            if birth_year_int and death_year_int and death_year_int < birth_year_int:
+                flash('Death year cannot be before birth year.', 'error')
+                return render_template('add_person.html', current_year=datetime.now().year)
+            
+            # Create person object
+            person = Person(
+                id=str(uuid.uuid4()),
+                name=name,
+                bio=bio if bio else None,
+                birth_year=birth_year_int,
+                death_year=death_year_int,
+                birth_place=birth_place if birth_place else None,
+                website=website if website else None,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            
+            # Store person in Redis
+            from .infrastructure.redis_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            person_data = {
+                '_id': person.id,
+                'name': person.name,
+                'normalized_name': person.normalized_name,
+                'bio': person.bio,
+                'birth_year': person.birth_year,
+                'death_year': person.death_year,
+                'birth_place': person.birth_place,
+                'website': person.website,
+                'created_at': person.created_at.isoformat(),
+                'updated_at': person.updated_at.isoformat()
+            }
+            
+            storage.store_node('person', person.id, person_data)
+            
+            flash(f'Person "{name}" added successfully!', 'success')
+            return redirect(url_for('main.person_details', person_id=person.id))
+            
+        except Exception as e:
+            current_app.logger.error(f"Error adding person: {e}")
+            flash('Error adding person. Please try again.', 'error')
+    
+    return render_template('add_person.html', current_year=datetime.now().year)
+
+
+@bp.route('/person/<person_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_person(person_id):
+    """Edit an existing person."""
+    try:
+        person = book_service.get_person_by_id_sync(person_id)
+        if not person:
+            flash('Person not found.', 'error')
+            return redirect(url_for('main.people'))
+        
+        if request.method == 'POST':
+            # Get form data
+            name = request.form.get('name', '').strip()
+            bio = request.form.get('bio', '').strip()
+            birth_year = request.form.get('birth_year')
+            death_year = request.form.get('death_year')
+            birth_place = request.form.get('birth_place', '').strip()
+            website = request.form.get('website', '').strip()
+            
+            if not name:
+                flash('Name is required.', 'error')
+                return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+            
+            # Convert years to integers if provided
+            birth_year_int = None
+            death_year_int = None
+            
+            if birth_year:
+                try:
+                    birth_year_int = int(birth_year)
+                except ValueError:
+                    flash('Birth year must be a valid number.', 'error')
+                    return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+            
+            if death_year:
+                try:
+                    death_year_int = int(death_year)
+                except ValueError:
+                    flash('Death year must be a valid number.', 'error')
+                    return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+            
+            # Validate year range
+            if birth_year_int and (birth_year_int < 0 or birth_year_int > datetime.now().year):
+                flash('Birth year must be valid.', 'error')
+                return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+            
+            if death_year_int and (death_year_int < 0 or death_year_int > datetime.now().year):
+                flash('Death year must be valid.', 'error')
+                return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+            
+            if birth_year_int and death_year_int and death_year_int < birth_year_int:
+                flash('Death year cannot be before birth year.', 'error')
+                return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+            
+            # Update person data
+            person.name = name
+            person.bio = bio if bio else None
+            person.birth_year = birth_year_int
+            person.death_year = death_year_int
+            person.birth_place = birth_place if birth_place else None
+            person.website = website if website else None
+            person.updated_at = datetime.now()
+            
+            # Update normalized name
+            person.normalized_name = Person._normalize_name(person.name)
+            
+            # Update in Redis
+            from .infrastructure.redis_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            person_data = {
+                '_id': person.id,
+                'name': person.name,
+                'normalized_name': person.normalized_name,
+                'bio': person.bio,
+                'birth_year': person.birth_year,
+                'death_year': person.death_year,
+                'birth_place': person.birth_place,
+                'website': person.website,
+                'created_at': person.created_at.isoformat() if person.created_at else datetime.now().isoformat(),
+                'updated_at': person.updated_at.isoformat()
+            }
+            
+            storage.store_node('person', person.id, person_data)
+            
+            flash(f'Person "{name}" updated successfully!', 'success')
+            return redirect(url_for('main.person_details', person_id=person.id))
+        
+        return render_template('edit_person.html', person=person, current_year=datetime.now().year)
+    
+    except Exception as e:
+        current_app.logger.error(f"Error editing person {person_id}: {e}")
+        flash('Error editing person. Please try again.', 'error')
+        return redirect(url_for('main.people'))
+
+
+@bp.route('/person/<person_id>/delete', methods=['POST'])
+@login_required
+def delete_person(person_id):
+    """Delete a person (with confirmation)."""
+    try:
+        # Helper function to handle potential coroutine returns
+        def safe_call_sync_method(method, *args, **kwargs):
+            """Safely call a sync method that might return a coroutine."""
+            import inspect
+            result = method(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Can't use loop.run_until_complete if loop is already running
+                        print(f"⚠️ [DELETE_PERSON] Loop is running, method {method.__name__} returned coroutine")
+                        return None  # Return None as fallback
+                    else:
+                        return loop.run_until_complete(result)
+                except Exception as e:
+                    print(f"⚠️ [DELETE_PERSON] Error running coroutine for {method.__name__}: {e}")
+                    return None
+            return result
+        
+        person = safe_call_sync_method(book_service.get_person_by_id_sync, person_id)
+        if not person:
+            flash('Person not found.', 'error')
+            return redirect(url_for('main.people'))
+        
+        person_name = getattr(person, 'name', 'Unknown Person')
+        
+        # Check if person has associated books by directly querying the storage layer
+        # This bypasses any user filtering and checks for ANY books associated with this person
+        from .infrastructure.redis_graph import get_graph_storage
+        storage = get_graph_storage()
+        
+        # FIRST: Clean up orphaned relationships - relationships pointing to books that no longer exist
+        print(f"🧹 [DELETE_PERSON] Starting orphaned relationship cleanup for person {person_id}")
+        
+        # Get all user's books first to check which ones actually exist
+        user_books = safe_call_sync_method(book_service.get_user_books_sync, str(current_user.id))
+        if user_books is None:
+            user_books = []
+        
+        # Create a set of valid book IDs for quick lookup
+        valid_book_ids = set()
+        for book in user_books:
+            book_id = getattr(book, 'id', None) or getattr(book, '_id', None)
+            if book_id:
+                valid_book_ids.add(str(book_id))
+        
+        print(f"🧹 [DELETE_PERSON] User has {len(valid_book_ids)} valid books in their library")
+        
+        # Find all relationships that point TO this person/author (from any book)
+        orphaned_relationships_found = 0
+        orphaned_relationships_cleaned = 0
+        
+        # Get ALL books in the system (not just user's books) to check for orphaned relationships
+        all_book_nodes = storage.find_nodes_by_type('book')
+        print(f"🧹 [DELETE_PERSON] Checking {len(all_book_nodes)} total books for orphaned relationships")
+        
+        for book_data in all_book_nodes:
+            if not book_data or not book_data.get('_id'):
+                continue
+                
+            book_id = book_data.get('_id')
+            if not book_id or not isinstance(book_id, str):
+                continue
+            
+            # Check if this book actually exists in the user's library
+            book_exists_in_user_library = book_id in valid_book_ids
+            
+            # Get ALL relationships from this book
+            all_relationships = storage.get_relationships('book', book_id)
+            
+            # Check for relationships pointing to our person/author
+            for rel in all_relationships:
+                rel_type = rel.get('relationship', 'unknown')
+                to_type = rel.get('to_type')
+                to_id = rel.get('to_id')
+                
+                if ((to_type == 'author' and to_id == person_id) or 
+                    (to_type == 'person' and to_id == person_id)):
+                    
+                    orphaned_relationships_found += 1
+                    book_title = book_data.get('title', 'Unknown Title')
+                    
+                    # If the book doesn't exist in user's library, this is an orphaned relationship
+                    if not book_exists_in_user_library:
+                        print(f"🗑️ [DELETE_PERSON] Removing orphaned relationship: book '{book_title}' ({book_id}) -> {rel_type} -> {to_type}:{to_id}")
+                        try:
+                            # Ensure we have valid string values before calling delete_relationship
+                            if to_type and to_id and isinstance(to_type, str) and isinstance(to_id, str):
+                                storage.delete_relationship('book', book_id, rel_type, to_type, to_id)
+                                orphaned_relationships_cleaned += 1
+                            else:
+                                print(f"⚠️ [DELETE_PERSON] Invalid relationship data: to_type={to_type}, to_id={to_id}")
+                        except Exception as cleanup_error:
+                            print(f"⚠️ [DELETE_PERSON] Failed to clean orphaned relationship: {cleanup_error}")
+        
+        print(f"🧹 [DELETE_PERSON] Found {orphaned_relationships_found} total relationships to person")
+        print(f"🧹 [DELETE_PERSON] Cleaned {orphaned_relationships_cleaned} orphaned relationships")
+        
+        # NOW: Count remaining valid books that have relationships to this person/author
+        total_associated_books = 0
+        associated_book_details = []
+        
+        print(f"🔍 [DELETE_PERSON] Checking remaining relationships after cleanup")
+        
+        for book in user_books:
+            book_id = getattr(book, 'id', None) or getattr(book, '_id', None)
+            if not book_id:
+                continue
+            
+            book_id = str(book_id)
+            
+            # Check ALL relationships from this book (not just WRITTEN_BY)
+            all_relationships = storage.get_relationships('book', book_id)
+            
+            # Check if any of these relationships point to our person/author
+            for rel in all_relationships:
+                rel_type = rel.get('relationship', 'unknown')
+                to_type = rel.get('to_type')
+                to_id = rel.get('to_id')
+                
+                if ((to_type == 'author' and to_id == person_id) or 
+                    (to_type == 'person' and to_id == person_id)):
+                    
+                    book_title = getattr(book, 'title', 'Unknown Title')
+                    total_associated_books += 1
+                    associated_book_details.append(f"{book_title} (via {rel_type} -> {to_type})")
+                    print(f"🔍 [DELETE_PERSON] Found valid book '{book_title}' linked via {rel_type} -> {to_type}:{to_id}")
+                    break  # Found a relationship, count this book and move to next
+        
+        print(f"📊 [DELETE_PERSON] Total valid associated books found: {total_associated_books}")
+        if associated_book_details:
+            print(f"📋 [DELETE_PERSON] Valid associated books: {associated_book_details[:5]}")  # Show first 5
+        
+        if total_associated_books > 0:
+            flash(f'Cannot delete "{person_name}" because they are associated with {total_associated_books} books. Please consider merging with another person instead.', 'error')
+            return redirect(url_for('main.person_details', person_id=person_id))
+        
+        # Delete from Redis
+        storage.delete_node('person', person_id)
+        
+        flash(f'Person "{person_name}" deleted successfully.', 'success')
+        return redirect(url_for('main.people'))
+    
+    except Exception as e:
+        current_app.logger.error(f"Error deleting person {person_id}: {e}")
+        flash('Error deleting person. Please try again.', 'error')
+        return redirect(url_for('main.people'))
+
+
+@bp.route('/person/merge', methods=['GET', 'POST'])
+@login_required
+def merge_persons():
+    """Merge two or more persons into one."""
+    if request.method == 'POST':
+        try:
+            # Get form data
+            primary_person_id = request.form.get('primary_person_id')
+            merge_person_ids = request.form.getlist('merge_person_ids')
+            
+            if not primary_person_id:
+                flash('Please select a primary person to merge into.', 'error')
+                return redirect(url_for('main.merge_persons'))
+            
+            if not merge_person_ids:
+                flash('Please select at least one person to merge.', 'error')
+                return redirect(url_for('main.merge_persons'))
+            
+            if primary_person_id in merge_person_ids:
+                flash('Cannot merge a person with themselves.', 'error')
+                return redirect(url_for('main.merge_persons'))
+            
+            # Helper function to handle potential coroutine returns
+            def safe_call_sync_method(method, *args, **kwargs):
+                """Safely call a sync method that might return a coroutine."""
+                import inspect
+                result = method(*args, **kwargs)
+                if inspect.iscoroutine(result):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # Can't use loop.run_until_complete if loop is already running
+                            print(f"⚠️ [MERGE_PERSON] Loop is running, method {method.__name__} returned coroutine")
+                            return None  # Return None as fallback
+                        else:
+                            return loop.run_until_complete(result)
+                    except Exception as e:
+                        print(f"⚠️ [MERGE_PERSON] Error running coroutine for {method.__name__}: {e}")
+                        return None
+                return result
+            
+            # Get persons
+            primary_person = safe_call_sync_method(book_service.get_person_by_id_sync, primary_person_id)
+            if not primary_person:
+                flash('Primary person not found.', 'error')
+                return redirect(url_for('main.merge_persons'))
+            
+            merge_persons = []
+            for person_id in merge_person_ids:
+                person = safe_call_sync_method(book_service.get_person_by_id_sync, person_id)
+                if person:
+                    merge_persons.append(person)
+            
+            if not merge_persons:
+                flash('No valid persons found to merge.', 'error')
+                return redirect(url_for('main.merge_persons'))
+            
+            # Perform merge operation
+            from .infrastructure.redis_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            merged_count = 0
+            for merge_person in merge_persons:
+                try:
+                    # Find all relationships pointing to the merge person
+                    # Update WRITTEN_BY relationships to point to primary person
+                    all_book_nodes = storage.find_nodes_by_type('book')
+                    
+                    for book_data in all_book_nodes:
+                        if not book_data or not book_data.get('_id'):
+                            continue
+                        
+                        book_id = book_data.get('_id')
+                        if not book_id or not isinstance(book_id, str):
+                            continue
+                            
+                        relationships = storage.get_relationships('book', book_id, 'WRITTEN_BY')
+                        
+                        # Check if any relationships point to the person we're merging
+                        for rel in relationships:
+                            if ((rel.get('to_type') == 'author' and rel.get('to_id') == merge_person.id) or
+                                (rel.get('to_type') == 'person' and rel.get('to_id') == merge_person.id)):
+                                
+                                # Delete old relationship - with type safety
+                                to_type = rel.get('to_type')
+                                to_id = rel.get('to_id')
+                                if to_type and to_id and isinstance(to_type, str) and isinstance(to_id, str):
+                                    storage.delete_relationship('book', book_id, 'WRITTEN_BY', to_type, to_id)
+                                    
+                                    # Create new relationship to primary person
+                                    storage.create_relationship('book', book_id, 'WRITTEN_BY', 'person', primary_person_id)
+                                    
+                                    current_app.logger.info(f"Merged relationship: Book {book_id} now points to person {primary_person_id} instead of {merge_person.id}")
+                    
+                    # Delete the merged person
+                    storage.delete_node('person', merge_person.id)
+                    storage.delete_node('author', merge_person.id)  # Also delete any author node
+                    merged_count += 1
+                    
+                except Exception as e:
+                    current_app.logger.error(f"Error merging person {merge_person.id}: {e}")
+                    continue
+            
+            if merged_count > 0:
+                person_names = [p.name for p in merge_persons[:merged_count]]
+                primary_person_name = getattr(primary_person, 'name', 'Unknown Person')
+                flash(f'Successfully merged {merged_count} person(s) ({", ".join(person_names)}) into "{primary_person_name}".', 'success')
+            else:
+                flash('No persons were merged due to errors.', 'error')
+            
+            return redirect(url_for('main.person_details', person_id=primary_person_id))
+        
+        except Exception as e:
+            current_app.logger.error(f"Error during person merge: {e}")
+            flash('Error merging persons. Please try again.', 'error')
+    
+    # GET request - show merge form
+    try:
+        # Helper function to handle potential coroutine returns
+        def safe_call_sync_method(method, *args, **kwargs):
+            """Safely call a sync method that might return a coroutine."""
+            import inspect
+            result = method(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Can't use loop.run_until_complete if loop is already running
+                        print(f"⚠️ [MERGE_GET] Loop is running, method {method.__name__} returned coroutine")
+                        return []  # Return empty list as fallback
+                    else:
+                        return loop.run_until_complete(result)
+                except Exception as e:
+                    print(f"⚠️ [MERGE_GET] Error running coroutine for {method.__name__}: {e}")
+                    return []
+            return result
+        
+        all_persons = safe_call_sync_method(book_service.list_all_persons_sync)
+        if all_persons is None:
+            all_persons = []
+        all_persons.sort(key=lambda p: p.name.lower())
+        return render_template('merge_persons.html', persons=all_persons)
+    
+    except Exception as e:
+        current_app.logger.error(f"Error loading merge persons page: {e}")
+        flash('Error loading merge page.', 'error')
+        return redirect(url_for('main.people'))
+
+
+@bp.route('/api/person/search')
+@login_required
+def api_search_persons():
+    """API endpoint for searching persons (used in autocomplete)."""
+    query = request.args.get('q', '').strip()
+    if len(query) < 2:
+        return jsonify([])
+    
+    try:
+        # Helper function to handle potential coroutine returns
+        def safe_call_sync_method(method, *args, **kwargs):
+            """Safely call a sync method that might return a coroutine."""
+            import inspect
+            result = method(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Can't use loop.run_until_complete if loop is already running
+                        print(f"⚠️ [SEARCH_API] Loop is running, method {method.__name__} returned coroutine")
+                        return []  # Return empty list as fallback
+                    else:
+                        return loop.run_until_complete(result)
+                except Exception as e:
+                    print(f"⚠️ [SEARCH_API] Error running coroutine for {method.__name__}: {e}")
+                    return []
+            return result
+        
+        persons = safe_call_sync_method(book_service.search_persons_sync, query, 20)
+        if persons is None:
+            persons = []
+        
+        results = []
+        for person in persons:
+            # Get book count for each person
+            try:
+                books_by_type = safe_call_sync_method(book_service.get_books_by_person_sync, person.id, None)
+                if books_by_type is None:
+                    books_by_type = {}
+                total_books = sum(len(books) for books in books_by_type.values())
+            except:
+                total_books = 0
+            
+            results.append({
+                'id': person.id,
+                'name': person.name,
+                'bio': person.bio[:100] + '...' if person.bio and len(person.bio) > 100 else person.bio,
+                'book_count': total_books,
+                'birth_year': person.birth_year,
+                'death_year': person.death_year
+            })
+        
+        return jsonify(results)
+    
+    except Exception as e:
+        current_app.logger.error(f"Error searching persons: {e}")
+        return jsonify([])
 
 @bp.route('/toggle_theme', methods=['POST'])
 @login_required
@@ -2599,19 +3560,34 @@ def toggle_theme():
 @bp.route('/direct_import', methods=['GET', 'POST'])
 @login_required
 def direct_import():
-    """Direct import for Goodreads and StoryGraph CSV files without template mapping."""
-    if request.method == 'POST':
-        # Check if we're using a file from the session (from the suggestion redirect)
+    """Handle direct import for Goodreads/StoryGraph."""
+    import tempfile
+    import os
+    
+    # Check if we have a suggested file from the session
+    suggested = request.args.get('suggested', 'false').lower() == 'true'
+    import_type = request.args.get('import_type', 'goodreads')
+    suggested_filename = session.get('direct_import_filename')
+    
+    if request.method == 'GET':
+        return render_template('direct_import.html', 
+                             suggested=suggested,
+                             import_type=import_type,
+                             suggested_filename=suggested_filename)
+    
+    # POST request - handle the import
+    try:
         use_suggested_file = request.form.get('use_suggested_file') == 'true'
         
-        if use_suggested_file and 'direct_import_file' in session:
+        if use_suggested_file and session.get('direct_import_file'):
+            # Use the file from session (already uploaded)
             temp_path = session['direct_import_file']
-            filename = session.get('direct_import_filename', 'import_file.csv')
+            original_filename = session.get('direct_import_filename', 'import.csv')
         else:
-            # Handle normal file upload
+            # Handle new file upload
             file = request.files.get('csv_file')
             if not file or not file.filename.endswith('.csv'):
-                flash('Please upload a valid CSV file.', 'danger')
+                flash('Please select a valid CSV file.', 'error')
                 return redirect(url_for('main.direct_import'))
             
             # Save file temporarily
@@ -2619,79 +3595,156 @@ def direct_import():
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'direct_import_{current_user.id}_')
             file.save(temp_file.name)
             temp_path = temp_file.name
+            original_filename = filename
         
-        try:
-            # Add detailed logging around each step
-            print(f"🔍 [ROUTE] Starting direct import process for user {current_user.id}")
-            print(f"📁 [ROUTE] Temp file path: {temp_path}")
+        # Detect the file type by checking headers
+        with open(temp_path, 'r', encoding='utf-8') as csvfile:
+            first_line = csvfile.readline()
             
-            # Detect import type
-            print(f"🔍 [ROUTE] Detecting import type...")
-            import_type = direct_import_service.detect_import_type(temp_path)
-            print(f"📋 [ROUTE] Detected import type: {import_type}")
-            
-            if import_type not in ['goodreads', 'storygraph']:
-                print(f"❌ [ROUTE] Unsupported import type: {import_type}")
-                flash(f'Unsupported file format. This tool only supports Goodreads and StoryGraph CSV exports. Detected: {import_type or "unknown"}', 'danger')
-                return redirect(url_for('main.direct_import'))
-            
-            # Perform direct import
-            print(f"🚀 [ROUTE] Starting direct import with service...")
-            result = direct_import_service.direct_import_sync(temp_path, str(current_user.id), import_type)
-            print(f"✅ [ROUTE] Direct import service call completed")
-            print(f"📊 [ROUTE] Raw result from service: {result}")
-            
-            # Clear session data
-            session.pop('direct_import_file', None)
-            session.pop('direct_import_filename', None)
-            print(f"🧹 [ROUTE] Cleared session data")
-            
-            # Log completion to avoid any async context issues
-            print(f"✅ [ROUTE] Direct import completed successfully for user {current_user.id}")
-            print(f"📊 [ROUTE] Results: {result.get('books_imported', 0)}/{result.get('total_processed', 0)} books imported")
-            
-            # Show completion page instead of redirecting to library
-            try:
-                print("🖼️ [ROUTE] About to render completion page")
-                print(f"📊 [ROUTE] Result success: {result.get('success', False)}")
-                
-                return render_template('import_complete.html',
-                                     success=result.get('success', False),
-                                     imported_count=result.get('books_imported', 0),
-                                     total_rows=result.get('total_processed', 0),
-                                     import_type=import_type,
-                                     errors=result.get('errors', []))
-                    
-            except Exception as template_error:
-                print(f"❌ [ROUTE] Template rendering failed: {template_error}")
-                import traceback
-                traceback.print_exc()
-                # Return a simple error message instead of re-raising
-                flash(f'Import completed but there was an error displaying results: {str(template_error)}', 'warning')
-                return redirect(url_for('main.library'))
-            
-        except Exception as e:
-            print(f"❌ [ROUTE] Exception in direct import: {type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            current_app.logger.error(f"Direct import error: {e}")
-            flash(f'Import failed: {str(e)}', 'danger')
+        # Determine import type based on headers
+        goodreads_signatures = ['Book Id', 'Author l-f', 'Bookshelves', 'Exclusive Shelf']
+        storygraph_signatures = ['Read Status', 'Moods', 'Pace', 'Character- or Plot-Driven?']
+        
+        detected_type = None
+        if any(sig in first_line for sig in goodreads_signatures):
+            detected_type = 'goodreads'
+        elif any(sig in first_line for sig in storygraph_signatures):
+            detected_type = 'storygraph'
+        else:
+            flash('This file does not appear to be a valid Goodreads or StoryGraph export.', 'error')
             return redirect(url_for('main.direct_import'))
-        finally:
-            # Clean up temp file (but only if it's not from the session)
-            if not use_suggested_file:
+        
+        # Create an import job using the existing import infrastructure
+        task_id = str(uuid.uuid4())
+        
+        # Get the appropriate field mappings for the detected platform
+        if detected_type == 'goodreads':
+            field_mappings = get_goodreads_field_mappings()
+        else:  # storygraph
+            field_mappings = get_storygraph_field_mappings()
+        
+        # Create import job data
+        job_data = {
+            'task_id': task_id,
+            'user_id': current_user.id,
+            'csv_file_path': temp_path,
+            'field_mappings': field_mappings,
+            'default_reading_status': 'library_only',
+            'duplicate_handling': 'skip',
+            'custom_fields_enabled': True,
+            'direct_import_type': detected_type,
+            'status': 'pending',
+            'processed': 0,
+            'success': 0,
+            'errors': 0,
+            'total': 0,
+            'start_time': datetime.utcnow().isoformat(),
+            'current_book': None,
+            'error_messages': [],
+            'recent_activity': []
+        }
+        
+        # Count total rows
+        try:
+            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                job_data['total'] = sum(1 for _ in reader)
+        except:
+            job_data['total'] = 0
+        
+        # Store job data
+        print(f"🏗️ [CREATE] Creating job {task_id} for user {current_user.id}")
+        redis_success = store_job_in_redis(task_id, job_data)
+        import_jobs[task_id] = job_data
+        
+        print(f"📊 [CREATE] Redis storage: {'✅' if redis_success else '❌'}")
+        print(f"💾 [CREATE] Memory storage: ✅")
+        print(f"🔧 [CREATE] Job status: {job_data['status']}")
+        
+        # Auto-create custom fields for the platform
+        auto_create_custom_fields(field_mappings, current_user.id)
+        
+        # Start the import in background
+        app = current_app._get_current_object()
+        def run_import():
+            with app.app_context():
                 try:
-                    import os
-                    os.unlink(temp_path)
-                except:
-                    pass
-    
-    # GET request - check if we have a suggested file
-    suggested = request.args.get('suggested') == 'True'
-    import_type = request.args.get('import_type', '')
-    suggested_filename = session.get('direct_import_filename', '') if suggested else ''
-    
-    return render_template('direct_import.html', 
-                         suggested=suggested, 
-                         import_type=import_type,
-                         suggested_filename=suggested_filename)
+                    start_import_job(task_id)
+                except Exception as e:
+                    if task_id in import_jobs:
+                        import_jobs[task_id]['status'] = 'failed'
+                        import_jobs[task_id]['error_message'] = str(e)
+                    app.logger.error(f"Direct import job {task_id} failed: {e}")
+        
+        thread = threading.Thread(target=run_import)
+        thread.daemon = True
+        thread.start()
+        
+        # Clear session data
+        session.pop('direct_import_file', None)
+        session.pop('direct_import_filename', None)
+        
+        flash(f'Started {detected_type.title()} import! You can monitor progress on the next page.', 'success')
+        return redirect(url_for('main.import_books_progress', task_id=task_id))
+        
+    except Exception as e:
+        current_app.logger.error(f"Error in direct import: {e}")
+        flash('An error occurred during import. Please try again.', 'error')
+        return redirect(url_for('main.direct_import'))
+
+
+def get_goodreads_field_mappings():
+    """Get predefined field mappings for Goodreads CSV format."""
+    return {
+        'Title': 'title',
+        'Author': 'author',
+        'Author l-f': 'author',  # Fallback for "last, first" format
+        'Additional Authors': 'additional_authors',
+        'ISBN': 'isbn',
+        'ISBN13': 'isbn',
+        'My Rating': 'rating',
+        'Average Rating': 'custom_global_average_rating',
+        'Publisher': 'publisher',
+        'Binding': 'custom_global_binding',
+        'Number of Pages': 'page_count',
+        'Year Published': 'publication_year',
+        'Original Publication Year': 'custom_global_original_publication_year',
+        'Date Read': 'date_read',
+        'Date Added': 'date_added',
+        'Bookshelves': 'categories',
+        'Bookshelves with positions': 'categories',
+        'Exclusive Shelf': 'reading_status',
+        'My Review': 'notes',
+        'Spoiler': 'custom_global_spoiler_review',
+        'Private Notes': 'custom_personal_private_notes',
+        'Read Count': 'custom_global_read_count',
+        'Owned Copies': 'custom_personal_owned_copies',
+        'Book Id': 'custom_global_goodreads_book_id'
+    }
+
+
+def get_storygraph_field_mappings():
+    """Get predefined field mappings for StoryGraph CSV format."""
+    return {
+        'Title': 'title',
+        'Authors': 'author',
+        'Contributors': 'contributors',  # New: Handle Contributors column
+        'ISBN/UID': 'isbn',  # Fixed: Use actual StoryGraph column name
+        'Star Rating': 'rating',  # Fixed: StoryGraph uses "Star Rating" not "My Rating"
+        'Read Status': 'reading_status',
+        'Date Started': 'start_date',
+        'Last Date Read': 'date_read',  # Fixed: StoryGraph uses "Last Date Read"
+        'Tags': 'categories',
+        'Review': 'notes',  # Fixed: StoryGraph uses "Review" not "My Review"
+        'Format': 'custom_global_format',
+        'Moods': 'custom_global_moods',
+        'Pace': 'custom_global_pace',
+        'Character- or Plot-Driven?': 'custom_global_character_plot_driven',
+        'Strong Character Development?': 'custom_global_strong_character_development',
+        'Loveable Characters?': 'custom_global_loveable_characters',
+        'Diverse Characters?': 'custom_global_diverse_characters',
+        'Flawed Characters?': 'custom_global_flawed_characters',
+        'Content Warnings': 'custom_global_content_warnings',
+        'Content Warning Description': 'custom_global_content_warning_description',
+        'Owned?': 'custom_personal_owned'
+    }

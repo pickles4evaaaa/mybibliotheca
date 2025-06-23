@@ -450,7 +450,7 @@
 
 <!-- Add Book Section -->
 <div class="filter-section text-center">
-  <a href="{{ url_for('main.add_book_page') }}" class="btn btn-success btn-lg">
+  <a href="{{ url_for('main.add_book') }}" class="btn btn-success btn-lg">
     <i class="bi bi-plus-circle"></i> Add Books to Your Library
   </a>
 </div>
@@ -540,7 +540,7 @@
       <div class="empty-state">
         <div class="empty-state-icon">📚</div>
         <h3>No books found</h3>
-        <p>Try adjusting your filters or <a href="{{ url_for('main.add_book_page') }}">add some books</a> to your library!</p>
+        <p>Try adjusting your filters or <a href="{{ url_for('main.add_book') }}">add some books</a> to your library!</p>
       </div>
     </div>
   {% endif %}

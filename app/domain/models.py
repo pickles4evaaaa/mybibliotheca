@@ -248,6 +248,72 @@ class Category:
             self.normalized_name = self.name.strip().lower()
 
 
+class ContributionType(Enum):
+    """Types of contributions a person can make to a book."""
+    AUTHORED = "authored"
+    EDITED = "edited"
+    TRANSLATED = "translated"
+    ILLUSTRATED = "illustrated"
+    NARRATED = "narrated"  # For audiobooks
+    GAVE_FOREWORD = "gave_foreword"
+    GAVE_INTRODUCTION = "gave_introduction"
+    GAVE_AFTERWORD = "gave_afterword"
+    COMPILED = "compiled"
+    CONTRIBUTED = "contributed"  # Generic contribution
+    CO_AUTHORED = "co_authored"
+    GHOST_WROTE = "ghost_wrote"
+
+@dataclass
+class Person:
+    """Person domain model - represents contributors (authors, narrators, editors, etc.)."""
+    id: Optional[str] = None
+    name: str = ""
+    normalized_name: str = ""  # For fuzzy matching
+    
+    # Optional biographical information
+    birth_year: Optional[int] = None
+    death_year: Optional[int] = None
+    birth_place: Optional[str] = None
+    bio: Optional[str] = None
+    website: Optional[str] = None
+    
+    # Timestamps
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    
+    def __post_init__(self):
+        if not self.normalized_name and self.name:
+            self.normalized_name = self._normalize_name(self.name)
+    
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Normalize person name for matching (handle variations like 'Smith, John' vs 'John Smith')."""
+        # Handle "Last, First" format
+        if ',' in name:
+            parts = [part.strip() for part in name.split(',')]
+            if len(parts) == 2:
+                # Reverse "Last, First" to "First Last"
+                name = f"{parts[1]} {parts[0]}"
+        
+        return name.strip().lower()
+
+
+@dataclass
+class BookContribution:
+    """Represents a contribution relationship between a Person and a Book."""
+    person_id: str = ""
+    book_id: str = ""
+    contribution_type: ContributionType = ContributionType.AUTHORED
+    order: Optional[int] = None  # For ordering multiple contributors of same type
+    notes: Optional[str] = None  # Additional context about the contribution
+    
+    # For display purposes
+    person: Optional[Person] = None
+    
+    # Timestamps
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+
 @dataclass
 class Book:
     """Core book domain model - represents global book data shared across users."""
@@ -278,7 +344,7 @@ class Book:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     
     # Relationships (will be resolved via repository)
-    authors: List[Author] = field(default_factory=list)
+    contributors: List[BookContribution] = field(default_factory=list)
     publisher: Optional[Publisher] = None
     series: Optional[Series] = None
     series_volume: Optional[str] = None
@@ -299,6 +365,44 @@ class Book:
         return title.strip().lower()
     
     @property
+    def authors(self) -> List['Author']:
+        """Get authors from contributors for backward compatibility."""
+        author_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.AUTHORED]
+        return [Author(id=c.person.id, name=c.person.name, normalized_name=c.person.normalized_name) 
+                for c in author_contributors if c.person]
+    
+    @property
+    def narrators(self) -> List['Person']:
+        """Get narrators from contributors."""
+        narrator_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.NARRATED]
+        return [c.person for c in narrator_contributors if c.person]
+    
+    @property
+    def editors(self) -> List['Person']:
+        """Get editors from contributors."""
+        editor_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.EDITED]
+        return [c.person for c in editor_contributors if c.person]
+    
+    def get_contributors_by_type(self, contribution_type: ContributionType) -> List['Person']:
+        """Get contributors by contribution type."""
+        type_contributors = [c for c in self.contributors if c.contribution_type == contribution_type]
+        return [c.person for c in type_contributors if c.person]
+
+    @property
+    def author(self) -> str:
+        """Get primary author name for backward compatibility."""
+        if self.authors:
+            return self.authors[0].name
+        return ""
+    
+    @property  
+    def author_names(self) -> str:
+        """Get comma-separated author names for backward compatibility."""
+        if self.authors:
+            return ', '.join(author.name for author in self.authors)
+        return ""
+
+    @property
     def primary_isbn(self) -> Optional[str]:
         """Get the primary ISBN (prefer ISBN13 over ISBN10)."""
         return self.isbn13 or self.isbn10
@@ -314,11 +418,15 @@ class Book:
             return f"isbn13:{self.isbn13}"
         elif self.isbn10:
             return f"isbn10:{self.isbn10}"
-        elif self.title and self.authors:
-            author_names = [author.normalized_name for author in self.authors]
-            return f"title_author:{self.normalized_title}:{':'.join(sorted(author_names))}"
-        else:
-            return f"title:{self.normalized_title}"
+        elif self.title and self.contributors:
+            # Get author contributors for deduplication
+            author_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.AUTHORED]
+            if author_contributors:
+                author_names = [c.person.normalized_name if c.person else "" for c in author_contributors]
+                author_names = [name for name in author_names if name]  # Filter out empty names
+                return f"title_author:{self.normalized_title}:{':'.join(sorted(author_names))}"
+        
+        return f"title:{self.normalized_title}"
 
 
 @dataclass

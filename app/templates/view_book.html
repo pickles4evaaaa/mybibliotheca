@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from 'macros/contributors.html' import display_all_contributors %}
+
 {% block title %}{{ book.title }} - Bibliotheca{% endblock %}
 {% block content %}
 <style>
@@ -113,8 +115,9 @@
 {% endif %}
 <div class="row">
   <div class="col-md-6">
-    <p><strong>Author:</strong> {{ book.author }}</p>
-    <p><strong>ISBN:</strong> {{ book.isbn }}</p>
+    {{ display_all_contributors(book, compact=false) }}
+    
+    <p><strong>ISBN:</strong> {{ book.primary_isbn or 'N/A' }}</p>
     {% if book.published_date %}
       <p><strong>Published:</strong> {{ book.published_date }}</p>
     {% endif %}

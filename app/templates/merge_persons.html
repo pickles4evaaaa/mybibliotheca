@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+
+{% block title %}Merge People - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2 mb-0">
+                    <i class="bi bi-arrow-down-up me-2"></i>Merge People
+                </h1>
+                <a href="{{ url_for('main.people') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to People
+                </a>
+            </div>
+
+            <!-- Instructions -->
+            <div class="alert alert-info mb-4">
+                <h6 class="alert-heading">
+                    <i class="bi bi-info-circle"></i> How Merging Works
+                </h6>
+                <p class="mb-2">
+                    Merging combines multiple person entries into one. This is useful when you have duplicate entries 
+                    for the same person (e.g., "Stephen King" and "S. King").
+                </p>
+                <ul class="mb-0">
+                    <li><strong>Choose a primary person:</strong> This person will remain and receive all books from the merged persons</li>
+                    <li><strong>Select persons to merge:</strong> These will be deleted and their books moved to the primary person</li>
+                    <li><strong>This action cannot be undone:</strong> Make sure you're merging the right people</li>
+                </ul>
+            </div>
+
+            {% if persons %}
+            <!-- Merge Form -->
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST" id="mergeForm">
+                        <!-- Primary Person Selection -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-person-check"></i> Primary Person (Keep This One)
+                                <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select" id="primary_person_id" name="primary_person_id" required>
+                                <option value="">Select the person to keep...</option>
+                                {% for person in persons %}
+                                <option value="{{ person.id }}" 
+                                        data-name="{{ person.name }}" 
+                                        data-bio="{{ person.bio or '' }}"
+                                        data-books="{{ person.book_count if person.book_count is defined else 0 }}">
+                                    {{ person.name }}
+                                    {% if person.birth_year %} ({{ person.birth_year }}{% if person.death_year %}-{{ person.death_year }}{% endif %}){% endif %}
+                                    - {{ person.book_count if person.book_count is defined else 0 }} books
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">
+                                This person will remain after the merge and receive all books from the merged persons.
+                            </div>
+                        </div>
+
+                        <!-- Primary Person Preview -->
+                        <div id="primaryPersonPreview" class="card mb-4 d-none">
+                            <div class="card-header bg-success text-white">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-person-check"></i> Primary Person (Will Be Kept)
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="primaryPersonInfo"></div>
+                            </div>
+                        </div>
+
+                        <!-- Persons to Merge -->
+                        <div class="mb-4">
+                            <label class="form-label">
+                                <i class="bi bi-people"></i> People to Merge Into Primary Person
+                                <span class="text-danger">*</span>
+                            </label>
+                            <div class="form-text mb-2">
+                                Select one or more people to merge into the primary person. These will be deleted.
+                            </div>
+                            
+                            <div class="row" id="mergePersonsList">
+                                {% for person in persons %}
+                                <div class="col-md-6 mb-2">
+                                    <div class="form-check merge-person-option" data-person-id="{{ person.id }}">
+                                        <input class="form-check-input" type="checkbox" 
+                                               name="merge_person_ids" value="{{ person.id }}" 
+                                               id="merge_{{ person.id }}">
+                                        <label class="form-check-label w-100" for="merge_{{ person.id }}">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <strong>{{ person.name }}</strong>
+                                                    {% if person.birth_year %}
+                                                    <br>
+                                                    <small class="text-muted">
+                                                        {{ person.birth_year }}{% if person.death_year %}-{{ person.death_year }}{% endif %}
+                                                    </small>
+                                                    {% endif %}
+                                                    {% if person.bio %}
+                                                    <br>
+                                                    <small class="text-muted">{{ person.bio[:50] }}{% if person.bio|length > 50 %}...{% endif %}</small>
+                                                    {% endif %}
+                                                </div>
+                                                <span class="badge bg-secondary">
+                                                    {{ person.book_count if person.book_count is defined else 0 }} books
+                                                </span>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <!-- Merge Preview -->
+                        <div id="mergePreview" class="card mb-4 d-none">
+                            <div class="card-header bg-warning text-dark">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-exclamation-triangle"></i> Merge Preview
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="mergePreviewContent"></div>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{{ url_for('main.people') }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-danger" id="mergeButton" disabled>
+                                <i class="bi bi-arrow-down-up"></i> Merge People
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Warning -->
+            <div class="mt-4">
+                <div class="alert alert-danger">
+                    <h6 class="alert-heading">
+                        <i class="bi bi-exclamation-octagon"></i> Important Warning
+                    </h6>
+                    <p class="mb-0">
+                        <strong>This action cannot be undone.</strong> The merged people will be permanently deleted,
+                        and all their associated books will be transferred to the primary person. Please double-check
+                        your selection before proceeding.
+                    </p>
+                </div>
+            </div>
+
+            {% else %}
+            <!-- No People Available -->
+            <div class="text-center py-5">
+                <i class="bi bi-people display-1 text-muted"></i>
+                <h3 class="mt-3 text-muted">No People to Merge</h3>
+                <p class="text-muted">You need at least 2 people to perform a merge operation.</p>
+                <a href="{{ url_for('main.add_person') }}" class="btn btn-success">
+                    <i class="bi bi-person-plus"></i> Add More People
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.merge-person-option {
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 10px;
+    transition: all 0.2s;
+}
+
+.merge-person-option:hover {
+    background-color: #f8f9fa;
+    border-color: #adb5bd;
+}
+
+.merge-person-option.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.form-check-input:checked + .form-check-label {
+    background-color: #fff3cd;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const primarySelect = document.getElementById('primary_person_id');
+    const mergeCheckboxes = document.querySelectorAll('input[name="merge_person_ids"]');
+    const mergeButton = document.getElementById('mergeButton');
+    const primaryPreview = document.getElementById('primaryPersonPreview');
+    const primaryInfo = document.getElementById('primaryPersonInfo');
+    const mergePreview = document.getElementById('mergePreview');
+    const mergePreviewContent = document.getElementById('mergePreviewContent');
+    const mergeForm = document.getElementById('mergeForm');
+    
+    function updateUI() {
+        const primaryId = primarySelect.value;
+        const selectedMergeIds = Array.from(mergeCheckboxes)
+            .filter(cb => cb.checked)
+            .map(cb => cb.value);
+        
+        // Enable/disable merge options based on primary selection
+        document.querySelectorAll('.merge-person-option').forEach(option => {
+            const personId = option.dataset.personId;
+            if (personId === primaryId) {
+                option.classList.add('disabled');
+                option.querySelector('input').checked = false;
+                option.querySelector('input').disabled = true;
+            } else {
+                option.classList.remove('disabled');
+                option.querySelector('input').disabled = false;
+            }
+        });
+        
+        // Show/hide primary person preview
+        if (primaryId) {
+            const primaryOption = primarySelect.querySelector(`option[value="${primaryId}"]`);
+            const name = primaryOption.dataset.name;
+            const bio = primaryOption.dataset.bio;
+            const books = primaryOption.dataset.books;
+            
+            primaryInfo.innerHTML = `
+                <h6>${name}</h6>
+                ${bio ? `<p class="text-muted mb-1">${bio}</p>` : ''}
+                <p class="mb-0"><strong>${books} books</strong> will be kept and additional books will be added from merged people.</p>
+            `;
+            primaryPreview.classList.remove('d-none');
+        } else {
+            primaryPreview.classList.add('d-none');
+        }
+        
+        // Show/hide merge preview
+        if (primaryId && selectedMergeIds.length > 0) {
+            const selectedPersons = selectedMergeIds.map(id => {
+                const checkbox = document.querySelector(`input[value="${id}"]`);
+                const label = checkbox.nextElementSibling;
+                const name = label.querySelector('strong').textContent;
+                const badge = label.querySelector('.badge');
+                const books = badge ? badge.textContent : '0 books';
+                return { name, books };
+            });
+            
+            let totalBooks = 0;
+            selectedPersons.forEach(person => {
+                const bookCount = parseInt(person.books.split(' ')[0]);
+                totalBooks += bookCount;
+            });
+            
+            mergePreviewContent.innerHTML = `
+                <p><strong>The following ${selectedPersons.length} person(s) will be deleted:</strong></p>
+                <ul>
+                    ${selectedPersons.map(person => `<li>${person.name} (${person.books})</li>`).join('')}
+                </ul>
+                <p><strong>Total books to be transferred:</strong> ${totalBooks}</p>
+                <p class="text-danger mb-0">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    These people will be permanently deleted and cannot be recovered.
+                </p>
+            `;
+            mergePreview.classList.remove('d-none');
+        } else {
+            mergePreview.classList.add('d-none');
+        }
+        
+        // Enable/disable merge button
+        mergeButton.disabled = !primaryId || selectedMergeIds.length === 0;
+    }
+    
+    // Event listeners
+    primarySelect.addEventListener('change', updateUI);
+    mergeCheckboxes.forEach(cb => cb.addEventListener('change', updateUI));
+    
+    // Form submission confirmation
+    mergeForm.addEventListener('submit', function(e) {
+        const primaryOption = primarySelect.querySelector(`option[value="${primarySelect.value}"]`);
+        const primaryName = primaryOption.dataset.name;
+        const selectedMergeIds = Array.from(mergeCheckboxes)
+            .filter(cb => cb.checked)
+            .map(cb => cb.value);
+        
+        const mergeNames = selectedMergeIds.map(id => {
+            const checkbox = document.querySelector(`input[value="${id}"]`);
+            const label = checkbox.nextElementSibling;
+            return label.querySelector('strong').textContent;
+        });
+        
+        const confirmMessage = `Are you absolutely sure you want to merge the following people into "${primaryName}"?\n\n` +
+            `People to be deleted:\n${mergeNames.map(name => `• ${name}`).join('\n')}\n\n` +
+            `This action CANNOT be undone!`;
+        
+        if (!confirm(confirmMessage)) {
+            e.preventDefault();
+        }
+    });
+    
+    // Initial UI update
+    updateUI();
+});
+</script>
+{% endblock %}

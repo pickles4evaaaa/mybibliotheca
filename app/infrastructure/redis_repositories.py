@@ -11,7 +11,7 @@ from datetime import datetime, date
 from dataclasses import asdict
 from enum import Enum
 
-from ..domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingStatus, OwnershipStatus, MediaType, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
+from ..domain.models import Book, User, Author, Person, BookContribution, ContributionType, Publisher, Series, Category, UserBookRelationship, ReadingStatus, OwnershipStatus, MediaType, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
 from ..domain.repositories import BookRepository, UserRepository, AuthorRepository, UserBookRepository, CustomFieldRepository, ImportMappingRepository
 from .redis_graph import RedisGraphStorage
 
@@ -45,6 +45,58 @@ class RedisBookRepository(BookRepository):
         """Create a new book."""
         if not book.id:
             book.id = str(uuid.uuid4())
+        
+        print(f"🔍 [REPO] Creating book: {book.title}")
+        print(f"📚 [REPO] Book has {len(book.authors)} authors")
+        
+        # First, ensure all authors exist as separate entities
+        updated_contributors = []
+        
+        # Preserve existing non-author contributors
+        for contributor in book.contributors:
+            if contributor.contribution_type != ContributionType.AUTHORED:
+                updated_contributors.append(contributor)
+        
+        # Process authors and create new AUTHORED contributions
+        for author in book.authors:
+            if author.name:  # Only process authors with names
+                # Find or create the author
+                existing_author = await self.find_or_create_author(author.name)
+                
+                # Ensure author has an ID
+                if not existing_author.id:
+                    print(f"❌ [REPO] Author {existing_author.name} has no ID")
+                    continue
+                
+                # Convert Author to Person for BookContribution
+                person = Person(
+                    id=existing_author.id,
+                    name=existing_author.name,
+                    normalized_name=existing_author.normalized_name,
+                    birth_year=existing_author.birth_year,
+                    death_year=existing_author.death_year,
+                    bio=existing_author.bio
+                )
+                
+                # Create BookContribution
+                contribution = BookContribution(
+                    person_id=existing_author.id,
+                    book_id=book.id or "",  # Ensure book.id is not None
+                    contribution_type=ContributionType.AUTHORED,
+                    person=person
+                )
+                updated_contributors.append(contribution)
+            else:
+                print(f"⚠️ [REPO] Skipping author with no name: {author}")
+        
+        # Update the book's contributors
+        from dataclasses import replace
+        book = replace(book, contributors=updated_contributors)
+        print(f"📚 [REPO] Updated book with {len(book.authors)} processed authors")
+        
+        # Ensure book has an ID before proceeding
+        if not book.id:
+            book.id = str(uuid.uuid4())
             
         book_data = asdict(book)
         # Handle nested objects
@@ -58,13 +110,16 @@ class RedisBookRepository(BookRepository):
         # Serialize datetime objects for JSON storage
         book_data = _serialize_for_json(book_data)
         
+        print(f"💾 [REPO] Storing book {book.title}")
         success = self.storage.store_node('book', book.id, book_data)
         if not success:
             raise Exception(f"Failed to create book {book.id}")
+        print(f"✅ [REPO] Book {book.title} stored successfully")
             
         # Create relationships
         for author in book.authors:
             if author.id:
+                print(f"🔗 [REPO] Creating relationship: book {book.id} -> author {author.id} ({author.name})")
                 self.storage.create_relationship('book', book.id, 'WRITTEN_BY', 'author', author.id)
                 
         if book.publisher and book.publisher.id:
@@ -304,20 +359,116 @@ class RedisBookRepository(BookRepository):
         
         return target_book
     
+    async def find_or_create_author(self, author_name: str) -> Author:
+        """Find existing author by name or create a new one."""
+        try:
+            print(f"🔍 [REPO] Looking for existing author: {author_name}")
+            
+            # Search for existing author by name
+            normalized_name = author_name.strip().lower()
+            
+            # Get all authors and check for matches
+            all_authors = self.storage.find_nodes_by_type('author')
+            for author_data in all_authors:
+                existing_name = author_data.get('name', '').strip().lower()
+                existing_normalized = author_data.get('normalized_name', '').strip().lower()
+                
+                if existing_name == normalized_name or existing_normalized == normalized_name:
+                    print(f"✅ [REPO] Found existing author: {author_data.get('name')} (ID: {author_data.get('_id')})")
+                    # Convert back to Author object
+                    author = Author(
+                        id=author_data.get('_id'),
+                        name=author_data.get('name', ''),
+                        normalized_name=author_data.get('normalized_name', ''),
+                        birth_year=author_data.get('birth_year'),
+                        death_year=author_data.get('death_year'),
+                        bio=author_data.get('bio')
+                    )
+                    return author
+            
+            # If not found, create new author
+            print(f"📝 [REPO] Creating new author: {author_name}")
+            author = Author(
+                id=str(uuid.uuid4()),
+                name=author_name,
+                normalized_name=normalized_name
+            )
+            
+            # Store the new author
+            author_data = asdict(author)
+            author_data = _serialize_for_json(author_data)
+            
+            success = self.storage.store_node('author', author.id, author_data)
+            if success:
+                print(f"✅ [REPO] New author created: {author.name} (ID: {author.id})")
+                return author
+            else:
+                raise Exception(f"Failed to create author {author_name}")
+                
+        except Exception as e:
+            print(f"❌ [REPO] Error finding/creating author {author_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
     def _data_to_book(self, data: Dict[str, Any]) -> Book:
         """Convert Redis data to Book domain model."""
         # Handle nested objects
-        authors = []
-        if 'authors' in data and data['authors']:
-            for author_data in data['authors']:
-                author_data_copy = author_data.copy()
-                # Handle datetime field for author
-                if 'created_at' in author_data_copy and isinstance(author_data_copy['created_at'], str):
+        contributors = []
+        
+        # Handle new contributor structure
+        if 'contributors' in data and data['contributors']:
+            for contrib_data in data['contributors']:
+                contrib_data_copy = contrib_data.copy()
+                # Handle datetime fields
+                if 'created_at' in contrib_data_copy and isinstance(contrib_data_copy['created_at'], str):
                     try:
-                        author_data_copy['created_at'] = datetime.fromisoformat(author_data_copy['created_at'])
+                        contrib_data_copy['created_at'] = datetime.fromisoformat(contrib_data_copy['created_at'])
                     except:
-                        author_data_copy['created_at'] = datetime.utcnow()
-                authors.append(Author(**author_data_copy))
+                        contrib_data_copy['created_at'] = datetime.utcnow()
+                        
+                # Handle person data within contribution
+                person_data = contrib_data_copy.pop('person', {})
+                if 'created_at' in person_data and isinstance(person_data['created_at'], str):
+                    try:
+                        person_data['created_at'] = datetime.fromisoformat(person_data['created_at'])
+                    except:
+                        person_data['created_at'] = datetime.utcnow()
+                        
+                person = Person(**person_data)
+                contrib_data_copy['person'] = person
+                
+                # Handle contribution_type
+                if 'contribution_type' in contrib_data_copy and isinstance(contrib_data_copy['contribution_type'], str):
+                    contrib_data_copy['contribution_type'] = ContributionType(contrib_data_copy['contribution_type'])
+                    
+                contributors.append(BookContribution(**contrib_data_copy))
+        
+        # Handle legacy authors structure for backward compatibility
+        elif 'authors' in data and data['authors']:
+            for author_data in data['authors']:
+                # Convert legacy author to Person and BookContribution
+                person_data = {
+                    'id': author_data.get('id', str(uuid.uuid4())),
+                    'name': author_data.get('name', ''),
+                    'bio': author_data.get('bio', ''),
+                    'image_url': author_data.get('image_url', ''),
+                    'created_at': datetime.utcnow()
+                }
+                
+                if 'created_at' in author_data and isinstance(author_data['created_at'], str):
+                    try:
+                        person_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+                    except:
+                        person_data['created_at'] = datetime.utcnow()
+                        
+                person = Person(**person_data)
+                contribution = BookContribution(
+                    person=person,
+                    contribution_type=ContributionType.AUTHORED,
+                    created_at=person_data['created_at']
+                )
+                contributors.append(contribution)
                 
         publisher = None
         if 'publisher' in data and data['publisher']:
@@ -341,7 +492,8 @@ class RedisBookRepository(BookRepository):
         
         # Remove nested objects and metadata fields from data for Book creation
         book_data = data.copy()
-        book_data.pop('authors', None)
+        book_data.pop('authors', None)  # Remove legacy authors
+        book_data.pop('contributors', None)  # Remove contributors (will be set after)
         book_data.pop('publisher', None)
         book_data.pop('series', None)
         book_data.pop('categories', None)
@@ -373,7 +525,7 @@ class RedisBookRepository(BookRepository):
                 book_data['updated_at'] = datetime.utcnow()
         
         book = Book(**book_data)
-        book.authors = authors
+        book.contributors = contributors
         book.publisher = publisher
         book.series = series
         book.categories = categories

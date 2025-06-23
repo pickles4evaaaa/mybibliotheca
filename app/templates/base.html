@@ -634,6 +634,7 @@
           <div class="navbar-nav me-auto">
             {% if current_user.is_authenticated %}
               <a class="btn btn-outline-primary me-2" href="{{ url_for('main.library') }}">Library</a>
+              <a class="btn btn-outline-info me-2" href="{{ url_for('main.people') }}">People</a>
               <a class="btn btn-outline-success me-2" href="{{ url_for('main.stats') }}">Stats</a>
               <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
               <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>

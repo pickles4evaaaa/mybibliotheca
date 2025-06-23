@@ -237,6 +237,8 @@ class RedisGraphStorage:
             # Serialize any datetime objects in properties
             serialized_properties = serialize_datetime_values(properties or {})
             
+            logger.debug(f"Creating relationship {from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}")
+            
             # Store forward relationship
             forward_key = f"rel:{from_type}:{from_id}:{relationship}"
             rel_data = {
@@ -245,7 +247,10 @@ class RedisGraphStorage:
                 'properties': serialized_properties,
                 'created_at': datetime.utcnow().isoformat()
             }
-            self.redis.sadd(forward_key, json.dumps(rel_data))
+            
+            json_string = json.dumps(rel_data)
+            
+            self.redis.sadd(forward_key, json_string)
             
             # Store reverse relationship for efficient traversal
             reverse_key = f"rel_reverse:{to_type}:{to_id}:{relationship}"
@@ -263,7 +268,7 @@ class RedisGraphStorage:
             logger.error(f"Failed to create relationship {from_type}:{from_id} -[{relationship}]-> {to_type}:{to_id}: {e}")
             return False
     
-    def get_relationships(self, from_type: str, from_id: str, relationship: str = None) -> List[Dict[str, Any]]:
+    def get_relationships(self, from_type: str, from_id: str, relationship: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get outgoing relationships from a node."""
         try:
             if relationship:
@@ -276,9 +281,11 @@ class RedisGraphStorage:
             relationships = []
             for key in keys:
                 rel_strings = self.redis.smembers(key)
+                
                 for rel_string in rel_strings:
                     try:
                         rel_data = json.loads(rel_string)
+                        
                         # Extract relationship type from key
                         rel_type = key.split(':')[-1]
                         rel_data['relationship'] = rel_type
@@ -460,7 +467,7 @@ class RedisGraphStorage:
             logger.error(f"Failed to get sorted set size for {key}: {e}")
             return 0
     
-    async def get_sorted_set_range_by_score(self, key: str, min_score: float, max_score: float, limit: int = None) -> List[str]:
+    async def get_sorted_set_range_by_score(self, key: str, min_score: float, max_score: float, limit: Optional[int] = None) -> List[str]:
         """Get members of a sorted set within a score range."""
         try:
             kwargs = {}
