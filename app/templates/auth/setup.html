@@ -3,6 +3,91 @@
 {% block title %}Initial Setup - Bibliotheca{% endblock %}
 
 {% block content %}
+<style>
+/* Dark mode improvements for setup page */
+[data-theme="dark"] .card {
+    background-color: var(--bs-dark);
+    border-color: #495057;
+}
+
+[data-theme="dark"] .card-header {
+    background-color: #495057;
+    border-bottom-color: #6c757d;
+}
+
+[data-theme="dark"] .text-muted {
+    color: #adb5bd !important;
+}
+
+[data-theme="dark"] .form-text {
+    color: #adb5bd !important;
+}
+
+[data-theme="dark"] .alert-info {
+    background-color: #0f3460;
+    border-color: #084298;
+    color: #b6d7ff;
+}
+
+[data-theme="dark"] .alert-success {
+    background-color: #0f5132;
+    border-color: #0a58ca;
+    color: #a3cfbb;
+}
+
+[data-theme="dark"] .alert-warning {
+    background-color: #664d03;
+    border-color: #ffca2c;
+    color: #ffda6a;
+}
+
+[data-theme="dark"] .form-control {
+    background-color: #495057;
+    border-color: #6c757d;
+    color: #fff;
+}
+
+[data-theme="dark"] .form-control:focus {
+    background-color: #495057;
+    border-color: #86b7fe;
+    color: #fff;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+[data-theme="dark"] .form-label {
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .progress {
+    background-color: #495057;
+}
+
+[data-theme="dark"] .progress-bar {
+    background-color: #0d6efd;
+}
+
+/* Ensure readability for all alert content */
+[data-theme="dark"] .alert h6 {
+    color: inherit;
+}
+
+[data-theme="dark"] .alert ul li {
+    color: inherit;
+}
+
+[data-theme="dark"] .alert-info .fas {
+    color: #b6d7ff;
+}
+
+[data-theme="dark"] .alert-success .fas {
+    color: #a3cfbb;
+}
+
+[data-theme="dark"] .alert-warning .fas {
+    color: #ffda6a;
+}
+</style>
+
 <div class="row justify-content-center">
     <div class="col-md-6">
         <div class="card">

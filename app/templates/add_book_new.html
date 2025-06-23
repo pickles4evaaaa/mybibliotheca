@@ -2,6 +2,96 @@
 {% block title %}Add Book - Bibliotheca{% endblock %}
 {% block content %}
 <style>
+  /* CSS Variables for consistent theming */
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --warm-white: #FFF8DC;
+    --cream: #F5F5DC;
+    --shadow: rgba(0,0,0,0.1);
+  }
+
+  /* Dark mode overrides */
+  [data-theme="dark"] {
+    --primary-brown: #D2B48C;
+    --light-brown: #8B4513;
+    --warm-white: #343a40;
+    --cream: #495057;
+    --shadow: rgba(255,255,255,0.1);
+  }
+
+  /* Dark mode specific text improvements */
+  [data-theme="dark"] .text-muted {
+    color: #adb5bd !important;
+  }
+
+  [data-theme="dark"] .small.text-muted {
+    color: #ced4da !important;
+  }
+
+  [data-theme="dark"] .help-text {
+    color: #ced4da !important;
+  }
+
+  .help-text {
+    color: #6c757d;
+  }
+
+  [data-theme="dark"] .lead {
+    color: #f8f9fa !important;
+  }
+
+  [data-theme="dark"] .tab-content {
+    background: var(--bs-dark);
+    border-color: #495057;
+  }
+
+  [data-theme="dark"] .list-group-item {
+    background-color: #495057;
+    border-color: #6c757d;
+    color: #f8f9fa;
+  }
+
+  [data-theme="dark"] .nav-tabs .nav-link {
+    color: #f8f9fa;
+  }
+
+  [data-theme="dark"] .nav-tabs .nav-link:hover {
+    color: var(--primary-brown);
+  }
+
+  [data-theme="dark"] .nav-tabs .nav-link.active {
+    background-color: var(--primary-brown);
+    color: #fff;
+  }
+
+  [data-theme="dark"] .form-control {
+    background-color: #495057;
+    border-color: #6c757d;
+    color: #fff;
+  }
+
+  [data-theme="dark"] .form-control:focus {
+    background-color: #495057;
+    border-color: #86b7fe;
+    color: #fff;
+  }
+
+  [data-theme="dark"] .form-label {
+    color: #f8f9fa;
+  }
+
+  [data-theme="dark"] .alert-info {
+    background-color: #0f3460;
+    border-color: #084298;
+    color: #b6d7ff;
+  }
+
+  [data-theme="dark"] .search-results {
+    background: var(--cream);
+    border: 1px solid #6c757d;
+  }
+
   .add-book-header {
     background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
     color: white;
@@ -193,7 +283,7 @@
               <button type="button" class="btn btn-outline-primary btn-sm" onclick="addCustomField()">
                 <i class="bi bi-plus"></i> Add Another Field
               </button>
-              <div class="small text-muted mt-2">
+              <div class="small help-text mt-2">
                 Add custom metadata like genre, mood, content warnings, or any other information you want to track.
               </div>
             </div>
