@@ -454,6 +454,9 @@ class User:
     # Reading settings
     reading_streak_offset: int = 0
     
+    # Timezone setting
+    timezone: str = "UTC"
+    
     # User metadata (future enhancement)
     display_name: Optional[str] = None
     bio: Optional[str] = None

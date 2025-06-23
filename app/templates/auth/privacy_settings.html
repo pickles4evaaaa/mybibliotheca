@@ -55,6 +55,32 @@
     color: #e0e0e0 !important;
 }
 
+[data-theme="dark"] .form-select {
+    background-color: #495057 !important;
+    border-color: #6c757d !important;
+    color: #fff !important;
+}
+
+[data-theme="dark"] .form-select:focus {
+    background-color: #495057 !important;
+    border-color: #86b7fe !important;
+    color: #fff !important;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+}
+
+[data-theme="dark"] .form-control {
+    background-color: #495057 !important;
+    border-color: #6c757d !important;
+    color: #fff !important;
+}
+
+[data-theme="dark"] .form-control:focus {
+    background-color: #495057 !important;
+    border-color: #86b7fe !important;
+    color: #fff !important;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+}
+
 /* Ensure toggle switches work properly in dark mode */
 [data-theme="dark"] .form-check-input:checked {
     background-color: #0d6efd;
@@ -152,12 +178,53 @@
                 </div>
             </div>
         </div>
-    </div>
-</div>
-
-<div class="row">
-    <div class="col-md-8 mb-4">
-        <div class="card">
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-clock"></i> Timezone Information
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>Current Timezone:</strong>
+                    <p class="small text-muted mb-1">{{ timezone_info.name }}</p>
+                    <p class="small" id="current-time">{{ timezone_info.current_time }}</p>
+                </div>
+                
+                <div class="alert alert-info">
+                    <small>
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Note:</strong> This timezone is used for displaying reading logs, activity timestamps, and streak calculations.
+                    </small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-gear"></i> Change Timezone
+                </h6>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('auth.update_timezone') }}">
+                    {{ form.hidden_tag() }}
+                    
+                    <div class="mb-3">
+                        {{ form.timezone.label(class="form-label") }}
+                        {{ form.timezone(class="form-select") }}
+                        <small class="text-muted">Select your timezone for accurate time display</small>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-sm">Update Timezone</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
             <div class="card-header">
                 <h6 class="card-title mb-0">
                     <i class="bi bi-calendar-check"></i> Reading Streak Settings
@@ -169,10 +236,9 @@
                     
                     <div class="mb-3">
                         {{ streak_form.reading_streak_offset.label(class="form-label") }}
-                        {{ streak_form.reading_streak_offset }}
+                        {{ streak_form.reading_streak_offset(class="form-control form-control-sm") }}
                         <div class="form-text">
-                            Add extra days to your reading streak. This can account for days you read but forgot to log, 
-                            or give yourself a head start. Current streak: <strong>{{ current_user.get_reading_streak() }}</strong> days.
+                            Add extra days to your reading streak. Current streak: <strong>{{ current_user.get_reading_streak() }}</strong> days.
                         </div>
                     </div>
                     
@@ -180,16 +246,41 @@
                         <small>
                             <i class="bi bi-info-circle"></i>
                             <strong>How it works:</strong> Your streak is calculated from your reading logs, 
-                            then this offset is added. The offset doesn't replace your actual reading activity.
+                            then this offset is added.
                         </small>
                     </div>
                     
                     <div class="d-grid">
-                        {{ streak_form.submit }}
+                        <button type="submit" class="btn btn-primary btn-sm">Update Streak Settings</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+// Update current time every minute
+function updateCurrentTime() {
+    const timeElement = document.getElementById('current-time');
+    if (timeElement) {
+        const now = new Date();
+        const timeString = now.toLocaleString('en-US', {
+            timeZone: '{{ timezone_info.name }}',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZoneName: 'short'
+        });
+        timeElement.textContent = timeString;
+    }
+}
+
+// Update time immediately and then every 30 seconds
+updateCurrentTime();
+setInterval(updateCurrentTime, 30000);
+</script>
 {% endblock %}

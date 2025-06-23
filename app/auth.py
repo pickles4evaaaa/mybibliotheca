@@ -431,15 +431,42 @@ def debug_info():
 @login_required
 def privacy_settings():
     from app.forms import PrivacySettingsForm, ReadingStreakForm
+    import pytz
     
     form = PrivacySettingsForm()
     streak_form = ReadingStreakForm()
+    
+    # Populate timezone choices with common timezones
+    common_timezones = [
+        ('UTC', 'UTC'),
+        ('America/New_York', 'Eastern Time (US & Canada)'),
+        ('America/Chicago', 'Central Time (US & Canada)'),
+        ('America/Denver', 'Mountain Time (US & Canada)'),
+        ('America/Los_Angeles', 'Pacific Time (US & Canada)'),
+        ('America/Phoenix', 'Arizona'),
+        ('America/Anchorage', 'Alaska'),
+        ('Pacific/Honolulu', 'Hawaii'),
+        ('Europe/London', 'London'),
+        ('Europe/Paris', 'Paris'),
+        ('Europe/Berlin', 'Berlin'),
+        ('Europe/Rome', 'Rome'),
+        ('Europe/Madrid', 'Madrid'),
+        ('Europe/Amsterdam', 'Amsterdam'),
+        ('Asia/Tokyo', 'Tokyo'),
+        ('Asia/Shanghai', 'Shanghai'),
+        ('Asia/Dubai', 'Dubai'),
+        ('Asia/Kolkata', 'Mumbai/Kolkata'),
+        ('Australia/Sydney', 'Sydney'),
+        ('Australia/Melbourne', 'Melbourne'),
+    ]
+    form.timezone.choices = common_timezones
     
     # Populate forms with current values
     if request.method == 'GET':
         form.share_current_reading.data = current_user.share_current_reading
         form.share_reading_activity.data = current_user.share_reading_activity
         form.share_library.data = current_user.share_library
+        form.timezone.data = getattr(current_user, 'timezone', 'UTC')
         streak_form.reading_streak_offset.data = current_user.reading_streak_offset
     
     if form.validate_on_submit():
@@ -447,7 +474,7 @@ def privacy_settings():
             # Get current user from Redis to ensure we have the latest data
             user_from_redis = user_service.get_user_by_id_sync(current_user.id)
             if user_from_redis:
-                # Update privacy settings
+                # Update privacy settings (excluding timezone)
                 user_from_redis.share_current_reading = form.share_current_reading.data
                 user_from_redis.share_reading_activity = form.share_reading_activity.data
                 user_from_redis.share_library = form.share_library.data
@@ -468,10 +495,27 @@ def privacy_settings():
         except Exception as e:
             flash(f'Failed to update privacy settings: {str(e)}', 'error')
     
+    # Get current timezone info for display
+    try:
+        user_tz = pytz.timezone(getattr(current_user, 'timezone', 'UTC'))
+        current_time = datetime.now(user_tz)
+        timezone_info = {
+            'name': getattr(current_user, 'timezone', 'UTC'),
+            'current_time': current_time.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'offset': current_time.strftime('%z')
+        }
+    except:
+        timezone_info = {
+            'name': 'UTC',
+            'current_time': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'offset': '+0000'
+        }
+    
     return render_template('auth/privacy_settings.html', 
                          title='Privacy Settings', 
                          form=form, 
-                         streak_form=streak_form)
+                         streak_form=streak_form,
+                         timezone_info=timezone_info)
 
 @auth.route('/my_activity')
 @login_required
@@ -537,5 +581,63 @@ def update_streak_settings():
             flash(f'Error updating streak settings: {str(e)}', 'error')
     else:
         flash('Error updating streak settings. Please try again.', 'danger')
+    
+    return redirect(url_for('auth.privacy_settings'))
+
+@auth.route('/update_timezone', methods=['POST'])
+@login_required
+def update_timezone():
+    from app.forms import PrivacySettingsForm
+    import pytz
+    
+    form = PrivacySettingsForm()
+    
+    # Populate timezone choices (same as in privacy_settings)
+    common_timezones = [
+        ('UTC', 'UTC'),
+        ('America/New_York', 'Eastern Time (US & Canada)'),
+        ('America/Chicago', 'Central Time (US & Canada)'),
+        ('America/Denver', 'Mountain Time (US & Canada)'),
+        ('America/Los_Angeles', 'Pacific Time (US & Canada)'),
+        ('America/Phoenix', 'Arizona'),
+        ('America/Anchorage', 'Alaska'),
+        ('Pacific/Honolulu', 'Hawaii'),
+        ('Europe/London', 'London'),
+        ('Europe/Paris', 'Paris'),
+        ('Europe/Berlin', 'Berlin'),
+        ('Europe/Rome', 'Rome'),
+        ('Europe/Madrid', 'Madrid'),
+        ('Europe/Amsterdam', 'Amsterdam'),
+        ('Asia/Tokyo', 'Tokyo'),
+        ('Asia/Shanghai', 'Shanghai'),
+        ('Asia/Dubai', 'Dubai'),
+        ('Asia/Kolkata', 'Mumbai/Kolkata'),
+        ('Australia/Sydney', 'Sydney'),
+        ('Australia/Melbourne', 'Melbourne'),
+    ]
+    form.timezone.choices = common_timezones
+    
+    if form.validate_on_submit():
+        try:
+            # Get current user from Redis to ensure we have the latest data
+            user_from_redis = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_redis:
+                # Update timezone
+                user_from_redis.timezone = form.timezone.data
+                
+                # Save through Redis service
+                updated_user = user_service.update_user_sync(user_from_redis)
+                if updated_user:
+                    # Update current_user object for immediate reflection
+                    current_user.timezone = updated_user.timezone
+                    flash('Timezone updated successfully!', 'success')
+                else:
+                    flash('Failed to update timezone.', 'error')
+            else:
+                flash('User not found.', 'error')
+        except Exception as e:
+            flash(f'Error updating timezone: {str(e)}', 'error')
+    else:
+        flash('Error updating timezone. Please try again.', 'danger')
     
     return redirect(url_for('auth.privacy_settings'))

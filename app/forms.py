@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, BooleanField, SubmitField, TextAreaField, IntegerField
+from wtforms import StringField, PasswordField, BooleanField, SubmitField, TextAreaField, IntegerField, SelectField
 from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError, Optional, NumberRange
 from .domain.models import User
 
@@ -86,6 +86,7 @@ class PrivacySettingsForm(FlaskForm):
     share_current_reading = BooleanField('Share what I\'m currently reading')
     share_reading_activity = BooleanField('Share my reading activity and statistics')
     share_library = BooleanField('Make my library visible to others')
+    timezone = SelectField('Timezone', choices=[], default='UTC')
     submit = SubmitField('Update Privacy Settings')
 
 class AdminPasswordResetForm(FlaskForm):
