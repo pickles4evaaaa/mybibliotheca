@@ -123,7 +123,6 @@ class RedisBookService:
         try:            
             # Generate ID if not set
             if not domain_book.id:
-                import uuid
                 domain_book.id = str(uuid.uuid4())
             
             # Store book in Redis (globally)
@@ -131,7 +130,6 @@ class RedisBookService:
             
             return domain_book
         except Exception as e:
-            import traceback
             traceback.print_exc()
             raise
     
@@ -178,7 +176,6 @@ class RedisBookService:
             
             return True
         except Exception as e:
-            import traceback
             traceback.print_exc()
             return False
     
@@ -238,10 +235,11 @@ class RedisBookService:
                     setattr(book, 'custom_metadata', rel.custom_metadata or {})
                     books.append(book)
                 else:
+                    # Book not found, skip this relationship
+                    continue
             
             return books
         except Exception as e:
-            import traceback
             traceback.print_exc()
             return []
     
@@ -442,7 +440,6 @@ class RedisBookService:
                 return False
                 
         except Exception as e:
-            import traceback
             traceback.print_exc()
             return False
     
@@ -574,7 +571,6 @@ class RedisBookService:
             return book
             
         except Exception as e:
-            import traceback
             traceback.print_exc()
             return None
 
