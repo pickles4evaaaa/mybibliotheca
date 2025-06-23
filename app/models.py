@@ -237,3 +237,64 @@ class ReadingLog(db.Model):
     
     def __repr__(self):
         return f'<ReadingLog {self.user_id}:{self.book_id} on {self.date}>'
+
+class Task(db.Model):
+    id = db.Column(db.String(36), primary_key=True, default=lambda: secrets.token_urlsafe(27))
+    name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), default='pending')  # pending, running, completed, failed
+    progress = db.Column(db.Integer, default=0)  # 0-100
+    total_items = db.Column(db.Integer, default=0)
+    processed_items = db.Column(db.Integer, default=0)
+    success_count = db.Column(db.Integer, default=0)
+    error_count = db.Column(db.Integer, default=0)
+    current_item = db.Column(db.String(255), nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    result = db.Column(db.JSON, nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    
+    user = db.relationship('User', backref=db.backref('tasks', lazy=True))
+    
+    def update_progress(self, processed=None, current_item=None, success_count=None, error_count=None):
+        """Update task progress"""
+        if processed is not None:
+            self.processed_items = processed
+        if current_item is not None:
+            self.current_item = current_item
+        if success_count is not None:
+            self.success_count = success_count
+        if error_count is not None:
+            self.error_count = error_count
+        
+        if self.total_items > 0:
+            self.progress = int((self.processed_items / self.total_items) * 100)
+        
+        db.session.commit()
+    
+    def mark_started(self):
+        """Mark task as started"""
+        self.status = 'running'
+        self.started_at = datetime.now(timezone.utc)
+        db.session.commit()
+    
+    def mark_completed(self, result=None):
+        """Mark task as completed"""
+        self.status = 'completed'
+        self.completed_at = datetime.now(timezone.utc)
+        self.progress = 100
+        if result:
+            self.result = result
+        db.session.commit()
+    
+    def mark_failed(self, error_message):
+        """Mark task as failed"""
+        self.status = 'failed'
+        self.completed_at = datetime.now(timezone.utc)
+        self.error_message = error_message
+        db.session.commit()
+    
+    def __repr__(self):
+        return f'<Task {self.name}>'
