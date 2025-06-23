@@ -20,6 +20,8 @@ import uuid
 import tempfile
 import json
 import threading  # Add threading import
+import traceback  # Add traceback import
+import inspect  # Add inspect import
 from werkzeug.utils import secure_filename
 
 bp = Blueprint('main', __name__)
@@ -3302,10 +3304,114 @@ def delete_person(person_id):
             flash(f'Cannot delete "{person_name}" because they are associated with {total_associated_books} books. Please consider merging with another person instead.', 'error')
             return redirect(url_for('main.person_details', person_id=person_id))
         
-        # Delete from Redis
-        storage.delete_node('person', person_id)
+        # Final cleanup: Remove any remaining relationships TO this person before deletion
+        print(f"🗑️ [DELETE_PERSON] Performing final cleanup of all relationships TO person {person_id}")
         
-        flash(f'Person "{person_name}" deleted successfully.', 'success')
+        # Find and delete ALL relationships pointing to this person (both author and person types)
+        all_book_nodes = storage.find_nodes_by_type('book')
+        final_cleanup_count = 0
+        
+        for book_data in all_book_nodes:
+            if not book_data or not book_data.get('_id'):
+                continue
+                
+            book_id = book_data.get('_id')
+            if not book_id or not isinstance(book_id, str):
+                continue
+            
+            # Get ALL relationships from this book
+            all_relationships = storage.get_relationships('book', book_id)
+            
+            # Remove any relationship pointing to our person/author
+            for rel in all_relationships:
+                rel_type = rel.get('relationship', 'unknown')
+                to_type = rel.get('to_type')
+                to_id = rel.get('to_id')
+                
+                if ((to_type == 'author' and to_id == person_id) or 
+                    (to_type == 'person' and to_id == person_id)):
+                    
+                    print(f"🗑️ [DELETE_PERSON] Final cleanup: removing {book_id} -> {rel_type} -> {to_type}:{to_id}")
+                    try:
+                        # Ensure we have valid string values before calling delete_relationship
+                        if (rel_type and to_type and to_id and 
+                            isinstance(rel_type, str) and isinstance(to_type, str) and isinstance(to_id, str)):
+                            storage.delete_relationship('book', book_id, rel_type, to_type, to_id)
+                            final_cleanup_count += 1
+                        else:
+                            print(f"⚠️ [DELETE_PERSON] Invalid relationship data for final cleanup: rel_type={rel_type}, to_type={to_type}, to_id={to_id}")
+                    except Exception as cleanup_error:
+                        print(f"⚠️ [DELETE_PERSON] Failed final cleanup: {cleanup_error}")
+        
+        print(f"🗑️ [DELETE_PERSON] Final cleanup removed {final_cleanup_count} remaining relationships")
+        
+        # Delete the person node from Redis
+        print(f"🗑️ [DELETE_PERSON] Deleting person node {person_id}")
+        print(f"🔍 [DELETE_PERSON] Storage object: {storage}")
+        print(f"🔍 [DELETE_PERSON] Redis client: {storage.redis}")
+        
+        # First, check what keys exist for this person
+        person_key = f"node:person:{person_id}"
+        author_key = f"node:author:{person_id}"
+        
+        print(f"🔍 [DELETE_PERSON] Checking if person key exists: {person_key}")
+        person_exists = storage.redis.exists(person_key)
+        print(f"🔍 [DELETE_PERSON] Person key exists: {person_exists}")
+        
+        print(f"🔍 [DELETE_PERSON] Checking if author key exists: {author_key}")
+        author_exists = storage.redis.exists(author_key)
+        print(f"🔍 [DELETE_PERSON] Author key exists: {author_exists}")
+        
+        # Check what keys match the pattern
+        pattern = f"*{person_id}*"
+        matching_keys = storage.redis.keys(pattern)
+        print(f"🔍 [DELETE_PERSON] Keys matching {pattern}: {matching_keys}")
+        
+        deletion_success = False
+        
+        try:
+            # Try deleting as person first
+            if person_exists:
+                print(f"🗑️ [DELETE_PERSON] Attempting to delete person node")
+                deletion_success = storage.delete_node('person', person_id)
+                print(f"🔍 [DELETE_PERSON] Person delete result: {deletion_success}")
+            
+            # Try deleting as author if person deletion failed or person key didn't exist
+            if not deletion_success and author_exists:
+                print(f"🗑️ [DELETE_PERSON] Attempting to delete author node")
+                deletion_success = storage.delete_node('author', person_id)
+                print(f"🔍 [DELETE_PERSON] Author delete result: {deletion_success}")
+            
+            # If neither worked, try manual deletion of any matching keys
+            if not deletion_success and matching_keys:
+                print(f"🗑️ [DELETE_PERSON] Attempting manual deletion of matching keys")
+                deleted_count = 0
+                for key in matching_keys:
+                    try:
+                        key_str = key.decode('utf-8') if isinstance(key, bytes) else str(key)
+                        result = storage.redis.delete(key_str)
+                        if result:
+                            deleted_count += 1
+                            print(f"🗑️ [DELETE_PERSON] Manually deleted key: {key_str}")
+                    except Exception as key_error:
+                        print(f"⚠️ [DELETE_PERSON] Failed to delete key {key}: {key_error}")
+                
+                if deleted_count > 0:
+                    deletion_success = True
+                    print(f"✅ [DELETE_PERSON] Manually deleted {deleted_count} keys")
+            
+        except Exception as delete_error:
+            print(f"💥 [DELETE_PERSON] Exception during delete operations: {delete_error}")
+            traceback.print_exc()
+            deletion_success = False
+        
+        if deletion_success:
+            print(f"✅ [DELETE_PERSON] Successfully deleted person node {person_id}")
+            flash(f'Person "{person_name}" deleted successfully.', 'success')
+        else:
+            print(f"❌ [DELETE_PERSON] Failed to delete person node {person_id}")
+            flash(f'Error deleting person "{person_name}". Please try again.', 'error')
+        
         return redirect(url_for('main.people'))
     
     except Exception as e:

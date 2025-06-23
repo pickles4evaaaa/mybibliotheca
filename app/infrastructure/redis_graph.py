@@ -191,20 +191,91 @@ class RedisGraphStorage:
         """Delete a node and its relationships."""
         try:
             key = f"node:{node_type}:{node_id}"
+            logger.info(f"Starting delete_node for {node_type}:{node_id}")
+            
+            # Check if node exists first
+            node_exists = self.redis.exists(key)
+            logger.info(f"Node {node_type}:{node_id} exists: {node_exists}")
+            
+            # Clean up all relationships involving this node
+            logger.info(f"Cleaning up relationships for {node_type}:{node_id}")
+            try:
+                self._cleanup_node_relationships(node_type, node_id)
+                logger.info(f"Successfully cleaned up relationships for {node_type}:{node_id}")
+            except Exception as cleanup_error:
+                logger.error(f"Error during relationship cleanup for {node_type}:{node_id}: {cleanup_error}")
+                # Continue with deletion even if cleanup fails
             
             # Remove from type index
-            self.redis.srem(f"index:type:{node_type}", node_id)
+            logger.info(f"Removing {node_id} from type index {node_type}")
+            index_removed = self.redis.srem(f"index:type:{node_type}", node_id)
+            logger.info(f"Removed from index: {index_removed}")
             
             # Delete node
+            logger.info(f"Deleting node key: {key}")
             result = self.redis.delete(key)
+            logger.info(f"Delete result: {result}, type: {type(result)}")
             
-            # TODO: Clean up relationships (will implement when needed)
+            success = result > 0
+            if success:
+                logger.info(f"Successfully deleted node {node_type}:{node_id}")
+            else:
+                logger.warning(f"Node deletion returned {result} for {node_type}:{node_id}")
             
-            return result > 0
+            return success
             
         except Exception as e:
             logger.error(f"Failed to delete node {node_type}:{node_id}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+    
+    def _cleanup_node_relationships(self, node_type: str, node_id: str) -> None:
+        """Clean up all relationships involving a specific node."""
+        try:
+            logger.info(f"Starting relationship cleanup for {node_type}:{node_id}")
+            
+            # Find all relationship types involving this node as source
+            pattern = f"rel:{node_type}:{node_id}:*"
+            logger.info(f"Searching for forward relationships with pattern: {pattern}")
+            
+            try:
+                rel_keys = self.redis.keys(pattern)
+                logger.info(f"Found {len(rel_keys)} forward relationship keys")
+                
+                for rel_key in rel_keys:
+                    try:
+                        delete_result = self.redis.delete(rel_key)
+                        logger.debug(f"Deleted relationship key: {rel_key}, result: {delete_result}")
+                    except Exception as key_error:
+                        logger.error(f"Error deleting relationship key {rel_key}: {key_error}")
+            except Exception as forward_error:
+                logger.error(f"Error finding forward relationships: {forward_error}")
+            
+            # Find all reverse relationships involving this node as target
+            reverse_pattern = f"rel_reverse:{node_type}:{node_id}:*"
+            logger.info(f"Searching for reverse relationships with pattern: {reverse_pattern}")
+            
+            try:
+                reverse_rel_keys = self.redis.keys(reverse_pattern)
+                logger.info(f"Found {len(reverse_rel_keys)} reverse relationship keys")
+                
+                for rel_key in reverse_rel_keys:
+                    try:
+                        delete_result = self.redis.delete(rel_key)
+                        logger.debug(f"Deleted reverse relationship key: {rel_key}, result: {delete_result}")
+                    except Exception as key_error:
+                        logger.error(f"Error deleting reverse relationship key {rel_key}: {key_error}")
+            except Exception as reverse_error:
+                logger.error(f"Error finding reverse relationships: {reverse_error}")
+                
+            logger.info(f"Completed relationship cleanup for {node_type}:{node_id}")
+                
+        except Exception as e:
+            logger.error(f"Failed to cleanup relationships for node {node_type}:{node_id}: {e}")
+            import traceback
+            logger.error(f"Cleanup traceback: {traceback.format_exc()}")
+            # Don't re-raise the exception - let the deletion continue
     
     def find_nodes_by_type(self, node_type: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Find all nodes of a specific type."""
@@ -231,7 +302,7 @@ class RedisGraphStorage:
     # Relationship Operations
     
     def create_relationship(self, from_type: str, from_id: str, relationship: str, 
-                          to_type: str, to_id: str, properties: Dict[str, Any] = None) -> bool:
+                          to_type: str, to_id: str, properties: Optional[Dict[str, Any]] = None) -> bool:
         """Create a relationship between two nodes."""
         try:
             # Serialize any datetime objects in properties
