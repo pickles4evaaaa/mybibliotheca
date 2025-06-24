@@ -1699,16 +1699,48 @@ class RedisCategoryRepository(CategoryRepository):
                 'descendants_count': 0
             }
             
-            # Count books with this category
-            book_relationships = self.storage.get_relationships('book', None, 'HAS_CATEGORY')
-            category_books = [rel for rel in book_relationships if rel.get('to_id') == category_id]
-            stats['total_books'] = len(category_books)
-            
-            # Count user's books with this category (if user specified)
             if user_id:
-                # This would require cross-referencing with user-book relationships
-                # For now, we'll implement a basic version
-                stats['user_books'] = 0  # TODO: Implement user-specific count
+                # Count books in this category that the user actually has
+                print(f"🔍 [CATEGORY_REPO] Getting user-specific book count for category {category_id}, user {user_id}")
+                
+                # Get all book IDs that have this category
+                pattern = f"rel:book:*:HAS_CATEGORY"
+                keys = self.storage.redis.keys(pattern)
+                category_book_ids = set()
+                
+                for key in keys:
+                    rel_strings = self.storage.redis.smembers(key)
+                    for rel_string in rel_strings:
+                        try:
+                            rel_data = json.loads(rel_string)
+                            if rel_data.get('to_id') == category_id:
+                                # Extract book_id from key: rel:book:{book_id}:HAS_CATEGORY
+                                book_id = key.split(':')[2]
+                                category_book_ids.add(book_id)
+                        except (json.JSONDecodeError, IndexError):
+                            continue
+                
+                print(f"📊 [CATEGORY_REPO] Found {len(category_book_ids)} books with category {category_id}")
+                
+                # Now check which of these books the user actually has
+                user_book_count = 0
+                # The correct pattern is rel:user:{user_id}:owns (not HAS_BOOK)
+                user_relationships = self.storage.get_relationships('user', user_id, 'owns')
+                
+                for rel in user_relationships:
+                    book_id = rel.get('to_id')
+                    if book_id and book_id in category_book_ids:
+                        user_book_count += 1
+                
+                stats['user_books'] = user_book_count
+                stats['total_books'] = user_book_count  # For user-specific views, show user count
+                print(f"✅ [CATEGORY_REPO] User {user_id} has {user_book_count} books in category {category_id}")
+                
+            else:
+                # Count all books with this category (original behavior)
+                book_relationships = self.storage.get_relationships('book', None, 'HAS_CATEGORY')
+                category_books = [rel for rel in book_relationships if rel.get('to_id') == category_id]
+                stats['total_books'] = len(category_books)
             
             # Count direct children
             children = await self.get_children(category_id)

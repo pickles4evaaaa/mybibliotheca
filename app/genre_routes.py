@@ -54,7 +54,7 @@ def index():
                 current_app.logger.error(f"Error in safe_call_sync_method: {e}")
                 return None
         
-        all_categories = safe_call_sync_method(book_service.list_all_categories_sync)
+        all_categories = safe_call_sync_method(book_service.list_all_categories_sync, str(current_user.id))
         
         # Ensure we have a list
         if not isinstance(all_categories, list):
@@ -91,7 +91,7 @@ def category_details(category_id):
         print(f"🔍 [GENRE] Starting category details page for category_id: {category_id}, user: {current_user.id}")
         
         # Get category details
-        category = book_service.get_category_by_id_sync(category_id)
+        category = book_service.get_category_by_id_sync(category_id, str(current_user.id))
         
         if not category:
             print(f"❌ [GENRE] Category not found for ID: {category_id}")
@@ -106,7 +106,7 @@ def category_details(category_id):
         print(f"📊 [GENRE] Got {len(books)} books for category")
         
         # Get category hierarchy info
-        children = book_service.get_category_children_sync(category_id)
+        children = book_service.get_category_children_sync(category_id, str(current_user.id))
         
         # Calculate total books including descendants
         total_books_with_descendants = len(books)
@@ -117,7 +117,7 @@ def category_details(category_id):
         while current_cat:
             breadcrumbs.insert(0, current_cat)
             if current_cat.parent_id:
-                current_cat = book_service.get_category_by_id_sync(current_cat.parent_id)
+                current_cat = book_service.get_category_by_id_sync(current_cat.parent_id, str(current_user.id))
             else:
                 break
         
@@ -164,7 +164,7 @@ def add_category():
             # Determine level
             level = 0
             if parent_id:
-                parent = book_service.get_category_by_id_sync(parent_id)
+                parent = book_service.get_category_by_id_sync(parent_id, None)
                 if parent:
                     level = parent.level + 1
                 else:
@@ -211,7 +211,7 @@ def add_category():
 def edit_category(category_id):
     """Edit an existing category."""
     try:
-        category = book_service.get_category_by_id_sync(category_id)
+        category = book_service.get_category_by_id_sync(category_id, None)
         if not category:
             flash('Category not found.', 'error')
             return redirect(url_for('genres.index'))
@@ -237,7 +237,7 @@ def edit_category(category_id):
             # Check for circular reference if parent is changing
             if parent_id and parent_id != category.parent_id:
                 # Make sure we're not creating a circular reference
-                parent = book_service.get_category_by_id_sync(parent_id)
+                parent = book_service.get_category_by_id_sync(parent_id, None)
                 if parent:
                     # Check if the new parent is a descendant of this category
                     temp_parent = parent
@@ -246,14 +246,14 @@ def edit_category(category_id):
                             flash('Cannot set a descendant as parent (would create circular reference).', 'error')
                             return render_template('genres/edit.html', category=category)
                         if temp_parent.parent_id:
-                            temp_parent = book_service.get_category_by_id_sync(temp_parent.parent_id)
+                            temp_parent = book_service.get_category_by_id_sync(temp_parent.parent_id, None)
                         else:
                             break
             
             # Determine new level
             level = 0
             if parent_id:
-                parent = book_service.get_category_by_id_sync(parent_id)
+                parent = book_service.get_category_by_id_sync(parent_id, None)
                 if parent:
                     level = parent.level + 1
             
@@ -310,13 +310,13 @@ def edit_category(category_id):
 def delete_category(category_id):
     """Delete a category (with confirmation)."""
     try:
-        category = book_service.get_category_by_id_sync(category_id)
+        category = book_service.get_category_by_id_sync(category_id, None)
         if not category:
             flash('Category not found.', 'error')
             return redirect(url_for('genres.index'))
         
         # Check if category has children or books
-        children = book_service.get_category_children_sync(category_id)
+        children = book_service.get_category_children_sync(category_id, None)
         books = book_service.get_books_by_category_sync(category_id, include_subcategories=False)
         
         if children:
@@ -360,13 +360,13 @@ def bulk_delete_categories():
         
         for category_id in selected_categories:
             try:
-                category = book_service.get_category_by_id_sync(category_id)
+                category = book_service.get_category_by_id_sync(category_id, None)
                 if not category:
                     continue
                 
                 # Check constraints unless force delete
                 if not force_delete:
-                    children = book_service.get_category_children_sync(category_id)
+                    children = book_service.get_category_children_sync(category_id, None)
                     books = book_service.get_books_by_category_sync(category_id, include_subcategories=False)
                     
                     if children or books:
@@ -436,8 +436,8 @@ def merge_categories():
             return redirect(url_for('genres.merge'))
         
         # Get category names for confirmation message
-        primary_category = book_service.get_category_by_id_sync(primary_category_id)
-        merge_categories = [book_service.get_category_by_id_sync(cat_id) for cat_id in merge_category_ids]
+        primary_category = book_service.get_category_by_id_sync(primary_category_id, None)
+        merge_categories = [book_service.get_category_by_id_sync(cat_id, None) for cat_id in merge_category_ids]
         merge_categories = [cat for cat in merge_categories if cat]  # Filter out None values
         
         if not primary_category:
@@ -472,7 +472,7 @@ def api_search_categories():
         if not query:
             return jsonify([])
         
-        categories = book_service.search_categories_sync(query, limit)
+        categories = book_service.search_categories_sync(query, limit, str(current_user.id))
         
         results = []
         for category in categories:
@@ -497,13 +497,13 @@ def api_search_categories():
 def hierarchy_view():
     """Display categories in a hierarchical tree view."""
     try:
-        root_categories = book_service.get_root_categories_sync()
+        root_categories = book_service.get_root_categories_sync(str(current_user.id))
         
         # For each root category, we'll build the full tree structure
         def build_tree(categories):
             tree = []
             for category in categories:
-                children = book_service.get_category_children_sync(category.id)
+                children = book_service.get_category_children_sync(category.id, str(current_user.id))
                 if children:
                     category.children = build_tree(children)
                 else:

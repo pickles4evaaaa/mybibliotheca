@@ -1005,13 +1005,13 @@ class RedisBookService:
         return self.find_or_create_person(person_name)
 
     # Genre/Category-related methods
-    async def get_category_by_id(self, category_id: str):
+    async def get_category_by_id(self, category_id: str, user_id: Optional[str] = None):
         """Get a category by their ID with parent relationship populated."""
         try:
             category = await self.redis_category_repo.get_by_id(category_id)
             if category:
                 # Add usage statistics
-                stats = await self.redis_category_repo.get_category_usage_stats(category_id)
+                stats = await self.redis_category_repo.get_category_usage_stats(category_id, user_id)
                 category.book_count = stats.get('total_books', 0)
                 
                 # Populate parent relationship
@@ -1021,7 +1021,7 @@ class RedisBookService:
                         category.parent = parent
                         # Recursively populate parent's parent if needed for full ancestry
                         if parent and parent.parent_id:
-                            parent_of_parent = await self.get_category_by_id(parent.parent_id)
+                            parent_of_parent = await self.get_category_by_id(parent.parent_id, user_id)
                             if parent_of_parent:
                                 parent.parent = parent_of_parent
                     except Exception as e:
@@ -1033,11 +1033,11 @@ class RedisBookService:
             return None
     
     @run_async
-    def get_category_by_id_sync(self, category_id: str):
+    def get_category_by_id_sync(self, category_id: str, user_id: Optional[str] = None):
         """Sync wrapper for get_category_by_id."""
-        return self.get_category_by_id(category_id)
+        return self.get_category_by_id(category_id, user_id)
     
-    async def search_categories(self, query: str, limit: int = 10):
+    async def search_categories(self, query: str, limit: int = 10, user_id: Optional[str] = None):
         """Search for categories by name."""
         try:
             categories = await self.redis_category_repo.search_by_name(query)
@@ -1045,7 +1045,7 @@ class RedisBookService:
             # Add usage statistics to each category
             for category in categories[:limit]:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(category.id)
+                    stats = await self.redis_category_repo.get_category_usage_stats(category.id, user_id)
                     category.book_count = stats.get('total_books', 0)
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error getting stats for category {category.id}: {e}")
@@ -1057,11 +1057,11 @@ class RedisBookService:
             return []
     
     @run_async
-    def search_categories_sync(self, query: str, limit: int = 10):
+    def search_categories_sync(self, query: str, limit: int = 10, user_id: Optional[str] = None):
         """Sync wrapper for search_categories."""
-        return self.search_categories(query, limit)
+        return self.search_categories(query, limit, user_id)
     
-    async def list_all_categories(self):
+    async def list_all_categories(self, user_id: Optional[str] = None):
         """List all categories in the storage and return as Category objects with hierarchy."""
         try:
             categories = await self.redis_category_repo.get_all()
@@ -1072,7 +1072,7 @@ class RedisBookService:
             # Add usage statistics to each category
             for category in categories:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(category.id)
+                    stats = await self.redis_category_repo.get_category_usage_stats(category.id, user_id)
                     category.book_count = stats.get('total_books', 0)
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error getting stats for category {category.id}: {e}")
@@ -1087,11 +1087,11 @@ class RedisBookService:
             return []
     
     @run_async
-    def list_all_categories_sync(self):
+    def list_all_categories_sync(self, user_id: Optional[str] = None):
         """Sync wrapper for list_all_categories."""
-        return self.list_all_categories()
+        return self.list_all_categories(user_id)
     
-    async def get_root_categories(self):
+    async def get_root_categories(self, user_id: Optional[str] = None):
         """Get top-level categories (no parent)."""
         try:
             root_categories = await self.redis_category_repo.get_root_categories()
@@ -1099,7 +1099,7 @@ class RedisBookService:
             # Add usage statistics and build partial hierarchy
             for category in root_categories:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(category.id)
+                    stats = await self.redis_category_repo.get_category_usage_stats(category.id, user_id)
                     category.book_count = stats.get('total_books', 0)
                     
                     # Get direct children
@@ -1116,11 +1116,11 @@ class RedisBookService:
             return []
     
     @run_async
-    def get_root_categories_sync(self):
+    def get_root_categories_sync(self, user_id: Optional[str] = None):
         """Sync wrapper for get_root_categories."""
-        return self.get_root_categories()
+        return self.get_root_categories(user_id)
     
-    async def get_category_children(self, category_id: str):
+    async def get_category_children(self, category_id: str, user_id: Optional[str] = None):
         """Get direct children of a category."""
         try:
             children = await self.redis_category_repo.get_children(category_id)
@@ -1128,7 +1128,7 @@ class RedisBookService:
             # Add usage statistics
             for child in children:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(child.id)
+                    stats = await self.redis_category_repo.get_category_usage_stats(child.id, user_id)
                     child.book_count = stats.get('total_books', 0)
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error getting stats for child category {child.id}: {e}")
@@ -1140,9 +1140,9 @@ class RedisBookService:
             return []
     
     @run_async
-    def get_category_children_sync(self, category_id: str):
+    def get_category_children_sync(self, category_id: str, user_id: Optional[str] = None):
         """Sync wrapper for get_category_children."""
-        return self.get_category_children(category_id)
+        return self.get_category_children(category_id, user_id)
     
     async def create_category(self, category):
         """Create a new category in Redis storage."""
