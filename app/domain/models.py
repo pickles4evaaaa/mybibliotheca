@@ -241,11 +241,87 @@ class Category:
     parent_id: Optional[str] = None
     description: Optional[str] = None
     level: int = 0  # Hierarchy level (0 = root)
+    color: Optional[str] = None  # Hex color for visual organization
+    icon: Optional[str] = None  # Bootstrap icon or emoji for display
+    aliases: List[str] = field(default_factory=list)  # Alternative names/spellings
+    
+    # Hierarchy relationships (populated by service layer)
+    parent: Optional['Category'] = None
+    children: List['Category'] = field(default_factory=list)
+    
+    # Usage statistics (populated by service layer)
+    book_count: int = 0
+    user_book_count: int = 0  # For specific user
+    
     created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
     
     def __post_init__(self):
         if not self.normalized_name and self.name:
-            self.normalized_name = self.name.strip().lower()
+            self.normalized_name = self._normalize_name(self.name)
+    
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Normalize category name for matching (handle variations)."""
+        return name.strip().lower()
+    
+    @property
+    def full_path(self) -> str:
+        """Get full hierarchical path (e.g., 'Fiction > Science Fiction > Dystopian')."""
+        if self.parent:
+            return f"{self.parent.full_path} > {self.name}"
+        return self.name
+    
+    @property
+    def breadcrumbs(self) -> List['Category']:
+        """Get list of categories from root to this category."""
+        if self.parent:
+            return self.parent.breadcrumbs + [self]
+        return [self]
+    
+    def is_descendant_of(self, category: 'Category') -> bool:
+        """Check if this category is a descendant of another category."""
+        if not self.parent:
+            return False
+        if self.parent.id == category.id:
+            return True
+        return self.parent.is_descendant_of(category)
+    
+    def get_all_ancestors(self) -> List['Category']:
+        """Get all ancestor categories up to root."""
+        if not self.parent:
+            return []
+        return [self.parent] + self.parent.get_all_ancestors()
+    
+    def get_ancestors(self) -> List['Category']:
+        """Alias for get_all_ancestors() for template compatibility."""
+        return self.get_all_ancestors()
+    
+    def get_all_descendants(self) -> List['Category']:
+        """Get all descendant categories recursively."""
+        descendants = []
+        for child in self.children:
+            descendants.append(child)
+            descendants.extend(child.get_all_descendants())
+        return descendants
+    
+    @property
+    def is_root(self) -> bool:
+        """Check if this is a root category (no parent)."""
+        return self.parent_id is None
+    
+    @property
+    def is_leaf(self) -> bool:
+        """Check if this is a leaf category (no children)."""
+        return len(self.children) == 0
+    
+    def matches_name_or_alias(self, name: str) -> bool:
+        """Check if name matches this category's name or any alias."""
+        normalized_name = self._normalize_name(name)
+        if normalized_name == self.normalized_name:
+            return True
+        normalized_aliases = [self._normalize_name(alias) for alias in self.aliases]
+        return normalized_name in normalized_aliases
 
 
 class ContributionType(Enum):
@@ -350,6 +426,9 @@ class Book:
     series_volume: Optional[str] = None
     series_order: Optional[int] = None
     categories: List[Category] = field(default_factory=list)
+    
+    # Raw category data from API/CSV (temporary field for processing)
+    raw_categories: Optional[Any] = None
     
     def __post_init__(self):
         if not self.normalized_title and self.title:

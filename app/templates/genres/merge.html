@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+
+{% block title %}Merge Categories - Genres - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-lg-8 col-xl-6">
+            <!-- Page Header -->
+            <div class="d-flex align-items-center mb-4">
+                <a href="{{ url_for('genres.index') }}" class="btn btn-outline-secondary me-3">
+                    <i class="bi bi-arrow-left"></i>
+                </a>
+                <div>
+                    <h1 class="h2 mb-0">
+                        <i class="bi bi-arrow-down-up me-2"></i>Merge Categories
+                    </h1>
+                    <p class="text-muted mb-0">Combine two categories into one</p>
+                </div>
+            </div>
+
+            <!-- Warning Alert -->
+            <div class="alert alert-warning">
+                <h6 class="alert-heading">
+                    <i class="bi bi-exclamation-triangle"></i> Important Notice
+                </h6>
+                <p class="mb-0">
+                    Merging categories is <strong>permanent</strong>. All books, subcategories, and metadata from the source category will be transferred to the target category. The source category will be deleted.
+                </p>
+            </div>
+
+            <!-- Merge Form -->
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST" id="merge-form">
+                        {{ form.hidden_tag() }}
+                        
+                        <!-- Source Category Selection -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="bi bi-arrow-up-right"></i> Source Category (will be merged from)
+                            </h5>
+                            
+                            <div class="mb-3">
+                                {{ form.source_id.label(class="form-label required") }}
+                                {{ form.source_id(class="form-select" + (" is-invalid" if form.source_id.errors else ""), onchange="updateSourcePreview()") }}
+                                {% if form.source_id.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.source_id.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text">
+                                    Select the category that will be merged into another category. This category will be deleted after the merge.
+                                </div>
+                            </div>
+
+                            <!-- Source Category Preview -->
+                            <div id="source-preview" class="card bg-light d-none">
+                                <div class="card-body">
+                                    <h6 class="card-title text-danger">
+                                        <i class="bi bi-info-circle"></i> Source Category Details
+                                    </h6>
+                                    <div id="source-details"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Target Category Selection -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="bi bi-arrow-down-left"></i> Target Category (will be merged into)
+                            </h5>
+                            
+                            <div class="mb-3">
+                                {{ form.target_id.label(class="form-label required") }}
+                                {{ form.target_id(class="form-select" + (" is-invalid" if form.target_id.errors else ""), onchange="updateTargetPreview()") }}
+                                {% if form.target_id.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.target_id.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text">
+                                    Select the category that will receive all the books and subcategories from the source category.
+                                </div>
+                            </div>
+
+                            <!-- Target Category Preview -->
+                            <div id="target-preview" class="card bg-light d-none">
+                                <div class="card-body">
+                                    <h6 class="card-title text-success">
+                                        <i class="bi bi-info-circle"></i> Target Category Details
+                                    </h6>
+                                    <div id="target-details"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Merge Options -->
+                        <div class="mb-4">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="bi bi-gear"></i> Merge Options
+                            </h5>
+                            
+                            <div class="form-check mb-3">
+                                {{ form.merge_aliases(class="form-check-input") }}
+                                {{ form.merge_aliases.label(class="form-check-label") }}
+                                <div class="form-text">
+                                    Add the source category's aliases to the target category's alias list.
+                                </div>
+                            </div>
+                            
+                            <div class="form-check mb-3">
+                                {{ form.merge_description(class="form-check-input") }}
+                                {{ form.merge_description.label(class="form-check-label") }}
+                                <div class="form-text">
+                                    Append the source category's description to the target category's description.
+                                </div>
+                            </div>
+                            
+                            <div class="form-check mb-3">
+                                {{ form.preserve_hierarchy(class="form-check-input") }}
+                                {{ form.preserve_hierarchy.label(class="form-check-label") }}
+                                <div class="form-text">
+                                    Move subcategories of the source category to become subcategories of the target category.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Merge Preview -->
+                        <div id="merge-preview" class="mb-4 d-none">
+                            <h5 class="border-bottom pb-2 mb-3">
+                                <i class="bi bi-eye"></i> Merge Preview
+                            </h5>
+                            
+                            <div class="card border-warning">
+                                <div class="card-body">
+                                    <div id="merge-summary"></div>
+                                    
+                                    <div class="row mt-3">
+                                        <div class="col-md-6">
+                                            <h6 class="text-danger">What will be removed:</h6>
+                                            <ul id="removal-list" class="list-unstyled"></ul>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <h6 class="text-success">What will be transferred:</h6>
+                                            <ul id="transfer-list" class="list-unstyled"></ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Confirmation -->
+                        <div class="mb-4">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="confirm-merge" required onchange="toggleSubmitButton()">
+                                <label class="form-check-label" for="confirm-merge">
+                                    <strong>I understand that this action cannot be undone</strong>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Form Actions -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{{ url_for('genres.index') }}" class="btn btn-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-danger" id="submit-button" disabled>
+                                <i class="bi bi-arrow-down-up"></i> Merge Categories
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Help Section -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="card-title mb-0">
+                        <i class="bi bi-question-circle"></i> How Category Merging Works
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>What happens during a merge:</h6>
+                            <ul class="small">
+                                <li>All books from the source category are moved to the target category</li>
+                                <li>All subcategories of the source category become subcategories of the target category</li>
+                                <li>The source category is permanently deleted</li>
+                                <li>Aliases and descriptions can be merged based on your options</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Use cases for merging:</h6>
+                            <ul class="small">
+                                <li>Eliminating duplicate categories</li>
+                                <li>Consolidating similar categories</li>
+                                <li>Reorganizing your category structure</li>
+                                <li>Fixing import mistakes</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Category data for JavaScript -->
+<script type="application/json" id="category-data">
+{{ categories_json | safe }}
+</script>
+
+<style>
+.required::after {
+    content: " *";
+    color: #dc3545;
+}
+
+.color-indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 1px solid #dee2e6;
+}
+
+.category-preview {
+    padding: 10px;
+    border-left: 4px solid #007bff;
+    background: #f8f9fa;
+    margin-top: 10px;
+}
+
+.merge-arrow {
+    font-size: 2rem;
+    color: #ffc107;
+}
+
+#merge-summary {
+    font-weight: 500;
+}
+
+.list-unstyled li {
+    margin-bottom: 5px;
+}
+
+.list-unstyled li i {
+    width: 16px;
+}
+</style>
+
+<script>
+// Category data
+const categoryData = JSON.parse(document.getElementById('category-data').textContent);
+
+function updateSourcePreview() {
+    const sourceSelect = document.getElementById('{{ form.source_id.id }}');
+    const sourceId = sourceSelect.value;
+    const preview = document.getElementById('source-preview');
+    const details = document.getElementById('source-details');
+    
+    if (sourceId && categoryData[sourceId]) {
+        const category = categoryData[sourceId];
+        
+        details.innerHTML = `
+            <div class="d-flex align-items-center mb-2">
+                <span class="me-2">${category.icon || '🏷️'}</span>
+                <strong>${category.name}</strong>
+                ${category.color ? `<div class="ms-2 color-indicator" style="background-color: ${category.color};"></div>` : ''}
+            </div>
+            <div class="row text-center small">
+                <div class="col-4">
+                    <div class="fw-bold text-primary">${category.book_count}</div>
+                    <div class="text-muted">Books</div>
+                </div>
+                <div class="col-4">
+                    <div class="fw-bold text-info">${category.children_count}</div>
+                    <div class="text-muted">Subcategories</div>
+                </div>
+                <div class="col-4">
+                    <div class="fw-bold text-secondary">${category.level}</div>
+                    <div class="text-muted">Level</div>
+                </div>
+            </div>
+            ${category.description ? `<div class="mt-2 small text-muted">${category.description}</div>` : ''}
+            ${category.aliases && category.aliases.length > 0 ? `<div class="mt-2"><small class="text-muted">Aliases: ${category.aliases.join(', ')}</small></div>` : ''}
+        `;
+        
+        preview.classList.remove('d-none');
+    } else {
+        preview.classList.add('d-none');
+    }
+    
+    updateMergePreview();
+}
+
+function updateTargetPreview() {
+    const targetSelect = document.getElementById('{{ form.target_id.id }}');
+    const targetId = targetSelect.value;
+    const preview = document.getElementById('target-preview');
+    const details = document.getElementById('target-details');
+    
+    if (targetId && categoryData[targetId]) {
+        const category = categoryData[targetId];
+        
+        details.innerHTML = `
+            <div class="d-flex align-items-center mb-2">
+                <span class="me-2">${category.icon || '🏷️'}</span>
+                <strong>${category.name}</strong>
+                ${category.color ? `<div class="ms-2 color-indicator" style="background-color: ${category.color};"></div>` : ''}
+            </div>
+            <div class="row text-center small">
+                <div class="col-4">
+                    <div class="fw-bold text-primary">${category.book_count}</div>
+                    <div class="text-muted">Books</div>
+                </div>
+                <div class="col-4">
+                    <div class="fw-bold text-info">${category.children_count}</div>
+                    <div class="text-muted">Subcategories</div>
+                </div>
+                <div class="col-4">
+                    <div class="fw-bold text-secondary">${category.level}</div>
+                    <div class="text-muted">Level</div>
+                </div>
+            </div>
+            ${category.description ? `<div class="mt-2 small text-muted">${category.description}</div>` : ''}
+            ${category.aliases && category.aliases.length > 0 ? `<div class="mt-2"><small class="text-muted">Aliases: ${category.aliases.join(', ')}</small></div>` : ''}
+        `;
+        
+        preview.classList.remove('d-none');
+    } else {
+        preview.classList.add('d-none');
+    }
+    
+    updateMergePreview();
+}
+
+function updateMergePreview() {
+    const sourceSelect = document.getElementById('{{ form.source_id.id }}');
+    const targetSelect = document.getElementById('{{ form.target_id.id }}');
+    const sourceId = sourceSelect.value;
+    const targetId = targetSelect.value;
+    const preview = document.getElementById('merge-preview');
+    const summary = document.getElementById('merge-summary');
+    const removalList = document.getElementById('removal-list');
+    const transferList = document.getElementById('transfer-list');
+    
+    if (sourceId && targetId && categoryData[sourceId] && categoryData[targetId]) {
+        const source = categoryData[sourceId];
+        const target = categoryData[targetId];
+        
+        // Check for potential issues
+        let warnings = [];
+        if (sourceId === targetId) {
+            warnings.push('You cannot merge a category with itself.');
+        }
+        
+        if (warnings.length > 0) {
+            summary.innerHTML = `<div class="alert alert-danger">${warnings.join('<br>')}</div>`;
+            preview.classList.remove('d-none');
+            return;
+        }
+        
+        // Build summary
+        summary.innerHTML = `
+            <div class="d-flex align-items-center justify-content-center mb-3">
+                <div class="text-center">
+                    <div><strong>${source.name}</strong></div>
+                    <small class="text-muted">${source.book_count} books, ${source.children_count} subcategories</small>
+                </div>
+                <div class="mx-4">
+                    <i class="bi bi-arrow-right merge-arrow"></i>
+                </div>
+                <div class="text-center">
+                    <div><strong>${target.name}</strong></div>
+                    <small class="text-muted">${target.book_count} books, ${target.children_count} subcategories</small>
+                </div>
+            </div>
+        `;
+        
+        // Build removal list
+        removalList.innerHTML = `
+            <li><i class="bi bi-x text-danger"></i> "${source.name}" category will be deleted</li>
+        `;
+        
+        // Build transfer list
+        let transfers = [];
+        if (source.book_count > 0) {
+            transfers.push(`<li><i class="bi bi-book text-primary"></i> ${source.book_count} books moved to "${target.name}"`);
+        }
+        if (source.children_count > 0) {
+            transfers.push(`<li><i class="bi bi-diagram-3 text-info"></i> ${source.children_count} subcategories moved to "${target.name}"`);
+        }
+        
+        const mergeAliases = document.getElementById('{{ form.merge_aliases.id }}').checked;
+        const mergeDescription = document.getElementById('{{ form.merge_description.id }}').checked;
+        
+        if (mergeAliases && source.aliases && source.aliases.length > 0) {
+            transfers.push(`<li><i class="bi bi-tags text-secondary"></i> ${source.aliases.length} aliases added to "${target.name}"`);
+        }
+        if (mergeDescription && source.description) {
+            transfers.push(`<li><i class="bi bi-text-paragraph text-secondary"></i> Description appended to "${target.name}"`);
+        }
+        
+        if (transfers.length === 0) {
+            transfers.push(`<li><i class="bi bi-info-circle text-muted"></i> No content to transfer`);
+        }
+        
+        transferList.innerHTML = transfers.join('');
+        
+        preview.classList.remove('d-none');
+    } else {
+        preview.classList.add('d-none');
+    }
+}
+
+function toggleSubmitButton() {
+    const checkbox = document.getElementById('confirm-merge');
+    const button = document.getElementById('submit-button');
+    button.disabled = !checkbox.checked;
+}
+
+// Update target options when source changes to prevent self-merge
+document.getElementById('{{ form.source_id.id }}').addEventListener('change', function() {
+    const sourceId = this.value;
+    const targetSelect = document.getElementById('{{ form.target_id.id }}');
+    
+    // Re-enable all options first
+    Array.from(targetSelect.options).forEach(option => {
+        option.disabled = false;
+    });
+    
+    // Disable the source option in target select
+    if (sourceId) {
+        const sourceOption = targetSelect.querySelector(`option[value="${sourceId}"]`);
+        if (sourceOption) {
+            sourceOption.disabled = true;
+        }
+        
+        // If target is currently set to the same as source, clear it
+        if (targetSelect.value === sourceId) {
+            targetSelect.value = '';
+            updateTargetPreview();
+        }
+    }
+});
+
+// Add change listeners for merge options
+document.getElementById('{{ form.merge_aliases.id }}').addEventListener('change', updateMergePreview);
+document.getElementById('{{ form.merge_description.id }}').addEventListener('change', updateMergePreview);
+
+// Initialize if values are pre-selected
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('{{ form.source_id.id }}').value) {
+        updateSourcePreview();
+    }
+    if (document.getElementById('{{ form.target_id.id }}').value) {
+        updateTargetPreview();
+    }
+});
+
+// Form validation
+document.getElementById('merge-form').addEventListener('submit', function(e) {
+    const sourceId = document.getElementById('{{ form.source_id.id }}').value;
+    const targetId = document.getElementById('{{ form.target_id.id }}').value;
+    
+    if (sourceId === targetId) {
+        e.preventDefault();
+        alert('You cannot merge a category with itself.');
+        return;
+    }
+    
+    if (!sourceId || !targetId) {
+        e.preventDefault();
+        alert('Please select both source and target categories.');
+        return;
+    }
+    
+    const confirmCheckbox = document.getElementById('confirm-merge');
+    if (!confirmCheckbox.checked) {
+        e.preventDefault();
+        alert('Please confirm that you understand this action cannot be undone.');
+        return;
+    }
+    
+    // Final confirmation
+    const source = categoryData[sourceId];
+    const target = categoryData[targetId];
+    const message = `Are you sure you want to merge "${source.name}" into "${target.name}"?\n\nThis will:\n- Move ${source.book_count} books to "${target.name}"\n- Move ${source.children_count} subcategories to "${target.name}"\n- Delete "${source.name}" permanently\n\nThis action cannot be undone.`;
+    
+    if (!confirm(message)) {
+        e.preventDefault();
+    }
+});
+</script>
+{% endblock %}

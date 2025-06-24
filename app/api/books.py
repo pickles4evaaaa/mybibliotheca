@@ -77,7 +77,7 @@ def parse_book_data(data):
         language=data.get('language', '').strip() or 'en',
         description=data.get('description', '').strip() or None,
         cover_url=data.get('cover_url', '').strip() or None,
-        categories=data.get('categories', []) if isinstance(data.get('categories'), list) else [],
+        raw_categories=data.get('categories'),  # Use raw_categories for automatic processing
         average_rating=data.get('average_rating') or None,
         rating_count=data.get('rating_count') or None,
         created_at=datetime.now(),
@@ -167,7 +167,16 @@ def create_book():
         domain_book = parse_book_data(data)
         
         # Create book using service layer
-        created_book = book_service.create_book_sync(domain_book, current_user.id)
+        created_book = book_service.find_or_create_book_sync(domain_book)
+        
+        # Add to user's library
+        if created_book:
+            from ..domain.models import ReadingStatus
+            book_service.add_book_to_user_library_sync(
+                user_id=current_user.id,
+                book_id=created_book.id,
+                reading_status=ReadingStatus.PLAN_TO_READ
+            )
         
         return jsonify({
             'status': 'success',

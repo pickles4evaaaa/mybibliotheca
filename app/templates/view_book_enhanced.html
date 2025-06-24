@@ -91,10 +91,26 @@
                                 {% endif %}
                             </div>
                             
-                            <!-- Categories -->
-                            {% if book.categories %}
+                            <!-- Categories/Genres -->
+                            {% if book_categories %}
                             <div class="mb-3">
-                                <small class="text-muted d-block mb-1">Categories</small>
+                                <small class="text-muted d-block mb-1">
+                                    <i class="bi bi-tags me-1"></i>Genres & Categories
+                                </small>
+                                {% for category in book_categories %}
+                                    <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
+                                       class="badge bg-light text-dark border me-1 mb-1 text-decoration-none" 
+                                       title="Category: {{ category.name }}{% if category.description %} - {{ category.description }}{% endif %}">
+                                        {{ category.name }}
+                                    </a>
+                                {% endfor %}
+                            </div>
+                            {% elif book.categories %}
+                            <!-- Fallback for legacy categories string -->
+                            <div class="mb-3">
+                                <small class="text-muted d-block mb-1">
+                                    <i class="bi bi-tags me-1"></i>Categories (Legacy)
+                                </small>
                                 {% for category in book.categories.split(',') %}
                                     <span class="badge bg-light text-dark border me-1 mb-1">{{ category.strip() }}</span>
                                 {% endfor %}
@@ -692,6 +708,27 @@ document.addEventListener('DOMContentLoaded', function() {
 /* Better spacing between accordion items */
 .accordion-item:not(:last-child) {
     margin-bottom: 0.5rem;
+}
+
+/* Genre badge hover effects */
+.badge.bg-light:hover {
+    background-color: #e2e6ea !important;
+    transform: translateY(-1px);
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.badge.bg-secondary:hover {
+    background-color: #5a6268 !important;
+    transform: translateY(-1px);
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Dark mode support */
+[data-theme="dark"] .badge.bg-light:hover {
+    background-color: #495057 !important;
+    color: white !important;
 }
 </style>
 {% endblock %}

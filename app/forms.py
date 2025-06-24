@@ -157,3 +157,141 @@ class ReadingStreakForm(FlaskForm):
         }
     )
     submit = SubmitField('Update Streak Settings', render_kw={'class': 'btn btn-primary'})
+
+# === Genre/Category Forms ===
+
+class CategoryForm(FlaskForm):
+    name = StringField('Category Name', validators=[
+        DataRequired(message='Category name is required'), 
+        Length(min=1, max=100, message='Category name must be between 1 and 100 characters')
+    ])
+    description = TextAreaField('Description', validators=[
+        Optional(),
+        Length(max=500, message='Description cannot exceed 500 characters')
+    ])
+    parent_id = SelectField('Parent Category', validators=[Optional()], coerce=str)
+    aliases = TextAreaField('Aliases', validators=[Optional()], 
+                           render_kw={'rows': 3, 'placeholder': 'Enter alternative names, one per line'})
+    icon = StringField('Icon', validators=[
+        Optional(),
+        Length(max=10, message='Icon cannot exceed 10 characters')
+    ])
+    color = StringField('Color', validators=[Optional()])
+    submit = SubmitField('Save Category')
+    
+    def __init__(self, current_category_id=None, *args, **kwargs):
+        super(CategoryForm, self).__init__(*args, **kwargs)
+        self.current_category_id = current_category_id
+        self.populate_parent_choices()
+    
+    def populate_parent_choices(self):
+        """Populate parent category choices, excluding the current category and its descendants"""
+        try:
+            from .services import book_service
+            categories = book_service.get_all_categories_sync()
+            
+            # Build choices list
+            choices = [('', 'None (Root Category)')]
+            
+            for category in categories:
+                # Skip current category (for edit form)
+                if self.current_category_id and category.id == self.current_category_id:
+                    continue
+                
+                # Skip descendants of current category (for edit form)
+                if self.current_category_id and self.is_descendant(category, self.current_category_id):
+                    continue
+                
+                # Create indented display name based on level
+                indent = '  ' * category.level
+                display_name = f"{indent}{category.name}"
+                choices.append((category.id, display_name))
+            
+            self.parent_id.choices = choices
+        except Exception as e:
+            print(f"Error populating parent choices: {e}")
+            self.parent_id.choices = [('', 'None (Root Category)')]
+    
+    def is_descendant(self, category, ancestor_id):
+        """Check if category is a descendant of the given ancestor"""
+        current = category
+        while current.parent_id:
+            if current.parent_id == ancestor_id:
+                return True
+            # Would need to fetch parent to continue, simplified for now
+            break
+        return False
+
+    def validate_name(self, name):
+        """Ensure category name is unique at the same level"""
+        try:
+            from .services import book_service
+            
+            # Get parent_id from form
+            parent_id = self.parent_id.data if self.parent_id.data else None
+            
+            # Check for existing category with same name and parent
+            existing_categories = book_service.search_categories_sync(name.data)
+            
+            for category in existing_categories:
+                if (category.name.lower() == name.data.lower() and 
+                    category.parent_id == parent_id and
+                    (not self.current_category_id or category.id != self.current_category_id)):
+                    if parent_id:
+                        raise ValidationError(f'A category named "{name.data}" already exists under the selected parent.')
+                    else:
+                        raise ValidationError(f'A root category named "{name.data}" already exists.')
+        except Exception as e:
+            if "already exists" in str(e):
+                raise e
+            # Don't fail validation on service errors
+            pass
+
+class MergeCategoriesForm(FlaskForm):
+    source_id = SelectField('Source Category (will be deleted)', validators=[DataRequired()], coerce=str)
+    target_id = SelectField('Target Category (will receive content)', validators=[DataRequired()], coerce=str)
+    merge_aliases = BooleanField('Merge aliases from source to target', default=True)
+    merge_description = BooleanField('Append source description to target', default=False)
+    preserve_hierarchy = BooleanField('Move subcategories to target category', default=True)
+    submit = SubmitField('Merge Categories')
+    
+    def __init__(self, *args, **kwargs):
+        super(MergeCategoriesForm, self).__init__(*args, **kwargs)
+        self.populate_category_choices()
+    
+    def populate_category_choices(self):
+        """Populate category choices for source and target"""
+        try:
+            from .services import book_service
+            categories = book_service.get_all_categories_sync()
+            
+            choices = []
+            for category in categories:
+                # Create display name with hierarchy
+                indent = '  ' * category.level
+                book_info = f" ({category.book_count} books)" if category.book_count > 0 else ""
+                display_name = f"{indent}{category.name}{book_info}"
+                choices.append((category.id, display_name))
+            
+            if not choices:
+                choices = [('', 'No categories available')]
+            
+            self.source_id.choices = choices
+            self.target_id.choices = choices
+        except Exception as e:
+            print(f"Error populating category choices: {e}")
+            self.source_id.choices = [('', 'No categories available')]
+            self.target_id.choices = [('', 'No categories available')]
+    
+    def validate_source_id(self, source_id):
+        """Validate source category selection"""
+        if not source_id.data:
+            raise ValidationError('Please select a source category.')
+    
+    def validate_target_id(self, target_id):
+        """Validate target category selection"""
+        if not target_id.data:
+            raise ValidationError('Please select a target category.')
+        
+        if target_id.data == self.source_id.data:
+            raise ValidationError('Source and target categories cannot be the same.')

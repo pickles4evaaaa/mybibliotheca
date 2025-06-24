@@ -1,0 +1,115 @@
+<!-- Hierarchy node template for displaying categories in tree structure -->
+<div class="tree-node" data-category-id="{{ root.id }}">
+    <div class="category-item d-flex align-items-center justify-content-between" 
+         data-category-id="{{ root.id }}">
+        
+        <!-- Left side: Toggle, Icon, Name, and basic info -->
+        <div class="d-flex align-items-center flex-grow-1">
+            <!-- Toggle button for expansion -->
+            {% if root.children and root.children|length > 0 %}
+            <button class="expand-toggle" 
+                    data-category-id="{{ root.id }}" 
+                    id="toggle-{{ root.id }}"
+                    onclick="toggleNode('{{ root.id }}')"
+                    title="Toggle subcategories">
+                <i class="bi bi-chevron-down"></i>
+            </button>
+            {% else %}
+            <span class="expand-toggle no-children">
+                <i class="bi bi-dot"></i>
+            </span>
+            {% endif %}
+            
+            <!-- Category icon -->
+            {% if root.icon %}
+                <span class="me-2 fs-5">{{ root.icon }}</span>
+            {% else %}
+                <i class="bi bi-tag me-2 text-muted"></i>
+            {% endif %}
+            
+            <!-- Category name and details -->
+            <div class="flex-grow-1">
+                <div class="d-flex align-items-center">
+                    <strong class="category-name me-2">{{ root.name }}</strong>
+                    
+                    <!-- Color indicator -->
+                    {% if root.color %}
+                        <div class="color-indicator me-2" style="background-color: {{ root.color }};"></div>
+                    {% endif %}
+                    
+                    <!-- Level indicator -->
+                    <span class="badge bg-secondary badge-sm me-2">L{{ root.level }}</span>
+                    
+                    <!-- Stats badges -->
+                    {% if root.book_count > 0 %}
+                    <span class="badge bg-primary me-1" title="{{ root.book_count }} books">
+                        <i class="bi bi-book"></i> {{ root.book_count }}
+                    </span>
+                    {% endif %}
+                    
+                    {% if root.children and root.children|length > 0 %}
+                    <span class="badge bg-info me-1" title="{{ root.children|length }} subcategories">
+                        <i class="bi bi-diagram-3"></i> {{ root.children|length }}
+                    </span>
+                    {% endif %}
+                </div>
+                
+                <!-- Description (if available) -->
+                {% if root.description %}
+                <div class="category-description text-muted small mt-1">
+                    {{ root.description[:80] }}{% if root.description|length > 80 %}...{% endif %}
+                </div>
+                {% endif %}
+                
+                <!-- Aliases (if available) -->
+                {% if root.aliases %}
+                <div class="category-meta mt-1">
+                    <small class="text-muted">
+                        Also: {{ root.aliases[:2]|join(', ') }}{% if root.aliases|length > 2 %}...{% endif %}
+                    </small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Right side: Action buttons -->
+        <div class="action-buttons ms-3">
+            <div class="btn-group btn-group-sm">
+                <button type="button" class="btn btn-outline-primary btn-sm" 
+                        onclick="viewCategory('{{ root.id }}')" title="View details">
+                    <i class="bi bi-eye"></i>
+                </button>
+                
+                <button type="button" class="btn btn-outline-secondary btn-sm" 
+                        onclick="editCategory('{{ root.id }}')" title="Edit category">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                
+                <button type="button" class="btn btn-outline-success btn-sm" 
+                        onclick="addSubcategory('{{ root.id }}')" title="Add subcategory">
+                    <i class="bi bi-plus"></i>
+                </button>
+                
+                <!-- Delete button (only if no books or children) -->
+                {% if root.book_count == 0 and (not root.children or root.children|length == 0) %}
+                <form method="POST" action="{{ url_for('genres.delete_category', category_id=root.id) }}" 
+                      class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ root.name }}?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete category">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Children categories -->
+    {% if root.children and root.children|length > 0 %}
+    <div class="tree-children" id="children-{{ root.id }}">
+        {% for child in root.children %}
+            {% set root = child %}
+            {% include 'genres/_hierarchy_node.html' %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>

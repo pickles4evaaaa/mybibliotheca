@@ -23,7 +23,7 @@ from flask_login import current_user
 from werkzeug.local import LocalProxy
 
 from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
-from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository, RedisUserBookRepository, RedisCustomFieldRepository, RedisImportMappingRepository
+from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository, RedisUserBookRepository, RedisCustomFieldRepository, RedisImportMappingRepository, RedisCategoryRepository
 from .infrastructure.redis_graph import get_graph_storage
 
 
@@ -117,6 +117,7 @@ class RedisBookService:
         self.redis_user_repo = RedisUserRepository(self.storage)
         self.redis_author_repo = RedisAuthorRepository(self.storage)
         self.redis_user_book_repo = RedisUserBookRepository(self.storage)
+        self.redis_category_repo = RedisCategoryRepository(self.storage)
     
     async def create_book(self, domain_book: Book) -> Book:
         """Create a book in Redis (global, not user-specific)."""
@@ -257,6 +258,9 @@ class RedisBookService:
             # Handle contributors separately
             contributors = kwargs.pop('contributors', None)
             
+            # Handle categories separately
+            raw_categories = kwargs.pop('raw_categories', None)
+            
             # Separate relationship fields from book fields
             relationship_fields = {'personal_notes', 'user_rating', 'reading_status', 'ownership_status', 
                                  'date_started', 'date_finished', 'date_added', 'favorite', 'priority', 'custom_metadata'}
@@ -279,6 +283,10 @@ class RedisBookService:
             # Handle contributors if provided
             if contributors is not None:
                 await self._update_book_contributors(book, contributors)
+            
+            # Handle categories if provided
+            if raw_categories is not None:
+                await self.process_book_categories(book.id, raw_categories)
             
             # Update relationship fields if any
             if rel_fields:
@@ -520,10 +528,20 @@ class RedisBookService:
                 existing_book.updated_at = datetime.now()
                 await self.redis_book_repo.update(existing_book)
             
+            # Process categories for existing book (add any new ones)
+            if hasattr(domain_book, 'raw_categories') and domain_book.raw_categories:
+                await self.process_book_categories(existing_book.id, domain_book.raw_categories)
+            
             return existing_book
         
         # If no existing book found, create new one
-        return await self.create_book(domain_book)
+        created_book = await self.create_book(domain_book)
+        
+        # Process categories for the newly created book
+        if created_book and hasattr(domain_book, 'raw_categories') and domain_book.raw_categories:
+            await self.process_book_categories(created_book.id, domain_book.raw_categories)
+        
+        return created_book
 
     async def get_user_book(self, user_id: str, book_identifier: str) -> Optional[Book]:
         """Get a specific book for a user with user-specific metadata.
@@ -986,6 +1004,508 @@ class RedisBookService:
         """Sync wrapper for find_or_create_person."""
         return self.find_or_create_person(person_name)
 
+    # Genre/Category-related methods
+    async def get_category_by_id(self, category_id: str):
+        """Get a category by their ID with parent relationship populated."""
+        try:
+            category = await self.redis_category_repo.get_by_id(category_id)
+            if category:
+                # Add usage statistics
+                stats = await self.redis_category_repo.get_category_usage_stats(category_id)
+                category.book_count = stats.get('total_books', 0)
+                
+                # Populate parent relationship
+                if category.parent_id:
+                    try:
+                        parent = await self.redis_category_repo.get_by_id(category.parent_id)
+                        category.parent = parent
+                        # Recursively populate parent's parent if needed for full ancestry
+                        if parent and parent.parent_id:
+                            parent_of_parent = await self.get_category_by_id(parent.parent_id)
+                            if parent_of_parent:
+                                parent.parent = parent_of_parent
+                    except Exception as e:
+                        print(f"⚠️ [SERVICE] Error loading parent for category {category_id}: {e}")
+                        
+            return category
+        except Exception as e:
+            print(f"❌ [SERVICE] Error getting category by ID {category_id}: {e}")
+            return None
+    
+    @run_async
+    def get_category_by_id_sync(self, category_id: str):
+        """Sync wrapper for get_category_by_id."""
+        return self.get_category_by_id(category_id)
+    
+    async def search_categories(self, query: str, limit: int = 10):
+        """Search for categories by name."""
+        try:
+            categories = await self.redis_category_repo.search_by_name(query)
+            
+            # Add usage statistics to each category
+            for category in categories[:limit]:
+                try:
+                    stats = await self.redis_category_repo.get_category_usage_stats(category.id)
+                    category.book_count = stats.get('total_books', 0)
+                except Exception as e:
+                    print(f"⚠️ [SERVICE] Error getting stats for category {category.id}: {e}")
+                    category.book_count = 0
+            
+            return categories[:limit]
+        except Exception as e:
+            print(f"❌ [SERVICE] Error searching categories: {e}")
+            return []
+    
+    @run_async
+    def search_categories_sync(self, query: str, limit: int = 10):
+        """Sync wrapper for search_categories."""
+        return self.search_categories(query, limit)
+    
+    async def list_all_categories(self):
+        """List all categories in the storage and return as Category objects with hierarchy."""
+        try:
+            categories = await self.redis_category_repo.get_all()
+            
+            # Build hierarchy relationships
+            categories = await self.redis_category_repo.build_hierarchy_for_categories(categories)
+            
+            # Add usage statistics to each category
+            for category in categories:
+                try:
+                    stats = await self.redis_category_repo.get_category_usage_stats(category.id)
+                    category.book_count = stats.get('total_books', 0)
+                except Exception as e:
+                    print(f"⚠️ [SERVICE] Error getting stats for category {category.id}: {e}")
+                    category.book_count = 0
+            
+            print(f"📊 [SERVICE] Returning {len(categories)} Category objects")
+            return categories
+        except Exception as e:
+            print(f"❌ [SERVICE] Error listing categories: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    @run_async
+    def list_all_categories_sync(self):
+        """Sync wrapper for list_all_categories."""
+        return self.list_all_categories()
+    
+    async def get_root_categories(self):
+        """Get top-level categories (no parent)."""
+        try:
+            root_categories = await self.redis_category_repo.get_root_categories()
+            
+            # Add usage statistics and build partial hierarchy
+            for category in root_categories:
+                try:
+                    stats = await self.redis_category_repo.get_category_usage_stats(category.id)
+                    category.book_count = stats.get('total_books', 0)
+                    
+                    # Get direct children
+                    children = await self.redis_category_repo.get_children(category.id)
+                    category.children = children
+                except Exception as e:
+                    print(f"⚠️ [SERVICE] Error processing root category {category.id}: {e}")
+                    category.book_count = 0
+                    category.children = []
+            
+            return root_categories
+        except Exception as e:
+            print(f"❌ [SERVICE] Error getting root categories: {e}")
+            return []
+    
+    @run_async
+    def get_root_categories_sync(self):
+        """Sync wrapper for get_root_categories."""
+        return self.get_root_categories()
+    
+    async def get_category_children(self, category_id: str):
+        """Get direct children of a category."""
+        try:
+            children = await self.redis_category_repo.get_children(category_id)
+            
+            # Add usage statistics
+            for child in children:
+                try:
+                    stats = await self.redis_category_repo.get_category_usage_stats(child.id)
+                    child.book_count = stats.get('total_books', 0)
+                except Exception as e:
+                    print(f"⚠️ [SERVICE] Error getting stats for child category {child.id}: {e}")
+                    child.book_count = 0
+            
+            return children
+        except Exception as e:
+            print(f"❌ [SERVICE] Error getting children for category {category_id}: {e}")
+            return []
+    
+    @run_async
+    def get_category_children_sync(self, category_id: str):
+        """Sync wrapper for get_category_children."""
+        return self.get_category_children(category_id)
+    
+    async def create_category(self, category):
+        """Create a new category in Redis storage."""
+        try:
+            from dataclasses import asdict
+            from .domain.models import Category
+            
+            # Convert Category object to proper format if needed
+            if isinstance(category, Category):
+                pass  # Already a Category object
+            else:
+                # Convert from dict or other format
+                category_data = category if isinstance(category, dict) else asdict(category)
+                category = Category(**category_data)
+            
+            # Ensure we have a valid ID
+            if not category.id:
+                category.id = str(uuid.uuid4())
+            
+            # Create the category
+            created_category = await self.redis_category_repo.create(category)
+            if created_category:
+                print(f"✅ [SERVICE] Created category: {category.name} (ID: {category.id})")
+                return created_category
+            else:
+                print(f"❌ [SERVICE] Failed to create category: {category.name}")
+                return None
+        except Exception as e:
+            print(f"❌ [SERVICE] Error creating category: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    @run_async
+    def create_category_sync(self, category):
+        """Sync wrapper for create_category."""
+        return self.create_category(category)
+    
+    async def update_category(self, category):
+        """Update an existing category."""
+        try:
+            updated_category = await self.redis_category_repo.update(category)
+            print(f"✅ [SERVICE] Updated category: {category.name} (ID: {category.id})")
+            return updated_category
+        except Exception as e:
+            print(f"❌ [SERVICE] Error updating category: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    @run_async
+    def update_category_sync(self, category):
+        """Sync wrapper for update_category."""
+        return self.update_category(category)
+    
+    async def delete_category(self, category_id: str):
+        """Delete a category."""
+        try:
+            success = await self.redis_category_repo.delete(category_id)
+            if success:
+                print(f"✅ [SERVICE] Deleted category: {category_id}")
+            return success
+        except Exception as e:
+            print(f"❌ [SERVICE] Error deleting category {category_id}: {e}")
+            return False
+    
+    @run_async
+    def delete_category_sync(self, category_id: str):
+        """Sync wrapper for delete_category."""
+        return self.delete_category(category_id)
+    
+    async def find_or_create_category(self, category_name: str, parent_id: Optional[str] = None):
+        """Find existing category by name or create a new one."""
+        try:
+            category = await self.redis_category_repo.find_or_create(category_name, parent_id)
+            return category
+        except Exception as e:
+            print(f"❌ [SERVICE] Error in find_or_create_category for {category_name}: {e}")
+            return None
+    
+    @run_async
+    def find_or_create_category_sync(self, category_name: str, parent_id: Optional[str] = None):
+        """Sync wrapper for find_or_create_category."""
+        return self.find_or_create_category(category_name, parent_id)
+    
+    async def get_books_by_category(self, category_id: str, user_id: Optional[str] = None, include_subcategories: bool = True):
+        """Get all books associated with a category."""
+        try:
+            books_result = []
+            category_ids_to_check = [category_id]
+            
+            # If including subcategories, get all descendants
+            if include_subcategories:
+                category = await self.get_category_by_id(category_id)
+                if category:
+                    # Get all descendant categories recursively
+                    descendants = await self._get_category_descendants_recursive(category_id)
+                    category_ids_to_check.extend([desc.id for desc in descendants])
+            
+            print(f"🔍 [SERVICE] Checking {len(category_ids_to_check)} categories for books")
+            
+            # Get books for each category ID
+            for cat_id in category_ids_to_check:
+                print(f"🔍 [SERVICE] Looking for books in category {cat_id}")
+                
+                # Find books that have HAS_CATEGORY relationships to this category
+                # We need to scan through all book HAS_CATEGORY relationship keys
+                pattern = f"rel:book:*:HAS_CATEGORY"
+                keys = self.storage.redis.keys(pattern)
+                print(f"🔍 [SERVICE] Found {len(keys)} HAS_CATEGORY relationship keys")
+                
+                for key in keys:
+                    rel_strings = self.storage.redis.smembers(key)
+                    
+                    for rel_string in rel_strings:
+                        try:
+                            rel_data = json.loads(rel_string)
+                            
+                            # Check if this relationship points to our target category
+                            if rel_data.get('to_id') == cat_id:
+                                # Extract book_id from the key: rel:book:{book_id}:HAS_CATEGORY
+                                book_id = key.split(':')[2]
+                                print(f"✅ [SERVICE] Found book {book_id} in category {cat_id}")
+                                
+                                # Get the full book object
+                                book = await self.redis_book_repo.get_by_id(book_id)
+                                if book:
+                                    # If user_id is provided, check if user has this book and add user-specific data
+                                    if user_id:
+                                        user_book_relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
+                                        if user_book_relationship:
+                                            # Add user-specific attributes
+                                            setattr(book, 'reading_status', user_book_relationship.reading_status.value)
+                                            setattr(book, 'ownership_status', user_book_relationship.ownership_status.value)
+                                            setattr(book, 'start_date', user_book_relationship.start_date)
+                                            setattr(book, 'finish_date', user_book_relationship.finish_date)
+                                            setattr(book, 'user_rating', user_book_relationship.user_rating)
+                                            setattr(book, 'personal_notes', user_book_relationship.personal_notes)
+                                            setattr(book, 'date_added', user_book_relationship.date_added)
+                                            setattr(book, 'user_tags', user_book_relationship.user_tags)
+                                            setattr(book, 'locations', user_book_relationship.locations)
+                                            setattr(book, 'custom_metadata', user_book_relationship.custom_metadata or {})
+                                            books_result.append(book)
+                                            print(f"✅ [SERVICE] Added book {book.title} to category books (user has it)")
+                                        else:
+                                            print(f"⚠️ [SERVICE] User {user_id} doesn't have book {book.title}")
+                                    else:
+                                        # No user filter, include all books
+                                        books_result.append(book)
+                                        print(f"✅ [SERVICE] Added book {book.title} to category books (no user filter)")
+                                else:
+                                    print(f"❌ [SERVICE] Could not load book {book_id}")
+                        except json.JSONDecodeError:
+                            print(f"⚠️ [SERVICE] Invalid JSON in relationship: {rel_string}")
+                        except Exception as e:
+                            print(f"❌ [SERVICE] Error processing relationship: {e}")
+            
+            # Remove duplicates (book might be in multiple subcategories)
+            seen_book_ids = set()
+            unique_books = []
+            for book in books_result:
+                if book.id not in seen_book_ids:
+                    unique_books.append(book)
+                    seen_book_ids.add(book.id)
+            
+            print(f"📊 [SERVICE] Returning {len(unique_books)} books for category {category_id}")
+            return unique_books
+            
+        except Exception as e:
+            print(f"❌ [SERVICE] Error getting books by category {category_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    @run_async
+    def get_books_by_category_sync(self, category_id: str, user_id: Optional[str] = None, include_subcategories: bool = True):
+        """Sync wrapper for get_books_by_category."""
+        return self.get_books_by_category(category_id, user_id, include_subcategories)
+    
+    async def _get_category_descendants_recursive(self, category_id: str):
+        """Helper method to get all descendants of a category recursively."""
+        descendants = []
+        children = await self.redis_category_repo.get_children(category_id)
+        
+        for child in children:
+            descendants.append(child)
+            # Recursively get descendants of this child
+            child_descendants = await self._get_category_descendants_recursive(child.id)
+            descendants.extend(child_descendants)
+        
+        return descendants
+    
+    async def merge_categories(self, primary_category_id: str, merge_category_ids: List[str]):
+        """Merge multiple categories into one primary category."""
+        try:
+            merged_count = 0
+            
+            primary_category = await self.get_category_by_id(primary_category_id)
+            if not primary_category:
+                raise Exception(f"Primary category {primary_category_id} not found")
+            
+            for merge_id in merge_category_ids:
+                if merge_id == primary_category_id:
+                    continue  # Skip merging into itself
+                
+                try:
+                    merge_category = await self.get_category_by_id(merge_id)
+                    if not merge_category:
+                        continue
+                    
+                    # Move all book relationships from merge category to primary category
+                    book_relationships = self.storage.get_relationships('book', None, 'HAS_CATEGORY')
+                    for rel in book_relationships:
+                        if rel.get('to_id') == merge_id:
+                            book_id = rel.get('from_id')
+                            if book_id:
+                                # Remove old relationship
+                                self.storage.delete_relationship('book', book_id, 'HAS_CATEGORY', 'category', merge_id)
+                                # Create new relationship to primary category
+                                self.storage.create_relationship('book', book_id, 'HAS_CATEGORY', 'category', primary_category_id)
+                                print(f"✅ [SERVICE] Moved book {book_id} from category {merge_id} to {primary_category_id}")
+                    
+                    # Move all child categories to primary category (if hierarchical merge is desired)
+                    children = await self.redis_category_repo.get_children(merge_id)
+                    for child in children:
+                        child.parent_id = primary_category_id
+                        child.level = primary_category.level + 1
+                        await self.redis_category_repo.update(child)
+                        print(f"✅ [SERVICE] Moved child category {child.name} to primary category")
+                    
+                    # Delete the merged category
+                    await self.redis_category_repo.delete(merge_id)
+                    merged_count += 1
+                    
+                except Exception as e:
+                    print(f"❌ [SERVICE] Error merging category {merge_id}: {e}")
+                    continue
+            
+            if merged_count > 0:
+                print(f"✅ [SERVICE] Successfully merged {merged_count} categories into {primary_category.name}")
+            
+            return merged_count > 0
+            
+        except Exception as e:
+            print(f"❌ [SERVICE] Error merging categories: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    @run_async
+    def merge_categories_sync(self, primary_category_id: str, merge_category_ids: List[str]):
+        """Sync wrapper for merge_categories."""
+        return self.merge_categories(primary_category_id, merge_category_ids)
+    
+    async def get_book_categories(self, book_id: str) -> List[Category]:
+        """Get all categories for a book."""
+        try:
+            categories = []
+            seen_category_ids = set()
+            
+            # Get all HAS_CATEGORY relationships for this book
+            relationships = self.storage.get_relationships('book', book_id, 'HAS_CATEGORY')
+            print(f"📚 [SERVICE] Found {len(relationships)} category relationships for book {book_id}")
+            
+            for rel in relationships:
+                category_id = rel.get('to_id')
+                if category_id and category_id not in seen_category_ids:
+                    category = await self.get_category_by_id(category_id)
+                    if category:
+                        categories.append(category)
+                        seen_category_ids.add(category_id)
+                        print(f"✅ [SERVICE] Added category: {category.name}")
+                elif category_id in seen_category_ids:
+                    print(f"⚠️ [SERVICE] Skipping duplicate category relationship for {category_id}")
+            
+            print(f"📊 [SERVICE] Returning {len(categories)} Category objects")
+            return categories
+            
+        except Exception as e:
+            print(f"❌ [SERVICE] Error getting book categories: {e}")
+            traceback.print_exc()
+            return []
+    
+    @run_async
+    def get_book_categories_sync(self, book_id: str) -> List[Category]:
+        """Sync wrapper for get_book_categories."""
+        return self.get_book_categories(book_id)
+
+    async def process_book_categories(self, book_id: str, categories_data: Any) -> bool:
+        """Process and assign categories to a book from API data or CSV."""
+        try:
+            if not categories_data:
+                return True  # No categories to process
+            
+            # Handle different category data formats
+            categories_list = []
+            
+            if isinstance(categories_data, str):
+                # String format: "Fiction, Science Fiction, Adventure"
+                categories_list = [cat.strip() for cat in categories_data.split(',') if cat.strip()]
+            elif isinstance(categories_data, list):
+                # List format: ["Fiction", "Science Fiction", "Adventure"]
+                categories_list = [str(cat).strip() for cat in categories_data if str(cat).strip()]
+            else:
+                print(f"⚠️ [SERVICE] Unsupported categories format: {type(categories_data)}")
+                return True  # Don't fail the import for unsupported formats
+            
+            print(f"📚 [SERVICE] Processing {len(categories_list)} categories for book {book_id}: {categories_list}")
+            
+            # Process each category
+            for category_name in categories_list:
+                if not category_name:
+                    continue
+                    
+                try:
+                    # Find or create the category
+                    category = await self.find_or_create_category(category_name)
+                    if category:
+                        # Check if relationship already exists
+                        existing_relationships = self.storage.get_relationships('book', book_id, 'HAS_CATEGORY')
+                        relationship_exists = any(
+                            rel.get('to_id') == category.id 
+                            for rel in existing_relationships
+                        )
+                        
+                        if not relationship_exists:
+                            # Create relationship between book and category
+                            relationship_created = self.storage.create_relationship(
+                                'book', book_id, 'HAS_CATEGORY', 'category', category.id
+                            )
+                            if relationship_created:
+                                print(f"✅ [SERVICE] Linked book {book_id} to category '{category_name}' (ID: {category.id})")
+                                
+                                # Update category book count
+                                try:
+                                    await self.redis_category_repo.increment_book_count(category.id)
+                                    print(f"📊 [SERVICE] Incremented book count for category '{category_name}'")
+                                except Exception as count_error:
+                                    print(f"⚠️ [SERVICE] Failed to update book count for category '{category_name}': {count_error}")
+                            else:
+                                print(f"⚠️ [SERVICE] Failed to create relationship for category '{category_name}'")
+                        else:
+                            print(f"ℹ️ [SERVICE] Relationship already exists for book {book_id} and category '{category_name}' (ID: {category.id})")
+                    else:
+                        print(f"❌ [SERVICE] Failed to find or create category '{category_name}'")
+                        
+                except Exception as e:
+                    print(f"❌ [SERVICE] Error processing category '{category_name}': {e}")
+                    # Continue with other categories even if one fails
+                    continue
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ [SERVICE] Error processing book categories: {e}")
+            traceback.print_exc()
+            return False
+    
+    @run_async
+    def process_book_categories_sync(self, book_id: str, categories_data: Any) -> bool:
+        """Sync wrapper for process_book_categories."""
+        return self.process_book_categories(book_id, categories_data)
+    
 
 class RedisUserService:
     """Service for managing users using Redis as the sole data store."""
@@ -1138,7 +1658,7 @@ class RedisUserService:
     def get_all_users_sync(self) -> List[User]:
         """Sync wrapper for get_all_users."""
         return self.get_all_users()
-    
+
 
 class RedisReadingLogService:
     """Service for managing reading logs using Redis as the sole data store."""
@@ -1200,16 +1720,10 @@ class RedisCustomFieldService:
     async def get_user_fields_with_calculated_usage(self, user_id: str) -> List[CustomFieldDefinition]:
         """Get user's custom fields with calculated usage statistics."""
         try:
-            user_fields = await self.custom_field_repo.get_by_user(user_id)
-            
-            # For now, return fields with zero usage count since we don't have usage tracking implemented
-            # This can be enhanced later to actually calculate usage from books
-            for field in user_fields:
-                field.usage_count = 0
-            
-            return user_fields
+            fields = await self.custom_field_repo.get_by_user(user_id)
+            return fields
         except Exception as e:
-            print(f"❌ [SERVICE] Error getting user fields with usage: {e}")
+            print(f"❌ [CUSTOM_FIELD_SERVICE] Error getting user fields: {e}")
             return []
 
     @run_async
@@ -1220,16 +1734,10 @@ class RedisCustomFieldService:
     async def get_shareable_fields_with_calculated_usage(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
         """Get shareable custom fields with calculated usage statistics."""
         try:
-            shareable_fields = await self.custom_field_repo.get_shareable(exclude_user_id=exclude_user_id)
-            
-            # For now, return fields with zero usage count since we don't have usage tracking implemented
-            # This can be enhanced later to actually calculate usage from books
-            for field in shareable_fields:
-                field.usage_count = 0
-            
-            return shareable_fields
+            fields = await self.custom_field_repo.get_shareable(exclude_user_id=exclude_user_id)
+            return fields
         except Exception as e:
-            print(f"❌ [SERVICE] Error getting shareable fields with usage: {e}")
+            print(f"❌ [CUSTOM_FIELD_SERVICE] Error getting shareable fields: {e}")
             return []
 
     @run_async
@@ -1238,30 +1746,8 @@ class RedisCustomFieldService:
         return self.get_shareable_fields_with_calculated_usage(exclude_user_id)
 
     def get_custom_metadata_for_display(self, metadata: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Format custom metadata for display in templates."""
-        if not metadata:
-            return []
-        
-        display_items = []
-        for field_name, value in metadata.items():
-            # Convert field name to display format
-            display_name = field_name.replace('_', ' ').title()
-            
-            # Format the value for display
-            if isinstance(value, bool):
-                display_value = "Yes" if value else "No"
-            elif value is None:
-                display_value = "-"
-            else:
-                display_value = str(value)
-            
-            display_items.append({
-                'name': field_name,
-                'display_name': display_name,
-                'value': display_value
-            })
-        
-        return display_items
+        """Convert custom metadata to display format."""
+        return []
 
 
 class RedisImportMappingService:
@@ -1278,8 +1764,11 @@ class RedisImportMappingService:
     
     async def get_templates_for_user(self, user_id: str):
         """Get import mapping templates for a user."""
-        # Basic implementation - can be expanded later
-        return []
+        try:
+            return await self.import_mapping_repo.get_by_user(user_id)
+        except Exception as e:
+            print(f"❌ [IMPORT_MAPPING_SERVICE] Error getting templates for user: {e}")
+            return []
     
     @run_async
     def get_templates_for_user_sync(self, user_id: str):
@@ -1287,7 +1776,7 @@ class RedisImportMappingService:
         return self.get_templates_for_user(user_id)
     
     async def get_user_templates(self, user_id: str):
-        """Get import mapping templates for a user (alias for get_templates_for_user)."""
+        """Get user templates (alias for get_templates_for_user)."""
         return await self.get_templates_for_user(user_id)
 
     @run_async
@@ -1295,57 +1784,74 @@ class RedisImportMappingService:
         """Sync wrapper for get_user_templates."""
         return self.get_user_templates(user_id)
     
-    async def get_template_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
-        """Get an import mapping template by its ID."""
-        return await self.import_mapping_repo.get_by_id(template_id)
-
-    @run_async
-    def get_template_by_id_sync(self, template_id: str) -> Optional[ImportMappingTemplate]:
-        """Sync wrapper for get_template_by_id."""
-        return self.get_template_by_id(template_id)
-
-    async def create_template(self, template: ImportMappingTemplate):
+    async def create_template(self, template):
         """Create a new import mapping template."""
         try:
-            # Generate ID if not provided
-            if not template.id:
-                template.id = str(uuid.uuid4())
-            
-            # Store template data in Redis
-            template_data = template.to_dict()
-            template_key = f"import_template:{template.id}"
-            
-            # Store the template
-            self.storage.store_node('import_template', template.id, template_data)
-            print(f"✅ [SERVICE] Created import template: {template.name}")
-            return template
+            return await self.import_mapping_repo.create(template)
         except Exception as e:
-            print(f"❌ [SERVICE] Error creating import template: {e}")
+            print(f"❌ [IMPORT_MAPPING_SERVICE] Error creating template: {e}")
             return None
     
     @run_async
-    def create_template_sync(self, template: ImportMappingTemplate):
+    def create_template_sync(self, template):
         """Sync wrapper for create_template."""
         return self.create_template(template)
-
+    
+    async def get_template_by_id(self, template_id: str):
+        """Get import mapping template by ID."""
+        try:
+            return await self.import_mapping_repo.get_by_id(template_id)
+        except Exception as e:
+            print(f"❌ [IMPORT_MAPPING_SERVICE] Error getting template by ID: {e}")
+            return None
+    
+    @run_async
+    def get_template_by_id_sync(self, template_id: str):
+        """Sync wrapper for get_template_by_id."""
+        return self.get_template_by_id(template_id)
+    
+    async def update_template(self, template):
+        """Update an existing import mapping template."""
+        try:
+            return await self.import_mapping_repo.update(template)
+        except Exception as e:
+            print(f"❌ [IMPORT_MAPPING_SERVICE] Error updating template: {e}")
+            return None
+    
+    @run_async
+    def update_template_sync(self, template):
+        """Sync wrapper for update_template."""
+        return self.update_template(template)
+    
     async def delete_template(self, template_id: str):
         """Delete an import mapping template."""
         try:
-            self.storage.delete_node('import_template', template_id)
-            print(f"✅ [SERVICE] Deleted import template: {template_id}")
-            return True
+            return await self.import_mapping_repo.delete(template_id)
         except Exception as e:
-            print(f"❌ [SERVICE] Error deleting import template: {e}")
+            print(f"❌ [IMPORT_MAPPING_SERVICE] Error deleting template: {e}")
             return False
-
+    
     @run_async
     def delete_template_sync(self, template_id: str):
         """Sync wrapper for delete_template."""
         return self.delete_template(template_id)
     
+    async def detect_template(self, headers: list, user_id: str):
+        """Detect matching template based on CSV headers."""
+        try:
+            return await self.import_mapping_repo.detect_template(headers, user_id)
+        except Exception as e:
+            print(f"❌ [IMPORT_MAPPING_SERVICE] Error detecting template: {e}")
+            return None
+    
+    @run_async
+    def detect_template_sync(self, headers: list, user_id: str):
+        """Sync wrapper for detect_template."""
+        return self.detect_template(headers, user_id)
+
 
 class RedisDirectImportService:
-    """Service for managing direct imports using Redis as the sole data store."""
+    """Service for direct import operations using Redis as the sole data store."""
     
     def __init__(self):
         self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
@@ -1354,49 +1860,48 @@ class RedisDirectImportService:
             raise RuntimeError("Redis must be enabled for this version of Bibliotheca")
             
         self.storage = get_graph_storage()
-        self.book_service = RedisBookService()
-        self.custom_field_service = RedisCustomFieldService()
-    
-    async def process_import(self, user_id: str, import_data: dict):
-        """Process a direct import."""
-        # Basic implementation - can be expanded later
-        return {"status": "not_implemented"}
-    
-    @run_async
-    def process_import_sync(self, user_id: str, import_data: dict):
-        """Sync wrapper for process_import."""
-        return self.process_import(user_id, import_data)
 
-    def get_user_custom_fields(self, user_id: str) -> List[Tuple[str, bool]]:
-        """
-        Get a list of custom field names and their global status for a user.
-        This is a synchronous wrapper for use in routes.
-        """
+
+def _parse_date_with_fallbacks(date_str: str, field_name: str = "date") -> Optional[date]:
+    """Parse date string with multiple format fallbacks."""
+    if not date_str or not isinstance(date_str, str):
+        return None
+    
+    date_str = date_str.strip()
+    if not date_str:
+        return None
+    
+    # List of date formats to try (most specific first)
+    date_formats = [
+        '%Y-%m-%d',      # 2023-12-25
+        '%Y/%m/%d',      # 2023/12/25
+        '%m/%d/%Y',      # 12/25/2023
+        '%d/%m/%Y',      # 25/12/2023
+        '%Y-%m',         # 2023-12
+        '%Y/%m',         # 2023/12
+        '%m/%Y',         # 12/2023
+        '%Y',            # 2023
+        '%B %d, %Y',     # December 25, 2023
+        '%b %d, %Y',     # Dec 25, 2023
+        '%d %B %Y',      # 25 December 2023
+        '%d %b %Y',      # 25 Dec 2023
+    ]
+    
+    for date_format in date_formats:
         try:
-            # Get both personal and global fields
-            personal_fields = self.custom_field_service.get_available_fields_sync(user_id, is_global=False)
-            global_fields = self.custom_field_service.get_available_fields_sync(user_id, is_global=True)
+            parsed_date = datetime.strptime(date_str, date_format)
             
-            # Combine and return with their global status
-            result = []
-            result.extend([(f.name, False) for f in personal_fields])
-            result.extend([(f.name, True) for f in global_fields])
-            return result
-        except Exception as e:
-            current_app.logger.error(f"Error in get_user_custom_fields: {e}")
-            return []
-
-    def _detect_and_parse_date(self, date_str: Optional[str], field_name: str = "date") -> Optional[datetime]:
-        """Detect and parse a date string into a datetime object."""
-        if not date_str:
-            return None
-        
-        # Try parsing the date string using common formats
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y", "%Y%m%d"):
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
+            # If only year was provided, default to January 1st
+            if date_format == '%Y':
+                return date(parsed_date.year, 1, 1)
+            # If only year and month, default to 1st of month
+            elif date_format in ['%Y-%m', '%Y/%m', '%m/%Y']:
+                return date(parsed_date.year, parsed_date.month, 1)
+            else:
+                return parsed_date.date()
+                
+        except ValueError:
+            continue
         
         # If parsing failed, log and return None
         current_app.logger.warning(f"Invalid date format for {field_name}: {date_str}")

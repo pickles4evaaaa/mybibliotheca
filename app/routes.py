@@ -371,7 +371,7 @@ def library():
     if category_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.categories and category_filter.lower() in book.categories.lower()
+            if book.categories and any(category_filter.lower() in cat.name.lower() for cat in book.categories if hasattr(cat, 'name'))
         ]
 
     # Books are already in the right format for the template
@@ -386,7 +386,8 @@ def library():
 
     for book in all_books:
         if book.categories:
-            categories.update([cat.strip() for cat in book.categories.split(',')])
+            # book.categories is a list of Category objects, not a string
+            categories.update([cat.name for cat in book.categories if hasattr(cat, 'name')])
         if book.publisher:
             # Handle Publisher domain object or string
             publisher_name = book.publisher.name if hasattr(book.publisher, 'name') else str(book.publisher)
@@ -461,6 +462,28 @@ def edit_book(uid):
                     if index_part not in contributor_data:
                         contributor_data[index_part] = {}
                     contributor_data[index_part][field] = value
+        
+        # Process categories
+        categories = []
+        category_data = {}
+        
+        # Parse category form data
+        for key, value in request.form.items():
+            if key.startswith('categories[') and '][' in key:
+                # Extract index and field from key like "categories[0][name]"
+                parts = key.split('][')
+                if len(parts) == 2:
+                    index_part = parts[0].replace('categories[', '')
+                    field = parts[1].replace(']', '')
+                    
+                    if index_part not in category_data:
+                        category_data[index_part] = {}
+                    category_data[index_part][field] = value
+        
+        # Create category list for processing
+        for cat_data in category_data.values():
+            if cat_data.get('name'):
+                categories.append(cat_data['name'])  # Just pass the name, service will handle creation/linking
         
         # Create BookContribution objects
         for contrib in contributor_data.values():
@@ -573,13 +596,14 @@ def edit_book(uid):
             'cover_url': request.form.get('cover_url', '').strip() or None,
             'isbn13': new_isbn13,
             'isbn10': new_isbn10,
-            'contributors': contributors
+            'contributors': contributors,
+            'raw_categories': ','.join(categories) if categories else None  # Add categories to update
         }
         
         # Remove None values except for specific fields
         filtered_data = {}
         for k, v in update_data.items():
-            if k in ['contributors'] or v is not None:
+            if k in ['contributors', 'raw_categories'] or v is not None:
                 filtered_data[k] = v
         
         success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
@@ -589,7 +613,14 @@ def edit_book(uid):
             flash('Failed to update book.', 'error')
         return redirect(url_for('main.view_book', uid=uid))
         
-    return render_template('edit_book_enhanced.html', book=user_book)
+    # Get book categories for editing
+    book_categories = []
+    try:
+        book_categories = book_service.get_book_categories_sync(user_book.id)
+    except Exception as e:
+        print(f"❌ [EDIT] Error loading book categories: {e}")
+    
+    return render_template('edit_book_enhanced.html', book=user_book, book_categories=book_categories)
 
 
 @bp.route('/book/<uid>/enhanced')
@@ -608,6 +639,17 @@ def view_book_enhanced(uid):
     if hasattr(user_book, 'custom_metadata'):
         print(f"📋 [VIEW] User book custom_metadata content: {user_book.custom_metadata}")
         print(f"📊 [VIEW] User book custom_metadata type: {type(user_book.custom_metadata)}")
+
+    # Get book categories
+    book_categories = []
+    try:
+        print(f"🗂️ [VIEW] Fetching categories for book {user_book.id}")
+        book_categories = book_service.get_book_categories_sync(user_book.id)
+        print(f"📚 [VIEW] Found {len(book_categories)} categories")
+    except Exception as e:
+        print(f"❌ [VIEW] Error loading book categories: {e}")
+        import traceback
+        traceback.print_exc()
 
     # Get custom metadata for display
     global_metadata_display = []
@@ -637,6 +679,7 @@ def view_book_enhanced(uid):
     return render_template(
         'view_book_enhanced.html', 
         book=user_book,
+        book_categories=book_categories,
         global_metadata_display=global_metadata_display,
         personal_metadata_display=personal_metadata_display
     )
@@ -1026,7 +1069,7 @@ def add_book_from_search():
         description=description,
         published_date=_convert_published_date_to_date(published_date),
         page_count=page_count,
-        categories=categories.split(',') if categories else [],
+        raw_categories=categories,  # Use raw_categories instead of processing here
         publisher=Publisher(name=publisher) if publisher else None,
         language=language,
         average_rating=average_rating,
@@ -1035,7 +1078,7 @@ def add_book_from_search():
     
     # Use the service to create the book
     try:
-        created_book = book_service.create_book_sync(domain_book)
+        created_book = book_service.find_or_create_book_sync(domain_book)
         # Add to user's library
         book_service.add_book_to_user_library_sync(
             user_id=current_user.id,
@@ -1401,7 +1444,7 @@ def search_books_in_library():
     if category_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.categories and category_filter.lower() in book.categories.lower()
+            if book.categories and any(category_filter.lower() in cat.name.lower() for cat in book.categories if hasattr(cat, 'name'))
         ]
 
     # Books are already in the right format for the template
@@ -1416,7 +1459,8 @@ def search_books_in_library():
 
     for book in all_books:
         if book.categories:
-            categories.update([cat.strip() for cat in book.categories.split(',')])
+            # book.categories is a list of Category objects, not a string
+            categories.update([cat.name for cat in book.categories if hasattr(cat, 'name')])
         if book.publisher:
             # Handle Publisher domain object or string
             publisher_name = book.publisher.name if hasattr(book.publisher, 'name') else str(book.publisher)
@@ -1465,6 +1509,8 @@ def add_book_manual():
     isbn = request.form.get('isbn', '').strip()
     author = request.form.get('author', '').strip()
     cover_url = request.form.get('cover_url', '').strip()
+    genre = request.form.get('genre', '').strip()
+    publisher_name = request.form.get('publisher', '').strip()
     
     # Normalize ISBN by extracting digits only
     normalized_isbn = None
@@ -1475,6 +1521,13 @@ def add_book_manual():
             print(f"📚 [MANUAL] Normalized ISBN: {isbn} -> {normalized_isbn}")
         else:
             print(f"⚠️ [MANUAL] Could not normalize ISBN: {isbn}")
+    
+    # Process manual genre input
+    manual_categories = []
+    if genre:
+        # Split by comma and clean up
+        manual_categories = [cat.strip() for cat in genre.split(',') if cat.strip()]
+        print(f"📚 [MANUAL] Manual categories: {manual_categories}")
     
     start_date_str = request.form.get('start_date') or None
     finish_date_str = request.form.get('finish_date') or None
@@ -1561,6 +1614,30 @@ def add_book_manual():
                 publisher = ol_data.get('publisher')
                 language = ol_data.get('language')
 
+    # Combine API categories with manual categories
+    final_categories = []
+    if categories:
+        if isinstance(categories, list):
+            final_categories.extend(categories)
+        elif isinstance(categories, str):
+            final_categories.append(categories)
+    
+    # Add manual categories
+    final_categories.extend(manual_categories)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_categories = []
+    for cat in final_categories:
+        if cat not in seen:
+            unique_categories.append(cat)
+            seen.add(cat)
+    
+    print(f"📚 [MANUAL] Final categories (API + manual): {unique_categories}")
+    
+    # Use manual publisher if provided, otherwise use API publisher
+    final_publisher = publisher_name or publisher
+
     try:
         # Create contributors from author data
         contributors = []
@@ -1617,14 +1694,21 @@ def add_book_manual():
             average_rating=average_rating,
             rating_count=rating_count,
             contributors=contributors,
-            publisher=Publisher(id=str(uuid.uuid4()), name=publisher) if publisher else None,
-            categories=[],  # TODO: Parse categories
+            publisher=Publisher(id=str(uuid.uuid4()), name=final_publisher) if final_publisher else None,
+            categories=unique_categories or [],  # Use final combined categories
+            raw_categories=unique_categories,  # Store raw categories for processing
             created_at=datetime.now(),
             updated_at=datetime.now()
         )
         
         # Use find_or_create_book to avoid duplicates (global)
         existing_book = book_service.find_or_create_book_sync(domain_book)
+        
+        # Categories are already processed by find_or_create_book_sync, no need to process again
+        if unique_categories:
+            print(f"📚 [MANUAL] Categories already processed during book creation: {unique_categories}")
+        else:
+            print(f"📚 [MANUAL] No categories found for book {title}")
         
         # Add to user's library with custom metadata
         book_service.add_book_to_user_library_sync(
@@ -2234,8 +2318,8 @@ def auto_detect_fields(headers, user_id=None):
         elif any(word in header_lower for word in ['date added', 'added']):
             mappings[header] = 'date_added'
         
-        # Categories/genres - handle Goodreads bookshelves
-        elif any(word in header_lower for word in ['genre', 'category', 'tag', 'subject', 'bookshelves']) and 'positions' not in header_lower:
+        # Categories/genres - exclude Goodreads bookshelves (reading statuses)
+        elif any(word in header_lower for word in ['genre', 'category', 'tag', 'subject']) and 'positions' not in header_lower:
             mappings[header] = 'categories'
         
         # Language
@@ -2548,6 +2632,7 @@ def start_import_job(task_id):
                     published_date = None
                     google_data = None  # Initialize google_data
                     ol_data = None  # Initialize ol_data
+                    api_categories = None  # Initialize categories from API
                     
                     # Override with API data if available (prioritize API data for richer metadata)
                     # Use the cleaned ISBN for API calls
@@ -2580,6 +2665,10 @@ def start_import_job(task_id):
                                 average_rating = google_data.get('average_rating')
                                 rating_count = google_data.get('rating_count')
                                 published_date = google_data.get('published_date')
+                                # Extract categories from Google Books
+                                api_categories = google_data.get('categories')
+                                if api_categories:
+                                    print(f"Got categories from Google Books: {api_categories}")
                                 if cover_url:
                                     print(f"Got cover URL from Google: {cover_url}")
                             else:
@@ -2604,10 +2693,20 @@ def start_import_job(task_id):
                                     page_count = page_count or ol_data.get('page_count')
                                     language = language or ol_data.get('language', 'en')
                                     published_date = published_date or ol_data.get('published_date')
+                                    # Extract categories from OpenLibrary (if not already from Google)
+                                    if not api_categories:
+                                        api_categories = ol_data.get('categories')
+                                        if api_categories:
+                                            print(f"Got categories from OpenLibrary: {api_categories}")
                         except Exception as api_error:
                             print(f"Error fetching metadata for ISBN {api_isbn}: {api_error}")
                     else:
                         print("No valid ISBN available for API lookup")
+                    
+                    # Determine final categories to use (prioritize CSV then API)
+                    final_categories = book_data.get('categories') or api_categories
+                    if final_categories:
+                        print(f"Final categories to process: {final_categories}")
                     
                     # Rebuild authors list with updated author data
                     # Build contributors from author data with deduplication
@@ -2753,6 +2852,7 @@ def start_import_job(task_id):
                         average_rating=average_rating,
                         rating_count=rating_count,
                         published_date=_convert_published_date_to_date(published_date),
+                        raw_categories=final_categories,  # Use raw_categories for processing
                         custom_metadata=global_custom_metadata,  # Add global custom metadata
                         created_at=datetime.now(),
                         updated_at=datetime.now()
@@ -4161,8 +4261,8 @@ def get_goodreads_field_mappings():
         'Original Publication Year': 'custom_global_original_publication_year',
         'Date Read': 'date_read',
         'Date Added': 'date_added',
-        'Bookshelves': 'categories',
-        'Bookshelves with positions': 'categories',
+        'Bookshelves': 'reading_status',  # Fixed: Goodreads bookshelves are reading statuses, not categories
+        'Bookshelves with positions': 'reading_status',  # Fixed: These are also reading statuses
         'Exclusive Shelf': 'reading_status',
         'My Review': 'notes',
         'Spoiler': 'custom_global_spoiler_review',
@@ -4187,7 +4287,7 @@ def get_storygraph_field_mappings():
         'Tags': 'categories',
         'Review': 'notes',  # Fixed: StoryGraph uses "Review" not "My Review"
         'Format': 'custom_global_format',
-        'Moods': 'custom_global_moods',
+        'Moods': 'categories',  # Fixed: Moods contain genre-like descriptors that work well as categories
         'Pace': 'custom_global_pace',
         'Character- or Plot-Driven?': 'custom_global_character_plot_driven',
         'Strong Character Development?': 'custom_global_strong_character_development',

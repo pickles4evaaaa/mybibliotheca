@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Add Genre/Category{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8">
+            <h2>Add New Genre/Category</h2>
+            
+            <form method="POST" action="{{ url_for('genres.add_category') }}">
+                <div class="mb-3">
+                    <label for="name" class="form-label">Category Name</label>
+                    <input type="text" class="form-control" id="name" name="name" required>
+                    <div class="form-text">Enter a descriptive name for the genre/category.</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="parent_id" class="form-label">Parent Category (Optional)</label>
+                    <select class="form-control" id="parent_id" name="parent_id">
+                        <option value="">-- None (Top Level) --</option>
+                        {% for category in categories %}
+                        <option value="{{ category.id }}">{{ category.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Select a parent category to create a subcategory.</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="description" class="form-label">Description (Optional)</label>
+                    <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                    <div class="form-text">Optional description for this category.</div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Add Category</button>
+                <a href="{{ url_for('genres.index') }}" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>💡 Tips</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="list-unstyled">
+                        <li><strong>📚 Automatic Detection:</strong> Categories are automatically created when books are imported from Google Books or OpenLibrary.</li>
+                        <li><strong>🗂️ Hierarchy:</strong> You can create subcategories by selecting a parent category.</li>
+                        <li><strong>🔍 Examples:</strong> Fiction → Science Fiction → Space Opera</li>
+                        <li><strong>📖 Common Genres:</strong> Fiction, Non-Fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

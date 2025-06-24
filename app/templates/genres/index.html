@@ -1,0 +1,713 @@
+{% extends "base.html" %}
+
+{% block title %}Genres & Categories - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <!-- Page Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2 mb-0">
+                    <i class="bi bi-tags-fill me-2"></i>Genres & Categories
+                </h1>
+                <div>
+                    <a href="{{ url_for('genres.test_auto_mapping') }}" class="btn btn-outline-primary me-2" title="Test automatic genre mapping">
+                        <i class="bi bi-lightning"></i> Test Auto-Mapping
+                    </a>
+                    <a href="{{ url_for('genres.add_category') }}" class="btn btn-success me-2">
+                        <i class="bi bi-plus-circle"></i> Add Category
+                    </a>
+                    <a href="{{ url_for('genres.hierarchy_view') }}" class="btn btn-info me-2">
+                        <i class="bi bi-diagram-3"></i> Hierarchy View
+                    </a>
+                    <a href="{{ url_for('genres.merge_categories') }}" class="btn btn-warning">
+                        <i class="bi bi-arrow-down-up"></i> Merge Categories
+                    </a>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" 
+                               class="form-control" 
+                               id="categorySearch" 
+                               placeholder="Search categories..."
+                               onkeyup="filterCategories()">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center">
+                        <label class="form-label me-2 mb-0">View:</label>
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="viewType" id="cardView" checked onclick="toggleView('card')">
+                            <label class="btn btn-outline-primary" for="cardView">
+                                <i class="bi bi-grid-3x2"></i> Cards
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="viewType" id="listView" onclick="toggleView('list')">
+                            <label class="btn btn-outline-primary" for="listView">
+                                <i class="bi bi-list"></i> List
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="viewType" id="treeView" onclick="toggleView('tree')">
+                            <label class="btn btn-outline-primary" for="treeView">
+                                <i class="bi bi-diagram-2"></i> Tree
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics Summary -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <h3 class="text-primary">{{ categories|length }}</h3>
+                            <p class="mb-0">Total Categories</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <h3 class="text-success">{{ root_categories|length }}</h3>
+                            <p class="mb-0">Root Categories</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <h3 class="text-info">{{ categories|selectattr('book_count')|sum(attribute='book_count') }}</h3>
+                            <p class="mb-0">Total Books</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <h3 class="text-warning">{{ categories|selectattr('level', 'greaterthan', 0)|list|length }}</h3>
+                            <p class="mb-0">Subcategories</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Selection Toolbar (hidden by default) -->
+            <!-- Selection toolbar -->
+            <div id="selection-toolbar" class="selection-toolbar" style="display: none;">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <span id="selection-count">0</span> category(ies) selected
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-outline-light btn-sm" onclick="selectAll()">Select All</button>
+                        <button type="button" class="btn btn-outline-light btn-sm" onclick="clearSelection()">Clear Selection</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="bulkDeleteCategories()">Delete Selected</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Categories Content -->
+            <div class="categories-container">
+                {% if categories %}
+                    <!-- Card View -->
+                    <div id="cardViewContainer">
+                        <div class="row">
+                            <!-- Select All -->
+                            <div class="col-12 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()">
+                                    <label class="form-check-label" for="selectAllCheckbox">
+                                        Select All
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            {% for category in categories %}
+                            <div class="col-lg-3 col-md-4 col-sm-6 mb-4 category-card" 
+                                 data-name="{{ category.name | lower }}" 
+                                 data-description="{{ category.description | lower if category.description else '' }}" 
+                                 data-category-id="{{ category.id }}">
+                                <div class="card h-100 {% if category.level > 0 %}border-start border-3{% endif %}" 
+                                     {% if category.color %}style="border-left-color: {{ category.color }} !important;"{% endif %}>
+                                    <!-- Selection checkbox -->
+                                    <div class="position-absolute top-0 end-0 p-2" style="z-index: 10;">
+                                        <input type="checkbox" class="form-check-input category-checkbox" value="{{ category.id }}" data-book-count="{{ category.book_count }}">
+                                    </div>
+                                    
+                                    <div class="card-body" onclick="openCategory('{{ category.id }}')">
+                                        <h5 class="card-title d-flex align-items-center">
+                                            {% if category.icon %}
+                                                <span class="me-2">{{ category.icon }}</span>
+                                            {% else %}
+                                                <i class="bi bi-tag me-2"></i>
+                                            {% endif %}
+                                            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+                                                {{ category.name }}
+                                            </a>
+                                        </h5>
+                                        
+                                        <!-- Level indicator -->
+                                        {% if category.level > 0 %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">
+                                                {% for i in range(category.level) %}
+                                                    <i class="bi bi-chevron-right"></i>
+                                                {% endfor %}
+                                                Level {{ category.level }}
+                                            </small>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        {% if category.description %}
+                                        <p class="card-text text-muted small">
+                                            {{ category.description[:100] }}
+                                            {% if category.description | length > 100 %}...{% endif %}
+                                        </p>
+                                        {% endif %}
+                                        
+                                        <!-- Aliases -->
+                                        {% if category.aliases %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Also known as:</small>
+                                            <div class="aliases">
+                                                {% for alias in category.aliases[:3] %}
+                                                <span class="badge bg-light text-dark border me-1">{{ alias }}</span>
+                                                {% endfor %}
+                                                {% if category.aliases|length > 3 %}
+                                                <small class="text-muted">+{{ category.aliases|length - 3 }} more</small>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        <div class="row text-center small text-muted">
+                                            <div class="col-6">
+                                                <strong>{{ category.book_count }}</strong>
+                                                <div>Books</div>
+                                            </div>
+                                            <div class="col-6">
+                                                <strong>{{ category.children|length if category.children else 0 }}</strong>
+                                                <div>Children</div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Actions -->
+                                        <div class="mt-3 d-flex justify-content-between">
+                                            <div class="btn-group btn-group-sm">
+                                                <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="btn btn-sm btn-outline-primary">
+                                                    <i class="bi bi-eye"></i> View
+                                                </a>
+                                                <div class="btn-group">
+                                                    <a href="{{ url_for('genres.edit_category', category_id=category.id) }}" class="btn btn-sm btn-outline-secondary">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </a>
+                                                    {% if category.book_count == 0 and (not category.children or category.children|length == 0) %}
+                                                    <form method="POST" action="{{ url_for('genres.delete_category', category_id=category.id) }}" 
+                                                          class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ category.name }}?')">
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </form>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <!-- List View -->
+                    <div id="listViewContainer" class="d-none">
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="selectAllCheckboxList" onchange="toggleSelectAll()">
+                                    <label class="form-check-label" for="selectAllCheckboxList">
+                                        <strong>Select All Categories</strong>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th width="40"></th>
+                                            <th>Category</th>
+                                            <th>Level</th>
+                                            <th>Books</th>
+                                            <th>Children</th>
+                                            <th>Description</th>
+                                            <th width="120">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for category in categories %}
+                                        <tr class="category-row" data-name="{{ category.name | lower }}" data-category-id="{{ category.id }}">
+                                            <td>
+                                                <input type="checkbox" class="form-check-input category-checkbox" value="{{ category.id }}" data-book-count="{{ category.book_count }}">
+                                            </td>
+                                            <td>
+                                                <div class="d-flex align-items-center">
+                                                    {% if category.level > 0 %}
+                                                        <span class="me-2 text-muted">
+                                                            {% for i in range(category.level) %}
+                                                                <i class="bi bi-chevron-right"></i>
+                                                            {% endfor %}
+                                                        </span>
+                                                    {% endif %}
+                                                    {% if category.icon %}
+                                                        <span class="me-2">{{ category.icon }}</span>
+                                                    {% else %}
+                                                        <i class="bi bi-tag me-2"></i>
+                                                    {% endif %}
+                                                    <strong>{{ category.name }}</strong>
+                                                    {% if category.color %}
+                                                        <div class="ms-2 color-indicator" style="background-color: {{ category.color }};"></div>
+                                                    {% endif %}
+                                                </div>
+                                                {% if category.aliases %}
+                                                <div class="mt-1">
+                                                    <small class="text-muted">
+                                                        Aliases: {{ category.aliases[:2]|join(', ') }}
+                                                        {% if category.aliases|length > 2 %}+{{ category.aliases|length - 2 }} more{% endif %}
+                                                    </small>
+                                                </div>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-secondary">{{ category.level }}</span>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-primary">{{ category.book_count }}</span>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-info">{{ category.children|length if category.children else 0 }}</span>
+                                            </td>
+                                            <td>
+                                                <small class="text-muted">
+                                                    {{ category.description[:50] if category.description else '-' }}
+                                                    {% if category.description and category.description|length > 50 %}...{% endif %}
+                                                </small>
+                                            </td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm">
+                                                    <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="btn btn-sm btn-outline-primary">
+                                                        <i class="bi bi-eye"></i>
+                                                    </a>
+                                                    <a href="{{ url_for('genres.edit_category', category_id=category.id) }}" class="btn btn-sm btn-outline-secondary">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </a>
+                                                    {% if category.book_count == 0 and (not category.children or category.children|length == 0) %}
+                                                    <form method="POST" action="{{ url_for('genres.delete_category', category_id=category.id) }}" 
+                                                          class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ category.name }}?')">
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </form>
+                                                    {% endif %}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tree View -->
+                    <div id="treeViewContainer" class="d-none">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="tree-view">
+                                    {% for root_category in root_categories %}
+                                        {% include 'genres/_category_tree_node.html' %}
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-tags display-1 text-muted"></i>
+                        <h3 class="mt-3">No Categories Yet</h3>
+                        <p class="text-muted">Start organizing your books by creating categories and genres.</p>
+                        <a href="{{ url_for('genres.add_category') }}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Add Your First Category
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Delete Form -->
+<form id="bulk-delete-form" method="POST" action="{{ url_for('genres.bulk_delete_categories') }}" style="display: none;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+</form>
+
+<!-- Custom Confirmation Modal -->
+<div id="deleteConfirmationModal" class="modal fade" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                    Confirm Deletion
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="deletion-summary"></div>
+                
+                <!-- Options for categories with books or children -->
+                <div id="deletion-options" style="display: none;">
+                    <hr>
+                    <h6><i class="bi bi-gear"></i> Deletion Options:</h6>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="forceDelete">
+                        <label class="form-check-label" for="forceDelete">
+                            <strong>Force delete</strong> (remove categories even if they have books or children)
+                            <br><small class="text-muted">Warning: This will remove categories from books and may orphan child categories.</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" onclick="confirmBulkDelete()">
+                    <i class="bi bi-trash"></i> Delete Categories
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.selection-toolbar {
+    background: linear-gradient(135deg, #6c757d, #495057);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.stat-card {
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+}
+
+.category-selection {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+}
+
+.category-card {
+    transition: transform 0.2s;
+    cursor: pointer;
+}
+
+.category-card:hover {
+    transform: translateY(-2px);
+}
+
+.color-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.tree-view .tree-node {
+    margin-left: 20px;
+    border-left: 2px solid #dee2e6;
+    padding-left: 15px;
+    position: relative;
+}
+
+.tree-view .tree-node::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 20px;
+    width: 15px;
+    height: 2px;
+    background-color: #dee2e6;
+}
+
+.tree-view .tree-node:last-child {
+    border-left-color: transparent;
+}
+
+.tree-view .tree-node:last-child::after {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 20px;
+    bottom: 0;
+    width: 2px;
+    background-color: white;
+}
+
+.aliases .badge {
+    font-size: 0.7em;
+}
+</style>
+
+<script>
+function filterCategories() {
+    const searchTerm = document.getElementById('categorySearch').value.toLowerCase();
+    const cards = document.querySelectorAll('.category-card');
+    const rows = document.querySelectorAll('.category-row');
+    
+    // Filter cards
+    cards.forEach(card => {
+        const name = card.dataset.name;
+        const description = card.dataset.description;
+        
+        if (name.includes(searchTerm) || description.includes(searchTerm)) {
+            card.style.display = '';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+    
+    // Filter rows
+    rows.forEach(row => {
+        const name = row.dataset.name;
+        
+        if (name.includes(searchTerm)) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
+
+function toggleView(viewType) {
+    const cardView = document.getElementById('cardViewContainer');
+    const listView = document.getElementById('listViewContainer');
+    const treeView = document.getElementById('treeViewContainer');
+    
+    // Hide all views
+    cardView.classList.add('d-none');
+    listView.classList.add('d-none');
+    treeView.classList.add('d-none');
+    
+    // Show selected view
+    if (viewType === 'card') {
+        cardView.classList.remove('d-none');
+    } else if (viewType === 'list') {
+        listView.classList.remove('d-none');
+    } else if (viewType === 'tree') {
+        treeView.classList.remove('d-none');
+    }
+}
+
+function selectAll() {
+    const categoryCheckboxes = document.querySelectorAll('.category-checkbox');
+    const selectAllCheckboxes = document.querySelectorAll('#selectAllCheckbox, #selectAllCheckboxList');
+    
+    categoryCheckboxes.forEach(checkbox => {
+        checkbox.checked = true;
+    });
+    
+    selectAllCheckboxes.forEach(checkbox => {
+        checkbox.checked = true;
+        checkbox.indeterminate = false;
+    });
+    
+    updateSelection();
+}
+
+function toggleSelectAll() {
+    const selectAllCheckboxes = document.querySelectorAll('#selectAllCheckbox, #selectAllCheckboxList');
+    const categoryCheckboxes = document.querySelectorAll('.category-checkbox');
+    const isChecked = selectAllCheckboxes[0].checked;
+    
+    // Update all checkboxes to match
+    selectAllCheckboxes.forEach(checkbox => {
+        checkbox.checked = isChecked;
+    });
+    
+    categoryCheckboxes.forEach(checkbox => {
+        checkbox.checked = isChecked;
+    });
+    
+    updateSelection();
+}
+
+function updateSelection() {
+    const checkboxes = document.querySelectorAll('.category-checkbox');
+    const selectedBoxes = document.querySelectorAll('.category-checkbox:checked');
+    const selectionToolbar = document.getElementById('selection-toolbar');
+    const selectionCount = document.getElementById('selection-count');
+    const selectAllCheckboxes = document.querySelectorAll('#selectAllCheckbox, #selectAllCheckboxList');
+    
+    // Update visual state of category cards
+    checkboxes.forEach(checkbox => {
+        const categoryCard = checkbox.closest('.category-card');
+        if (categoryCard) {
+            if (checkbox.checked) {
+                categoryCard.classList.add('border-primary', 'bg-light');
+            } else {
+                categoryCard.classList.remove('border-primary', 'bg-light');
+            }
+        }
+    });
+    
+    // Update selection toolbar
+    if (selectedBoxes.length > 0) {
+        selectionToolbar.style.display = 'block';
+        selectionCount.textContent = selectedBoxes.length;
+    } else {
+        selectionToolbar.style.display = 'none';
+    }
+    
+    // Update select all checkboxes
+    const allChecked = selectedBoxes.length === checkboxes.length && checkboxes.length > 0;
+    const someChecked = selectedBoxes.length > 0 && selectedBoxes.length < checkboxes.length;
+    
+    selectAllCheckboxes.forEach(checkbox => {
+        checkbox.checked = allChecked;
+        checkbox.indeterminate = someChecked;
+    });
+}
+
+function clearSelection() {
+    const categoryCheckboxes = document.querySelectorAll('.category-checkbox');
+    const selectAllCheckboxes = document.querySelectorAll('#selectAllCheckbox, #selectAllCheckboxList');
+    
+    categoryCheckboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    
+    selectAllCheckboxes.forEach(checkbox => {
+        checkbox.checked = false;
+        checkbox.indeterminate = false;
+    });
+    
+    updateSelection();
+}
+
+function bulkDeleteCategories() {
+    const selectedBoxes = document.querySelectorAll('.category-checkbox:checked');
+    
+    if (selectedBoxes.length === 0) {
+        alert('Please select categories to delete.');
+        return;
+    }
+    
+    // Build summary
+    let categoriesWithBooks = 0;
+    let categoriesWithChildren = 0;
+    let summary = `You are about to delete ${selectedBoxes.length} categories:<br><br>`;
+    
+    selectedBoxes.forEach((checkbox, index) => {
+        const categoryCard = checkbox.closest('.category-card') || checkbox.closest('tr');
+        const categoryName = categoryCard.querySelector('strong').textContent || categoryCard.dataset.name;
+        const bookCount = parseInt(checkbox.dataset.bookCount) || 0;
+        
+        summary += `• ${categoryName}`;
+        if (bookCount > 0) {
+            summary += ` (${bookCount} books)`;
+            categoriesWithBooks++;
+        }
+        summary += '<br>';
+    });
+    
+    // Show options if needed
+    const deletionOptions = document.getElementById('deletion-options');
+    if (categoriesWithBooks > 0 || categoriesWithChildren > 0) {
+        deletionOptions.style.display = 'block';
+        summary += `<br><strong>Warning:</strong> ${categoriesWithBooks} categories have books assigned.`;
+    } else {
+        deletionOptions.style.display = 'none';
+    }
+    
+    document.getElementById('deletion-summary').innerHTML = summary;
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmationModal'));
+    modal.show();
+}
+
+function confirmBulkDelete() {
+    const selectedBoxes = document.querySelectorAll('.category-checkbox:checked');
+    const form = document.getElementById('bulk-delete-form');
+    const forceDeleteCheckbox = document.getElementById('forceDelete');
+    
+    if (!form) {
+        alert('Error: Could not find delete form. Please refresh the page.');
+        return;
+    }
+    
+    // Clear form but keep CSRF token
+    const existingCsrfToken = form.querySelector('input[name="csrf_token"]');
+    form.innerHTML = '';
+    if (existingCsrfToken) {
+        form.appendChild(existingCsrfToken);
+    }
+    
+    // Add force delete flag if needed
+    if (forceDeleteCheckbox && forceDeleteCheckbox.checked) {
+        const forceInput = document.createElement('input');
+        forceInput.type = 'hidden';
+        forceInput.name = 'force_delete';
+        forceInput.value = 'true';
+        form.appendChild(forceInput);
+    }
+    
+    selectedBoxes.forEach((checkbox) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'selected_categories';
+        input.value = checkbox.value;
+        form.appendChild(input);
+    });
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('deleteConfirmationModal'));
+    if (modal) {
+        modal.hide();
+    }
+    
+    form.submit();
+}
+
+function openCategory(categoryId) {
+    window.location.href = `/genres/${categoryId}`;
+}
+
+// Initialize event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    // Add change listeners to all category checkboxes
+    document.querySelectorAll('.category-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', updateSelection);
+    });
+    
+    // Initialize view
+    updateSelection();
+});
+</script>
+{% endblock %}

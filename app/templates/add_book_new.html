@@ -231,6 +231,18 @@
 
       <div class="row mb-3">
         <div class="col-md-6">
+          <label for="manual-genre" class="form-label">Genre/Category</label>
+          <input type="text" class="form-control" id="manual-genre" name="genre" placeholder="e.g., Science Fiction, Fantasy, Mystery">
+          <div class="form-text">Enter one or more genres separated by commas</div>
+        </div>
+        <div class="col-md-6">
+          <label for="manual-publisher" class="form-label">Publisher</label>
+          <input type="text" class="form-control" id="manual-publisher" name="publisher" placeholder="Publisher name">
+        </div>
+      </div>
+
+      <div class="row mb-3">
+        <div class="col-md-6">
           <label for="manual-start-date" class="form-label">Start Date</label>
           <input type="date" class="form-control" id="manual-start-date" name="start_date">
         </div>
@@ -354,6 +366,12 @@ function fetchBookData() {
       if (data.title) document.getElementById('manual-title').value = data.title;
       if (data.author) document.getElementById('manual-author').value = data.author;
       if (data.cover) document.getElementById('manual-cover-url').value = data.cover;
+      if (data.categories) {
+        // Handle categories - join array with commas if it's an array
+        const categories = Array.isArray(data.categories) ? data.categories.join(', ') : data.categories;
+        document.getElementById('manual-genre').value = categories;
+      }
+      if (data.publisher) document.getElementById('manual-publisher').value = data.publisher;
     })
     .catch(error => {
       console.error('Error fetching book data:', error);

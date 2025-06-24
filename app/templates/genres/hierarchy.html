@@ -1,0 +1,555 @@
+{% extends "base.html" %}
+
+{% block title %}Category Hierarchy - Genres - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <!-- Page Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h2 mb-0">
+                        <i class="bi bi-diagram-3 me-2"></i>Category Hierarchy
+                    </h1>
+                    <p class="text-muted mb-0">Visual representation of your category organization</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('genres.add_category') }}" class="btn btn-success me-2">
+                        <i class="bi bi-plus-circle"></i> Add Category
+                    </a>
+                    <a href="{{ url_for('genres.index') }}" class="btn btn-primary">
+                        <i class="bi bi-grid-3x2"></i> Grid View
+                    </a>
+                </div>
+            </div>
+
+            <!-- Hierarchy Controls -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-outline-primary" onclick="expandAll()">
+                                    <i class="bi bi-plus-square"></i> Expand All
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" onclick="collapseAll()">
+                                    <i class="bi bi-dash-square"></i> Collapse All
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" onclick="toggleStats()">
+                                    <i class="bi bi-bar-chart"></i> Toggle Stats
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <span class="input-group-text">
+                                    <i class="bi bi-search"></i>
+                                </span>
+                                <input type="text" class="form-control" id="hierarchySearch" 
+                                       placeholder="Search in hierarchy..." onkeyup="filterHierarchy()">
+                                <button class="btn btn-outline-secondary" type="button" onclick="clearSearch()">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hierarchy Statistics -->
+            <div class="row mb-4" id="hierarchy-stats">
+                <div class="col-md-3">
+                    <div class="card stat-card text-center">
+                        <div class="card-body">
+                            <h3 class="text-primary">{{ hierarchy_stats.total_categories }}</h3>
+                            <p class="mb-0">Total Categories</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card text-center">
+                        <div class="card-body">
+                            <h3 class="text-success">{{ hierarchy_stats.root_categories }}</h3>
+                            <p class="mb-0">Root Categories</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card text-center">
+                        <div class="card-body">
+                            <h3 class="text-info">{{ hierarchy_stats.max_depth }}</h3>
+                            <p class="mb-0">Max Depth</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card text-center">
+                        <div class="card-body">
+                            <h3 class="text-warning">{{ hierarchy_stats.total_books }}</h3>
+                            <p class="mb-0">Total Books</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hierarchy Tree -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-diagram-2"></i> Category Tree
+                        {% if highlight_category %}
+                        <span class="badge bg-warning ms-2">Highlighting: {{ highlight_category }}</span>
+                        {% endif %}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if root_categories %}
+                    <div class="hierarchy-tree" id="hierarchy-container">
+                        {% for root in root_categories %}
+                        <div class="tree-root mb-4" data-category-id="{{ root.id }}">
+                            {% include 'genres/_hierarchy_node.html' with context %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-diagram-3 display-1 text-muted"></i>
+                        <h3 class="mt-3">No Categories Found</h3>
+                        <p class="text-muted">Start building your category hierarchy by creating your first category.</p>
+                        <a href="{{ url_for('genres.add_category') }}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Create First Category
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="card-title mb-0">
+                        <i class="bi bi-info-circle"></i> Legend
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-chevron-down me-2 text-primary"></i>
+                                <span>Expandable category</span>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <span class="badge bg-primary me-2">5</span>
+                                <span>Number of books</span>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <span class="badge bg-info me-2">3</span>
+                                <span>Number of subcategories</span>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <div class="color-indicator me-2" style="background-color: #007bff;"></div>
+                                <span>Category color</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.hierarchy-tree {
+    font-family: 'Courier New', monospace;
+    line-height: 1.8;
+}
+
+.tree-node {
+    position: relative;
+    margin-left: 0;
+    padding-left: 25px;
+}
+
+.tree-node::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 50%;
+    width: 20px;
+    border-left: 2px solid #dee2e6;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.tree-node:last-child::before {
+    border-left-color: transparent;
+}
+
+.tree-node::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #dee2e6;
+}
+
+.tree-node:last-child::after {
+    height: 50%;
+}
+
+.tree-root > .tree-node::before,
+.tree-root > .tree-node::after {
+    display: none;
+}
+
+.category-item {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    transition: all 0.2s ease;
+    position: relative;
+    z-index: 1;
+}
+
+.category-item:hover {
+    background: #e9ecef;
+    transform: translateX(2px);
+}
+
+.category-item.highlighted {
+    background: #fff3cd;
+    border-color: #ffeaa7;
+    box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.25);
+}
+
+.expand-toggle {
+    background: none;
+    border: none;
+    color: #6c757d;
+    cursor: pointer;
+    padding: 2px 6px;
+    margin-right: 8px;
+    border-radius: 3px;
+    transition: all 0.2s ease;
+}
+
+.expand-toggle:hover {
+    background: #dee2e6;
+    color: #495057;
+}
+
+.expand-toggle.no-children {
+    visibility: hidden;
+}
+
+.tree-children {
+    margin-left: 20px;
+    margin-top: 5px;
+}
+
+.tree-children.collapsed {
+    display: none;
+}
+
+.stat-card {
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+}
+
+.color-indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 1px solid #dee2e6;
+}
+
+.category-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.action-buttons .btn {
+    padding: 2px 6px;
+    font-size: 0.75rem;
+}
+
+.search-highlight {
+    background-color: #ffeb3b;
+    padding: 1px 2px;
+    border-radius: 2px;
+}
+
+@media (max-width: 768px) {
+    .tree-node {
+        padding-left: 15px;
+    }
+    
+    .tree-children {
+        margin-left: 10px;
+    }
+}
+</style>
+
+<script>
+// Global state
+let statsVisible = true;
+let searchTerm = '';
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    // Highlight specific category if requested
+    {% if highlight_category %}
+    highlightCategory('{{ highlight_category }}');
+    {% endif %}
+    
+    // Initialize all nodes as expanded by default
+    document.querySelectorAll('.tree-children').forEach(children => {
+        children.classList.remove('collapsed');
+    });
+    
+    // Update toggle icons
+    updateToggleIcons();
+});
+
+// Expand/collapse functions
+function expandAll() {
+    document.querySelectorAll('.tree-children').forEach(children => {
+        children.classList.remove('collapsed');
+    });
+    updateToggleIcons();
+}
+
+function collapseAll() {
+    document.querySelectorAll('.tree-children').forEach(children => {
+        children.classList.add('collapsed');
+    });
+    updateToggleIcons();
+}
+
+function toggleNode(categoryId) {
+    const children = document.getElementById(`children-${categoryId}`);
+    const toggle = document.getElementById(`toggle-${categoryId}`);
+    
+    if (children) {
+        children.classList.toggle('collapsed');
+        updateToggleIcon(toggle, !children.classList.contains('collapsed'));
+    }
+}
+
+function updateToggleIcons() {
+    document.querySelectorAll('.expand-toggle').forEach(toggle => {
+        const categoryId = toggle.dataset.categoryId;
+        const children = document.getElementById(`children-${categoryId}`);
+        
+        if (children) {
+            updateToggleIcon(toggle, !children.classList.contains('collapsed'));
+        }
+    });
+}
+
+function updateToggleIcon(toggle, isExpanded) {
+    const icon = toggle.querySelector('i');
+    if (icon) {
+        icon.className = isExpanded ? 'bi bi-chevron-down' : 'bi bi-chevron-right';
+    }
+}
+
+// Stats toggle
+function toggleStats() {
+    const statsContainer = document.getElementById('hierarchy-stats');
+    statsVisible = !statsVisible;
+    
+    if (statsVisible) {
+        statsContainer.style.display = 'flex';
+    } else {
+        statsContainer.style.display = 'none';
+    }
+}
+
+// Search functionality
+function filterHierarchy() {
+    const searchInput = document.getElementById('hierarchySearch');
+    searchTerm = searchInput.value.toLowerCase().trim();
+    
+    if (searchTerm === '') {
+        clearSearchHighlights();
+        showAllNodes();
+        return;
+    }
+    
+    // Clear previous highlights
+    clearSearchHighlights();
+    
+    // Find matching nodes
+    const allNodes = document.querySelectorAll('.category-item');
+    let hasMatches = false;
+    
+    allNodes.forEach(node => {
+        const categoryName = node.querySelector('.category-name').textContent.toLowerCase();
+        const categoryDesc = node.querySelector('.category-description');
+        const description = categoryDesc ? categoryDesc.textContent.toLowerCase() : '';
+        
+        if (categoryName.includes(searchTerm) || description.includes(searchTerm)) {
+            // Highlight matching text
+            highlightSearchTerm(node, searchTerm);
+            
+            // Show this node and all its ancestors
+            showNodeAndAncestors(node);
+            hasMatches = true;
+        } else {
+            // Hide non-matching nodes
+            hideNode(node);
+        }
+    });
+    
+    if (!hasMatches) {
+        showNoResultsMessage();
+    }
+}
+
+function clearSearch() {
+    document.getElementById('hierarchySearch').value = '';
+    filterHierarchy();
+}
+
+function clearSearchHighlights() {
+    document.querySelectorAll('.search-highlight').forEach(highlight => {
+        const parent = highlight.parentNode;
+        parent.replaceChild(document.createTextNode(highlight.textContent), highlight);
+        parent.normalize();
+    });
+}
+
+function showAllNodes() {
+    document.querySelectorAll('.category-item').forEach(node => {
+        node.style.display = '';
+        const treeNode = node.closest('.tree-node');
+        if (treeNode) {
+            treeNode.style.display = '';
+        }
+    });
+    hideNoResultsMessage();
+}
+
+function hideNode(node) {
+    const treeNode = node.closest('.tree-node');
+    if (treeNode) {
+        treeNode.style.display = 'none';
+    }
+}
+
+function showNodeAndAncestors(node) {
+    let current = node.closest('.tree-node');
+    
+    while (current) {
+        current.style.display = '';
+        
+        // Expand parent if it's collapsed
+        const parentChildren = current.parentNode;
+        if (parentChildren && parentChildren.classList.contains('tree-children')) {
+            parentChildren.classList.remove('collapsed');
+            
+            // Find the toggle button for the parent
+            const parentNode = parentChildren.previousElementSibling;
+            if (parentNode) {
+                const toggle = parentNode.querySelector('.expand-toggle');
+                if (toggle) {
+                    updateToggleIcon(toggle, true);
+                }
+            }
+        }
+        
+        // Move up to parent tree node
+        current = current.parentNode.closest('.tree-node');
+    }
+}
+
+function highlightSearchTerm(node, term) {
+    const nameElement = node.querySelector('.category-name');
+    const descElement = node.querySelector('.category-description');
+    
+    [nameElement, descElement].forEach(element => {
+        if (element && element.textContent.toLowerCase().includes(term)) {
+            const text = element.textContent;
+            const regex = new RegExp(`(${term})`, 'gi');
+            element.innerHTML = text.replace(regex, '<span class="search-highlight">$1</span>');
+        }
+    });
+}
+
+function showNoResultsMessage() {
+    const container = document.getElementById('hierarchy-container');
+    
+    // Remove existing no results message
+    const existing = container.querySelector('.no-results-message');
+    if (existing) {
+        existing.remove();
+    }
+    
+    // Add no results message
+    const message = document.createElement('div');
+    message.className = 'no-results-message text-center py-5';
+    message.innerHTML = `
+        <i class="bi bi-search display-1 text-muted"></i>
+        <h3 class="mt-3">No Categories Found</h3>
+        <p class="text-muted">No categories match your search term "${searchTerm}".</p>
+        <button class="btn btn-outline-primary" onclick="clearSearch()">
+            <i class="bi bi-x"></i> Clear Search
+        </button>
+    `;
+    
+    container.appendChild(message);
+}
+
+function hideNoResultsMessage() {
+    const message = document.querySelector('.no-results-message');
+    if (message) {
+        message.remove();
+    }
+}
+
+// Highlight specific category
+function highlightCategory(categoryId) {
+    const categoryItem = document.querySelector(`[data-category-id="${categoryId}"] .category-item`);
+    if (categoryItem) {
+        categoryItem.classList.add('highlighted');
+        
+        // Show the category and its ancestors
+        showNodeAndAncestors(categoryItem);
+        
+        // Scroll to the category
+        setTimeout(() => {
+            categoryItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
+    }
+}
+
+// Navigation functions
+function viewCategory(categoryId) {
+    window.location.href = `{{ url_for('genres.category_details', category_id='') }}${categoryId}`;
+}
+
+function editCategory(categoryId) {
+    window.location.href = `{{ url_for('genres.edit_category', category_id='') }}${categoryId}`;
+}
+
+function addSubcategory(parentId) {
+    window.location.href = `{{ url_for('genres.add_category') }}?parent_id=${parentId}`;
+}
+</script>
+{% endblock %}

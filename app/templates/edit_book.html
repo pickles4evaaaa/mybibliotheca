@@ -49,9 +49,24 @@
     </div>
   </div>
   <div class="mb-3">
-    <label for="categories" class="form-label">Categories</label>
-    <input type="text" class="form-control" id="categories" name="categories" value="{{ book.categories or '' }}" placeholder="Comma-separated categories">
-    <div class="form-text">Enter categories separated by commas (e.g., Fiction, Science Fiction, Adventure)</div>
+    <label for="categories" class="form-label">
+      <i class="bi bi-tags me-1"></i>Genres & Categories
+    </label>
+    {% if book_categories %}
+      <div class="mb-2">
+        <small class="text-muted">Current categories:</small><br>
+        {% for category in book_categories %}
+          <span class="badge bg-light text-dark border me-1 mb-1">{{ category.name }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <input type="text" class="form-control" id="categories" name="raw_categories" 
+           value="{% if book_categories %}{{ book_categories|map(attribute='name')|join(', ') }}{% else %}{{ book.categories or '' }}{% endif %}" 
+           placeholder="Enter categories separated by commas">
+    <div class="form-text">
+      Enter categories separated by commas (e.g., Fiction, Science Fiction, Adventure). 
+      New categories will be created automatically.
+    </div>
   </div>
   <div class="row">
     <div class="col-md-6">

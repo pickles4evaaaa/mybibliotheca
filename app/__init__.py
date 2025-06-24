@@ -150,7 +150,7 @@ def _initialize_default_templates():
                     "Original Publication Year": {"action": "map_existing", "target_field": "original_publication_year"},
                     "Date Read": {"action": "map_existing", "target_field": "date_read"},
                     "Date Added": {"action": "map_existing", "target_field": "date_added"},
-                    "Bookshelves": {"action": "map_existing", "target_field": "categories"},
+                    "Bookshelves": {"action": "map_existing", "target_field": "reading_status"},
                     "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},
                     "My Review": {"action": "map_existing", "target_field": "notes"},
                     "Private Notes": {"action": "map_existing", "target_field": "private_notes"}
@@ -193,7 +193,8 @@ def _initialize_default_templates():
                     "Read Count": {"action": "map_existing", "target_field": "read_count"},
                     "Star Rating": {"action": "map_existing", "target_field": "rating"},
                     "Review": {"action": "map_existing", "target_field": "notes"},
-                    "Tags": {"action": "map_existing", "target_field": "categories"}
+                    "Tags": {"action": "map_existing", "target_field": "categories"},
+                    "Moods": {"action": "map_existing", "target_field": "categories"}
                 },
                 times_used=0,
                 last_used=None,
@@ -452,6 +453,12 @@ def create_app():
         app.register_blueprint(migration_bp)
     except ImportError as e:
         print(f"⚠️  Could not import migration routes: {e}")
+    
+    try:
+        from .genre_routes import genres_bp
+        app.register_blueprint(genres_bp, url_prefix='/genres')
+    except ImportError as e:
+        print(f"⚠️  Could not import genre routes: {e}")
     
     app.register_blueprint(bp)
     app.register_blueprint(auth, url_prefix='/auth')

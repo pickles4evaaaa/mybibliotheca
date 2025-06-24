@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+
+{% block title %}Search Results - Genres - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <!-- Page Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h2 mb-0">
+                        <i class="bi bi-search me-2"></i>Search Results
+                    </h1>
+                    <p class="text-muted mb-0">
+                        {% if query %}
+                            Found {{ results|length }} categories matching "{{ query }}"
+                        {% else %}
+                            No search query provided
+                        {% endif %}
+                    </p>
+                </div>
+                <div>
+                    <a href="{{ url_for('genres.index') }}" class="btn btn-primary">
+                        <i class="bi bi-arrow-left"></i> Back to Categories
+                    </a>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <form method="GET" action="{{ url_for('genres.search_categories') }}">
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <i class="bi bi-search"></i>
+                            </span>
+                            <input type="text" class="form-control" name="q" 
+                                   value="{{ query or '' }}" 
+                                   placeholder="Search categories by name, description, or aliases..."
+                                   autofocus>
+                            <button class="btn btn-primary" type="submit">Search</button>
+                        </div>
+                        <div class="form-text mt-2">
+                            Search across category names, descriptions, and aliases. Use specific terms for better results.
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Search Results -->
+            {% if query %}
+                {% if results %}
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-list"></i> Search Results ({{ results|length }})
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% for category in results %}
+                            <div class="col-lg-4 col-md-6 mb-4">
+                                <div class="card h-100 category-result" 
+                                     data-category-id="{{ category.id }}">
+                                    <div class="card-body">
+                                        <div class="d-flex align-items-center mb-2">
+                                            {% if category.icon %}
+                                                <span class="me-2 fs-4">{{ category.icon }}</span>
+                                            {% else %}
+                                                <i class="bi bi-tag me-2 fs-4"></i>
+                                            {% endif %}
+                                            <div class="flex-grow-1">
+                                                <h5 class="card-title mb-1">
+                                                    <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
+                                                       class="text-decoration-none">
+                                                        {{ category.name }}
+                                                    </a>
+                                                </h5>
+                                                {% if category.color %}
+                                                    <div class="color-indicator" style="background-color: {{ category.color }};"></div>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+
+                                        <!-- Category level and path -->
+                                        {% if category.level > 0 %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">
+                                                Level {{ category.level }}
+                                                {% if category.parent_name %}
+                                                    • Child of {{ category.parent_name }}
+                                                {% endif %}
+                                            </small>
+                                        </div>
+                                        {% else %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Root Category</small>
+                                        </div>
+                                        {% endif %}
+
+                                        <!-- Description -->
+                                        {% if category.description %}
+                                        <p class="card-text text-muted small">
+                                            {{ category.description[:100] }}
+                                            {% if category.description|length > 100 %}...{% endif %}
+                                        </p>
+                                        {% endif %}
+
+                                        <!-- Aliases -->
+                                        {% if category.aliases %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Also known as:</small>
+                                            <div class="aliases">
+                                                {% for alias in category.aliases[:3] %}
+                                                <span class="badge bg-light text-dark border me-1">{{ alias }}</span>
+                                                {% endfor %}
+                                                {% if category.aliases|length > 3 %}
+                                                <small class="text-muted">+{{ category.aliases|length - 3 }} more</small>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+
+                                        <!-- Statistics -->
+                                        <div class="row text-center small text-muted mb-3">
+                                            <div class="col-6">
+                                                <strong class="text-primary">{{ category.book_count }}</strong>
+                                                <div>Books</div>
+                                            </div>
+                                            <div class="col-6">
+                                                <strong class="text-info">{{ category.children_count or 0 }}</strong>
+                                                <div>Children</div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Actions -->
+                                        <div class="d-flex justify-content-between">
+                                            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
+                                               class="btn btn-sm btn-primary">
+                                                <i class="bi bi-eye"></i> View Details
+                                            </a>
+                                            
+                                            <div class="btn-group btn-group-sm">
+                                                <a href="{{ url_for('genres.edit_category', category_id=category.id) }}" 
+                                                   class="btn btn-outline-secondary">
+                                                    <i class="bi bi-pencil"></i>
+                                                </a>
+                                                {% if category.book_count > 0 %}
+                                                <a href="{{ url_for('main.book_list') }}?category={{ category.id }}" 
+                                                   class="btn btn-outline-info">
+                                                    <i class="bi bi-book"></i>
+                                                </a>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pagination (if needed) -->
+                {% if results|length >= 50 %}
+                <div class="card mt-4">
+                    <div class="card-body text-center">
+                        <p class="text-muted mb-0">
+                            Showing first 50 results. Try refining your search for more specific results.
+                        </p>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% else %}
+                <!-- No Results -->
+                <div class="card">
+                    <div class="card-body text-center py-5">
+                        <i class="bi bi-search display-1 text-muted"></i>
+                        <h3 class="mt-3">No Categories Found</h3>
+                        <p class="text-muted">
+                            No categories match your search for "{{ query }}".
+                        </p>
+                        <div class="mt-4">
+                            <h6>Try:</h6>
+                            <ul class="list-unstyled">
+                                <li>• Using different keywords</li>
+                                <li>• Checking for typos</li>
+                                <li>• Using broader search terms</li>
+                                <li>• Searching for aliases or alternative names</li>
+                            </ul>
+                        </div>
+                        <div class="mt-4">
+                            <a href="{{ url_for('genres.index') }}" class="btn btn-primary me-2">
+                                <i class="bi bi-list"></i> Browse All Categories
+                            </a>
+                            <a href="{{ url_for('genres.add_category') }}" class="btn btn-success">
+                                <i class="bi bi-plus-circle"></i> Create Category
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            {% else %}
+            <!-- No Query -->
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-search display-1 text-muted"></i>
+                    <h3 class="mt-3">Search Categories</h3>
+                    <p class="text-muted">
+                        Enter a search term above to find categories by name, description, or aliases.
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Search Tips -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="card-title mb-0">
+                        <i class="bi bi-lightbulb"></i> Search Tips
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>What you can search for:</h6>
+                            <ul class="small">
+                                <li>Category names (e.g., "Science Fiction")</li>
+                                <li>Partial names (e.g., "sci" for "Science Fiction")</li>
+                                <li>Descriptions and keywords</li>
+                                <li>Aliases and alternative names</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Search examples:</h6>
+                            <ul class="small">
+                                <li><code>mystery</code> - finds Mystery categories</li>
+                                <li><code>sci-fi</code> - finds Science Fiction via alias</li>
+                                <li><code>non-fiction</code> - finds all non-fiction categories</li>
+                                <li><code>young adult</code> - finds YA categories</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.category-result {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.category-result:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.color-indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 1px solid #dee2e6;
+}
+
+.aliases .badge {
+    font-size: 0.7em;
+}
+
+code {
+    background-color: #f8f9fa;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+</style>
+
+<script>
+// Highlight search terms in results
+document.addEventListener('DOMContentLoaded', function() {
+    const query = '{{ query | safe }}';
+    if (query && query.length > 2) {
+        highlightSearchTerms(query.toLowerCase());
+    }
+});
+
+function highlightSearchTerms(searchTerm) {
+    const categoryCards = document.querySelectorAll('.category-result');
+    
+    categoryCards.forEach(card => {
+        const textElements = card.querySelectorAll('h5, p, .badge');
+        
+        textElements.forEach(element => {
+            if (element.textContent.toLowerCase().includes(searchTerm)) {
+                const text = element.innerHTML;
+                const regex = new RegExp(`(${escapeRegExp(searchTerm)})`, 'gi');
+                element.innerHTML = text.replace(regex, '<mark>$1</mark>');
+            }
+        });
+    });
+}
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Form enhancement
+document.querySelector('form input[name="q"]').addEventListener('keyup', function(e) {
+    if (e.key === 'Enter') {
+        this.form.submit();
+    }
+});
+</script>
+{% endblock %}

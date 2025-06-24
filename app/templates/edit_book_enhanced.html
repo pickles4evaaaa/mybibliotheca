@@ -68,6 +68,68 @@
     cursor: pointer;
     margin-left: 5px;
 }
+
+/* Category/Genre styles */
+.category-autocomplete {
+    position: relative;
+}
+.autocomplete-dropdown-categories {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    max-height: 250px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.category-tag {
+    display: inline-block;
+    background: #e7f3ff;
+    border: 1px solid #b3d9ff;
+    border-radius: 16px;
+    padding: 4px 12px;
+    margin: 2px;
+    font-size: 0.875em;
+    color: #0066cc;
+}
+.category-tag .remove {
+    color: #dc3545;
+    cursor: pointer;
+    margin-left: 5px;
+}
+
+/* Dark mode support for categories */
+[data-theme="dark"] .category-tag {
+    background: #1a3a5c;
+    border-color: #2e5a87;
+    color: #87ceeb;
+}
+[data-theme="dark"] .autocomplete-dropdown-categories {
+    background: #2d2d2d;
+    border-color: #404040;
+}
+[data-theme="dark"] .autocomplete-item {
+    color: #e0e0e0;
+    border-bottom-color: #404040;
+}
+[data-theme="dark"] .autocomplete-item:hover,
+[data-theme="dark"] .autocomplete-item.selected {
+    background-color: #404040;
+}
+[data-theme="dark"] .autocomplete-item.create-new {
+    background-color: #2d3d2d;
+    border-top-color: #404040;
+    color: #86e29b;
+}
+[data-theme="dark"] .autocomplete-item.create-new:hover {
+    background-color: #1f3f1f;
+}
 </style>
 {% endblock %}
 
@@ -256,11 +318,50 @@
                         </div>
                     </div>
                 </div>
+                
+                <!-- Genres/Categories -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-tags me-1"></i>Genres & Categories
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="categories-section">
+                                <div class="categories-display mb-2">
+                                    {% if book_categories %}
+                                        {% for category in book_categories %}
+                                        <div class="category-tag" data-id="{{ category.id }}" data-name="{{ category.name }}">
+                                            {{ category.name }}
+                                            <span class="remove" onclick="removeCategory(this)">×</span>
+                                        </div>
+                                        {% endfor %}
+                                    {% endif %}
+                                </div>
+                                <div class="category-autocomplete">
+                                    <input type="text" class="form-control category-input" 
+                                           placeholder="Start typing genre or category name...">
+                                    <div class="autocomplete-dropdown-categories"></div>
+                                </div>
+                                <div class="form-text">
+                                    <small class="text-muted">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        Type to search existing genres or add new ones. Popular genres: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         
         <!-- Hidden inputs for contributors -->
         <div id="contributorInputs"></div>
+        
+        <!-- Hidden inputs for categories -->
+        <div id="categoryInputs"></div>
         
         <div class="row">
             <div class="col-12">
@@ -286,6 +387,7 @@ let activeDropdown = null;
 // Initialize contributor autocomplete
 document.addEventListener('DOMContentLoaded', function() {
     const contributorInputs = document.querySelectorAll('.contributor-input');
+    const categoryInput = document.querySelector('.category-input');
     
     contributorInputs.forEach((input, index) => {
         input.addEventListener('input', handleInput);
@@ -293,16 +395,25 @@ document.addEventListener('DOMContentLoaded', function() {
         input.addEventListener('blur', handleBlur);
     });
     
+    // Initialize category autocomplete
+    if (categoryInput) {
+        categoryInput.addEventListener('input', handleCategoryInput);
+        categoryInput.addEventListener('keydown', handleCategoryKeydown);
+        categoryInput.addEventListener('blur', handleCategoryBlur);
+    }
+    
     // Update hidden inputs on form submission
     const form = document.getElementById('editBookForm');
     if (form) {
         form.addEventListener('submit', function(e) {
             updateHiddenInputs();
+            updateCategoryInputs();
         });
     }
     
     // Update hidden inputs on page load
     updateHiddenInputs();
+    updateCategoryInputs();
 });
 
 function handleInput(e) {
@@ -555,6 +666,230 @@ function updateHiddenInputs() {
             
             contributorIndex++;
         });
+    });
+}
+
+// Category autocomplete functions
+function handleCategoryInput(e) {
+    const input = e.target;
+    const query = input.value.trim();
+    const dropdown = input.nextElementSibling;
+    
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    if (query.length < 2) {
+        hideCategoryDropdown(dropdown);
+        return;
+    }
+    
+    searchTimeout = setTimeout(() => {
+        searchCategories(query, dropdown, input);
+    }, 150);
+}
+
+function handleCategoryKeydown(e) {
+    const dropdown = e.target.nextElementSibling;
+    const items = dropdown.querySelectorAll('.autocomplete-item');
+    const selected = dropdown.querySelector('.autocomplete-item.selected');
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (selected) {
+            selected.classList.remove('selected');
+            const next = selected.nextElementSibling || items[0];
+            next.classList.add('selected');
+        } else if (items.length > 0) {
+            items[0].classList.add('selected');
+        }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (selected) {
+            selected.classList.remove('selected');
+            const prev = selected.previousElementSibling || items[items.length - 1];
+            prev.classList.add('selected');
+        }
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (selected) {
+            selectCategory(selected);
+        } else {
+            createNewCategory(e.target);
+        }
+    } else if (e.key === 'Escape') {
+        hideCategoryDropdown(dropdown);
+    }
+}
+
+function handleCategoryBlur(e) {
+    setTimeout(() => {
+        const dropdown = e.target.nextElementSibling;
+        hideCategoryDropdown(dropdown);
+    }, 200);
+}
+
+function searchCategories(query, dropdown, input) {
+    dropdown.innerHTML = `
+        <div class="autocomplete-item">
+            <div class="name text-muted">
+                <i class="bi bi-hourglass-split"></i> Searching genres...
+            </div>
+        </div>
+    `;
+    dropdown.style.display = 'block';
+    
+    fetch(`/genres/api/search?q=${encodeURIComponent(query)}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(categories => {
+            showCategoryDropdown(dropdown, categories, input);
+        })
+        .catch(error => {
+            console.error('Error searching categories:', error);
+            showCategoryDropdown(dropdown, [], input);
+        });
+}
+
+function showCategoryDropdown(dropdown, categories, input) {
+    if (!dropdown) {
+        return;
+    }
+    
+    dropdown.innerHTML = '';
+    
+    // Show existing categories
+    categories.forEach((category, index) => {
+        const item = document.createElement('div');
+        item.className = 'autocomplete-item';
+        item.innerHTML = `
+            <div class="name">${category.name}</div>
+            ${category.description ? `<div class="bio">${category.description}</div>` : ''}
+        `;
+        item.dataset.id = category.id;
+        item.dataset.name = category.name;
+        item.addEventListener('mousedown', () => selectCategory(item));
+        dropdown.appendChild(item);
+    });
+    
+    // Add "Create new" option at the bottom if query exists
+    if (input.value.trim()) {
+        const createItem = document.createElement('div');
+        createItem.className = 'autocomplete-item create-new';
+        createItem.innerHTML = `
+            <div class="name">
+                <i class="bi bi-plus-circle me-1"></i> 
+                Add "${input.value.trim()}" as new genre
+            </div>
+        `;
+        createItem.dataset.name = input.value.trim();
+        createItem.dataset.new = 'true';
+        createItem.addEventListener('mousedown', () => selectCategory(createItem));
+        dropdown.appendChild(createItem);
+    }
+    
+    dropdown.style.display = 'block';
+}
+
+function hideCategoryDropdown(dropdown) {
+    dropdown.style.display = 'none';
+    dropdown.innerHTML = '';
+}
+
+function selectCategory(item) {
+    const input = item.closest('.category-autocomplete').querySelector('.category-input');
+    const display = document.querySelector('.categories-display');
+    
+    let categoryId = item.dataset.id || '';
+    const categoryName = item.dataset.name;
+    const isNew = item.dataset.new === 'true';
+    
+    // Check if category is already added
+    const existingTags = display.querySelectorAll('.category-tag');
+    for (let tag of existingTags) {
+        if (tag.dataset.name === categoryName) {
+            input.value = '';
+            hideCategoryDropdown(item.closest('.autocomplete-dropdown-categories'));
+            return;
+        }
+    }
+    
+    // Add category tag
+    const tag = document.createElement('div');
+    tag.className = 'category-tag';
+    tag.dataset.id = categoryId;
+    tag.dataset.name = categoryName;
+    tag.dataset.new = isNew ? 'true' : 'false';
+    tag.innerHTML = `
+        ${categoryName}
+        ${isNew ? '<small class="text-muted"> (new)</small>' : ''}
+        <span class="remove" onclick="removeCategory(this)">×</span>
+    `;
+    
+    display.appendChild(tag);
+    
+    // Clear input
+    input.value = '';
+    hideCategoryDropdown(item.closest('.autocomplete-dropdown-categories'));
+    
+    // Update hidden inputs
+    updateCategoryInputs();
+}
+
+function createNewCategory(input) {
+    const name = input.value.trim();
+    if (!name) return;
+    
+    selectCategory({
+        dataset: { name: name, new: 'true' },
+        closest: () => input.closest('.category-autocomplete')
+    });
+}
+
+function removeCategory(removeBtn) {
+    const categoryTag = removeBtn.closest('.category-tag');
+    
+    if (categoryTag) {
+        categoryTag.remove();
+        updateCategoryInputs();
+    }
+}
+
+function updateCategoryInputs() {
+    const hiddenContainer = document.getElementById('categoryInputs');
+    hiddenContainer.innerHTML = '';
+    
+    const tags = document.querySelectorAll('.category-tag');
+    
+    tags.forEach((tag, index) => {
+        const id = tag.dataset.id;
+        const name = tag.dataset.name;
+        const isNew = tag.dataset.new === 'true';
+        
+        const nameInput = document.createElement('input');
+        nameInput.type = 'hidden';
+        nameInput.name = `categories[${index}][name]`;
+        nameInput.value = name;
+        
+        const isNewInput = document.createElement('input');
+        isNewInput.type = 'hidden';
+        isNewInput.name = `categories[${index}][is_new]`;
+        isNewInput.value = isNew ? 'true' : 'false';
+        
+        if (id && !isNew) {
+            const idInput = document.createElement('input');
+            idInput.type = 'hidden';
+            idInput.name = `categories[${index}][id]`;
+            idInput.value = id;
+            hiddenContainer.appendChild(idInput);
+        }
+        
+        hiddenContainer.appendChild(nameInput);
+        hiddenContainer.appendChild(isNewInput);
     });
 }
 </script>

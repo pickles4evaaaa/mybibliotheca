@@ -1,0 +1,132 @@
+<!-- Tree node for category hierarchy display -->
+<div class="tree-node mb-2" data-category-id="{{ root_category.id }}">
+    <div class="d-flex align-items-center justify-content-between p-2 border rounded">
+        <div class="d-flex align-items-center flex-grow-1">
+            <!-- Selection checkbox -->
+            <input type="checkbox" class="category-checkbox me-2" value="{{ root_category.id }}" data-book-count="{{ root_category.book_count }}">
+            
+            <!-- Expand/Collapse button -->
+            {% if root_category.children and root_category.children|length > 0 %}
+            <button class="btn btn-sm btn-link p-0 me-2 text-decoration-none" 
+                    onclick="toggleTreeNode('{{ root_category.id }}')"
+                    id="toggle-{{ root_category.id }}">
+                <i class="bi bi-chevron-down"></i>
+            </button>
+            {% else %}
+            <span class="me-2" style="width: 20px; display: inline-block;"></span>
+            {% endif %}
+            
+            <!-- Category icon -->
+            {% if root_category.icon %}
+                <span class="me-2">{{ root_category.icon }}</span>
+            {% else %}
+                <i class="bi bi-tag me-2"></i>
+            {% endif %}
+            
+            <!-- Category name and info -->
+            <div class="flex-grow-1">
+                <strong>
+                    <a href="{{ url_for('genres.category_details', category_id=root_category.id) }}" 
+                       class="text-decoration-none">
+                        {{ root_category.name }}
+                    </a>
+                </strong>
+                {% if root_category.color %}
+                    <div class="ms-2 d-inline-block color-indicator" style="background-color: {{ root_category.color }};"></div>
+                {% endif %}
+                
+                {% if root_category.description %}
+                <div class="text-muted small">{{ root_category.description[:80] }}{% if root_category.description|length > 80 %}...{% endif %}</div>
+                {% endif %}
+                
+                {% if root_category.aliases %}
+                <div class="mt-1">
+                    <small class="text-muted">Aliases: {{ root_category.aliases[:2]|join(', ') }}{% if root_category.aliases|length > 2 %}+{{ root_category.aliases|length - 2 }} more{% endif %}</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Stats and actions -->
+        <div class="d-flex align-items-center">
+            <!-- Stats badges -->
+            <div class="me-3">
+                <span class="badge bg-primary me-1" title="Books">
+                    <i class="bi bi-book"></i> {{ root_category.book_count }}
+                </span>
+                {% if root_category.children and root_category.children|length > 0 %}
+                <span class="badge bg-info" title="Children">
+                    <i class="bi bi-diagram-3"></i> {{ root_category.children|length }}
+                </span>
+                {% endif %}
+            </div>
+            
+            <!-- Action buttons -->
+            <div class="btn-group btn-group-sm">
+                <a href="{{ url_for('genres.category_details', category_id=root_category.id) }}" 
+                   class="btn btn-outline-primary btn-sm" title="View Details">
+                    <i class="bi bi-eye"></i>
+                </a>
+                <a href="{{ url_for('genres.edit_category', category_id=root_category.id) }}" 
+                   class="btn btn-outline-secondary btn-sm" title="Edit">
+                    <i class="bi bi-pencil"></i>
+                </a>
+                {% if root_category.book_count == 0 and (not root_category.children or root_category.children|length == 0) %}
+                <form method="POST" action="{{ url_for('genres.delete_category', category_id=root_category.id) }}" 
+                      class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ root_category.name }}?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Children categories (collapsible) -->
+    {% if root_category.children and root_category.children|length > 0 %}
+    <div id="children-{{ root_category.id }}" class="tree-children mt-2">
+        {% for child_category in root_category.children %}
+            {% set root_category = child_category %}
+            {% include 'genres/_category_tree_node.html' %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Tree node toggle functionality
+function toggleTreeNode(categoryId) {
+    const childrenDiv = document.getElementById(`children-${categoryId}`);
+    const toggleButton = document.getElementById(`toggle-${categoryId}`);
+    const icon = toggleButton.querySelector('i');
+    
+    if (childrenDiv.style.display === 'none') {
+        childrenDiv.style.display = 'block';
+        icon.className = 'bi bi-chevron-down';
+    } else {
+        childrenDiv.style.display = 'none';
+        icon.className = 'bi bi-chevron-right';
+    }
+}
+
+// Expand all tree nodes
+function expandAllTreeNodes() {
+    document.querySelectorAll('.tree-children').forEach(children => {
+        children.style.display = 'block';
+    });
+    document.querySelectorAll('.tree-node button i').forEach(icon => {
+        icon.className = 'bi bi-chevron-down';
+    });
+}
+
+// Collapse all tree nodes
+function collapseAllTreeNodes() {
+    document.querySelectorAll('.tree-children').forEach(children => {
+        children.style.display = 'none';
+    });
+    document.querySelectorAll('.tree-node button i').forEach(icon => {
+        icon.className = 'bi bi-chevron-right';
+    });
+}
+</script>

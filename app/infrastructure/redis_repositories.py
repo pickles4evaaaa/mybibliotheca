@@ -95,7 +95,25 @@ class RedisBookRepository(BookRepository):
             book_data['publisher'] = asdict(book.publisher)
         if book.series:
             book_data['series'] = asdict(book.series)
-        book_data['categories'] = [asdict(category) for category in book.categories]
+        
+        # Handle categories - they might be raw data or Category instances
+        if book.categories:
+            serialized_categories = []
+            for category in book.categories:
+                if hasattr(category, '__dataclass_fields__'):  # It's a dataclass
+                    serialized_categories.append(asdict(category))
+                else:  # It's raw data (string or dict)
+                    if isinstance(category, str):
+                        # Store as simple dict for raw string categories
+                        serialized_categories.append({'name': category})
+                    elif isinstance(category, dict):
+                        serialized_categories.append(category)
+                    else:
+                        # Convert to string as fallback
+                        serialized_categories.append({'name': str(category)})
+            book_data['categories'] = serialized_categories
+        else:
+            book_data['categories'] = []
         
         # Serialize datetime objects for JSON storage
         book_data = _serialize_for_json(book_data)
@@ -128,9 +146,9 @@ class RedisBookRepository(BookRepository):
                 properties['order'] = book.series_order
             self.storage.create_relationship('book', book.id, 'PART_OF_SERIES', 'series', book.series.id, properties)
             
-        for category in book.categories:
-            if category.id:
-                self.storage.create_relationship('book', book.id, 'CATEGORIZED_AS', 'category', category.id)
+        # Note: Category relationships are handled separately via process_book_categories
+        # This avoids issues with raw category data vs Category objects
+        print(f"📚 [REPO] Skipping direct category relationship creation - will be handled by process_book_categories")
         
         return book
     
@@ -1270,3 +1288,511 @@ class RedisImportMappingRepository(ImportMappingRepository):
             created_at=created_at,
             updated_at=updated_at
         )
+
+
+# Add base repository for categories
+class CategoryRepository:
+    """Abstract base repository for categories/genres."""
+    
+    async def create(self, category: Category) -> Category:
+        """Create a new category."""
+        raise NotImplementedError
+    
+    async def get_by_id(self, category_id: str) -> Optional[Category]:
+        """Get a category by ID."""
+        raise NotImplementedError
+    
+    async def get_by_name(self, name: str) -> Optional[Category]:
+        """Get a category by exact name."""
+        raise NotImplementedError
+    
+    async def search_by_name(self, query: str) -> List[Category]:
+        """Search categories by name pattern."""
+        raise NotImplementedError
+    
+    async def get_all(self) -> List[Category]:
+        """Get all categories."""
+        raise NotImplementedError
+    
+    async def get_root_categories(self) -> List[Category]:
+        """Get categories with no parent (root level)."""
+        raise NotImplementedError
+    
+    async def get_children(self, parent_id: str) -> List[Category]:
+        """Get direct children of a category."""
+        raise NotImplementedError
+    
+    async def update(self, category: Category) -> Category:
+        """Update an existing category."""
+        raise NotImplementedError
+    
+    async def delete(self, category_id: str) -> bool:
+        """Delete a category."""
+        raise NotImplementedError
+    
+    async def find_or_create(self, name: str, parent_id: Optional[str] = None) -> Category:
+        """Find existing category by name or create new one."""
+        raise NotImplementedError
+
+
+class RedisCategoryRepository(CategoryRepository):
+    """Redis-based implementation of CategoryRepository."""
+    
+    def __init__(self, storage: RedisGraphStorage):
+        self.storage = storage
+    
+    async def create(self, category: Category) -> Category:
+        """Create a new category."""
+        if not category.id:
+            category.id = str(uuid.uuid4())
+        
+        category.updated_at = datetime.utcnow()
+        
+        # Prepare data for storage
+        category_data = {
+            '_id': category.id,
+            'name': category.name,
+            'normalized_name': category.normalized_name,
+            'parent_id': category.parent_id,
+            'description': category.description,
+            'level': category.level,
+            'color': category.color,
+            'icon': category.icon,
+            'aliases': category.aliases,
+            'book_count': category.book_count,  # Include book count
+            'created_at': category.created_at.isoformat(),
+            'updated_at': category.updated_at.isoformat()
+        }
+        
+        # Store the category node
+        success = self.storage.store_node('category', category.id, category_data)
+        if not success:
+            raise Exception(f"Failed to create category: {category.name}")
+        
+        # Create parent-child relationship if parent exists
+        if category.parent_id:
+            self.storage.create_relationship(
+                'category', category.parent_id, 'HAS_CHILD', 'category', category.id
+            )
+        
+        print(f"✅ [CATEGORY_REPO] Created category: {category.name} (ID: {category.id})")
+        return category
+    
+    async def get_by_id(self, category_id: str) -> Optional[Category]:
+        """Get a category by ID."""
+        try:
+            category_data = self.storage.get_node('category', category_id)
+            if not category_data:
+                return None
+            
+            return self._data_to_category(category_data)
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error getting category by ID {category_id}: {e}")
+            return None
+    
+    async def get_by_name(self, name: str) -> Optional[Category]:
+        """Get a category by exact name."""
+        try:
+            normalized_name = Category._normalize_name(name)
+            all_categories = self.storage.find_nodes_by_type('category')
+            
+            for category_data in all_categories:
+                if category_data.get('normalized_name') == normalized_name:
+                    return self._data_to_category(category_data)
+            
+            return None
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error getting category by name {name}: {e}")
+            return None
+    
+    async def search_by_name(self, query: str) -> List[Category]:
+        """Search categories by name pattern."""
+        try:
+            normalized_query = query.lower()
+            all_categories = self.storage.find_nodes_by_type('category')
+            
+            matching_categories = []
+            for category_data in all_categories:
+                category_name = category_data.get('name', '').lower()
+                normalized_name = category_data.get('normalized_name', '')
+                aliases = category_data.get('aliases', [])
+                
+                # Check name, normalized name, and aliases
+                if (normalized_query in category_name or 
+                    normalized_query in normalized_name or
+                    any(normalized_query in alias.lower() for alias in aliases)):
+                    matching_categories.append(self._data_to_category(category_data))
+            
+            # Sort by relevance (exact match first, then starts with, then contains)
+            def sort_key(category):
+                name_lower = category.name.lower()
+                if name_lower == normalized_query:
+                    return 0  # Exact match
+                elif name_lower.startswith(normalized_query):
+                    return 1  # Starts with
+                else:
+                    return 2  # Contains
+            
+            matching_categories.sort(key=sort_key)
+            return matching_categories[:50]  # Limit results
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error searching categories: {e}")
+            return []
+    
+    async def get_all(self) -> List[Category]:
+        """Get all categories."""
+        try:
+            all_category_data = self.storage.find_nodes_by_type('category')
+            categories = []
+            
+            for category_data in all_category_data:
+                category = self._data_to_category(category_data)
+                if category:
+                    categories.append(category)
+            
+            # Sort by level first, then by name
+            categories.sort(key=lambda c: (c.level, c.name.lower()))
+            return categories
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error getting all categories: {e}")
+            return []
+    
+    async def get_root_categories(self) -> List[Category]:
+        """Get categories with no parent (root level)."""
+        try:
+            all_categories = await self.get_all()
+            root_categories = [cat for cat in all_categories if cat.parent_id is None]
+            root_categories.sort(key=lambda c: c.name.lower())
+            return root_categories
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error getting root categories: {e}")
+            return []
+    
+    async def get_children(self, parent_id: str) -> List[Category]:
+        """Get direct children of a category."""
+        try:
+            # Get relationships where parent has children
+            relationships = self.storage.get_relationships('category', parent_id, 'HAS_CHILD')
+            
+            children = []
+            for rel in relationships:
+                if rel.get('to_type') == 'category':
+                    child_id = rel.get('to_id')
+                    child = await self.get_by_id(child_id)
+                    if child:
+                        children.append(child)
+            
+            children.sort(key=lambda c: c.name.lower())
+            return children
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error getting children for {parent_id}: {e}")
+            return []
+    
+    async def update(self, category: Category) -> Category:
+        """Update an existing category."""
+        try:
+            category.updated_at = datetime.utcnow()
+            
+            # Get existing data to preserve relationships
+            existing_data = self.storage.get_node('category', category.id)
+            if not existing_data:
+                raise Exception(f"Category {category.id} not found")
+            
+            # Prepare updated data
+            category_data = {
+                '_id': category.id,
+                'name': category.name,
+                'normalized_name': category.normalized_name,
+                'parent_id': category.parent_id,
+                'description': category.description,
+                'level': category.level,
+                'color': category.color,
+                'icon': category.icon,
+                'aliases': category.aliases,
+                'book_count': existing_data.get('book_count', category.book_count),  # Preserve existing count or use new
+                'created_at': existing_data.get('created_at', category.created_at.isoformat()),
+                'updated_at': category.updated_at.isoformat()
+            }
+            
+            # Update the node
+            success = self.storage.store_node('category', category.id, category_data)
+            if not success:
+                raise Exception(f"Failed to update category: {category.name}")
+            
+            # Handle parent relationship changes
+            old_parent_id = existing_data.get('parent_id')
+            new_parent_id = category.parent_id
+            
+            if old_parent_id != new_parent_id:
+                # Remove old parent relationship
+                if old_parent_id:
+                    self.storage.delete_relationship('category', old_parent_id, 'HAS_CHILD', 'category', category.id)
+                
+                # Add new parent relationship
+                if new_parent_id:
+                    self.storage.create_relationship('category', new_parent_id, 'HAS_CHILD', 'category', category.id)
+            
+            print(f"✅ [CATEGORY_REPO] Updated category: {category.name} (ID: {category.id})")
+            return category
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error updating category {category.id}: {e}")
+            raise
+    
+    async def delete(self, category_id: str) -> bool:
+        """Delete a category."""
+        try:
+            # Check if category has children
+            children = await self.get_children(category_id)
+            if children:
+                raise Exception(f"Cannot delete category with {len(children)} children. Move or delete children first.")
+            
+            # Check if category is used by any books
+            book_relationships = self.storage.get_relationships('book', None, 'HAS_CATEGORY')
+            used_by_books = [rel for rel in book_relationships if rel.get('to_id') == category_id]
+            
+            if used_by_books:
+                raise Exception(f"Cannot delete category used by {len(used_by_books)} books. Remove category from books first.")
+            
+            # Get category data for parent relationship cleanup
+            category_data = self.storage.get_node('category', category_id)
+            if not category_data:
+                return False
+            
+            # Remove parent relationship if exists
+            parent_id = category_data.get('parent_id')
+            if parent_id:
+                self.storage.delete_relationship('category', parent_id, 'HAS_CHILD', 'category', category_id)
+            
+            # Delete the category node
+            success = self.storage.delete_node('category', category_id)
+            
+            if success:
+                print(f"✅ [CATEGORY_REPO] Deleted category: {category_id}")
+            
+            return success
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error deleting category {category_id}: {e}")
+            return False
+    
+    async def find_or_create(self, name: str, parent_id: Optional[str] = None) -> Category:
+        """Find existing category by name or create new one."""
+        try:
+            # First try to find by exact name
+            existing = await self.get_by_name(name)
+            if existing:
+                print(f"✅ [CATEGORY_REPO] Found existing category: {name} (ID: {existing.id})")
+                return existing
+            
+            # Create new category
+            level = 0
+            if parent_id:
+                parent = await self.get_by_id(parent_id)
+                if parent:
+                    level = parent.level + 1
+            
+            new_category = Category(
+                id=str(uuid.uuid4()),
+                name=name.strip(),
+                parent_id=parent_id,
+                level=level,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            
+            created_category = await self.create(new_category)
+            print(f"✅ [CATEGORY_REPO] Created new category: {name} (ID: {created_category.id})")
+            return created_category
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error in find_or_create for {name}: {e}")
+            raise
+    
+    def _data_to_category(self, data: Dict[str, Any]) -> Optional[Category]:
+        """Convert Redis data to Category domain model."""
+        try:
+            # Handle datetime fields
+            created_at = datetime.utcnow()
+            updated_at = datetime.utcnow()
+            
+            if 'created_at' in data and isinstance(data['created_at'], str):
+                try:
+                    created_at = datetime.fromisoformat(data['created_at'])
+                except:
+                    pass
+            
+            if 'updated_at' in data and isinstance(data['updated_at'], str):
+                try:
+                    updated_at = datetime.fromisoformat(data['updated_at'])
+                except:
+                    pass
+            
+            # Handle aliases
+            aliases = data.get('aliases', [])
+            if isinstance(aliases, str):
+                aliases = [aliases]
+            elif not isinstance(aliases, list):
+                aliases = []
+            
+            category = Category(
+                id=data.get('_id'),
+                name=data.get('name', ''),
+                normalized_name=data.get('normalized_name', ''),
+                parent_id=data.get('parent_id'),
+                description=data.get('description'),
+                level=data.get('level', 0),
+                color=data.get('color'),
+                icon=data.get('icon'),
+                aliases=aliases,
+                book_count=data.get('book_count', 0),  # Include book count
+                created_at=created_at,
+                updated_at=updated_at
+            )
+            
+            return category
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error converting data to category: {e}")
+            return None
+    
+    async def build_hierarchy_for_categories(self, categories: List[Category]) -> List[Category]:
+        """Build parent-child relationships for a list of categories."""
+        try:
+            # Create lookup maps
+            category_map = {cat.id: cat for cat in categories}
+            
+            # Build relationships
+            for category in categories:
+                # Reset relationships
+                category.parent = None
+                category.children = []
+                
+                # Set parent reference
+                if category.parent_id and category.parent_id in category_map:
+                    category.parent = category_map[category.parent_id]
+                
+                # Set children references
+                for other_category in categories:
+                    if other_category.parent_id == category.id:
+                        category.children.append(other_category)
+                
+                # Sort children by name
+                category.children.sort(key=lambda c: c.name.lower())
+            
+            return categories
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error building hierarchy: {e}")
+            return categories
+    
+    async def get_category_usage_stats(self, category_id: str, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get usage statistics for a category."""
+        try:
+            stats = {
+                'total_books': 0,
+                'user_books': 0,
+                'children_count': 0,
+                'descendants_count': 0
+            }
+            
+            # Count books with this category
+            book_relationships = self.storage.get_relationships('book', None, 'HAS_CATEGORY')
+            category_books = [rel for rel in book_relationships if rel.get('to_id') == category_id]
+            stats['total_books'] = len(category_books)
+            
+            # Count user's books with this category (if user specified)
+            if user_id:
+                # This would require cross-referencing with user-book relationships
+                # For now, we'll implement a basic version
+                stats['user_books'] = 0  # TODO: Implement user-specific count
+            
+            # Count direct children
+            children = await self.get_children(category_id)
+            stats['children_count'] = len(children)
+            
+            # Count all descendants recursively
+            def count_descendants(cat_id):
+                children = self.storage.get_relationships('category', cat_id, 'HAS_CHILD')
+                count = len(children)
+                for child_rel in children:
+                    child_id = child_rel.get('to_id')
+                    if child_id:
+                        count += count_descendants(child_id)
+                return count
+            
+            stats['descendants_count'] = count_descendants(category_id)
+            
+            return stats
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error getting usage stats for {category_id}: {e}")
+            return {'total_books': 0, 'user_books': 0, 'children_count': 0, 'descendants_count': 0}
+
+    async def increment_book_count(self, category_id: str) -> bool:
+        """Increment the book count for a category."""
+        try:
+            # Get current category data
+            category_data = self.storage.get_node('category', category_id)
+            if not category_data:
+                print(f"❌ [CATEGORY_REPO] Category {category_id} not found for book count increment")
+                return False
+            
+            # Increment book_count (default to 0 if not present)
+            current_count = category_data.get('book_count', 0)
+            new_count = current_count + 1
+            
+            # Update the category data
+            category_data['book_count'] = new_count
+            category_data['updated_at'] = datetime.utcnow().isoformat()
+            
+            # Store updated data
+            success = self.storage.store_node('category', category_id, category_data)
+            if success:
+                print(f"📊 [CATEGORY_REPO] Incremented book count for category {category_id}: {current_count} -> {new_count}")
+            else:
+                print(f"❌ [CATEGORY_REPO] Failed to update book count for category {category_id}")
+            
+            return success
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error incrementing book count for {category_id}: {e}")
+            return False
+
+    async def recalculate_book_count(self, category_id: str) -> bool:
+        """Recalculate the book count for a category by counting actual relationships."""
+        try:
+            # Count actual HAS_CATEGORY relationships pointing to this category
+            pattern = f"rel:book:*:HAS_CATEGORY"
+            keys = self.storage.redis.keys(pattern)
+            count = 0
+            
+            for key in keys:
+                rel_strings = self.storage.redis.smembers(key)
+                for rel_string in rel_strings:
+                    try:
+                        rel_data = json.loads(rel_string)
+                        if rel_data.get('to_id') == category_id:
+                            count += 1
+                    except json.JSONDecodeError:
+                        continue
+            
+            # Update category with correct count
+            category_data = self.storage.get_node('category', category_id)
+            if category_data:
+                category_data['book_count'] = count
+                category_data['updated_at'] = datetime.utcnow().isoformat()
+                success = self.storage.store_node('category', category_id, category_data)
+                
+                if success:
+                    print(f"📊 [CATEGORY_REPO] Recalculated book count for category {category_id}: {count}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ [CATEGORY_REPO] Error recalculating book count for {category_id}: {e}")
+            return False

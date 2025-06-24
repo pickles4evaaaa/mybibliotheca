@@ -4,6 +4,14 @@
 {% block title %}{{ book.title }} - Bibliotheca{% endblock %}
 {% block content %}
 <style>
+/* Genre badge hover effects */
+.badge.bg-secondary:hover {
+    background-color: #5a6268 !important;
+    transform: translateY(-1px);
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
 /* Dark mode enhancements for View Book (Simple) */
 [data-theme="dark"] .form-check-label {
     color: #e0e0e0 !important;
@@ -132,7 +140,15 @@
     {% endif %}
   </div>
   <div class="col-md-6">
-    {% if book.categories %}
+    {% if book_categories %}
+      <p><strong>Genres & Categories:</strong> 
+        {% for category in book_categories %}
+          <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
+             class="badge bg-secondary me-1 text-decoration-none text-white" 
+             title="{{ category.description or category.name }}">{{ category.name }}</a>
+        {% endfor %}
+      </p>
+    {% elif book.categories %}
       <p><strong>Categories:</strong> 
         {% for category in book.categories.split(',') %}
           <span class="badge bg-secondary me-1">{{ category.strip() }}</span>
