@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}Import in Progress - Bibliotheca Setup{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <!-- Progress Indicator -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="progress mb-2">
+                        <div class="progress-bar" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Step 5 of 5: Importing Your Books</small>
+                </div>
+            </div>
+
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-cog fa-spin"></i> Setting Up Your Library
+                    </h3>
+                </div>
+                <div class="card-body">
+                    
+                    <!-- Import Progress Section -->
+                    <div class="card border-info mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h5 class="mb-0">
+                                <i class="fas fa-upload"></i> Import Progress
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span>Status:</span>
+                                        <span id="jobStatus" class="badge bg-primary">Starting...</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span>Progress:</span>
+                                        <span id="progressText">0 / 0</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="progress mb-3" style="height: 25px;">
+                                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                                    <span class="progress-text">0%</span>
+                                </div>
+                            </div>
+
+                            <!-- Current Book Being Processed -->
+                            <div class="alert alert-info" id="statusMessage">
+                                <i class="fas fa-book"></i> Preparing to import your books...
+                            </div>
+
+                            <!-- Import Statistics -->
+                            <div class="row text-center">
+                                <div class="col-md-4">
+                                    <div class="card bg-success text-white">
+                                        <div class="card-body">
+                                            <h4 id="successCount">0</h4>
+                                            <p class="mb-0">Books Imported</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card bg-danger text-white">
+                                        <div class="card-body">
+                                            <h4 id="errorCount">0</h4>
+                                            <p class="mb-0">Errors</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card bg-info text-white">
+                                        <div class="card-body">
+                                            <h4 id="totalBooks">{{ total_books or 0 }}</h4>
+                                            <p class="mb-0">Total Books</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity -->
+                    <div class="card border-secondary">
+                        <div class="card-header bg-secondary text-white">
+                            <h6 class="mb-0">
+                                <i class="fas fa-list"></i> Recent Activity
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="recentActivity" style="max-height: 200px; overflow-y: auto;">
+                                <p class="text-muted"><i>Starting import...</i></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions (initially hidden) -->
+                    <div id="completionActions" class="mt-4 text-center" style="display: none;">
+                        <a href="{{ url_for('main.library') }}" class="btn btn-success btn-lg">
+                            <i class="fas fa-books"></i> Go to Library
+                        </a>
+                        <p class="mt-2 text-muted">
+                            <small>Redirecting automatically in 3 seconds...</small>
+                        </p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.progress-text {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    line-height: 25px;
+    color: #000;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(255,255,255,0.8);
+}
+
+.card {
+    transition: all 0.3s ease;
+}
+
+.progress-bar-animated {
+    animation: progress-bar-stripes 1s linear infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+.pulse {
+    animation: pulse 2s infinite;
+}
+</style>
+
+<script>
+let pollInterval;
+let lastUpdateTime = new Date();
+let lastProcessedCount = 0;
+
+document.addEventListener('DOMContentLoaded', function() {
+    const taskId = '{{ task_id }}';
+    
+    if (taskId) {
+        console.log('Starting progress polling for task:', taskId);
+        
+        // Start polling immediately
+        pollProgress();
+        
+        // Set up interval polling every 2 seconds
+        pollInterval = setInterval(pollProgress, 2000);
+    } else {
+        console.error('No task ID provided');
+        document.getElementById('statusMessage').innerHTML = 
+            '<i class="fas fa-exclamation-triangle"></i> Error: No import task found';
+        document.getElementById('statusMessage').className = 'alert alert-danger';
+    }
+    
+    function pollProgress() {
+        fetch(`/onboarding/import-progress-json/${taskId}`)
+            .then(response => response.json())
+            .then(data => {
+                console.log('Progress data:', data);
+                
+                updateProgressDisplay(data);
+                
+                // Check if job is complete
+                if (data.status === 'completed' || data.status === 'failed') {
+                    clearInterval(pollInterval);
+                    handleCompletion(data);
+                }
+            })
+            .catch(error => {
+                console.error('Error polling progress:', error);
+                // Don't stop polling on error, just log it
+            });
+    }
+    
+    function updateProgressDisplay(data) {
+        // Update status badge
+        const statusBadge = document.getElementById('jobStatus');
+        if (data.status === 'completed') {
+            statusBadge.textContent = 'Completed';
+            statusBadge.className = 'badge bg-success';
+        } else if (data.status === 'failed') {
+            statusBadge.textContent = 'Failed';
+            statusBadge.className = 'badge bg-danger';
+        } else if (data.status === 'running') {
+            statusBadge.textContent = 'Running';
+            statusBadge.className = 'badge bg-primary';
+        } else {
+            statusBadge.textContent = 'Pending';
+            statusBadge.className = 'badge bg-secondary';
+        }
+        
+        // Update progress bar
+        const progress = data.total > 0 ? (data.processed / data.total) * 100 : 0;
+        const progressBar = document.getElementById('progressBar');
+        progressBar.style.width = `${progress}%`;
+        progressBar.setAttribute('aria-valuenow', progress);
+        progressBar.querySelector('.progress-text').textContent = `${Math.round(progress)}%`;
+        
+        // Update progress text
+        document.getElementById('progressText').textContent = `${data.processed || 0} / ${data.total || 0}`;
+        
+        // Update counts
+        document.getElementById('successCount').textContent = data.success || 0;
+        document.getElementById('errorCount').textContent = data.errors || 0;
+        document.getElementById('totalBooks').textContent = data.total || 0;
+        
+        // Update current book status
+        if (data.status === 'running' && data.current_book) {
+            document.getElementById('statusMessage').innerHTML = 
+                `<i class="fas fa-cog fa-spin"></i> Processing: ${data.current_book}`;
+            document.getElementById('statusMessage').className = 'alert alert-info';
+        } else if (data.status === 'completed') {
+            document.getElementById('statusMessage').innerHTML = 
+                `<i class="fas fa-check-circle"></i> Import completed! ${data.success || 0} books imported successfully.`;
+            document.getElementById('statusMessage').className = 'alert alert-success';
+        } else if (data.status === 'failed') {
+            document.getElementById('statusMessage').innerHTML = 
+                `<i class="fas fa-exclamation-triangle"></i> Import failed: ${data.error_message || 'Unknown error'}`;
+            document.getElementById('statusMessage').className = 'alert alert-danger';
+        }
+        
+        // Update recent activity
+        if (data.recent_activity && data.recent_activity.length > 0) {
+            const activityDiv = document.getElementById('recentActivity');
+            activityDiv.innerHTML = data.recent_activity
+                .slice(-10) // Show only last 10 activities
+                .reverse() // Show newest first
+                .map(activity => `<p class="mb-1 small"><i class="fas fa-arrow-right"></i> ${activity}</p>`)
+                .join('');
+        }
+    }
+    
+    function handleCompletion(data) {
+        console.log('Import job completed:', data);
+        
+        // Show completion actions
+        document.getElementById('completionActions').style.display = 'block';
+        
+        // Remove animation from progress bar
+        const progressBar = document.getElementById('progressBar');
+        progressBar.classList.remove('progress-bar-animated');
+        
+        // Add a completion notification
+        if (data.status === 'completed') {
+            // Auto-redirect after 3 seconds if successful
+            setTimeout(() => {
+                window.location.href = '{{ url_for("main.library") }}';
+            }, 3000);
+        }
+    }
+});
+</script>
+{% endblock %}

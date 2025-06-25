@@ -1000,7 +1000,7 @@ def search_books_in_library():
         users.append(type('User', (), user_data))
 
     return render_template(
-        'library.html',
+        'library_enhanced.html',
         books=books,
         categories=sorted(categories),
         publishers=sorted(publishers),

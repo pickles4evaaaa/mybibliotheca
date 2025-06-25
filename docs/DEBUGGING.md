@@ -15,6 +15,7 @@ Here are the available debug flags:
 | `BIBLIOTHECA_DEBUG_CSRF`    | Provides verbose output for Cross-Site Request Forgery (CSRF) token generation and validation. This is extremely useful for debugging form submission issues. |
 | `BIBLIOTHECA_DEBUG_SESSION` | Logs detailed information about the user's session, such as when a session is created, modified, or accessed.                               |
 | `BIBLIOTHECA_DEBUG_REQUESTS`| Prints information about incoming web requests, including the request method, path, and form data.                                         |
+| `BIBLIOTHECA_VERBOSE_INIT`  | Controls verbose logging during application initialization. When set to `false` (default in production), reduces duplicate startup messages when running with multiple Gunicorn workers. |
 
 ### Example `.env` Configuration
 
@@ -26,6 +27,7 @@ BIBLIOTHECA_DEBUG_AUTH=true
 BIBLIOTHECA_DEBUG_CSRF=true
 BIBLIOTHECA_DEBUG_SESSION=true
 BIBLIOTHECA_DEBUG_REQUESTS=true
+BIBLIOTHECA_VERBOSE_INIT=true
 ```
 
 ## How It Works
@@ -41,3 +43,21 @@ This approach allows you to selectively enable logging for only the parts of the
 - **Troubleshooting Login Issues:** If users are unable to log in or register, enabling `BIBLIOTHECA_DEBUG_AUTH` can provide step-by-step details of the authentication process, helping you pinpoint the cause of the failure.
 - **Fixing Form Submission Errors:** If you are encountering "CSRF token missing" or other form-related errors, `BIBLIOTHECA_DEBUG_CSRF` and `BIBLIOTHECA_DEBUG_SESSION` are invaluable for understanding how the CSRF token and session are being managed.
 - **Understanding Application Flow:** `BIBLIOTHECA_DEBUG_REQUESTS` can help you trace the flow of a request through the application, which is useful for understanding how different parts of the code interact.
+
+## Reducing Startup Message Duplication
+
+When running MyBibliotheca with multiple Gunicorn workers (default configuration), you may see duplicate initialization messages in the logs. This happens because each worker process initializes independently. To reduce log verbosity in production:
+
+```env
+# Disable verbose initialization messages (recommended for production)
+BIBLIOTHECA_VERBOSE_INIT=false
+```
+
+To enable verbose initialization logging (useful for debugging startup issues):
+
+```env
+# Enable verbose initialization messages (useful for development/debugging)
+BIBLIOTHECA_VERBOSE_INIT=true
+```
+
+**Note:** Essential error messages (such as Redis connection failures) will always be displayed regardless of this setting.

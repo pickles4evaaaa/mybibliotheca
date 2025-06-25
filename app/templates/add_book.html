@@ -1,53 +1,104 @@
 {% extends "base.html" %}
 {% block title %}Add Book - Bibliotheca{% endblock %}
 {% block content %}
-<h1>Add a New Book</h1>
-<form method="post">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-  <button type="button" class="btn btn-secondary" onclick="startScanner()">Scan Barcode</button>
+<div class="container mt-4">
+    <!-- Page Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h2 mb-0">
+            <i class="bi bi-plus-circle me-2"></i>Add Book
+        </h1>
+        <div>
+            <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Library
+            </a>
+        </div>
+    </div>
 
-  <!-- ISBN input -->
-  <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" type="text" pattern="[\d-]+" title="Enter a valid ISBN (digits and hyphens only)">
+<div class="card">
+    <div class="card-body">
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          
+          <div class="mb-3">
+            <button type="button" class="btn btn-secondary" onclick="startScanner()">
+              <i class="bi bi-upc-scan me-1"></i>Scan Barcode
+            </button>
+          </div>
 
-  <!-- Constrained scanner box -->
-  <div id="scanner" style="
-    width: 300px;
-    height: 200px;
-    display: none;
-    border: 2px solid #ccc;
-    margin: 1rem 0;
-    overflow: hidden;
-    position: relative;
-    background-color: #000;
-  "></div>
+          <!-- ISBN input -->
+          <div class="mb-3">
+            <label for="isbn" class="form-label">ISBN</label>
+            <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
+                   type="text" pattern="[\d-]+" title="Enter a valid ISBN (digits and hyphens only)">
+          </div>
 
-  <!-- Fetch and book data inputs -->
-  <button name="fetch" value="1" type="submit" class="btn btn-secondary">Fetch Book Data</button><br>
-  Title: <input id="title" name="title" value="{{ book_data.title if book_data else request.form.title or '' }}"><br>
-  Author: <input name="author" value="{{ book_data.author if book_data else request.form.author or '' }}"><br>
-  Start Date: <input name="start_date" type="date"><br>
-  Finish Date: <input name="finish_date" type="date"><br>
+          <!-- Constrained scanner box -->
+          <div id="scanner" style="
+            width: 300px;
+            height: 200px;
+            display: none;
+            border: 2px solid #ccc;
+            margin: 1rem 0;
+            overflow: hidden;
+            position: relative;
+            background-color: #000;
+          "></div>
 
-  {% if book_data and book_data.cover %}
-  <div class="mb-3 text-center">
-    <img src="{{ book_data.cover }}" alt="Book Cover" class="img-fluid rounded book-cover">
-  </div>
-  {% endif %}
+          <!-- Fetch and book data inputs -->
+          <div class="mb-3">
+            <button name="fetch" value="1" type="submit" class="btn btn-secondary">
+              <i class="bi bi-search me-1"></i>Fetch Book Data
+            </button>
+          </div>
+          
+          <div class="mb-3">
+            <label for="title" class="form-label">Title</label>
+            <input id="title" name="title" class="form-control" 
+                   value="{{ book_data.title if book_data else request.form.title or '' }}">
+          </div>
+          
+          <div class="mb-3">
+            <label for="author" class="form-label">Author</label>
+            <input name="author" class="form-control" 
+                   value="{{ book_data.author if book_data else request.form.author or '' }}">
+          </div>
+          
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label for="start_date" class="form-label">Start Date</label>
+              <input name="start_date" type="date" class="form-control">
+            </div>
+            <div class="col-md-6">
+              <label for="finish_date" class="form-label">Finish Date</label>
+              <input name="finish_date" type="date" class="form-control">
+            </div>
+          </div>
 
-  <label>
-    <input type="checkbox" name="want_to_read" {% if request.form.want_to_read %}checked{% endif %}>
-    Want to Read
-  </label><br>
+          {% if book_data and book_data.cover %}
+          <div class="mb-3 text-center">
+            <img src="{{ book_data.cover }}" alt="Book Cover" class="img-fluid rounded book-cover" style="max-height: 300px;">
+          </div>
+          {% endif %}
 
-  <label>
-    <input type="checkbox" name="library_only" {% if request.form.library_only %}checked{% endif %}>
-    Add to Library Only (not for reading)
-  </label><br>
+          <div class="mb-3">
+            <label for="reading_status" class="form-label">Reading Status</label>
+            <select class="form-select" name="reading_status">
+              <option value="plan_to_read" {{ 'selected' if request.form.want_to_read else '' }}>Plan to Read</option>
+              <option value="reading">Currently Reading</option>
+              <option value="read">Read</option>
+              <option value="library_only" {{ 'selected' if request.form.library_only else '' }}>Library Only (No Reading Intent)</option>
+            </select>
+          </div>
 
-  <input type="submit" name="add" value="Add Book">
-</form>
-
-<a href="{{ url_for('main.index') }}">Back to list</a>
+          <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+            <button type="submit" name="add" value="Add Book" class="btn btn-primary">
+              <i class="bi bi-plus-circle me-1"></i>Add Book
+            </button>
+          </div>
+        </form>
+    </div>
+</div>
+</div>
 
 <!-- QuaggaJS -->
 <script src="{{ url_for('static', filename='quagga.min.js') }}"></script>

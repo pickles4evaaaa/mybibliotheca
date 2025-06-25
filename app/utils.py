@@ -264,3 +264,30 @@ def generate_month_review_image(books, month, year):
         bg.paste(cover, (x, y), cover if cover.mode == 'RGBA' else None)
 
     return bg.convert('RGB')
+
+def normalize_goodreads_value(value, field_type='text'):
+    """
+    Normalize values from Goodreads CSV exports that use Excel text formatting.
+    Goodreads exports often have values like ="123456789" or ="" to force text formatting.
+    """
+    if not value or not isinstance(value, str):
+        return value.strip() if value else ''
+    
+    # Remove Excel text formatting: ="value" -> value
+    if value.startswith('="') and value.endswith('"'):
+        value = value[2:-1]  # Remove =" prefix and " suffix
+    elif value.startswith('=') and value.endswith('"'):
+        value = value[1:-1]  # Remove = prefix and " suffix  
+    elif value == '=""':
+        value = ''  # Empty quoted value
+    
+    # Additional cleaning for ISBN fields
+    if field_type == 'isbn':
+        # Remove any remaining quotes, equals, or whitespace
+        value = value.replace('"', '').replace('=', '').strip()
+        # Validate that it looks like an ISBN (digits, X, hyphens only)
+        if value and not all(c.isdigit() or c in 'X-' for c in value):
+            # If it doesn't look like an ISBN, it might be corrupted
+            print(f"WARNING: Potentially corrupted ISBN value: '{value}'")
+    
+    return value.strip()

@@ -33,6 +33,9 @@ services:
       - TIMEZONE=${TIMEZONE:-UTC}
       - WORKERS=${WORKERS:-4}
       
+      # Logging settings - disable verbose initialization to prevent duplicate messages
+      - BIBLIOTHECA_VERBOSE_INIT=${BIBLIOTHECA_VERBOSE_INIT:-false}
+      
       # Migration settings (DISABLED for manual migration)
       - AUTO_MIGRATE=false
       # - MIGRATION_DEFAULT_USER=admin

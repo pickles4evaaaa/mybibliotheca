@@ -181,18 +181,43 @@ document.addEventListener('DOMContentLoaded', function() {
                     button.disabled = true;
                     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Setting up your library...';
                     
-                    // Show progress indicator
+                    // Show detailed progress indicator
                     const progressDiv = document.createElement('div');
                     progressDiv.className = 'alert alert-info mt-3';
+                    progressDiv.id = 'setup-progress';
                     progressDiv.innerHTML = `
                         <h6><i class="fas fa-hourglass-half"></i> Setup in Progress</h6>
-                        <p class="mb-0">Please wait while we set up your library. This may take a few minutes.</p>
-                        <div class="progress mt-2">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" 
-                                 role="progressbar" style="width: 100%"></div>
+                        <div id="progress-steps">
+                            <p class="mb-2" id="step-1">✅ Creating admin account...</p>
+                            <p class="mb-2" id="step-2">⏳ Configuring site settings...</p>
+                            <p class="mb-2" id="step-3">⏳ Creating locations...</p>
+                            <p class="mb-2" id="step-4">⏳ Setting up custom fields...</p>
+                            <p class="mb-2" id="step-5">⏳ Importing your books...</p>
                         </div>
+                        <div class="progress mt-2">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
+                                 role="progressbar" style="width: 20%" id="progress-bar"></div>
+                        </div>
+                        <small class="text-muted mt-1">This process may take several minutes depending on the size of your library.</small>
                     `;
                     this.appendChild(progressDiv);
+                    
+                    // Simulate progress steps (since we can't get real-time feedback from the backend)
+                    setTimeout(() => {
+                        document.getElementById('step-2').innerHTML = '✅ Configuring site settings...';
+                        document.getElementById('progress-bar').style.width = '40%';
+                    }, 2000);
+                    
+                    setTimeout(() => {
+                        document.getElementById('step-3').innerHTML = '✅ Creating locations...';
+                        document.getElementById('progress-bar').style.width = '60%';
+                    }, 4000);
+                    
+                    setTimeout(() => {
+                        document.getElementById('step-4').innerHTML = '✅ Setting up custom fields...';
+                        document.getElementById('progress-bar').style.width = '80%';
+                        document.getElementById('step-5').innerHTML = '⏳ Importing your books... (this may take a while)';
+                    }, 6000);
                 }
             } else {
                 e.preventDefault();

@@ -1,6 +1,6 @@
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash, send_file, abort, make_response, session
 from flask_login import login_required, current_user
-from .domain.models import Book as DomainBook, Author, Person, BookContribution, ContributionType, Publisher, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
+from .domain.models import Book as DomainBook, Author, Person, BookContribution, ContributionType, Publisher, Series, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
 from .services import book_service, user_service, reading_log_service, custom_field_service, import_mapping_service, direct_import_service
 from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image
 from datetime import datetime, date, timedelta
@@ -323,7 +323,9 @@ def library():
     category_filter = request.args.get('category', '')
     publisher_filter = request.args.get('publisher', '')
     language_filter = request.args.get('language', '')
+    location_filter = request.args.get('location', '')
     search_query = request.args.get('search', '')
+    sort_option = request.args.get('sort', 'title_asc')  # Default to title A-Z
 
     # Use Redis service layer to get all user books (with relationship data)
     user_books = book_service.get_user_books_sync(str(current_user.id))
@@ -392,11 +394,68 @@ def library():
             if book.language == language_filter
         ]
     
+    if location_filter:
+        filtered_books = [
+            book for book in filtered_books 
+            if book.locations and any(
+                location_filter.lower() in loc.name.lower() 
+                for loc in book.locations 
+                if hasattr(loc, 'name')
+            )
+        ]
+    
     if category_filter:
         filtered_books = [
             book for book in filtered_books 
             if book.categories and any(category_filter.lower() in cat.name.lower() for cat in book.categories if hasattr(cat, 'name'))
         ]
+
+    # Apply sorting
+    def get_author_name(book):
+        """Helper function to get author name safely"""
+        if hasattr(book, 'authors') and book.authors:
+            # Handle list of Author objects
+            if isinstance(book.authors, list) and len(book.authors) > 0:
+                author = book.authors[0]
+                if hasattr(author, 'name'):
+                    return author.name
+                elif hasattr(author, 'first_name') and hasattr(author, 'last_name'):
+                    return f"{author.first_name} {author.last_name}".strip()
+                else:
+                    return str(author)
+            else:
+                return str(book.authors)
+        elif hasattr(book, 'author') and book.author:
+            return book.author
+        return "Unknown Author"
+    
+    def get_author_last_first(book):
+        """Helper function to get author name in Last, First format"""
+        author_name = get_author_name(book)
+        if ',' in author_name:
+            return author_name  # Already in Last, First format
+        name_parts = author_name.split()
+        if len(name_parts) >= 2:
+            last_name = name_parts[-1]
+            first_names = ' '.join(name_parts[:-1])
+            return f"{last_name}, {first_names}"
+        return author_name
+    
+    if sort_option == 'title_asc':
+        filtered_books.sort(key=lambda x: (x.title or "").lower())
+    elif sort_option == 'title_desc':
+        filtered_books.sort(key=lambda x: (x.title or "").lower(), reverse=True)
+    elif sort_option == 'author_first_asc':
+        filtered_books.sort(key=lambda x: get_author_name(x).lower())
+    elif sort_option == 'author_first_desc':
+        filtered_books.sort(key=lambda x: get_author_name(x).lower(), reverse=True)
+    elif sort_option == 'author_last_asc':
+        filtered_books.sort(key=lambda x: get_author_last_first(x).lower())
+    elif sort_option == 'author_last_desc':
+        filtered_books.sort(key=lambda x: get_author_last_first(x).lower(), reverse=True)
+    else:
+        # Default to title A-Z
+        filtered_books.sort(key=lambda x: (x.title or "").lower())
 
     # Books are already in the right format for the template
     books = filtered_books
@@ -407,6 +466,7 @@ def library():
     categories = set()
     publishers = set()
     languages = set()
+    locations = set()
 
     for book in all_books:
         if book.categories:
@@ -418,6 +478,9 @@ def library():
             publishers.add(publisher_name)
         if book.language:
             languages.add(book.language)
+        if book.locations:
+            # book.locations is a list of Location objects
+            locations.update([loc.name for loc in book.locations if hasattr(loc, 'name')])
 
     # Get users through Redis service layer
     domain_users = user_service.get_all_users_sync()
@@ -439,11 +502,14 @@ def library():
         categories=sorted(categories),
         publishers=sorted(publishers),
         languages=sorted(languages),
+        locations=sorted(locations),
         current_status_filter=status_filter,
         current_category=category_filter,
         current_publisher=publisher_filter,
         current_language=language_filter,
+        current_location=location_filter,
         current_search=search_query,
+        current_sort=sort_option,
         users=users
     )
 
@@ -1480,6 +1546,7 @@ def search_books_in_library():
     category_filter = request.args.get('category', '')
     publisher_filter = request.args.get('publisher', '')
     language_filter = request.args.get('language', '')
+    location_filter = request.args.get('location', '')
     search_query = request.args.get('search', '')
 
     # Use Redis service layer to get all user books (with relationship data)
@@ -1506,6 +1573,15 @@ def search_books_in_library():
             book for book in filtered_books 
             if book.language == language_filter
         ]
+    if location_filter:
+        filtered_books = [
+            book for book in filtered_books 
+            if book.locations and any(
+                location_filter.lower() in loc.name.lower() 
+                for loc in book.locations 
+                if hasattr(loc, 'name')
+            )
+        ]
     if category_filter:
         filtered_books = [
             book for book in filtered_books 
@@ -1521,6 +1597,7 @@ def search_books_in_library():
     categories = set()
     publishers = set()
     languages = set()
+    locations = set()
 
     for book in all_books:
         if book.categories:
@@ -1532,6 +1609,9 @@ def search_books_in_library():
             publishers.add(publisher_name)
         if book.language:
             languages.add(book.language)
+        if book.locations:
+            # book.locations is a list of Location objects
+            locations.update([loc.name for loc in book.locations if hasattr(loc, 'name')])
 
     # Get users through Redis service layer
     domain_users = user_service.get_all_users_sync()
@@ -1546,16 +1626,31 @@ def search_books_in_library():
         }
         users.append(type('User', (), user_data))
 
+    # Calculate statistics for filter buttons
+    stats = {
+        'total_books': len(user_books),
+        'books_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'read']),
+        'currently_reading': len([b for b in user_books if getattr(b, 'reading_status', None) == 'reading']),
+        'want_to_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']),
+        'on_hold': len([b for b in user_books if getattr(b, 'reading_status', None) == 'on_hold']),
+        'wishlist': len([b for b in user_books if getattr(b, 'ownership_status', None) == 'wishlist']),
+    }
+
     return render_template(
-        'library.html',
+        'library_enhanced.html',
         books=books,
+        stats=stats,
         categories=sorted(categories),
         publishers=sorted(publishers),
         languages=sorted(languages),
+        locations=sorted(locations),
+        current_status_filter='all',
         current_category=category_filter,
         current_publisher=publisher_filter,
         current_language=language_filter,
+        current_location=location_filter,
         current_search=search_query,
+        current_sort='title_asc',
         users=users,
         search_results=results,
         search_query=query
@@ -1571,11 +1666,57 @@ def add_book_manual():
         flash('Error: Title is required to add a book.', 'danger')
         return redirect(url_for('main.library'))
 
+    # Extract all form fields
     isbn = request.form.get('isbn', '').strip()
     author = request.form.get('author', '').strip()
-    cover_url = request.form.get('cover_url', '').strip()
-    genre = request.form.get('genre', '').strip()
+    subtitle = request.form.get('subtitle', '').strip()
     publisher_name = request.form.get('publisher', '').strip()
+    page_count_str = request.form.get('page_count', '').strip()
+    language = request.form.get('language', '').strip() or 'en'
+    cover_url = request.form.get('cover_url', '').strip()
+    published_date_str = request.form.get('published_date', '').strip()
+    series = request.form.get('series', '').strip()
+    series_volume = request.form.get('series_volume', '').strip()
+    series_order_str = request.form.get('series_order', '').strip()
+    genres = request.form.get('genres', '').strip()  # Changed from 'genre' to 'genres'
+    reading_status = request.form.get('reading_status', '').strip()
+    ownership_status = request.form.get('ownership_status', '').strip()
+    media_type = request.form.get('media_type', '').strip()
+    location_id = request.form.get('location_id', '').strip()
+    user_rating_str = request.form.get('user_rating', '').strip()
+    personal_notes = request.form.get('personal_notes', '').strip()
+    user_tags = request.form.get('user_tags', '').strip()
+    description = request.form.get('description', '').strip()
+    
+    # Convert numeric fields
+    page_count = None
+    if page_count_str:
+        try:
+            page_count = int(page_count_str)
+        except ValueError:
+            pass
+    
+    series_order = None
+    if series_order_str:
+        try:
+            series_order = int(series_order_str)
+        except ValueError:
+            pass
+    
+    user_rating = None
+    if user_rating_str:
+        try:
+            user_rating = float(user_rating_str)
+        except ValueError:
+            pass
+    
+    # Convert date fields
+    published_date = None
+    if published_date_str:
+        try:
+            published_date = datetime.strptime(published_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            pass
     
     # Normalize ISBN by extracting digits only
     normalized_isbn = None
@@ -1587,19 +1728,18 @@ def add_book_manual():
         else:
             print(f"⚠️ [MANUAL] Could not normalize ISBN: {isbn}")
     
+    
     # Process manual genre input
     manual_categories = []
-    if genre:
+    if genres:
         # Split by comma and clean up
-        manual_categories = [cat.strip() for cat in genre.split(',') if cat.strip()]
+        manual_categories = [cat.strip() for cat in genres.split(',') if cat.strip()]
         print(f"📚 [MANUAL] Manual categories: {manual_categories}")
     
     start_date_str = request.form.get('start_date') or None
     finish_date_str = request.form.get('finish_date') or None
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date() if start_date_str else None
     finish_date = datetime.strptime(finish_date_str, '%Y-%m-%d').date() if finish_date_str else None
-    want_to_read = 'want_to_read' in request.form
-    library_only = 'library_only' in request.form
 
     # Process custom metadata
     custom_metadata = {}
@@ -1749,8 +1889,9 @@ def add_book_manual():
         domain_book = DomainBook(
             id=str(uuid.uuid4()),
             title=title,
+            subtitle=subtitle if subtitle else None,
             description=description,
-            published_date=_convert_published_date_to_date(published_date),
+            published_date=published_date,  # Already converted to date above
             page_count=page_count,
             language=language or "en",
             cover_url=cover_url,
@@ -1760,6 +1901,9 @@ def add_book_manual():
             rating_count=rating_count,
             contributors=contributors,
             publisher=Publisher(id=str(uuid.uuid4()), name=final_publisher) if final_publisher else None,
+            series=Series(id=str(uuid.uuid4()), name=series) if series else None,
+            series_volume=series_volume if series_volume else None,
+            series_order=series_order,
             categories=unique_categories or [],  # Use final combined categories
             raw_categories=unique_categories,  # Store raw categories for processing
             created_at=datetime.now(),
@@ -1816,27 +1960,63 @@ def add_book_manual():
         
         print(f"📍 [MANUAL] Final default_locations list: {default_locations}")
         
-        print(f"📚 [MANUAL] Adding book to user library with locations: {default_locations}")
+        # Convert reading status string to enum
+        reading_status_enum = ReadingStatus.PLAN_TO_READ  # Default
+        if reading_status:
+            try:
+                reading_status_enum = ReadingStatus(reading_status)
+            except ValueError:
+                print(f"⚠️ [MANUAL] Invalid reading status: {reading_status}, using default")
+        
+        # Convert ownership status string to enum
+        ownership_status_enum = None
+        if ownership_status:
+            try:
+                from .domain.models import OwnershipStatus
+                ownership_status_enum = OwnershipStatus(ownership_status)
+            except ValueError:
+                print(f"⚠️ [MANUAL] Invalid ownership status: {ownership_status}")
+        
+        # Convert media type string to enum
+        media_type_enum = None
+        if media_type:
+            try:
+                from .domain.models import MediaType
+                media_type_enum = MediaType(media_type)
+            except ValueError:
+                print(f"⚠️ [MANUAL] Invalid media type: {media_type}")
+        
+        print(f"📚 [MANUAL] Adding book to user library with reading status: {reading_status_enum}")
         result = book_service.add_book_to_user_library_sync(
             user_id=current_user.id,
             book_id=existing_book.id,
-            reading_status=ReadingStatus.PLAN_TO_READ,
+            reading_status=reading_status_enum,
             locations=default_locations,
             custom_metadata=custom_metadata if custom_metadata else None
         )
         print(f"📚 [MANUAL] Add to library result: {result}")
         
-        # Update status if specified
-        if want_to_read or library_only or start_date or finish_date:
-            update_data = {
-                'want_to_read': want_to_read,
-                'library_only': library_only
-            }
-            if start_date:
-                update_data['start_date'] = start_date
-            if finish_date:
-                update_data['finish_date'] = finish_date
-                
+        # Update additional fields if specified
+        update_data = {}
+        if ownership_status_enum:
+            update_data['ownership_status'] = ownership_status_enum
+        if media_type_enum:
+            update_data['media_type'] = media_type_enum
+        if user_rating:
+            update_data['user_rating'] = user_rating
+        if personal_notes:
+            update_data['personal_notes'] = personal_notes
+        if user_tags:
+            update_data['user_tags'] = user_tags
+        if start_date:
+            update_data['start_date'] = start_date
+        if finish_date:
+            update_data['finish_date'] = finish_date
+        if location_id:
+            update_data['primary_location_id'] = location_id
+            
+        if update_data:
+            print(f"📚 [MANUAL] Updating book with additional data: {update_data}")
             book_service.update_book_sync(existing_book.uid, str(current_user.id), **update_data)
         
         if existing_book.id == domain_book.id:

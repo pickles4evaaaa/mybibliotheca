@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Setting Up Your Library - Bibliotheca{% endblock %}
+{% block content %}
+<style>
+/* Dark mode enhancements for Import Books Progress */
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+
+[data-theme="dark"] small.text-muted {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .card {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-header {
+    background-color: rgba(60, 60, 60, 0.8) !important;
+    border-bottom-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-body {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .border {
+    border-color: #404040 !important;
+}
+
+[data-theme="dark"] .alert-info {
+    background-color: rgba(13, 110, 253, 0.1) !important;
+    border-color: rgba(13, 110, 253, 0.3) !important;
+    color: #6ea8fe !important;
+}
+
+[data-theme="dark"] .alert-success {
+    background-color: rgba(25, 135, 84, 0.1) !important;
+    border-color: rgba(25, 135, 84, 0.3) !important;
+    color: #51cf66 !important;
+}
+
+[data-theme="dark"] .alert-danger {
+    background-color: rgba(220, 53, 69, 0.1) !important;
+    border-color: rgba(220, 53, 69, 0.3) !important;
+    color: #ff6b6b !important;
+}
+
+[data-theme="dark"] .text-success {
+    color: #51cf66 !important;
+}
+
+[data-theme="dark"] .text-danger {
+    color: #ff6b6b !important;
+}
+
+[data-theme="dark"] .list-group-item {
+    background-color: rgba(50, 50, 50, 0.8) !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] code {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+</style>
+<div class="container mt-4">
+    <!-- Progress Indicator -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="progress mb-2">
+                <div class="progress-bar" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+            </div>
+            <small class="text-muted">Step {{ step }} of {{ total_steps }}: Setting Up Your Library</small>
+        </div>
+    </div>
+
+    <h2>📚 Setting Up Your Library</h2>
+    
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Import Job: {{ task_id }}</h5>
+                    
+                    <div class="progress mb-3" style="height: 30px;">
+                        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            0%
+                        </div>
+                    </div>
+                    
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="processedCount">0</div>
+                                <small class="text-muted">Processed</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="successCount">0</div>
+                                <small class="text-success">Success</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="errorCount">0</div>
+                                <small class="text-danger">Errors</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="totalCount">{{ total_books }}</div>
+                                <small class="text-muted">Total</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <div id="statusMessage" class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> Setting up your library...
+                        </div>
+                    </div>
+                    
+                    <div id="completionButtons" class="d-none">
+                        <hr>
+                        <div class="d-flex gap-2">
+                            <a href="{{ url_for('main.library') }}" class="btn btn-primary btn-lg">
+                                <i class="fas fa-books"></i> Enter Your Library
+                            </a>
+                            <button id="downloadErrorsBtn" class="btn btn-outline-danger d-none">
+                                <i class="fas fa-download"></i> Download Error Report
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title">📋 Setup Details</h6>
+                    <ul class="list-unstyled small">
+                        <li><strong>Started:</strong> <span id="startTime">{{ start_time }}</span></li>
+                        <li><strong>Estimated Time:</strong> <span id="estimatedTime">Calculating...</span></li>
+                        <li><strong>Current Speed:</strong> <span id="currentSpeed">-</span> books/min</li>
+                        <li><strong>Status:</strong> <span id="jobStatus" class="badge bg-primary">Running</span></li>
+                    </ul>
+                    
+                    <hr>
+                    
+                    <h6>📝 Recent Activity</h6>
+                    <div id="activityLog" class="small" style="max-height: 200px; overflow-y: auto;">
+                        <!-- Activity log will be populated by JavaScript -->
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="alert alert-info alert-sm">
+                        <i class="fas fa-magic"></i>
+                        <strong>Enriching Your Books</strong><br>
+                        <small>We're fetching cover images, genres, descriptions, and other metadata to make your library beautiful and complete.</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let taskId = '{{ task_id }}';
+let totalBooks = {{ total_books }};
+let startTime = new Date('{{ start_time }}');
+let lastUpdateTime = startTime;
+let lastProcessedCount = 0;
+
+function updateProgress() {
+    // Use the onboarding-specific progress API endpoint
+    fetch(`/onboarding/import-progress-json/${taskId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error || data.status === 'error') {
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-exclamation-triangle"></i> Error: ${data.error || data.error_message}`;
+                document.getElementById('statusMessage').className = 'alert alert-danger';
+                return;
+            }
+            
+            // Update progress bar
+            const percentage = Math.round((data.processed / totalBooks) * 100);
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percentage + '%';
+            progressBar.setAttribute('aria-valuenow', percentage);
+            progressBar.textContent = percentage + '%';
+            
+            // Update counters
+            document.getElementById('processedCount').textContent = data.processed;
+            document.getElementById('successCount').textContent = data.success;
+            document.getElementById('errorCount').textContent = data.errors;
+            
+            // Update status
+            const jobStatus = document.getElementById('jobStatus');
+            if (data.status === 'completed') {
+                jobStatus.textContent = 'Completed';
+                jobStatus.className = 'badge bg-success';
+                progressBar.className = 'progress-bar bg-success';
+                
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-check-circle"></i> Welcome to Bibliotheca! Your library is ready with ${data.success} books.`;
+                document.getElementById('statusMessage').className = 'alert alert-success';
+                
+                document.getElementById('completionButtons').classList.remove('d-none');
+                
+                if (data.errors > 0) {
+                    document.getElementById('downloadErrorsBtn').classList.remove('d-none');
+                }
+                
+                // Automatically redirect after 3 seconds
+                setTimeout(() => {
+                    window.location.href = '/library';
+                }, 3000);
+                
+                return; // Stop polling
+            } else if (data.status === 'failed') {
+                jobStatus.textContent = 'Failed';
+                jobStatus.className = 'badge bg-danger';
+                progressBar.className = 'progress-bar bg-danger';
+                
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-exclamation-triangle"></i> Setup failed: ${data.error_message || 'Unknown error'}`;
+                document.getElementById('statusMessage').className = 'alert alert-danger';
+                
+                document.getElementById('completionButtons').classList.remove('d-none');
+                
+                return; // Stop polling
+            } else {
+                jobStatus.textContent = 'Running';
+                jobStatus.className = 'badge bg-primary';
+                
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="fas fa-cog fa-spin"></i> Setting up your library... Current: ${data.current_book || 'Unknown'}`;
+            }
+            
+            // Calculate speed and estimated time
+            const now = new Date();
+            const elapsedMinutes = (now - lastUpdateTime) / (1000 * 60);
+            const processedSinceLastUpdate = data.processed - lastProcessedCount;
+            
+            if (elapsedMinutes > 0 && processedSinceLastUpdate > 0) {
+                const currentSpeed = Math.round(processedSinceLastUpdate / elapsedMinutes);
+                document.getElementById('currentSpeed').textContent = currentSpeed;
+                
+                const remaining = totalBooks - data.processed;
+                if (currentSpeed > 0) {
+                    const estimatedMinutes = Math.round(remaining / currentSpeed);
+                    document.getElementById('estimatedTime').textContent = 
+                        estimatedMinutes < 60 ? `${estimatedMinutes} minutes` : 
+                        `${Math.round(estimatedMinutes / 60)} hours`;
+                }
+                
+                lastUpdateTime = now;
+                lastProcessedCount = data.processed;
+            }
+            
+            // Update activity log
+            if (data.recent_activity && data.recent_activity.length > 0) {
+                const activityLog = document.getElementById('activityLog');
+                activityLog.innerHTML = data.recent_activity
+                    .slice(-10) // Show last 10 activities
+                    .map(activity => `<div class="mb-1">${activity}</div>`)
+                    .join('');
+                activityLog.scrollTop = activityLog.scrollHeight;
+            }
+            
+            // Continue polling if not completed
+            if (data.status === 'running' || data.status === 'pending') {
+                setTimeout(updateProgress, 2000); // Poll every 2 seconds
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching progress:', error);
+            document.getElementById('statusMessage').innerHTML = 
+                `<i class="fas fa-exclamation-triangle"></i> Error fetching progress: ${error.message}`;
+            document.getElementById('statusMessage').className = 'alert alert-warning';
+            
+            // Retry after 5 seconds
+            setTimeout(updateProgress, 5000);
+        });
+}
+
+// Start polling
+setTimeout(updateProgress, 1000);
+
+// Handle error report download
+document.getElementById('downloadErrorsBtn').addEventListener('click', function() {
+    // For onboarding, we don't have the same error reporting endpoint
+    // So we'll just show an alert for now
+    alert('Error reporting is not available during onboarding. Please check the activity log for details.');
+});
+</script>
+{% endblock %}

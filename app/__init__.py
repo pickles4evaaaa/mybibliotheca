@@ -102,9 +102,13 @@ def _check_for_sqlite_migration():
 def _initialize_default_templates():
     """Initialize default import templates for Goodreads and StoryGraph if they don't exist."""
     try:
+        import os
         from datetime import datetime
         from .domain.models import ImportMappingTemplate
         from .services import import_mapping_service
+        
+        # Check if verbose logging is enabled
+        verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
         
         # Check if default templates already exist
         goodreads_template = None
@@ -114,12 +118,14 @@ def _initialize_default_templates():
             storygraph_template = import_mapping_service.get_template_by_id_sync("default_storygraph")
             
             if goodreads_template and storygraph_template:
-                print("✅ Default import templates already exist")
+                if verbose_init:
+                    print("✅ Default import templates already exist")
                 return
         except:
             pass  # Templates don't exist, we'll create them
         
-        print("🔄 Creating default import templates...")
+        if verbose_init:
+            print("🔄 Creating default import templates...")
         
         # Create Goodreads template
         if not goodreads_template:
@@ -161,7 +167,8 @@ def _initialize_default_templates():
                 updated_at=datetime.utcnow()
             )
             import_mapping_service.create_template_sync(goodreads_template)
-            print("✅ Created Goodreads default template")
+            if verbose_init:
+                print("✅ Created Goodreads default template")
         
         # Create StoryGraph template
         if not storygraph_template:
@@ -202,12 +209,16 @@ def _initialize_default_templates():
                 updated_at=datetime.utcnow()
             )
             import_mapping_service.create_template_sync(storygraph_template)
-            print("✅ Created StoryGraph default template")
+            if verbose_init:
+                print("✅ Created StoryGraph default template")
             
-        print("🎉 Default import templates initialized successfully!")
+        if verbose_init:
+            print("🎉 Default import templates initialized successfully!")
         
     except Exception as e:
-        print(f"⚠️  Warning: Could not initialize default templates: {e}")
+        verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        if verbose_init:
+            print(f"⚠️  Warning: Could not initialize default templates: {e}")
         # Don't fail app startup if templates can't be created
 
 
@@ -293,10 +304,20 @@ def create_app():
                     'csrf_token': csrf.generate_csrf()
                 }), 400
             else:
-                # For web requests, redirect back with error message
+                # For web requests, handle differently based on route
                 from flask import flash, redirect, url_for
-                flash('Security token expired. Please try again.', 'error')
-                return redirect(request.referrer or url_for('main.index'))
+                
+                # Special handling for onboarding routes
+                if request.endpoint and request.endpoint.startswith('onboarding.'):
+                    flash('Security token expired. The page will be refreshed with a new token.', 'warning')
+                    # Redirect to the same onboarding step to refresh the form
+                    if 'step' in request.view_args:
+                        return redirect(url_for('onboarding.step', step_num=request.view_args['step']))
+                    else:
+                        return redirect(url_for('onboarding.start'))
+                else:
+                    flash('Security token expired. Please try again.', 'error')
+                    return redirect(request.referrer or url_for('main.index'))
         return e
 
     def check_for_migration_reminder():
@@ -307,14 +328,19 @@ def create_app():
 
     # REDIS DATABASE INITIALIZATION
     with app.app_context():
-        print("🚀 Initializing Redis-only MyBibliotheca...")
+        # Use environment variable to control verbose logging across multiple workers
+        verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        
+        if verbose_init:
+            print("🚀 Initializing Redis-only MyBibliotheca...")
         
         # Test Redis connection
         try:
             from .infrastructure.redis_graph import get_graph_storage
             storage = get_graph_storage()
             # Simple connection test
-            print("✅ Redis connection successful")
+            if verbose_init:
+                print("✅ Redis connection successful")
             
             # Initialize services and attach to app
             from .services import (
@@ -329,21 +355,29 @@ def create_app():
                 app.custom_field_service = RedisCustomFieldService()
                 app.import_mapping_service = RedisImportMappingService()
                 app.direct_import_service = RedisDirectImportService()
-                print("📦 Services initialized successfully")
+                if verbose_init:
+                    print("📦 Services initialized successfully")
             except Exception as e:
                 print(f"⚠️ Warning: Could not initialize some services: {e}")
             
             # Initialize default import templates
-            _initialize_default_templates()
+            if verbose_init:
+                _initialize_default_templates()
+            else:
+                # Still run template initialization, just silently
+                try:
+                    _initialize_default_templates()
+                except Exception:
+                    pass  # Fail silently for worker processes
             
         except Exception as e:
             print(f"❌ Redis connection failed: {e}")
             print("🔧 Make sure Redis is running and accessible")
         
         # Development mode - skip auto admin creation, use setup page instead
-        print("🔧 Development mode: Use the setup page to create your admin user")
-        
-        print("🎉 Redis-only initialization completed successfully!")
+        if verbose_init:
+            print("🔧 Development mode: Use the setup page to create your admin user")
+            print("🎉 Redis-only initialization completed successfully!")
         
         # Check for SQLite databases that might need migration
         check_for_migration_reminder()
@@ -378,6 +412,41 @@ def create_app():
                     # Explicitly mark the session as modified to ensure it's saved
                     session.modified = True
                     debug_csrf(f"🔧 Session marked as modified. Keys: {list(session.keys())}")
+        
+        # Special handling for onboarding routes
+        if request.endpoint and request.endpoint.startswith('onboarding.'):
+            debug_auth("🔍 BEFORE_REQUEST: Onboarding route detected!")
+            if request.method == 'GET':
+                # Ensure CSRF token is available for onboarding forms
+                if 'csrf_token' not in session:
+                    from flask_wtf.csrf import generate_csrf
+                    debug_csrf("🔧 No CSRF token in session for onboarding GET. Generating one now.")
+                    generate_csrf()
+                    session.modified = True
+                    debug_csrf(f"🔧 Session marked as modified for onboarding. Keys: {list(session.keys())}")
+            elif request.method == 'POST':
+                debug_auth(f"Onboarding POST: Form keys: {list(request.form.keys())}")
+                debug_auth(f"CSRF token in form: {'csrf_token' in request.form}")
+                debug_auth(f"CSRF token in session: {'csrf_token' in session}")
+                if 'csrf_token' in request.form and 'csrf_token' in session:
+                    debug_auth(f"Form CSRF: {request.form.get('csrf_token')[:10]}...")
+                    debug_auth(f"Session CSRF: {session.get('csrf_token')[:10] if session.get('csrf_token') else 'None'}...")
+                    from flask_wtf.csrf import generate_csrf
+                    generate_csrf()
+                    # Explicitly mark the session as modified to ensure it's saved
+                    session.modified = True
+                    debug_csrf(f"🔧 Session marked as modified. Keys: {list(session.keys())}")
+        
+        # Special handling for onboarding routes to ensure CSRF tokens work
+        if request.endpoint and request.endpoint.startswith('onboarding.'):
+            debug_auth(f"🔍 BEFORE_REQUEST: Onboarding route detected: {request.endpoint}")
+            if request.method == 'GET':
+                if 'csrf_token' not in session:
+                    from flask_wtf.csrf import generate_csrf
+                    debug_csrf("🔧 No CSRF token in session for onboarding GET. Generating one now.")
+                    generate_csrf()
+                    session.modified = True
+                    debug_csrf(f"🔧 Session marked as modified for onboarding. Keys: {list(session.keys())}")
         
         # Check if setup is needed (no users exist)
         try:
@@ -487,7 +556,10 @@ def create_app():
     try:
         from .debug_routes import bp as debug_admin_bp
         app.register_blueprint(debug_admin_bp)
-        print("✅ Debug admin routes registered")
+        # Only show registration messages when verbose logging is enabled
+        verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        if verbose_init:
+            print("✅ Debug admin routes registered")
     except Exception as e:
         print(f"⚠️  Could not import debug routes: {e}")
     
@@ -495,7 +567,10 @@ def create_app():
     try:
         from .template_context import register_context_processors
         register_context_processors(app)
-        print("✅ Template context processors registered")
+        # Only show registration messages when verbose logging is enabled
+        verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        if verbose_init:
+            print("✅ Template context processors registered")
     except Exception as e:
         print(f"⚠️  Could not register template context processors: {e}")
     
