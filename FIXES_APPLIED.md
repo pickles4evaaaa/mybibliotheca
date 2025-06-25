@@ -59,7 +59,7 @@ admin_user = user_service.create_user_sync(
     is_active=True,
     password_must_change=False,
     timezone=site_config.get('timezone', 'UTC'),  # ← NEW
-    full_name=admin_data.get('full_name', ''),
+    display_name=admin_data.get('display_name', ''),
     location=site_config.get('location', '')
 )
 ```

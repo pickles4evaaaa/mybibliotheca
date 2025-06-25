@@ -1216,21 +1216,31 @@ def user_profile(user_id):
         current_year = datetime.now().year
         current_month = datetime.now().date().replace(day=1)
         
-        total_books = len([book for book in all_user_books if getattr(book, 'finish_date', None)])
+        # Helper function to safely get date from finish_date (handles both date and datetime objects)
+        def get_finish_date_safe(book):
+            finish_date = getattr(book, 'finish_date', None)
+            if finish_date is None:
+                return None
+            # Convert datetime to date if needed
+            if isinstance(finish_date, datetime):
+                return finish_date.date()
+            return finish_date
+        
+        total_books = len([book for book in all_user_books if get_finish_date_safe(book)])
         
         books_this_year = len([book for book in all_user_books 
-                              if getattr(book, 'finish_date', None) and 
-                              getattr(book, 'finish_date', None) >= date(current_year, 1, 1)])
+                              if get_finish_date_safe(book) and 
+                              get_finish_date_safe(book) >= date(current_year, 1, 1)])
         
         books_this_month = len([book for book in all_user_books 
-                               if getattr(book, 'finish_date', None) and 
-                               getattr(book, 'finish_date', None) >= current_month])
+                               if get_finish_date_safe(book) and 
+                               get_finish_date_safe(book) >= current_month])
         
         currently_reading = [book for book in all_user_books 
                            if getattr(book, 'start_date', None) and not getattr(book, 'finish_date', None)] if user.share_current_reading else []
         
-        recent_finished = sorted([book for book in all_user_books if getattr(book, 'finish_date', None)],
-                                key=lambda x: getattr(x, 'finish_date', date.min), reverse=True)[:10]
+        recent_finished = sorted([book for book in all_user_books if get_finish_date_safe(book)],
+                                key=lambda x: get_finish_date_safe(x) or date.min, reverse=True)[:10]
         
         # Get reading logs count from service
         reading_logs_count = reading_log_service.get_user_logs_count_sync(user_id)
@@ -1353,10 +1363,20 @@ def stats():
     user_books = book_service.get_user_books_sync(str(current_user.id))
     
     # Calculate user stats - use getattr for safe attribute access
-    books_finished_this_week = len([b for b in user_books if getattr(b, 'finish_date', None) and getattr(b, 'finish_date', None) >= week_start])
-    books_finished_this_month = len([b for b in user_books if getattr(b, 'finish_date', None) and getattr(b, 'finish_date', None) >= month_start])
-    books_finished_this_year = len([b for b in user_books if getattr(b, 'finish_date', None) and getattr(b, 'finish_date', None) >= year_start])
-    books_finished_total = len([b for b in user_books if getattr(b, 'finish_date', None)])
+    # Helper function to safely get date from finish_date (handles both date and datetime objects)
+    def get_finish_date(book):
+        finish_date = getattr(book, 'finish_date', None)
+        if finish_date is None:
+            return None
+        # Convert datetime to date if needed
+        if isinstance(finish_date, datetime):
+            return finish_date.date()
+        return finish_date
+    
+    books_finished_this_week = len([b for b in user_books if get_finish_date(b) and get_finish_date(b) >= week_start])
+    books_finished_this_month = len([b for b in user_books if get_finish_date(b) and get_finish_date(b) >= month_start])
+    books_finished_this_year = len([b for b in user_books if get_finish_date(b) and get_finish_date(b) >= year_start])
+    books_finished_total = len([b for b in user_books if get_finish_date(b)])
     
     currently_reading = [b for b in user_books if not getattr(b, 'finish_date', None) and not getattr(b, 'want_to_read', False) and not getattr(b, 'library_only', False)]
     want_to_read = [b for b in user_books if getattr(b, 'want_to_read', False)]
@@ -1381,8 +1401,19 @@ def stats():
         # Community stats summary - count finished books this month
         month_finished_books = redis_book_service.get_books_with_sharing_users_sync(days_back=30, limit=1000)
         month_start = datetime.now().date().replace(day=1)
+        
+        # Helper function to safely get date from finish_date for community stats
+        def get_finish_date_community(book):
+            finish_date = getattr(book, 'finish_date', None)
+            if finish_date is None:
+                return None
+            # Convert datetime to date if needed
+            if isinstance(finish_date, datetime):
+                return finish_date.date()
+            return finish_date
+        
         total_books_this_month = len([book for book in month_finished_books 
-                                    if getattr(book, 'finish_date', None) and getattr(book, 'finish_date', None) >= month_start])
+                                    if get_finish_date_community(book) and get_finish_date_community(book) >= month_start])
         
         total_active_readers = len(sharing_users)
         

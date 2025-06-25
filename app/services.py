@@ -1562,7 +1562,7 @@ class RedisUserService:
     async def create_user(self, username: str, email: str, password_hash: str, 
                         is_admin: bool = False, is_active: bool = True, 
                         password_must_change: bool = False, timezone: str = "UTC",
-                        full_name: str = "", location: str = "") -> User:
+                        display_name: str = "", location: str = "") -> User:
         """Create a new user."""
         try:
             # Generate a unique ID
@@ -1578,7 +1578,7 @@ class RedisUserService:
                 is_active=is_active,
                 password_must_change=password_must_change,
                 timezone=timezone,
-                full_name=full_name,
+                display_name=display_name,
                 location=location,
                 share_current_reading=False,
                 share_reading_activity=False,
@@ -1600,10 +1600,10 @@ class RedisUserService:
     def create_user_sync(self, username: str, email: str, password_hash: str,
                         is_admin: bool = False, is_active: bool = True,
                         password_must_change: bool = False, timezone: str = "UTC", 
-                        full_name: str = "", location: str = "") -> User:
+                        display_name: str = "", location: str = "") -> User:
         """Sync wrapper for create_user."""
         return self.create_user(username, email, password_hash, is_admin, is_active, 
-                               password_must_change, timezone, full_name, location)
+                               password_must_change, timezone, display_name, location)
     
     async def update_user(self, user: User) -> User:
         """Update an existing user."""

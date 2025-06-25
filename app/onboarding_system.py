@@ -561,7 +561,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
             is_active=True,
             password_must_change=False,
             timezone=site_config.get('timezone', 'UTC'),  # Set timezone from site config
-            full_name=admin_data.get('full_name', ''),
+            display_name=admin_data.get('display_name', ''),
             location=site_config.get('location', '')
         )
         
