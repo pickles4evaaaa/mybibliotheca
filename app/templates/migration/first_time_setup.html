@@ -1,0 +1,125 @@
+<!-- migration/first_time_setup.html -->
+{% extends "base.html" %}
+
+{% block title %}First Time Setup - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-rocket"></i> Welcome to Bibliotheca
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="lead">Let's set up your personal library system!</p>
+                    
+                    <!-- Database Detection Results -->
+                    {% if databases %}
+                    <div class="alert alert-info mb-4">
+                        <h5><i class="fas fa-database"></i> Detected Existing Libraries</h5>
+                        <p>We found {{ databases|length }} existing library database(s). After creating your admin account, you'll be able to migrate your existing data.</p>
+                        
+                        <div class="mt-3">
+                            {% for db in databases %}
+                            <div class="border rounded p-2 mb-2">
+                                <strong>{{ db.name }}</strong>
+                                <span class="badge badge-{{ 'success' if db.version == 'v2_multi_user' else 'info' }}">
+                                    {{ 'Multi-user' if db.version == 'v2_multi_user' else 'Single-user' }}
+                                </span>
+                                <br>
+                                <small class="text-muted">
+                                    {{ db.analysis.book_count }} books
+                                    {% if db.analysis.user_count %}
+                                        , {{ db.analysis.user_count }} users
+                                    {% endif %}
+                                </small>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Setup Form -->
+                    <form method="POST">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="form-group">
+                            <label for="username" class="font-weight-bold">
+                                <i class="fas fa-user"></i> Admin Username
+                            </label>
+                            {{ form.username(class="form-control", required=True) }}
+                            {% if form.username.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.username.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="email" class="font-weight-bold">
+                                <i class="fas fa-envelope"></i> Admin Email
+                            </label>
+                            {{ form.email(class="form-control", required=True) }}
+                            {% if form.email.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.email.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password" class="font-weight-bold">
+                                <i class="fas fa-lock"></i> Admin Password
+                            </label>
+                            {{ form.password(class="form-control", required=True) }}
+                            {% if form.password.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.password.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password2" class="font-weight-bold">
+                                <i class="fas fa-lock"></i> Confirm Password
+                            </label>
+                            {{ form.password2(class="form-control", required=True) }}
+                            {% if form.password2.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.password2.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="text-center mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg px-5">
+                                <i class="fas fa-user-plus"></i> Create Admin Account
+                            </button>
+                        </div>
+                    </form>
+                    
+                    {% if databases %}
+                    <div class="mt-4 text-center text-muted">
+                        <small>
+                            <i class="fas fa-info-circle"></i>
+                            After creating your account, you'll be guided through importing your existing library data.
+                        </small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

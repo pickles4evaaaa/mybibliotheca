@@ -147,11 +147,17 @@ class RedisBookService:
                                      date_added: Optional[date] = None) -> bool:
         """Add a book to a user's library by creating a relationship."""
         try:            
+            print(f"📚 [ADD_TO_LIBRARY] Adding book {book_id} to user {user_id} library")
+            print(f"📚 [ADD_TO_LIBRARY] Locations provided: {locations}")
+            print(f"📚 [ADD_TO_LIBRARY] Reading status: {reading_status}")
+            print(f"📚 [ADD_TO_LIBRARY] Custom metadata keys: {list(custom_metadata.keys()) if custom_metadata else 'None'}")
+            
             # Check if relationship already exists
             existing_rel = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
             if existing_rel:
+                print(f"📚 [ADD_TO_LIBRARY] Relationship already exists for user {user_id} and book {book_id}")
                 return True
-            
+
             # Create user-book relationship
             relationship = UserBookRelationship(
                 user_id=str(user_id),
@@ -172,11 +178,14 @@ class RedisBookService:
                 updated_at=datetime.now()
             )
             
+            print(f"📚 [ADD_TO_LIBRARY] Created relationship with locations: {relationship.locations}")
             # Store relationship in Redis
             await self.redis_user_book_repo.create_relationship(relationship)
             
+            print(f"📚 [ADD_TO_LIBRARY] Successfully stored relationship for user {user_id}, book {book_id}")
             return True
         except Exception as e:
+            print(f"❌ [ADD_TO_LIBRARY] Error adding book {book_id} to user {user_id} library: {e}")
             traceback.print_exc()
             return False
     
@@ -201,6 +210,7 @@ class RedisBookService:
                             setattr(book, 'user_tags', rel.user_tags)
                             setattr(book, 'locations', rel.locations)
                             setattr(book, 'custom_metadata', rel.custom_metadata or {})
+                            print(f"📍 [GET_BOOK] Book '{book.title}' has locations: {rel.locations}")
                             break
                 except Exception as e:
                     current_app.logger.warning(f"Could not load user relationship for book {book_id}: {e}")
@@ -234,6 +244,7 @@ class RedisBookService:
                     setattr(book, 'user_tags', rel.user_tags)
                     setattr(book, 'locations', rel.locations)
                     setattr(book, 'custom_metadata', rel.custom_metadata or {})
+                    print(f"📍 [GET_USER_BOOKS] Book '{book.title}' has locations: {rel.locations}")
                     books.append(book)
                 else:
                     # Book not found, skip this relationship
@@ -611,6 +622,7 @@ class RedisBookService:
                                       finish_date: Optional[date] = None,
                                       date_added: Optional[date] = None) -> bool:
         """Sync wrapper for add_book_to_user_library."""
+        print(f"📚 [ADD_TO_LIBRARY_SYNC] Called with user_id={user_id}, book_id={book_id}, locations={locations}")
         return self.add_book_to_user_library(user_id, book_id, reading_status, ownership_status, locations, custom_metadata, user_rating, user_review, personal_notes, start_date, finish_date, date_added)
     
     @run_async
@@ -1549,7 +1561,8 @@ class RedisUserService:
     
     async def create_user(self, username: str, email: str, password_hash: str, 
                         is_admin: bool = False, is_active: bool = True, 
-                        password_must_change: bool = False) -> User:
+                        password_must_change: bool = False, timezone: str = "UTC",
+                        full_name: str = "", location: str = "") -> User:
         """Create a new user."""
         try:
             # Generate a unique ID
@@ -1564,6 +1577,9 @@ class RedisUserService:
                 is_admin=is_admin,
                 is_active=is_active,
                 password_must_change=password_must_change,
+                timezone=timezone,
+                full_name=full_name,
+                location=location,
                 share_current_reading=False,
                 share_reading_activity=False,
                 share_library=False,
@@ -1583,9 +1599,11 @@ class RedisUserService:
     @run_async
     def create_user_sync(self, username: str, email: str, password_hash: str,
                         is_admin: bool = False, is_active: bool = True,
-                        password_must_change: bool = False) -> User:
+                        password_must_change: bool = False, timezone: str = "UTC", 
+                        full_name: str = "", location: str = "") -> User:
         """Sync wrapper for create_user."""
-        return self.create_user(username, email, password_hash, is_admin, is_active, password_must_change)
+        return self.create_user(username, email, password_hash, is_admin, is_active, 
+                               password_must_change, timezone, full_name, location)
     
     async def update_user(self, user: User) -> User:
         """Update an existing user."""

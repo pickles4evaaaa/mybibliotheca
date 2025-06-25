@@ -30,7 +30,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: url('{{ url_for('static', filename='paper-fibers.png') }}');
+    background: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==');
     opacity: 0.3;
   }
 
@@ -123,7 +123,18 @@
                                     </p>
                                 {% endif %}
                                 
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span class="text-muted small">Books at this location:</span>
+                                        <span class="badge bg-info">{{ location.book_count }} book{{ 's' if location.book_count != 1 else '' }}</span>
+                                    </div>
+                                </div>
+                                
                                 <div class="d-flex gap-2 mt-3">
+                                    <a href="{{ url_for('locations.view_location', location_id=location.id) }}" 
+                                       class="btn btn-outline-info btn-sm">
+                                        <i class="bi bi-eye"></i> View Books
+                                    </a>
                                     <a href="{{ url_for('locations.edit_location', location_id=location.id) }}" 
                                        class="btn btn-outline-primary btn-sm">
                                         <i class="bi bi-pencil"></i> Edit

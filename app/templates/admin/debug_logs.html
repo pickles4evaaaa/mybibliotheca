@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}Debug Logs - Admin - Bibliotheca{% endblock %}
+
+{% block content %}
+<style>
+  .log-entry {
+    border-left: 3px solid #dee2e6;
+    background: #f8f9fa;
+    margin-bottom: 0.5rem;
+  }
+  
+  .log-category {
+    font-size: 0.8rem;
+    font-weight: bold;
+  }
+  
+  .log-timestamp {
+    font-size: 0.75rem;
+    color: #6c757d;
+  }
+  
+  .log-message {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.9rem;
+  }
+  
+  .log-extra {
+    background: #e9ecef;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.8rem;
+  }
+  
+  .category-general { border-left-color: #6c757d; }
+  .category-location { border-left-color: #20c997; }
+  .category-book { border-left-color: #fd7e14; }
+  .category-user { border-left-color: #6f42c1; }
+  .category-test { border-left-color: #e83e8c; }
+  .category-error { border-left-color: #dc3545; }
+  .category-auth { border-left-color: #ffc107; }
+  
+  /* Dark mode adjustments */
+  [data-theme="dark"] .log-entry {
+    background: #2d3748;
+    color: #e2e8f0;
+  }
+  
+  [data-theme="dark"] .log-extra {
+    background: #4a5568;
+    color: #e2e8f0;
+  }
+  
+  .log-container {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+</style>
+
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{{ url_for('debug_admin.debug_dashboard') }}">Debug Dashboard</a>
+                    </li>
+                    <li class="breadcrumb-item active">Debug Logs</li>
+                </ol>
+            </nav>
+            <h1><i class="bi bi-file-text"></i> Debug Logs</h1>
+            <p class="text-muted">Viewing logs for {{ current_date }}</p>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="row mb-4">
+        <div class="col">
+            <div class="card">
+                <div class="card-body">
+                    <form method="get" class="row g-3">
+                        <div class="col-md-3">
+                            <label for="date" class="form-label">Date</label>
+                            <input type="date" class="form-control" id="date" name="date" 
+                                   value="{{ current_date }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="category" class="form-label">Category</label>
+                            <select class="form-select" id="category" name="category">
+                                <option value="">All Categories</option>
+                                {% for cat in categories %}
+                                    <option value="{{ cat }}" {{ 'selected' if cat == selected_category else '' }}>
+                                        {{ cat }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="limit" class="form-label">Limit</label>
+                            <select class="form-select" id="limit" name="limit">
+                                <option value="50">50 entries</option>
+                                <option value="100" selected>100 entries</option>
+                                <option value="200">200 entries</option>
+                                <option value="500">500 entries</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary me-2">
+                                <i class="bi bi-filter"></i> Filter
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="autoRefresh()">
+                                <i class="bi bi-arrow-clockwise"></i> Auto Refresh
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Entries -->
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        Log Entries ({{ logs|length }})
+                        {% if selected_category %}
+                            - {{ selected_category }}
+                        {% endif %}
+                    </h5>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-info" onclick="toggleAllDetails()">
+                            <i class="bi bi-eye"></i> Toggle Details
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearLogs()">
+                            <i class="bi bi-trash"></i> Clear Today
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    {% if logs %}
+                        <div class="log-container">
+                            {% for log in logs %}
+                                <div class="log-entry p-3 category-{{ log.category.lower() }}">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <span class="log-category badge bg-secondary">{{ log.category }}</span>
+                                        <span class="log-timestamp">{{ log.timestamp }}</span>
+                                    </div>
+                                    <div class="log-message">{{ log.message }}</div>
+                                    
+                                    <!-- Request Info -->
+                                    {% if log.request_path %}
+                                        <div class="mt-1">
+                                            <small class="text-muted">
+                                                <i class="bi bi-globe"></i> {{ log.request_method }} {{ log.request_path }}
+                                                {% if log.user_id and log.user_id != 'anonymous' %}
+                                                    | User: {{ log.user_id }}
+                                                {% endif %}
+                                            </small>
+                                        </div>
+                                    {% endif %}
+                                    
+                                    <!-- Extra Data -->
+                                    {% if log.extra_data %}
+                                        <details class="mt-2">
+                                            <summary class="small text-primary" style="cursor: pointer;">
+                                                <i class="bi bi-info-circle"></i> Extra Data
+                                            </summary>
+                                            <pre class="log-extra p-2 mt-1 rounded">{{ log.extra_data | tojson(indent=2) }}</pre>
+                                        </details>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="p-4 text-center">
+                            <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+                            <h4 class="text-muted mt-3">No Debug Logs Found</h4>
+                            <p class="text-muted">
+                                {% if selected_category %}
+                                    No logs found for category "{{ selected_category }}" on {{ current_date }}.
+                                {% else %}
+                                    No debug logs found for {{ current_date }}.
+                                {% endif %}
+                            </p>
+                            <a href="{{ url_for('debug_admin.debug_dashboard') }}" class="btn btn-primary">
+                                Back to Dashboard
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let autoRefreshInterval = null;
+
+function toggleAllDetails() {
+    const details = document.querySelectorAll('details');
+    const anyOpen = Array.from(details).some(d => d.open);
+    
+    details.forEach(detail => {
+        detail.open = !anyOpen;
+    });
+}
+
+function autoRefresh() {
+    const button = event.target;
+    
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+        button.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Auto Refresh';
+        button.classList.remove('btn-success');
+        button.classList.add('btn-outline-secondary');
+    } else {
+        autoRefreshInterval = setInterval(() => {
+            window.location.reload();
+        }, 5000);
+        button.innerHTML = '<i class="bi bi-stop-circle"></i> Stop Refresh';
+        button.classList.remove('btn-outline-secondary');
+        button.classList.add('btn-success');
+    }
+}
+
+function clearLogs() {
+    if (confirm('Are you sure you want to clear today\'s debug logs? This action cannot be undone.')) {
+        // This would need a backend endpoint to actually clear logs
+        alert('Clear logs functionality would be implemented here');
+    }
+}
+
+// Auto-scroll to bottom for real-time monitoring
+if (autoRefreshInterval) {
+    const logContainer = document.querySelector('.log-container');
+    if (logContainer) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+}
+</script>
+{% endblock %}

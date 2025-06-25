@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}Debug Dashboard - Admin - Bibliotheca{% endblock %}
+
+{% block content %}
+<style>
+  .debug-card {
+    border-left: 4px solid #007bff;
+  }
+  
+  .debug-enabled {
+    border-left-color: #28a745;
+  }
+  
+  .debug-disabled {
+    border-left-color: #dc3545;
+  }
+  
+  .log-entry {
+    border-left: 3px solid #dee2e6;
+    background: #f8f9fa;
+    margin-bottom: 0.5rem;
+  }
+  
+  .log-category {
+    font-size: 0.8rem;
+    font-weight: bold;
+  }
+  
+  .log-timestamp {
+    font-size: 0.75rem;
+    color: #6c757d;
+  }
+  
+  .log-message {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.9rem;
+  }
+  
+  .log-extra {
+    background: #e9ecef;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.8rem;
+  }
+  
+  .category-general { border-left-color: #6c757d; }
+  .category-location { border-left-color: #20c997; }
+  .category-book { border-left-color: #fd7e14; }
+  .category-user { border-left-color: #6f42c1; }
+  .category-test { border-left-color: #e83e8c; }
+  .category-error { border-left-color: #dc3545; }
+  .category-auth { border-left-color: #ffc107; }
+  
+  /* Dark mode adjustments */
+  [data-theme="dark"] .log-entry {
+    background: #2d3748;
+    color: #e2e8f0;
+  }
+  
+  [data-theme="dark"] .log-extra {
+    background: #4a5568;
+    color: #e2e8f0;
+  }
+</style>
+
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h1><i class="bi bi-bug"></i> Debug System Dashboard</h1>
+            <p class="text-muted">Manage debug mode and view system logs</p>
+        </div>
+    </div>
+
+    <!-- Debug Status Card -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <div class="card debug-card {{ 'debug-enabled' if debug_status.enabled else 'debug-disabled' }}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-{{ 'toggle-on text-success' if debug_status.enabled else 'toggle-off text-danger' }}"></i>
+                        Debug Mode Status
+                    </h5>
+                    <form method="post" action="{{ url_for('debug_admin.toggle_debug_mode') }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        {% if debug_status.enabled %}
+                            <input type="hidden" name="action" value="disable">
+                            <button type="submit" class="btn btn-danger btn-sm" 
+                                    onclick="return confirm('Are you sure you want to disable debug mode?')">
+                                <i class="bi bi-toggle-off"></i> Disable Debug
+                            </button>
+                        {% else %}
+                            <input type="hidden" name="action" value="enable">
+                            <button type="submit" class="btn btn-success btn-sm">
+                                <i class="bi bi-toggle-on"></i> Enable Debug
+                            </button>
+                        {% endif %}
+                    </form>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <strong>Current Status:</strong>
+                            <span class="badge bg-{{ 'success' if debug_status.enabled else 'danger' }} ms-2">
+                                {{ 'Enabled' if debug_status.enabled else 'Disabled' }}
+                            </span>
+                        </div>
+                        {% if debug_status.enabled_by %}
+                            <div class="col-md-6">
+                                <strong>Last Enabled By:</strong> {{ debug_status.enabled_by }}
+                                {% if debug_status.enabled_at %}
+                                    <br><small class="text-muted">{{ debug_status.enabled_at }}</small>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    {% if debug_status.disabled_by %}
+                        <div class="row mt-2">
+                            <div class="col-md-6">
+                                <strong>Last Disabled By:</strong> {{ debug_status.disabled_by }}
+                                {% if debug_status.disabled_at %}
+                                    <br><small class="text-muted">{{ debug_status.disabled_at }}</small>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endif %}
+                    
+                    <div class="mt-3">
+                        <p class="mb-0">
+                            <i class="bi bi-info-circle"></i>
+                            When enabled, debug information will be logged to the container logs and stored for admin viewing.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">Quick Actions</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('debug_admin.view_logs') }}" class="btn btn-outline-primary">
+                            <i class="bi bi-file-text"></i> View Debug Logs
+                        </a>
+                        <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#testDebugModal">
+                            <i class="bi bi-play-circle"></i> Test Debug Logging
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Debug Logs -->
+    {% if recent_logs %}
+        <div class="row">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Recent Debug Logs</h5>
+                        <a href="{{ url_for('debug_admin.view_logs') }}" class="btn btn-sm btn-outline-primary">
+                            View All Logs
+                        </a>
+                    </div>
+                    <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                        {% for log in recent_logs[:10] %}
+                            <div class="log-entry p-3 category-{{ log.category.lower() }}">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <span class="log-category badge bg-secondary">{{ log.category }}</span>
+                                    <span class="log-timestamp">{{ log.timestamp }}</span>
+                                </div>
+                                <div class="log-message">{{ log.message }}</div>
+                                {% if log.extra_data %}
+                                    <details class="mt-2">
+                                        <summary class="small">Extra Data</summary>
+                                        <pre class="log-extra p-2 mt-1 rounded">{{ log.extra_data | tojson(indent=2) }}</pre>
+                                    </details>
+                                {% endif %}
+                                {% if log.user_id and log.user_id != 'anonymous' %}
+                                    <small class="text-muted">User: {{ log.user_id }}</small>
+                                {% endif %}
+                                {% if log.request_path %}
+                                    <small class="text-muted"> | {{ log.request_method }} {{ log.request_path }}</small>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <div class="row">
+            <div class="col">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    No debug logs available. Enable debug mode and perform some actions to see logs here.
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Test Debug Modal -->
+<div class="modal fade" id="testDebugModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{{ url_for('debug_admin.test_debug') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="modal-header">
+                    <h5 class="modal-title">Test Debug Logging</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="testMessage" class="form-label">Debug Message</label>
+                        <input type="text" class="form-control" id="testMessage" name="message" 
+                               value="Test debug message from admin" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="testCategory" class="form-label">Category</label>
+                        <select class="form-select" id="testCategory" name="category">
+                            <option value="TEST">TEST</option>
+                            <option value="GENERAL">GENERAL</option>
+                            <option value="LOCATION">LOCATION</option>
+                            <option value="BOOK">BOOK</option>
+                            <option value="USER">USER</option>
+                            <option value="AUTH">AUTH</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Log Test Message</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

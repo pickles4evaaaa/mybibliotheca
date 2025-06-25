@@ -16,33 +16,10 @@ auth = Blueprint('auth', __name__)
 @auth.route('/setup', methods=['GET', 'POST'])
 @debug_route('SETUP')
 def setup():
-    """Initial setup route for creating the first admin user"""
+    """Initial setup route - redirects to new onboarding system"""
     debug_auth("="*60)
     debug_auth(f"Setup route accessed - Method: {request.method}")
-    debug_auth(f"Request endpoint: {request.endpoint}")
-    debug_auth(f"Request path: {request.path}")
-    debug_auth(f"Request args: {dict(request.args)}")
-    
-    # Enhanced POST debugging
-    if request.method == 'POST':
-        debug_auth("🚨 POST REQUEST DETECTED!")
-        debug_auth(f"Request form keys: {list(request.form.keys())}")
-        debug_auth(f"Request content type: {request.content_type}")
-        debug_auth(f"Request content length: {request.content_length}")
-        debug_auth(f"Raw form data: {dict(request.form)}")
-        
-        # Check if this is a proper form submission
-        if 'csrf_token' not in request.form:
-            debug_auth("❌ CRITICAL: No CSRF token in form data!")
-        else:
-            debug_auth(f"✅ CSRF token present: {request.form['csrf_token'][:20]}...")
-            
-        if 'username' not in request.form:
-            debug_auth("❌ CRITICAL: No username in form data!")
-        else:
-            debug_auth(f"✅ Username present: {request.form['username']}")
-    else:
-        debug_auth(f"Request form keys: N/A (GET request)")
+    debug_auth("Redirecting to new onboarding system")
     
     # Check if any users already exist using Redis service
     try:
@@ -56,92 +33,9 @@ def setup():
         debug_auth(f"Error checking user count: {e}")
         # If we can't check, assume no users exist and continue with setup
     
-    debug_auth("Creating SetupForm instance...")
-    form = SetupForm()
-    debug_auth(f"Setup form created. CSRF enabled: {current_app.config.get('WTF_CSRF_ENABLED', False)}")
-    
-    # Debug session and CSRF information
-    debug_csrf(f"Session before form processing: {dict(session)}")
-    debug_csrf(f"CSRF token from form: {getattr(form.csrf_token, 'data', 'N/A')}")
-    
-    if request.method == 'POST':
-        debug_auth("POST request received for setup")
-        debug_auth(f"Form data received: {dict(request.form)}")
-        debug_auth(f"Form validation status: {form.validate()}")
-        debug_auth(f"Form errors: {form.errors}")
-        
-        # Check each field individually
-        for field_name, field in form._fields.items():
-            if hasattr(field, 'data'):
-                debug_auth(f"Field {field_name}: data='{field.data}', errors={field.errors}")
-    
-    if form.validate_on_submit():
-        debug_auth("Setup form submitted and validated successfully!")
-        try:
-            debug_auth(f"Attempting to create user: {form.username.data}")
-            
-            # Create the first admin user through Redis service
-            password_hash = generate_password_hash(form.password.data)
-            admin_user = user_service.create_user_sync(
-                username=form.username.data,
-                email=form.email.data,
-                password_hash=password_hash,
-                is_admin=True,
-                is_active=True,
-                password_must_change=False  # First admin doesn't need to change password
-            )
-            
-            debug_auth(f"First admin user created successfully: {admin_user.username}")
-            
-            # Automatically log in the new admin user
-            login_user(admin_user)
-            debug_auth(f"User logged in successfully: {current_user.is_authenticated}")
-            
-            flash('Setup completed successfully! Welcome to Bibliotheca.', 'success')
-            debug_auth("Redirecting to main.index")
-            return redirect(url_for('main.index'))
-            
-        except Exception as e:
-            debug_auth(f"Setup failed with exception: {e}")
-            import traceback
-            debug_auth(f"Stack trace: {traceback.format_exc()}")
-            
-            # Log critical setup failures even in production
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Setup failed for user {form.username.data}: {str(e)}", 
-                        extra={'stack_trace': traceback.format_exc()})
-            
-            # Provide user-friendly error message
-            if "already exists" in str(e).lower():
-                flash('A user with this username or email already exists. Please try different credentials.', 'error')
-            elif "redis" in str(e).lower() or "connection" in str(e).lower():
-                flash('Database connection error. Please try again in a moment.', 'error')
-            else:
-                flash(f'Setup failed: {str(e)}. Please try again.', 'error')
-    else:
-        if request.method == 'POST':
-            debug_auth("Form validation failed!")
-            debug_auth(f"Setup form validation failed: {form.errors}")
-            debug_auth(f"CSRF validation error: {form.csrf_token.errors if hasattr(form, 'csrf_token') else 'N/A'}")
-            
-            # Check CSRF specifically
-            if hasattr(form, 'csrf_token') and form.csrf_token.errors:
-                debug_csrf(f"CSRF errors: {form.csrf_token.errors}")
-                flash('Security token expired. Please refresh the page and try again.', 'error')
-            else:
-                # Provide specific error messages for form validation failures
-                if form.errors:
-                    for field, errors in form.errors.items():
-                        if field != 'csrf_token':  # Don't repeat CSRF errors
-                            for error in errors:
-                                flash(f'{field.replace("_", " ").title()}: {error}', 'error')
-                else:
-                    flash('Please check your form entries and try again.', 'error')
-    
-    debug_auth("Rendering setup template")
-    debug_auth("="*60)
-    return render_template('auth/setup.html', title='Initial Setup', form=form)
+    # Redirect to the new onboarding system
+    flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
+    return redirect(url_for('onboarding.start'))
 
 @auth.route('/setup/status')
 def setup_status():
@@ -426,6 +320,26 @@ def debug_info():
     
     debug_data = get_debug_info()
     return jsonify(debug_data)
+
+@auth.route('/settings', methods=['GET', 'POST'])
+@login_required
+def settings():
+    """Main user settings page."""
+    from .infrastructure.redis_graph import get_graph_storage
+    
+    # Get site name for admin users
+    site_name = None
+    if current_user.is_admin:
+        redis_client = get_graph_storage().redis
+        current_site_name = redis_client.get('site_name')
+        if current_site_name:
+            site_name = current_site_name.decode('utf-8') if isinstance(current_site_name, bytes) else current_site_name
+        else:
+            site_name = 'MyBibliotheca'
+    
+    return render_template('settings.html', 
+                         title='Settings', 
+                         site_name=site_name)
 
 @auth.route('/privacy_settings', methods=['GET', 'POST'])
 @login_required

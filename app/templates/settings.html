@@ -190,6 +190,73 @@
                                         <i class="bi bi-people me-1"></i>User Management
                                     </a>
                                 </div>
+                                <div class="col-md-6">
+                                    <a href="{{ url_for('debug_admin.debug_dashboard') }}" class="btn btn-outline-info w-100">
+                                        <i class="bi bi-bug me-1"></i>Debug System
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Admin System Configuration (only visible to admins) -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseSystemConfig" 
+                                aria-expanded="false" aria-controls="collapseSystemConfig">
+                            <i class="bi bi-gear-wide-connected me-2"></i>System Configuration
+                        </button>
+                    </h2>
+                    <div id="collapseSystemConfig" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Configure global system settings and debug controls.</p>
+                            
+                            <!-- Site Configuration Form -->
+                            <form method="POST" action="{{ url_for('admin.settings') }}" class="mb-4">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <div class="row g-3">
+                                    <div class="col-md-8">
+                                        <label for="site_name" class="form-label">Site Name</label>
+                                        <input type="text" class="form-control" id="site_name" name="site_name" 
+                                               value="{{ site_name }}" placeholder="MyBibliotheca">
+                                        <small class="form-text text-muted">The name displayed in the site header</small>
+                                    </div>
+                                    <div class="col-md-4 d-flex align-items-end">
+                                        <button type="submit" class="btn btn-primary w-100">Save Settings</button>
+                                    </div>
+                                </div>
+                            </form>
+                            
+                            <!-- Debug System Controls -->
+                            <div class="border rounded p-3 bg-light">
+                                <h6 class="mb-3"><i class="bi bi-bug me-1"></i>Debug System</h6>
+                                <div class="row g-2">
+                                    <div class="col-md-6">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span>Debug Mode</span>
+                                            <span id="debugStatus" class="badge bg-{{ 'success' if debug_manager.is_debug_enabled() else 'secondary' }}">
+                                                {{ 'ON' if debug_manager.is_debug_enabled() else 'OFF' }}
+                                            </span>
+                                        </div>
+                                        <button id="toggleDebugBtn" 
+                                                class="btn btn-{{ 'warning' if debug_manager.is_debug_enabled() else 'success' }} w-100" 
+                                                onclick="toggleDebugMode()">
+                                            {{ '🟡 Disable Debug' if debug_manager.is_debug_enabled() else '🟢 Enable Debug' }}
+                                        </button>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="d-grid gap-2">
+                                            <a href="{{ url_for('debug_admin.debug_dashboard') }}" class="btn btn-outline-info btn-sm">
+                                                📊 Dashboard
+                                            </a>
+                                            <a href="{{ url_for('debug_admin.view_logs') }}" class="btn btn-outline-secondary btn-sm">
+                                                📋 Logs
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -335,7 +402,6 @@
                 </div>
             </div>
 
-            <!-- Back Button -->
             <div class="text-center mt-4">
                 <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary btn-lg">
                     <i class="bi bi-arrow-left me-1"></i>Back to Library
@@ -344,5 +410,75 @@
         </div>
     </div>
 </div>
+
+<script>
+async function toggleDebugMode() {
+    const btn = document.getElementById('toggleDebugBtn');
+    const status = document.getElementById('debugStatus');
+    
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Toggling...';
+    
+    try {
+        const response = await fetch('/admin/debug/toggle', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            
+            // Update status badge
+            status.textContent = data.debug_enabled ? 'ON' : 'OFF';
+            status.className = data.debug_enabled ? 'badge bg-success' : 'badge bg-secondary';
+            
+            // Update button
+            btn.className = data.debug_enabled ? 'btn btn-warning w-100' : 'btn btn-success w-100';
+            btn.innerHTML = data.debug_enabled ? '🟡 Disable Debug' : '🟢 Enable Debug';
+            
+            // Show success message
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-success alert-dismissible fade show mt-2';
+            alertDiv.innerHTML = `
+                <strong>✅ Success:</strong> Debug mode ${data.debug_enabled ? 'enabled' : 'disabled'}.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            btn.parentNode.appendChild(alertDiv);
+            
+            // Auto-dismiss after 3 seconds
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 3000);
+        } else {
+            throw new Error('Failed to toggle debug mode');
+        }
+    } catch (error) {
+        console.error('Error toggling debug mode:', error);
+        
+        // Show error message
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-danger alert-dismissible fade show mt-2';
+        alertDiv.innerHTML = `
+            <strong>❌ Error:</strong> Failed to toggle debug mode. Please try again.
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        btn.parentNode.appendChild(alertDiv);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+    }
+    
+    btn.disabled = false;
+}
+</script>
 
 {% endblock %}

@@ -150,8 +150,8 @@
       </p>
     {% elif book.categories %}
       <p><strong>Categories:</strong> 
-        {% for category in book.categories.split(',') %}
-          <span class="badge bg-secondary me-1">{{ category.strip() }}</span>
+        {% for category in book.categories %}
+          <span class="badge bg-secondary me-1">{{ category.name }}</span>
         {% endfor %}
       </p>
     {% endif %}

@@ -383,8 +383,10 @@ def create_app():
         try:
             user_count = user_service.get_user_count_sync()
             if user_count == 0:
-                # Skip for setup route and static files
-                if request.endpoint in ['auth.setup', 'static'] or (request.endpoint and request.endpoint.startswith('static')):
+                # Skip for setup route, onboarding routes, and static files
+                if (request.endpoint in ['auth.setup', 'static'] or 
+                    (request.endpoint and (request.endpoint.startswith('static') or 
+                                         request.endpoint.startswith('onboarding.')))):
                     return
                 # Redirect to setup page
                 return redirect(url_for('auth.setup'))
@@ -408,6 +410,9 @@ def create_app():
             'auth.forced_password_change',
             'auth.logout',
             'auth.setup',
+            'onboarding.start',
+            'onboarding.step',
+            'onboarding.complete',
             'migration.check_migration_status',
             'migration.migration_wizard',
             'migration.configure_migration',
@@ -418,8 +423,10 @@ def create_app():
             'static'
         ]
         
-        # Allow API and AJAX requests, and skip for static files
-        if request.endpoint in allowed_endpoints or (request.endpoint and request.endpoint.startswith('static')):
+        # Allow API and AJAX requests, and skip for static files and onboarding routes
+        if (request.endpoint in allowed_endpoints or 
+            (request.endpoint and (request.endpoint.startswith('static') or 
+                                 request.endpoint.startswith('onboarding.')))):
             return
         
         # Check for migration needs (DISABLED - migration now manual only)
@@ -455,6 +462,18 @@ def create_app():
         print(f"⚠️  Could not import migration routes: {e}")
     
     try:
+        from .advanced_migration_routes import migration_bp as advanced_migration_bp
+        app.register_blueprint(advanced_migration_bp)
+    except ImportError as e:
+        print(f"⚠️  Could not import advanced migration routes: {e}")
+    
+    try:
+        from .onboarding_system import onboarding_bp
+        app.register_blueprint(onboarding_bp)
+    except ImportError as e:
+        print(f"⚠️  Could not import onboarding system: {e}")
+    
+    try:
         from .genre_routes import genres_bp
         app.register_blueprint(genres_bp, url_prefix='/genres')
     except ImportError as e:
@@ -463,6 +482,22 @@ def create_app():
     app.register_blueprint(bp)
     app.register_blueprint(auth, url_prefix='/auth')
     app.register_blueprint(admin, url_prefix='/admin')
+    
+    # Register debug admin routes
+    try:
+        from .debug_routes import bp as debug_admin_bp
+        app.register_blueprint(debug_admin_bp)
+        print("✅ Debug admin routes registered")
+    except Exception as e:
+        print(f"⚠️  Could not import debug routes: {e}")
+    
+    # Register template context processors
+    try:
+        from .template_context import register_context_processors
+        register_context_processors(app)
+        print("✅ Template context processors registered")
+    except Exception as e:
+        print(f"⚠️  Could not register template context processors: {e}")
     
     # Register API blueprints
     from .api.books import books_api

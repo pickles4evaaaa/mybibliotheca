@@ -1,0 +1,204 @@
+<!-- onboarding/step5_confirmation.html -->
+{% extends "base.html" %}
+
+{% block title %}Confirmation - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <!-- Progress Indicator -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="progress mb-2">
+                        <div class="progress-bar" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Confirmation</small>
+                </div>
+            </div>
+            
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-check-double"></i> Step 5: Ready to Create Your Library
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="lead">Please review your configuration before we set up your library.</p>
+                    
+                    <!-- Admin Account Summary -->
+                    <div class="card border-primary mb-3">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0"><i class="fas fa-user-shield"></i> Admin Account</h6>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-1"><strong>Username:</strong> {{ onboarding_data.admin.username }}</p>
+                            <p class="mb-0"><strong>Email:</strong> {{ onboarding_data.admin.email }}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Site Configuration Summary -->
+                    <div class="card border-info mb-3">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="fas fa-cog"></i> Site Configuration</h6>
+                        </div>
+                        <div class="card-body">
+                            {% set site_config = onboarding_data.site_config %}
+                            <p class="mb-1"><strong>Site Name:</strong> {{ site_config.site_name }}</p>
+                            <p class="mb-1"><strong>Time Zone:</strong> {{ site_config.timezone }}</p>
+                            {% if site_config.location %}
+                            <p class="mb-1"><strong>Default Location:</strong> {{ site_config.location }}</p>
+                            <p class="mb-0"><strong>Set as default for new books:</strong> {{ 'Yes' if site_config.location_set_as_default else 'No' }}</p>
+                            {% else %}
+                            <p class="mb-0"><em>No default location set</em></p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Data Configuration Summary -->
+                    <div class="card border-warning mb-4">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0"><i class="fas fa-database"></i> Data Configuration</h6>
+                        </div>
+                        <div class="card-body">
+                            {% set data_options = onboarding_data.data_options %}
+                            {% if data_options.option == 'fresh' %}
+                                <p class="mb-0">
+                                    <i class="fas fa-plus-circle text-success"></i>
+                                    <strong>Starting Fresh:</strong> Empty library ready for new books
+                                </p>
+                            {% elif data_options.option == 'migrate' %}
+                                {% set db_analysis = data_options.database_analysis %}
+                                <p class="mb-1">
+                                    <i class="fas fa-database text-warning"></i>
+                                    <strong>Migrating Database:</strong> {{ db_analysis.name }}
+                                </p>
+                                <p class="mb-1">
+                                    <strong>Type:</strong> {{ 'Multi-user' if db_analysis.version == 'v2_multi_user' else 'Single-user' }}
+                                </p>
+                                <p class="mb-1">
+                                    <strong>Books to Import:</strong> {{ db_analysis.analysis.book_count }}
+                                </p>
+                                {% if db_analysis.analysis.user_count %}
+                                <p class="mb-1">
+                                    <strong>Users to Import:</strong> {{ db_analysis.analysis.user_count }}
+                                </p>
+                                {% endif %}
+                                {% if onboarding_data.migration_config and onboarding_data.migration_config.admin_user_mapping %}
+                                <p class="mb-0">
+                                    <strong>Admin Account Mapping:</strong> User ID {{ onboarding_data.migration_config.admin_user_mapping }}
+                                </p>
+                                {% endif %}
+                            {% elif data_options.option == 'import' %}
+                                <p class="mb-0">
+                                    <i class="fas fa-file-import text-info"></i>
+                                    <strong>Importing File:</strong> {{ data_options.import_file }}
+                                </p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Execution Confirmation -->
+                    <div class="alert alert-warning">
+                        <h5><i class="fas fa-exclamation-triangle"></i> Important Notes</h5>
+                        <ul class="mb-0">
+                            {% if data_options.option == 'migrate' %}
+                            <li>We'll create a complete backup of your existing database before migration</li>
+                            <li>Your original database will remain unchanged</li>
+                            <li>If something goes wrong, we can restore from the backup</li>
+                            {% endif %}
+                            <li>After setup, you'll be automatically logged in as the admin user</li>
+                            <li>You can modify these settings later in the admin panel</li>
+                        </ul>
+                    </div>
+                    
+                    <form method="POST" onsubmit="return confirmSetup()">
+                        <div class="d-flex justify-content-between mt-4">
+                            {% if onboarding_data.data_options.option in ['migrate', 'import'] %}
+                            <a href="{{ url_for('onboarding.step', step_num=4) }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                            {% else %}
+                            <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                            {% endif %}
+                            <button type="submit" name="action" value="execute" class="btn btn-success btn-lg px-5">
+                                <i class="fas fa-rocket"></i> Create My Library!
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.onboardingData = {
+    dataOption: {{ onboarding_data.data_options.option|tojson }},
+    bookCount: {{ (onboarding_data.data_options.database_analysis.analysis.book_count|default(0))|tojson }}
+};
+
+function confirmSetup() {
+    const dataOption = window.onboardingData.dataOption;
+    let message = 'Ready to create your library?\n\nThis will:\n';
+    
+    if (dataOption === 'migrate') {
+        const bookCount = window.onboardingData.bookCount;
+        message += '• Create your admin account\n';
+        message += '• Set up your site configuration\n';
+        message += '• Create a backup of your existing database\n';
+        message += '• Import ' + bookCount + ' books from your database\n';
+        message += '• Set up all user accounts and relationships\n\n';
+        message += 'This process may take a few minutes.';
+    } else if (dataOption === 'import') {
+        message += '• Create your admin account\n';
+        message += '• Set up your site configuration\n';
+        message += '• Import books from your CSV file\n\n';
+        message += 'This process may take a few minutes.';
+    } else {
+        message += '• Create your admin account\n';
+        message += '• Set up your site configuration\n';
+        message += '• Create an empty library ready for new books\n\n';
+        message += 'You\'ll be ready to start adding books immediately!';
+    }
+    
+    return confirm(message);
+}
+
+// Add loading state when form is submitted
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            if (confirmSetup()) {
+                const button = this.querySelector('button[type="submit"]');
+                if (button) {
+                    button.disabled = true;
+                    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Setting up your library...';
+                    
+                    // Show progress indicator
+                    const progressDiv = document.createElement('div');
+                    progressDiv.className = 'alert alert-info mt-3';
+                    progressDiv.innerHTML = `
+                        <h6><i class="fas fa-hourglass-half"></i> Setup in Progress</h6>
+                        <p class="mb-0">Please wait while we set up your library. This may take a few minutes.</p>
+                        <div class="progress mt-2">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" 
+                                 role="progressbar" style="width: 100%"></div>
+                        </div>
+                    `;
+                    this.appendChild(progressDiv);
+                }
+            } else {
+                e.preventDefault();
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

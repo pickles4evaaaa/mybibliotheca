@@ -68,11 +68,17 @@ def index():
         all_categories.sort(key=lambda c: (c.level, c.name.lower()))
         root_categories.sort(key=lambda c: c.name.lower())
         
+        # Get total unique book count for this user
+        user_books = safe_call_sync_method(book_service.get_user_books_sync, str(current_user.id))
+        total_book_count = len(user_books) if user_books else 0
+        
         print(f"📊 [GENRES] Displaying {len(all_categories)} categories ({len(root_categories)} root)")
+        print(f"📊 [GENRES] Total unique books for user: {total_book_count}")
         
         return render_template('genres/index.html', 
                              categories=all_categories,
-                             root_categories=root_categories)
+                             root_categories=root_categories,
+                             total_book_count=total_book_count)
         
     except Exception as e:
         print(f"❌ [GENRES] Error loading genres page: {e}")

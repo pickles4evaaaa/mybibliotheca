@@ -328,6 +328,26 @@ def library():
     # Use Redis service layer to get all user books (with relationship data)
     user_books = book_service.get_user_books_sync(str(current_user.id))
     
+    # Add location debugging via debug system
+    from app.debug_system import debug_log
+    debug_log(f"Retrieved {len(user_books)} books for user {current_user.id}", "LIBRARY")
+    books_with_locations = 0
+    books_without_locations = 0
+    location_counts = {}
+    
+    for book in user_books:
+        if hasattr(book, 'locations') and book.locations:
+            books_with_locations += 1
+            for loc_id in book.locations:
+                location_counts[loc_id] = location_counts.get(loc_id, 0) + 1
+            debug_log(f"Book '{book.title}' has locations: {book.locations}", "LIBRARY")
+        else:
+            books_without_locations += 1
+            debug_log(f"Book '{book.title}' has NO locations", "LIBRARY")
+    
+    debug_log(f"Summary: {books_with_locations} books WITH locations, {books_without_locations} books WITHOUT locations", "LIBRARY")
+    debug_log(f"Location distribution: {location_counts}", "LIBRARY")
+    
     # Calculate statistics for filter buttons
     stats = {
         'total_books': len(user_books),
@@ -335,7 +355,11 @@ def library():
         'currently_reading': len([b for b in user_books if getattr(b, 'reading_status', None) == 'reading']),
         'want_to_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']),
         'on_hold': len([b for b in user_books if getattr(b, 'reading_status', None) == 'on_hold']),
-        'wishlist': len([b for b in user_books if getattr(b, 'ownership_status', None) == 'wishlist'])
+        'wishlist': len([b for b in user_books if getattr(b, 'ownership_status', None) == 'wishlist']),
+        # Add location stats
+        'books_with_locations': books_with_locations,
+        'books_without_locations': books_without_locations,
+        'location_counts': location_counts
     }
     
     # Apply status filter first
@@ -494,7 +518,8 @@ def edit_book(uid):
                 
                 try:
                     # Always use find_or_create approach - the most reliable method
-                    print(f"🔍 [DEBUG] Finding or creating person: {person_name}")
+                    from app.debug_system import debug_log
+                    debug_log(f"Finding or creating person: {person_name}", "PERSON_CREATION")
                     
                     # Use the same logic as the repository's find_or_create_person method
                     from .infrastructure.redis_graph import get_graph_storage
@@ -510,7 +535,7 @@ def edit_book(uid):
                         existing_normalized = person_data.get('normalized_name', '').strip().lower()
                         
                         if existing_name == normalized_name or existing_normalized == normalized_name:
-                            print(f"✅ [DEBUG] Found existing person: {person_data.get('name')} (ID: {person_data.get('_id')})")
+                            debug_log(f"Found existing person: {person_data.get('name')} (ID: {person_data.get('_id')})", "PERSON_CREATION")
                             # Convert back to Person object
                             person = Person(
                                 id=person_data.get('_id'),
@@ -528,7 +553,7 @@ def edit_book(uid):
                     
                     # If not found, create new person
                     if not person:
-                        print(f"📝 [DEBUG] Creating new person: {person_name}")
+                        debug_log(f"Creating new person: {person_name}", "PERSON_CREATION")
                         person = Person(
                             id=str(uuid.uuid4()),
                             name=person_name,
@@ -553,14 +578,14 @@ def edit_book(uid):
                         
                         success = storage.store_node('person', person.id, person_data)
                         if not success:
-                            print(f"❌ [DEBUG] Failed to create person: {person_name}")
+                            debug_log(f"Failed to create person: {person_name}", "PERSON_CREATION_ERROR")
                             continue
                             
-                        print(f"✅ [DEBUG] Created new person: {person.name} (ID: {person.id})")
+                        debug_log(f"Created new person: {person.name} (ID: {person.id})", "PERSON_CREATION")
                     
                     # Validate person has valid ID
                     if not person or not person.id:
-                        print(f"❌ [DEBUG] Person has invalid ID: {person}")
+                        debug_log(f"Person has invalid ID: {person}", "PERSON_CREATION_ERROR")
                         continue
                     
                 except Exception as e:
@@ -627,61 +652,70 @@ def edit_book(uid):
 @login_required
 def view_book_enhanced(uid):
     """Enhanced book view with new status system."""
-    print(f"🔍 [VIEW] Loading enhanced view for book {uid}, user {current_user.id}")
+    from app.debug_system import debug_log
+    
+    debug_log(f"Loading enhanced view for book {uid}, user {current_user.id}", "VIEW")
     
     user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
     if not user_book:
-        print(f"❌ [VIEW] Book {uid} not found for user {current_user.id}")
+        debug_log(f"Book {uid} not found for user {current_user.id}", "VIEW")
         abort(404)
-    
-    print(f"📖 [VIEW] Found book: {user_book.title}")
-    print(f"🔍 [VIEW] User book has custom_metadata attribute: {hasattr(user_book, 'custom_metadata')}")
-    if hasattr(user_book, 'custom_metadata'):
-        print(f"📋 [VIEW] User book custom_metadata content: {user_book.custom_metadata}")
-        print(f"📊 [VIEW] User book custom_metadata type: {type(user_book.custom_metadata)}")
+
+    debug_log(f"Found book: {user_book.title}", "VIEW")
 
     # Get book categories
     book_categories = []
     try:
-        print(f"🗂️ [VIEW] Fetching categories for book {user_book.id}")
         book_categories = book_service.get_book_categories_sync(user_book.id)
-        print(f"📚 [VIEW] Found {len(book_categories)} categories")
+        debug_log(f"Found {len(book_categories)} categories", "VIEW")
     except Exception as e:
-        print(f"❌ [VIEW] Error loading book categories: {e}")
-        import traceback
-        traceback.print_exc()
+        current_app.logger.error(f"Error loading book categories: {e}")
+        debug_log(f"Error loading book categories: {e}", "VIEW_ERROR")
 
     # Get custom metadata for display
     global_metadata_display = []
     personal_metadata_display = []
     
     try:
-        print(f"🔍 [VIEW] Checking for global metadata...")
         # Global metadata is stored on the book itself, but we don't have a separate method to get just the book
         # For now, assume no global metadata since we're storing everything on relationships
         # TODO: Implement proper global vs personal metadata separation
         
-        print(f"🔍 [VIEW] Checking for personal metadata...")
         if hasattr(user_book, 'custom_metadata') and user_book.custom_metadata:
-            print(f"📋 [VIEW] Personal metadata found: {user_book.custom_metadata}")
+            debug_log(f"Personal metadata found: {user_book.custom_metadata}", "VIEW")
             personal_metadata_display = custom_field_service.get_custom_metadata_for_display(
                 user_book.custom_metadata
             )
         else:
-            print(f"⚪ [VIEW] No personal metadata found")
+            debug_log("No personal metadata found", "VIEW")
     except Exception as e:
-        print(f"❌ [VIEW] Error loading custom metadata for display: {e}")
-        import traceback
-        traceback.print_exc()
+        current_app.logger.error(f"Error loading custom metadata for display: {e}")
+        debug_log(f"Error loading custom metadata for display: {e}", "VIEW_ERROR")
     
-    print(f"📊 [VIEW] Returning with {len(global_metadata_display)} global and {len(personal_metadata_display)} personal metadata items")
+    # Get user locations for the location dropdown and debug info
+    user_locations = []
+    try:
+        from app.location_service import LocationService
+        from app.infrastructure.redis_graph import RedisGraphConnection
+        from config import Config
+        
+        redis_connection = RedisGraphConnection(Config.REDIS_URL)
+        location_service = LocationService(redis_connection.client)
+        user_locations = location_service.get_user_locations(str(current_user.id))
+        debug_log(f"Found {len(user_locations)} locations for user {current_user.id}", "VIEW")
+    except Exception as e:
+        current_app.logger.error(f"Error loading user locations: {e}")
+        debug_log(f"Error loading user locations: {e}", "VIEW_ERROR")
+    
+    debug_log(f"Returning with {len(global_metadata_display)} global and {len(personal_metadata_display)} personal metadata items", "VIEW")
     
     return render_template(
         'view_book_enhanced.html', 
         book=user_book,
         book_categories=book_categories,
         global_metadata_display=global_metadata_display,
-        personal_metadata_display=personal_metadata_display
+        personal_metadata_display=personal_metadata_display,
+        user_locations=user_locations
     )
 
 
@@ -1710,13 +1744,56 @@ def add_book_manual():
         else:
             print(f"📚 [MANUAL] No categories found for book {title}")
         
-        # Add to user's library with custom metadata
-        book_service.add_book_to_user_library_sync(
+        # Add to user's library with custom metadata and default location
+        # Get user's default location
+        default_locations = []
+        try:
+            print(f"📍 [MANUAL] Attempting to get default location for user {current_user.id}")
+            from .location_service import LocationService
+            from .infrastructure.redis_graph import RedisGraphConnection
+            from config import Config
+            
+            redis_connection = RedisGraphConnection(Config.REDIS_URL)
+            location_service = LocationService(redis_connection.client)
+            
+            print(f"📍 [MANUAL] Created location service, getting default location...")
+            default_location = location_service.get_default_location(str(current_user.id))
+            
+            if default_location:
+                default_locations = [default_location.id]
+                print(f"📍 [MANUAL] ✅ Found default location: {default_location.name} (ID: {default_location.id})")
+                print(f"📍 [MANUAL] Assigning to default location: {default_location.name} (ID: {default_location.id})")
+            else:
+                print(f"📍 [MANUAL] ❌ No default location found for user {current_user.id}")
+                # Check if user has any locations at all
+                all_locations = location_service.get_user_locations(str(current_user.id))
+                if not all_locations:
+                    print(f"📍 [MANUAL] 🏗️ User has no locations, creating default location...")
+                    default_locations_created = location_service.setup_default_locations(str(current_user.id))
+                    if default_locations_created:
+                        default_locations = [default_locations_created[0].id]
+                        print(f"📍 [MANUAL] ✅ Created and assigned default location: {default_locations_created[0].name} (ID: {default_locations_created[0].id})")
+                    else:
+                        print(f"📍 [MANUAL] ❌ Failed to create default locations")
+                else:
+                    print(f"📍 [MANUAL] User has {len(all_locations)} locations but none are default")
+                
+        except Exception as e:
+            print(f"❌ [MANUAL] Error getting default location: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print(f"📍 [MANUAL] Final default_locations list: {default_locations}")
+        
+        print(f"📚 [MANUAL] Adding book to user library with locations: {default_locations}")
+        result = book_service.add_book_to_user_library_sync(
             user_id=current_user.id,
             book_id=existing_book.id,
             reading_status=ReadingStatus.PLAN_TO_READ,
+            locations=default_locations,
             custom_metadata=custom_metadata if custom_metadata else None
         )
+        print(f"📚 [MANUAL] Add to library result: {result}")
         
         # Update status if specified
         if want_to_read or library_only or start_date or finish_date:
@@ -2867,6 +2944,43 @@ def start_import_job(task_id):
                         print(f"Created book result: {created_book}")
                         print(f"Created book type: {type(created_book)}")
                         if created_book:
+                            # Get user's default location for import
+                            default_locations = []
+                            try:
+                                print(f"📍 [IMPORT] Getting default location for user {user_id}")
+                                from app.location_service import LocationService
+                                from app.infrastructure.redis_graph import RedisGraphConnection
+                                from config import Config
+                                
+                                redis_connection = RedisGraphConnection(Config.REDIS_URL)
+                                location_service = LocationService(redis_connection.client)
+                                default_location = location_service.get_default_location(str(user_id))
+                                
+                                if default_location:
+                                    default_locations = [default_location.id]
+                                    print(f"📍 [IMPORT] ✅ Found default location: {default_location.name} (ID: {default_location.id})")
+                                else:
+                                    print(f"📍 [IMPORT] ❌ No default location found for user {user_id}")
+                                    # Check if user has any locations at all
+                                    all_locations = location_service.get_user_locations(str(user_id))
+                                    if not all_locations:
+                                        print(f"📍 [IMPORT] 🏗️ User has no locations, creating default location...")
+                                        default_locations_created = location_service.setup_default_locations(str(user_id))
+                                        if default_locations_created:
+                                            default_locations = [default_locations_created[0].id]
+                                            print(f"📍 [IMPORT] ✅ Created and assigned default location: {default_locations_created[0].name} (ID: {default_locations_created[0].id})")
+                                        else:
+                                            print(f"📍 [IMPORT] ❌ Failed to create default locations")
+                                    else:
+                                        print(f"📍 [IMPORT] User has {len(all_locations)} locations but none are default")
+                                        
+                            except Exception as loc_error:
+                                print(f"❌ [IMPORT] Error getting default location: {loc_error}")
+                                import traceback
+                                traceback.print_exc()
+                            
+                            print(f"📍 [IMPORT] Final default_locations list: {default_locations}")
+                            
                             # Convert reading status string to enum
                             reading_status_enum = ReadingStatus.PLAN_TO_READ  # default
                             if reading_status:
@@ -2881,13 +2995,16 @@ def start_import_job(task_id):
                                 elif reading_status == 'did_not_finish':
                                     reading_status_enum = ReadingStatus.DNF
 
-                            # Add to user's library
+                            # Add to user's library with locations
+                            print(f"📚 [IMPORT] Adding book to user library with locations: {default_locations}")
                             success = book_service.add_book_to_user_library_sync(
                                 user_id=user_id,
                                 book_id=created_book.id,
                                 reading_status=reading_status_enum,
-                                ownership_status=OwnershipStatus.OWNED
+                                ownership_status=OwnershipStatus.OWNED,
+                                locations=default_locations  # Now passing locations!
                             )
+                            print(f"📚 [IMPORT] Add to library result: {success}")
                             
                             # Add personal custom metadata if available
                             if success and personal_custom_metadata:

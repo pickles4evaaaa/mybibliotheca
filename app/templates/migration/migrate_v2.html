@@ -1,0 +1,166 @@
+<!-- migration/migrate_v2.html -->
+{% extends "base.html" %}
+
+{% block title %}Migrate Multi-User Library - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-users-cog"></i> Multi-User Library Migration
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-success">
+                        <h5><i class="fas fa-check-circle"></i> Migration Configuration Complete</h5>
+                        <p class="mb-1">
+                            Your admin account <strong>{{ admin_username }}</strong> will inherit the library from:
+                        </p>
+                        {% if mapped_user %}
+                        <div class="mt-2 p-2 bg-white rounded border">
+                            <strong>{{ mapped_user.username }}</strong>
+                            {% if mapped_user.is_admin %}
+                                <span class="badge badge-warning ml-1">
+                                    <i class="fas fa-crown"></i> Previous Admin
+                                </span>
+                            {% endif %}
+                            <br>
+                            <small class="text-muted">{{ mapped_user.email }}</small>
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Database Summary -->
+                    <div class="card bg-light mb-4">
+                        <div class="card-body">
+                            <h5><i class="fas fa-database"></i> Migration Summary</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>Database:</strong> {{ database.split('/')[-1] }}</p>
+                                    <p><strong>Total Books:</strong> {{ analysis.book_count }}</p>
+                                    <p><strong>Total Users:</strong> {{ analysis.user_count }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    {% if analysis.reading_log_count %}
+                                    <p><strong>Reading Logs:</strong> {{ analysis.reading_log_count }}</p>
+                                    {% endif %}
+                                    <p><strong>Migration Type:</strong> Multi-user with mapping</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Migration Process -->
+                    <div class="card border-warning mb-4">
+                        <div class="card-body">
+                            <h5><i class="fas fa-cogs text-warning"></i> Migration Process</h5>
+                            <ol class="mb-0">
+                                <li><strong>Backup:</strong> Complete backup of current data</li>
+                                <li><strong>User Migration:</strong> Create {{ analysis.user_count - 1 }} additional users</li>
+                                <li><strong>Admin Mapping:</strong> Transfer selected user's library to your admin account</li>
+                                <li><strong>Book Import:</strong> Import all {{ analysis.book_count }} books with proper ownership</li>
+                                <li><strong>Reading History:</strong> Preserve all reading logs and dates</li>
+                                <li><strong>Verification:</strong> Ensure data integrity across all users</li>
+                            </ol>
+                        </div>
+                    </div>
+                    
+                    <!-- User List -->
+                    {% if analysis.users and analysis.users|length > 1 %}
+                    <div class="card border-info mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="fas fa-users"></i> Users to be Created</h6>
+                        </div>
+                        <div class="card-body">
+                            {% for user in analysis.users %}
+                            {% if user != mapped_user %}
+                            <div class="d-flex justify-content-between align-items-center py-1">
+                                <div>
+                                    <strong>{{ user.username }}</strong>
+                                    <small class="text-muted ml-2">{{ user.email }}</small>
+                                </div>
+                                <span class="badge badge-secondary">Regular User</span>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Safety Notice -->
+                    <div class="alert alert-success">
+                        <h6><i class="fas fa-shield-alt"></i> Data Safety</h6>
+                        <p class="mb-0">
+                            Your original database will be completely backed up before migration begins. 
+                            All user data, books, and reading history will be preserved.
+                        </p>
+                    </div>
+                    
+                    <!-- Migration Form -->
+                    <form method="POST" onsubmit="return confirmMigration()">
+                        <div class="text-center">
+                            <button type="submit" name="action" value="migrate" class="btn btn-success btn-lg px-5">
+                                <i class="fas fa-play"></i> Start Multi-User Migration
+                            </button>
+                        </div>
+                    </form>
+                    
+                    <div class="text-center mt-3">
+                        <a href="{{ url_for('advanced_migration.setup_v2_migration') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to User Mapping
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmMigration() {
+    return confirm(
+        'Ready to start the multi-user migration?\n\n' +
+        'This process will:\n' +
+        '• Create backups of all current data\n' +
+        '• Migrate {{ analysis.user_count }} users\n' +
+        '• Import {{ analysis.book_count }} books with proper ownership\n' +
+        '• Preserve all reading history\n\n' +
+        'This may take several minutes depending on library size.\n\n' +
+        'Click OK to proceed.'
+    );
+}
+
+// Add loading state when form is submitted
+document.querySelector('form').addEventListener('submit', function(e) {
+    if (confirmMigration()) {
+        const button = this.querySelector('button[type="submit"]');
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Migrating Users and Books...';
+        
+        // Show detailed progress indicator
+        const progressDiv = document.createElement('div');
+        progressDiv.className = 'alert alert-info mt-3';
+        progressDiv.innerHTML = `
+            <h6><i class="fas fa-hourglass-half"></i> Multi-User Migration in Progress</h6>
+            <p>Please wait while we migrate your multi-user library. This process includes:</p>
+            <ul class="mb-2">
+                <li>Creating user accounts</li>
+                <li>Importing books with ownership</li>
+                <li>Preserving reading history</li>
+                <li>Verifying data integrity</li>
+            </ul>
+            <div class="progress">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" 
+                     role="progressbar" style="width: 100%"></div>
+            </div>
+        `;
+        this.appendChild(progressDiv);
+    } else {
+        e.preventDefault();
+    }
+});
+</script>
+{% endblock %}

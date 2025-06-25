@@ -1,0 +1,115 @@
+<!-- onboarding/step4_migration_config.html -->
+{% extends "base.html" %}
+
+{% block title %}Migration Configuration - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <!-- Progress Indicator -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="progress mb-2">
+                        <div class="progress-bar" role="progressbar" style="width: 80%" aria-valuenow="80" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Migration Configuration</small>
+                </div>
+            </div>
+            
+            <div class="card shadow">
+                <div class="card-header bg-warning text-dark">
+                    <h3 class="mb-0">
+                        <i class="fas fa-cogs"></i> Step 4: Configure Migration
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <h5><i class="fas fa-info-circle"></i> Database Analysis</h5>
+                        <p class="mb-1">
+                            <strong>Database:</strong> {{ database_analysis.name }}<br>
+                            <strong>Type:</strong> {{ 'Multi-user' if database_analysis.version == 'v2_multi_user' else 'Single-user' }}<br>
+                            <strong>Books:</strong> {{ database_analysis.analysis.book_count }}<br>
+                            {% if database_analysis.analysis.user_count %}
+                            <strong>Users:</strong> {{ database_analysis.analysis.user_count }}
+                            {% endif %}
+                        </p>
+                    </div>
+                    
+                    <form method="POST">
+                        {% if database_analysis.version == 'v2_multi_user' %}
+                        <!-- Multi-user database configuration -->
+                        <div class="card border-primary mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-user-check"></i> User Account Mapping
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <p>Which user from the old database corresponds to your new admin account?</p>
+                                
+                                {% for user in database_analysis.analysis.users %}
+                                <div class="card mb-2 border-{{ 'warning' if user.is_admin else 'light' }}">
+                                    <div class="card-body py-2">
+                                        <div class="custom-control custom-radio">
+                                            <input type="radio" 
+                                                   id="user_{{ user.id }}" 
+                                                   name="admin_user_mapping" 
+                                                   value="{{ user.id }}" 
+                                                   class="custom-control-input"
+                                                   {% if user.is_admin and loop.first %}checked{% endif %}>
+                                            <label class="custom-control-label" for="user_{{ user.id }}">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <strong>{{ user.username }}</strong>
+                                                        {% if user.is_admin %}
+                                                            <span class="badge badge-warning ml-1">
+                                                                <i class="fas fa-crown"></i> Admin
+                                                            </span>
+                                                        {% endif %}
+                                                        <br>
+                                                        <small class="text-muted">{{ user.email }}</small>
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                                
+                                <div class="alert alert-info mt-3">
+                                    <h6><i class="fas fa-info-circle"></i> What Happens</h6>
+                                    <ul class="mb-0">
+                                        <li><strong>Selected User:</strong> Their books will be transferred to your admin account</li>
+                                        <li><strong>Other Users:</strong> Will be recreated with their original usernames and books</li>
+                                        <li><strong>Admin Privileges:</strong> Only you will have admin access in the new system</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <!-- Single-user database configuration -->
+                        <div class="alert alert-success">
+                            <h5><i class="fas fa-check-circle"></i> Simple Migration</h5>
+                            <p class="mb-0">
+                                All {{ database_analysis.analysis.book_count }} books from this single-user database 
+                                will be assigned to your admin account. No additional configuration needed.
+                            </p>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                            <button type="submit" class="btn btn-primary btn-lg px-4">
+                                <i class="fas fa-arrow-right"></i> Continue to Confirmation
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

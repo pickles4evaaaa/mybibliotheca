@@ -639,10 +639,7 @@
               <a class="btn btn-outline-success me-2" href="{{ url_for('main.stats') }}">Stats</a>
               <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
               <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>
-              <a class="btn btn-outline-secondary me-2" href="{{ url_for('auth.privacy_settings') }}">Settings</a>
-              {% if current_user.is_admin %}
-                <a class="btn btn-outline-danger me-2" href="{{ url_for('admin.settings') }}">Admin</a>
-              {% endif %}
+              <a class="btn btn-outline-secondary me-2" href="{{ url_for('auth.settings') }}">Settings</a>
             {% endif %}
           </div>
           

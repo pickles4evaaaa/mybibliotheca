@@ -106,13 +106,13 @@
                                 {% endfor %}
                             </div>
                             {% elif book.categories %}
-                            <!-- Fallback for legacy categories string -->
+                            <!-- Categories from domain model -->
                             <div class="mb-3">
                                 <small class="text-muted d-block mb-1">
-                                    <i class="bi bi-tags me-1"></i>Categories (Legacy)
+                                    <i class="bi bi-tags me-1"></i>Categories
                                 </small>
-                                {% for category in book.categories.split(',') %}
-                                    <span class="badge bg-light text-dark border me-1 mb-1">{{ category.strip() }}</span>
+                                {% for category in book.categories %}
+                                    <span class="badge bg-light text-dark border me-1 mb-1">{{ category.name }}</span>
                                 {% endfor %}
                             </div>
                             {% endif %}
@@ -452,10 +452,19 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load user locations
     function loadLocations() {
+        console.log('🏠 [LOCATIONS] Loading user locations...');
         fetch('/locations/api/user_locations')
             .then(response => response.json())
             .then(locations => {
+                console.log('🏠 [LOCATIONS] Received locations:', locations);
                 locationSelect.innerHTML = '<option value="">Select location...</option>';
+                
+                // Get book's current locations from the template
+                const bookLocations = {{ book.locations|tojson if book.locations else '[]' }};
+                const currentLocationId = bookLocations.length > 0 ? bookLocations[0] : null;
+                console.log('🏠 [LOCATIONS] Book current locations:', bookLocations);
+                console.log('🏠 [LOCATIONS] Using location ID:', currentLocationId);
+                
                 locations.forEach(location => {
                     const option = document.createElement('option');
                     option.value = location.id;
@@ -463,14 +472,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (location.is_default) {
                         option.textContent += ' (Default)';
                     }
-                    if (location.id === '{{ book.primary_location_id or "" }}') {
+                    // Select the location if it matches the book's current location
+                    if (location.id === currentLocationId) {
                         option.selected = true;
+                        console.log('🏠 [LOCATIONS] ✅ Selected current location:', location.name, 'ID:', location.id);
                     }
                     locationSelect.appendChild(option);
                 });
+                console.log('🏠 [LOCATIONS] Location dropdown populated');
             })
             .catch(error => {
-                console.error('Error loading locations:', error);
+                console.error('❌ [LOCATIONS] Error loading locations:', error);
                 locationSelect.innerHTML = '<option value="">Error loading locations</option>';
             });
     }
@@ -731,4 +743,8 @@ document.addEventListener('DOMContentLoaded', function() {
     color: white !important;
 }
 </style>
+
+<!-- Debug Panel (Admin Only) -->
+{% include 'components/debug_panel.html' %}
+
 {% endblock %}

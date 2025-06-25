@@ -1,0 +1,60 @@
+<!-- Debug Info Component - Only visible to admins when debug mode is enabled -->
+{% if current_user and current_user.is_authenticated and debug_manager %}
+    {% if debug_manager.should_show_debug(current_user) %}
+        <div class="debug-panel mt-4">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h6 class="mb-0">
+                        <i class="bi bi-bug"></i> Debug Information 
+                        <small class="text-muted">(Admin Only)</small>
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Request Info:</h6>
+                            <ul class="list-unstyled small">
+                                <li><strong>Path:</strong> {{ request.path }}</li>
+                                <li><strong>Method:</strong> {{ request.method }}</li>
+                                <li><strong>User ID:</strong> {{ current_user.id }}</li>
+                                <li><strong>User Timezone:</strong> {{ current_user.timezone or 'UTC' }}</li>
+                                {% if request.args %}
+                                    <li><strong>Query Params:</strong> {{ request.args.to_dict() }}</li>
+                                {% endif %}
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Template Variables:</h6>
+                            <ul class="list-unstyled small">
+                                {% if location %}
+                                    <li><strong>location:</strong> {{ location.name }} ({{ location.id }})</li>
+                                {% endif %}
+                                {% if book_count is defined %}
+                                    <li><strong>book_count:</strong> {{ book_count }}</li>
+                                {% endif %}
+                                {% if books %}
+                                    <li><strong>books:</strong> {{ books|length }} items</li>
+                                {% endif %}
+                                {% if book is defined %}
+                                    <li><strong>book:</strong> {{ book.title or 'Untitled' }} ({{ book.id or book.uid }})</li>
+                                {% endif %}
+                                {% if categories is defined %}
+                                    <li><strong>categories:</strong> {{ categories|length }} items</li>
+                                {% endif %}
+                                {% if user_locations is defined %}
+                                    <li><strong>user_locations:</strong> {{ user_locations|length }} items</li>
+                                {% endif %}
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    {% if debug_data %}
+                        <hr>
+                        <h6>Debug Data:</h6>
+                        <pre class="bg-light p-2 rounded small">{{ debug_data | tojson(indent=2) }}</pre>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    {% endif %}
+{% endif %}

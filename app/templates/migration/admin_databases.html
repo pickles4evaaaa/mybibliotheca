@@ -1,0 +1,246 @@
+<!-- migration/admin_databases.html -->
+{% extends "base.html" %}
+
+{% block title %}Database Management - Admin - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card shadow">
+                <div class="card-header bg-dark text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-database"></i> Database Management
+                        <span class="badge badge-warning ml-2">Admin Only</span>
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="lead">
+                        Manage SQLite databases and migration options for your Bibliotheca installation.
+                    </p>
+                    
+                    {% if databases %}
+                    <div class="alert alert-info">
+                        <h5><i class="fas fa-info-circle"></i> Detected Databases</h5>
+                        <p class="mb-0">Found {{ databases|length }} SQLite database(s) that could be migrated.</p>
+                    </div>
+                    
+                    <!-- Database List -->
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Database</th>
+                                    <th>Type</th>
+                                    <th>Books</th>
+                                    <th>Users</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for db in databases %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ db.name }}</strong>
+                                        <br>
+                                        <small class="text-muted">{{ db.path }}</small>
+                                    </td>
+                                    <td>
+                                        <span class="badge badge-{{ 'success' if db.version == 'v2_multi_user' else 'info' }}">
+                                            {{ 'Multi-user' if db.version == 'v2_multi_user' else 'Single-user' }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge badge-primary">{{ db.analysis.book_count }}</span>
+                                    </td>
+                                    <td>
+                                        {% if db.analysis.user_count %}
+                                        <span class="badge badge-success">{{ db.analysis.user_count }}</span>
+                                        {% else %}
+                                        <span class="badge badge-light">N/A</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if db.version == 'unknown' %}
+                                        <span class="badge badge-danger">Unknown</span>
+                                        {% else %}
+                                        <span class="badge badge-warning">Ready to Migrate</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if db.version != 'unknown' %}
+                                        <div class="btn-group-vertical btn-group-sm">
+                                            <a href="{{ url_for('advanced_migration.admin_migrate_database', db_path=db.path) }}" 
+                                               class="btn btn-primary btn-sm">
+                                                <i class="fas fa-upload"></i> Migrate
+                                            </a>
+                                            <button class="btn btn-info btn-sm" 
+                                                    onclick="showDatabaseDetails('{{ db.name }}', {{ db.analysis|tojson }})">
+                                                <i class="fas fa-info"></i> Details
+                                            </button>
+                                        </div>
+                                        {% else %}
+                                        <span class="text-muted">No actions available</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- V2 User Details -->
+                    {% for db in databases %}
+                    {% if db.version == 'v2_multi_user' and db.analysis.users %}
+                    <div class="card mt-3 border-info">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0">
+                                <i class="fas fa-users"></i> Users in {{ db.name }}
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                {% for user in db.analysis.users %}
+                                <div class="col-md-4 mb-2">
+                                    <div class="border rounded p-2">
+                                        <strong>{{ user.username }}</strong>
+                                        {% if user.is_admin %}
+                                            <span class="badge badge-warning ml-1">
+                                                <i class="fas fa-crown"></i> Admin
+                                            </span>
+                                        {% endif %}
+                                        <br>
+                                        <small class="text-muted">{{ user.email }}</small>
+                                        <br>
+                                        <small class="text-muted">ID: {{ user.id }}</small>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                    
+                    {% else %}
+                    <div class="alert alert-success">
+                        <h5><i class="fas fa-check-circle"></i> No Migration Needed</h5>
+                        <p class="mb-0">
+                            No SQLite databases found that require migration. Your Bibliotheca installation 
+                            is running purely on Redis.
+                        </p>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Help Section -->
+                    <div class="card mt-4 border-secondary">
+                        <div class="card-header bg-secondary text-white">
+                            <h6 class="mb-0">
+                                <i class="fas fa-question-circle"></i> Migration Help
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <h6>Database Types:</h6>
+                            <ul>
+                                <li><strong>Single-user:</strong> Older Bibliotheca databases without user management</li>
+                                <li><strong>Multi-user:</strong> Newer databases with multiple user accounts</li>
+                            </ul>
+                            
+                            <h6 class="mt-3">Migration Process:</h6>
+                            <ul>
+                                <li>All data is backed up before migration begins</li>
+                                <li>Books, users, and reading history are preserved</li>
+                                <li>Single-user databases assign all content to the current admin</li>
+                                <li>Multi-user databases require user mapping configuration</li>
+                            </ul>
+                            
+                            <div class="alert alert-warning mt-3">
+                                <small>
+                                    <strong>Important:</strong> Migration is a one-time process. Once completed, 
+                                    the original SQLite database should be archived for backup purposes.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Database Details Modal -->
+<div class="modal fade" id="databaseModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-database"></i> Database Details
+                </h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body" id="modalContent">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showDatabaseDetails(name, analysis) {
+    const content = `
+        <h6>Database: ${name}</h6>
+        <div class="row">
+            <div class="col-md-6">
+                <h7>Statistics:</h7>
+                <ul>
+                    <li>Books: ${analysis.book_count || 0}</li>
+                    <li>Users: ${analysis.user_count || 'N/A'}</li>
+                    <li>Reading Logs: ${analysis.reading_log_count || 0}</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h7>Tables:</h7>
+                <ul>
+                    ${analysis.tables ? analysis.tables.map(table => `<li>${table}</li>`).join('') : '<li>No table info</li>'}
+                </ul>
+            </div>
+        </div>
+        
+        ${analysis.users ? `
+            <h7>Users in Database:</h7>
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Username</th>
+                            <th>Email</th>
+                            <th>Admin</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${analysis.users.map(user => `
+                            <tr>
+                                <td>${user.id}</td>
+                                <td>${user.username}</td>
+                                <td>${user.email}</td>
+                                <td>${user.is_admin ? '<i class="fas fa-crown text-warning"></i>' : ''}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        ` : ''}
+    `;
+    
+    document.getElementById('modalContent').innerHTML = content;
+    $('#databaseModal').modal('show');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,151 @@
+<!-- migration/complete.html -->
+{% extends "base.html" %}
+
+{% block title %}Migration Complete - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow border-success">
+                <div class="card-header bg-success text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-check-circle"></i> Migration Completed Successfully!
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-success">
+                        <h4 class="alert-heading">
+                            <i class="fas fa-trophy"></i> Welcome to Your New Bibliotheca Library!
+                        </h4>
+                        <p class="mb-0">
+                            Your library has been successfully migrated to the new Redis-based system. 
+                            All your books and reading history have been preserved.
+                        </p>
+                    </div>
+                    
+                    <!-- Migration Statistics -->
+                    <div class="card bg-light mb-4">
+                        <div class="card-body">
+                            <h5><i class="fas fa-chart-bar"></i> Migration Summary</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    {% if results.stats.books_migrated %}
+                                    <p><strong><i class="fas fa-book text-primary"></i> Books Migrated:</strong> {{ results.stats.books_migrated }}</p>
+                                    {% endif %}
+                                    {% if results.stats.users_migrated %}
+                                    <p><strong><i class="fas fa-users text-info"></i> Users Migrated:</strong> {{ results.stats.users_migrated }}</p>
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-6">
+                                    {% if results.stats.relationships_created %}
+                                    <p><strong><i class="fas fa-link text-success"></i> Relationships:</strong> {{ results.stats.relationships_created }}</p>
+                                    {% endif %}
+                                    {% if results.stats.reading_logs_migrated %}
+                                    <p><strong><i class="fas fa-calendar text-warning"></i> Reading Logs:</strong> {{ results.stats.reading_logs_migrated }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            
+                            {% if results.stats.database_version %}
+                            <div class="mt-2">
+                                <span class="badge badge-{{ 'success' if results.stats.database_version == 'v2_multi_user' else 'info' }}">
+                                    Source: {{ 'Multi-user Database' if results.stats.database_version == 'v2_multi_user' else 'Single-user Database' }}
+                                </span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Backup Information -->
+                    <div class="card border-warning mb-4">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0"><i class="fas fa-save"></i> Backup Information</h6>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-1">
+                                <strong>Backup Location:</strong> <code>{{ results.backup_location }}</code>
+                            </p>
+                            <small class="text-muted">
+                                Your original database and Redis data have been backed up to this location. 
+                                Keep these backups safe for recovery purposes.
+                            </small>
+                        </div>
+                    </div>
+                    
+                    <!-- Error Summary -->
+                    {% if results.stats.errors %}
+                    <div class="card border-warning mb-4">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Migration Warnings</h6>
+                        </div>
+                        <div class="card-body">
+                            <p>Some items encountered issues during migration:</p>
+                            <ul class="mb-0">
+                                {% for error in results.stats.errors %}
+                                <li><small>{{ error }}</small></li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Next Steps -->
+                    <div class="card border-primary">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0"><i class="fas fa-rocket"></i> What's Next?</h6>
+                        </div>
+                        <div class="card-body">
+                            <ul class="mb-3">
+                                <li><strong>Explore Your Library:</strong> Browse your migrated books and collections</li>
+                                <li><strong>Check Reading History:</strong> Verify your reading logs and dates</li>
+                                <li><strong>Customize Settings:</strong> Update your profile and privacy preferences</li>
+                                {% if results.stats.users_migrated %}
+                                <li><strong>User Management:</strong> Review and manage migrated user accounts</li>
+                                {% endif %}
+                                <li><strong>Add New Books:</strong> Start adding new books to your Redis-powered library</li>
+                            </ul>
+                            
+                            <div class="text-center">
+                                <a href="{{ url_for('main.index') }}" class="btn btn-primary btn-lg px-5">
+                                    <i class="fas fa-home"></i> Go to Your Library
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Support Information -->
+                    <div class="mt-4 text-center">
+                        <small class="text-muted">
+                            <i class="fas fa-question-circle"></i>
+                            Need help? Check the documentation or contact support if you encounter any issues.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Add celebration animation
+document.addEventListener('DOMContentLoaded', function() {
+    // Simple confetti-like effect (optional)
+    const header = document.querySelector('.card-header.bg-success');
+    if (header) {
+        header.style.position = 'relative';
+        header.style.overflow = 'hidden';
+        
+        // You could add CSS animations here for celebration effect
+    }
+    
+    // Auto-scroll to show full results
+    setTimeout(() => {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    }, 500);
+});
+</script>
+{% endblock %}

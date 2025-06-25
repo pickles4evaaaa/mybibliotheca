@@ -25,7 +25,15 @@ def manage_locations():
     """Manage user locations page."""
     location_service = get_location_service()
     locations = location_service.get_user_locations(str(current_user.id))
-    return render_template('locations/manage.html', locations=locations)
+    
+    # Get book counts for each location
+    book_counts = location_service.get_all_location_book_counts(str(current_user.id))
+    
+    # Add book count to each location object for template access
+    for location in locations:
+        location.book_count = book_counts.get(location.id, 0)
+    
+    return render_template('locations/manage.html', locations=locations, book_counts=book_counts)
 
 
 @bp.route('/add', methods=['GET', 'POST'])
@@ -146,3 +154,38 @@ def api_user_locations():
         }
         for loc in locations
     ])
+
+
+@bp.route('/<location_id>')
+@login_required
+def view_location(location_id):
+    """View location details and books at this location."""
+    location_service = get_location_service()
+    location = location_service.get_location(location_id)
+    
+    if not location or location.user_id != str(current_user.id):
+        flash('Location not found or access denied.', 'error')
+        return redirect(url_for('locations.manage_locations'))
+    
+    # Get books at this location
+    book_ids = location_service.get_books_at_location(location_id, str(current_user.id))
+    
+    # Get full book objects for display
+    books = []
+    if book_ids:
+        from app.services import book_service
+        for book_id in book_ids:
+            try:
+                book = book_service.get_book_by_id_sync(book_id, str(current_user.id))
+                if book:
+                    books.append(book)
+            except Exception as e:
+                print(f"❌ Error loading book {book_id}: {e}")
+    
+    # Get book count
+    book_count = location_service.get_location_book_count(location_id, str(current_user.id))
+    
+    return render_template('locations/view.html', 
+                         location=location, 
+                         books=books, 
+                         book_count=book_count)

@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block title %}{{ location.name }} - Location Details - Bibliotheca{% endblock %}
+
+{% block content %}
+<style>
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --cream: #F5F5DC;
+    --warm-white: #FEFEFE;
+    --gold: #DAA520;
+    --shadow: rgba(0,0,0,0.1);
+    --hover-shadow: rgba(0,0,0,0.2);
+  }
+
+  .location-header {
+    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+    color: white;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .location-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==');
+    opacity: 0.3;
+  }
+
+  .location-header h1 {
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 1;
+  }
+
+  .book-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .book-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    height: 100%;
+  }
+
+  .book-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px var(--hover-shadow);
+  }
+
+  .location-info-card {
+    background: linear-gradient(135deg, var(--cream) 0%, var(--warm-white) 100%);
+    border: 2px solid var(--light-brown);
+  }
+
+  .stats-card {
+    background: linear-gradient(135deg, var(--gold) 0%, #ffd700 100%);
+    color: #333;
+    font-weight: 600;
+  }
+
+  /* Dark mode adjustments */
+  [data-theme="dark"] .location-info-card {
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+    border-color: #404040;
+    color: #e0e0e0;
+  }
+
+  [data-theme="dark"] .stats-card {
+    background: linear-gradient(135deg, #b8860b 0%, #daa520 100%);
+    color: #000;
+  }
+</style>
+
+<div class="container mt-4">
+    <!-- Location Header -->
+    <div class="location-header text-center">
+        <h1>
+            <i class="bi bi-geo-alt-fill"></i> {{ location.name }}
+            {% if location.is_default %}
+                <span class="badge bg-light text-dark ms-2">Default</span>
+            {% endif %}
+        </h1>
+        {% if location.description %}
+            <p class="mb-0 opacity-75">{{ location.description }}</p>
+        {% endif %}
+    </div>
+
+    <!-- Navigation -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{{ url_for('locations.manage_locations') }}">
+                            <i class="bi bi-geo-alt"></i> Locations
+                        </a>
+                    </li>
+                    <li class="breadcrumb-item active" aria-current="page">{{ location.name }}</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column: Location Info -->
+        <div class="col-lg-4 mb-4">
+            <!-- Location Details Card -->
+            <div class="card location-info-card mb-3">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-info-circle"></i> Location Details
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <strong>Type:</strong>
+                        <span class="badge bg-secondary ms-2">{{ location.location_type.title() }}</span>
+                    </div>
+                    
+                    {% if location.address %}
+                        <div class="mb-3">
+                            <strong>Address:</strong>
+                            <p class="mb-0 mt-1">{{ location.address }}</p>
+                        </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <strong>Status:</strong>
+                        {% if location.is_default %}
+                            <span class="badge bg-primary ms-2">Default Location</span>
+                        {% else %}
+                            <span class="badge bg-secondary ms-2">Additional Location</span>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('locations.edit_location', location_id=location.id) }}" 
+                           class="btn btn-primary">
+                            <i class="bi bi-pencil"></i> Edit Location
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Book Statistics Card -->
+            <div class="card stats-card">
+                <div class="card-body text-center">
+                    <h2 class="display-4 mb-0">{{ book_count }}</h2>
+                    <p class="mb-0">Book{{ 's' if book_count != 1 else '' }} at this location</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Books at this Location -->
+        <div class="col-lg-8">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3>Books at {{ location.name }}</h3>
+                {% if books %}
+                    <span class="text-muted">{{ books|length }} of {{ book_count }} books shown</span>
+                {% endif %}
+            </div>
+
+            {% if books %}
+                <div class="book-grid">
+                    {% for book in books %}
+                        <div class="card book-card">
+                            {% if book.cover_url %}
+                                <img src="{{ book.cover_url }}" 
+                                     class="card-img-top" 
+                                     alt="{{ book.title }}"
+                                     style="height: 200px; object-fit: cover;">
+                            {% else %}
+                                <div class="card-img-top d-flex align-items-center justify-content-center bg-light" 
+                                     style="height: 200px;">
+                                    <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
+                                </div>
+                            {% endif %}
+                            
+                            <div class="card-body p-3">
+                                <h6 class="card-title mb-2" style="font-size: 0.9rem; line-height: 1.2;">
+                                    {{ book.title }}
+                                </h6>
+                                
+                                {% if book.author %}
+                                    <p class="card-text text-muted mb-2" style="font-size: 0.8rem;">
+                                        by {{ book.author }}
+                                    </p>
+                                {% endif %}
+                                
+                                {% if book.categories %}
+                                    <div class="mb-2">
+                                        {% for category in book.categories[:2] %}
+                                            <span class="badge bg-primary" style="font-size: 0.7rem;">
+                                                {{ category.name }}
+                                            </span>
+                                        {% endfor %}
+                                        {% if book.categories|length > 2 %}
+                                            <span class="text-muted" style="font-size: 0.7rem;">+{{ book.categories|length - 2 }} more</span>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                                
+                                <div class="d-grid">
+                                    <a href="{{ url_for('main.view_book', uid=book.id) }}" 
+                                       class="btn btn-outline-primary btn-sm">
+                                        View Details
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+                
+                {% if book_count > books|length %}
+                    <div class="alert alert-info mt-4">
+                        <i class="bi bi-info-circle"></i>
+                        Showing {{ books|length }} of {{ book_count }} books. 
+                        Some books may not be displayed due to loading limitations.
+                    </div>
+                {% endif %}
+                
+            {% else %}
+                <div class="text-center py-5">
+                    <div class="mb-4">
+                        <i class="bi bi-book text-muted" style="font-size: 4rem;"></i>
+                    </div>
+                    <h4 class="text-muted">No Books at This Location</h4>
+                    <p class="text-muted mb-4">
+                        {% if book_count > 0 %}
+                            There are {{ book_count }} books assigned to this location, but they couldn't be loaded.
+                        {% else %}
+                            No books have been assigned to this location yet.
+                        {% endif %}
+                    </p>
+                    <a href="{{ url_for('main.add_book') }}" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> Add a Book
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Debug Panel (Admin Only) -->
+{% include 'components/debug_panel.html' %}
+
+{% endblock %}

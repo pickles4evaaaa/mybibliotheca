@@ -1,0 +1,129 @@
+<!-- migration/migrate_v1.html -->
+{% extends "base.html" %}
+
+{% block title %}Migrate Single-User Library - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-upload"></i> Single-User Library Migration
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <h5><i class="fas fa-info-circle"></i> Migration Overview</h5>
+                        <p class="mb-1">
+                            We'll import your existing library and assign all books to your admin account: 
+                            <strong>{{ admin_username }}</strong>
+                        </p>
+                    </div>
+                    
+                    <!-- Database Summary -->
+                    <div class="card bg-light mb-4">
+                        <div class="card-body">
+                            <h5><i class="fas fa-database"></i> Database Summary</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>File:</strong> {{ database.split('/')[-1] }}</p>
+                                    <p><strong>Type:</strong> Single-user library</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Books:</strong> {{ analysis.book_count }}</p>
+                                    {% if analysis.reading_log_count %}
+                                    <p><strong>Reading Logs:</strong> {{ analysis.reading_log_count }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Migration Process -->
+                    <div class="card border-warning mb-4">
+                        <div class="card-body">
+                            <h5><i class="fas fa-exclamation-triangle text-warning"></i> What Will Happen</h5>
+                            <ol class="mb-0">
+                                <li><strong>Backup:</strong> We'll create a complete backup of your current data</li>
+                                <li><strong>Import Books:</strong> All {{ analysis.book_count }} books will be imported</li>
+                                <li><strong>Assign Ownership:</strong> All books will be assigned to your admin account</li>
+                                <li><strong>Reading History:</strong> 
+                                    {% if analysis.reading_log_count %}
+                                        Your {{ analysis.reading_log_count }} reading log entries will be preserved
+                                    {% else %}
+                                        Reading dates from book records will be preserved
+                                    {% endif %}
+                                </li>
+                                <li><strong>Verification:</strong> We'll verify all data was imported correctly</li>
+                            </ol>
+                        </div>
+                    </div>
+                    
+                    <!-- Safety Notice -->
+                    <div class="alert alert-success">
+                        <h6><i class="fas fa-shield-alt"></i> Safety First</h6>
+                        <p class="mb-0">
+                            Your original database will be safely backed up before any changes are made. 
+                            If anything goes wrong, we can restore from the backup.
+                        </p>
+                    </div>
+                    
+                    <!-- Migration Form -->
+                    <form method="POST" onsubmit="return confirmMigration()">
+                        <div class="text-center">
+                            <button type="submit" name="action" value="migrate" class="btn btn-primary btn-lg px-5">
+                                <i class="fas fa-play"></i> Start Migration
+                            </button>
+                        </div>
+                    </form>
+                    
+                    <div class="text-center mt-3">
+                        <a href="{{ url_for('advanced_migration.choose_migration') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Database Selection
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmMigration() {
+    return confirm(
+        'Are you ready to start the migration?\n\n' +
+        'This process will:\n' +
+        '• Create a backup of your current data\n' +
+        '• Import all {{ analysis.book_count }} books\n' +
+        '• Assign them to your admin account ({{ admin_username }})\n\n' +
+        'Click OK to proceed or Cancel to review.'
+    );
+}
+
+// Add loading state when form is submitted
+document.querySelector('form').addEventListener('submit', function(e) {
+    if (confirmMigration()) {
+        const button = this.querySelector('button[type="submit"]');
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Migrating...';
+        
+        // Show progress indicator
+        const progressDiv = document.createElement('div');
+        progressDiv.className = 'alert alert-info mt-3';
+        progressDiv.innerHTML = `
+            <h6><i class="fas fa-hourglass-half"></i> Migration in Progress</h6>
+            <p class="mb-0">Please wait while we migrate your library. This may take a few minutes.</p>
+            <div class="progress mt-2">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 100%"></div>
+            </div>
+        `;
+        this.appendChild(progressDiv);
+    } else {
+        e.preventDefault();
+    }
+});
+</script>
+{% endblock %}

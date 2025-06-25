@@ -1,0 +1,102 @@
+<!-- onboarding/step1_admin_setup.html -->
+{% extends "base.html" %}
+
+{% block title %}Setup Admin Account - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <!-- Progress Indicator -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="progress mb-2">
+                        <div class="progress-bar" role="progressbar" style="width: 20%" aria-valuenow="20" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Admin Account Setup</small>
+                </div>
+            </div>
+            
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-user-shield"></i> Step 1: Create Admin Account
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="lead">Let's start by creating your administrator account.</p>
+                    <p>This account will have full access to manage users, books, and system settings.</p>
+                    
+                    <form method="POST">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="form-group">
+                            <label for="username" class="font-weight-bold">
+                                <i class="fas fa-user"></i> Admin Username
+                            </label>
+                            {{ form.username(class="form-control", required=True, placeholder="Enter your username") }}
+                            {% if form.username.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.username.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="email" class="font-weight-bold">
+                                <i class="fas fa-envelope"></i> Admin Email
+                            </label>
+                            {{ form.email(class="form-control", required=True, placeholder="Enter your email address") }}
+                            {% if form.email.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.email.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                            <small class="form-text text-muted">This will be used for notifications and account recovery.</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password" class="font-weight-bold">
+                                <i class="fas fa-lock"></i> Admin Password
+                            </label>
+                            {{ form.password(class="form-control", required=True, placeholder="Enter a secure password") }}
+                            {% if form.password.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.password.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password2" class="font-weight-bold">
+                                <i class="fas fa-lock"></i> Confirm Password
+                            </label>
+                            {{ form.password2(class="form-control", required=True, placeholder="Confirm your password") }}
+                            {% if form.password2.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.password2.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <div></div> <!-- Empty div for spacing -->
+                            <button type="submit" class="btn btn-primary btn-lg px-4">
+                                <i class="fas fa-arrow-right"></i> Continue to Site Configuration
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

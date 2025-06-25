@@ -181,6 +181,14 @@
                         {% endif %}
                     </div>
 
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-search"></i> Automatic Migration Detection</h6>
+                        <p class="mb-0">
+                            The system will automatically check for existing SQLite databases during setup.
+                            If found, you'll be guided through importing your existing library data.
+                        </p>
+                    </div>
+
                     <div class="d-grid">
                         {{ form.submit(class="btn btn-primary btn-lg", id="setup-submit-btn") }}
                     </div>

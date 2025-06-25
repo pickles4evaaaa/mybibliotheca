@@ -1,0 +1,137 @@
+<!-- migration/setup_v2_migration.html -->
+{% extends "base.html" %}
+
+{% block title %}Setup Multi-User Migration - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="card shadow">
+                <div class="card-header bg-warning text-dark">
+                    <h3 class="mb-0">
+                        <i class="fas fa-users"></i> Multi-User Library Migration Setup
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-warning">
+                        <h5><i class="fas fa-question-circle"></i> User Account Mapping Required</h5>
+                        <p class="mb-1">
+                            This database contains multiple users. We need to know which existing user 
+                            corresponds to your new admin account: <strong>{{ admin_username }}</strong>
+                        </p>
+                    </div>
+                    
+                    <!-- Database Summary -->
+                    <div class="card bg-light mb-4">
+                        <div class="card-body">
+                            <h5><i class="fas fa-database"></i> Database Summary</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>File:</strong> {{ database.split('/')[-1] }}</p>
+                                    <p><strong>Type:</strong> Multi-user library</p>
+                                    <p><strong>Total Books:</strong> {{ analysis.book_count }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Users:</strong> {{ analysis.user_count }}</p>
+                                    {% if analysis.reading_log_count %}
+                                    <p><strong>Reading Logs:</strong> {{ analysis.reading_log_count }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- User Selection -->
+                    <div class="card border-primary mb-4">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0">
+                                <i class="fas fa-user-check"></i> Select Your Previous Account
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <p>Choose which user from the old database corresponds to your new admin account:</p>
+                            
+                            <form method="POST">
+                                {% for user in old_users %}
+                                <div class="card mb-2 border-{{ 'warning' if user.is_admin else 'light' }}">
+                                    <div class="card-body py-2">
+                                        <div class="custom-control custom-radio">
+                                            <input type="radio" 
+                                                   id="user_{{ user.id }}" 
+                                                   name="admin_user_mapping" 
+                                                   value="{{ user.id }}" 
+                                                   class="custom-control-input"
+                                                   {% if user.is_admin and loop.first %}checked{% endif %}>
+                                            <label class="custom-control-label" for="user_{{ user.id }}">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <strong>{{ user.username }}</strong>
+                                                        {% if user.is_admin %}
+                                                            <span class="badge badge-warning ml-1">
+                                                                <i class="fas fa-crown"></i> Admin
+                                                            </span>
+                                                        {% endif %}
+                                                        <br>
+                                                        <small class="text-muted">{{ user.email }}</small>
+                                                    </div>
+                                                    <div class="text-right">
+                                                        <small class="text-muted">User ID: {{ user.id }}</small>
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                                
+                                <div class="alert alert-info mt-3">
+                                    <h6><i class="fas fa-info-circle"></i> What Happens Next</h6>
+                                    <ul class="mb-0">
+                                        <li><strong>Selected User:</strong> Their books and reading history will be transferred to your new admin account</li>
+                                        <li><strong>Other Users:</strong> Will be recreated as regular users with their original usernames and books</li>
+                                        <li><strong>Passwords:</strong> All users will keep their original passwords</li>
+                                        <li><strong>Admin Status:</strong> Only you will have admin privileges in the new system</li>
+                                    </ul>
+                                </div>
+                                
+                                <div class="text-center mt-4">
+                                    <button type="submit" class="btn btn-primary btn-lg px-5">
+                                        <i class="fas fa-arrow-right"></i> Continue with Selected User
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="text-center">
+                        <a href="{{ url_for('advanced_migration.choose_migration') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Database Selection
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Add visual feedback for radio selection
+document.querySelectorAll('input[name="admin_user_mapping"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        // Remove previous selections
+        document.querySelectorAll('.card-body .card').forEach(card => {
+            card.classList.remove('border-primary', 'shadow-sm');
+        });
+        
+        // Highlight selected card
+        if (this.checked) {
+            this.closest('.card').classList.add('border-primary', 'shadow-sm');
+        }
+    });
+});
+
+// Trigger initial selection for admin user
+document.querySelector('input[name="admin_user_mapping"]:checked')?.dispatchEvent(new Event('change'));
+</script>
+{% endblock %}

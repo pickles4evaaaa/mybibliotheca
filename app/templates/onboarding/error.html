@@ -1,0 +1,52 @@
+<!-- onboarding/error.html -->
+{% extends "base.html" %}
+
+{% block title %}Setup Error{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-exclamation-triangle"></i> Setup Error
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="text-center mb-4">
+                        <i class="fas fa-times-circle fa-4x text-danger mb-3"></i>
+                        <h4>Oops! Something went wrong</h4>
+                    </div>
+                    
+                    {% if error %}
+                    <div class="alert alert-danger">
+                        <h5><i class="fas fa-info-circle"></i> Error Details:</h5>
+                        <p class="mb-0">{{ error }}</p>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mt-4">
+                        <h5>What you can do:</h5>
+                        <ul>
+                            <li>Check the error message above for specific details</li>
+                            <li>Try starting the setup process again</li>
+                            <li>Ensure all required files are in place</li>
+                            <li>Check the logs for more information</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="text-center mt-4">
+                        <a href="{{ url_for('onboarding.start') }}" class="btn btn-primary">
+                            <i class="fas fa-redo"></i> Start Setup Again
+                        </a>
+                        <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary ml-2">
+                            <i class="fas fa-home"></i> Go to Home
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

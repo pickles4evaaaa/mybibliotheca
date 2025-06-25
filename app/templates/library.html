@@ -503,8 +503,8 @@
             <div class="book-meta">
               {% if book.categories %}
                 <div class="category-badges mb-2">
-                  {% for category in book.categories.split(',')[:2] %}
-                    <span class="badge category-badge">{{ category.strip() }}</span>
+                  {% for category in book.categories[:2] %}
+                    <span class="badge category-badge">{{ category.name }}</span>
                   {% endfor %}
                 </div>
               {% endif %}
@@ -529,6 +529,13 @@
                 <span class="badge bg-success status-badge">Finished</span>
               {% elif book.library_only %}
                 <span class="badge bg-secondary status-badge">Library</span>
+              {% endif %}
+              
+              <!-- Location Debug Badge -->
+              {% if book.locations %}
+                <span class="badge bg-primary" title="Locations: {{ book.locations|join(', ') }}">📍 {{ book.locations|length }}</span>
+              {% else %}
+                <span class="badge bg-warning" title="No location assigned">📍 None</span>
               {% endif %}
             </div>
           </div>
@@ -718,5 +725,8 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 </script>
+
+<!-- Debug Panel (Admin Only) -->
+{% include 'components/debug_panel.html' %}
 
 {% endblock %}

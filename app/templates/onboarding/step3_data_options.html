@@ -1,0 +1,217 @@
+<!-- onboarding/step3_data_options.html -->
+{% extends "base.html" %}
+
+{% block title %}Data Options - Bibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <!-- Progress Indicator -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="progress mb-2">
+                        <div class="progress-bar" role="progressbar" style="width: 60%" aria-valuenow="60" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Data Options</small>
+                </div>
+            </div>
+            
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h3 class="mb-0">
+                        <i class="fas fa-database"></i> Step 3: Choose Your Data Source
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="lead">How would you like to set up your library?</p>
+                    
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="row">
+                            <!-- Option 1: Fresh Start -->
+                            <div class="col-md-4 mb-4">
+                                <div class="card h-100 border-primary data-option-card" data-option="fresh">
+                                    <div class="card-body text-center">
+                                        <div class="custom-control custom-radio">
+                                            <input type="radio" 
+                                                   id="option_fresh" 
+                                                   name="data_option" 
+                                                   value="fresh" 
+                                                   class="custom-control-input"
+                                                   {% if not databases %}checked{% endif %}>
+                                            <label class="custom-control-label" for="option_fresh">
+                                                <div class="text-center">
+                                                    <i class="fas fa-plus-circle fa-3x text-primary mb-3"></i>
+                                                    <h5>Start Fresh</h5>
+                                                    <p class="text-muted">Begin with an empty library and add books manually or through search.</p>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Option 2: Migrate Existing Database -->
+                            {% if databases %}
+                            <div class="col-md-4 mb-4">
+                                <div class="card h-100 border-warning data-option-card" data-option="migrate">
+                                    <div class="card-body text-center">
+                                        <div class="custom-control custom-radio">
+                                            <input type="radio" 
+                                                   id="option_migrate" 
+                                                   name="data_option" 
+                                                   value="migrate" 
+                                                   class="custom-control-input"
+                                                   checked>
+                                            <label class="custom-control-label" for="option_migrate">
+                                                <div class="text-center">
+                                                    <i class="fas fa-database fa-3x text-warning mb-3"></i>
+                                                    <h5>Migrate Existing Data</h5>
+                                                    <p class="text-muted">Import from a previous Bibliotheca database.</p>
+                                                    <span class="badge badge-success">{{ databases|length }} database(s) found</span>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Option 3: Import from File -->
+                            <div class="col-md-4 mb-4">
+                                <div class="card h-100 border-info data-option-card" data-option="import">
+                                    <div class="card-body text-center">
+                                        <div class="custom-control custom-radio">
+                                            <input type="radio" 
+                                                   id="option_import" 
+                                                   name="data_option" 
+                                                   value="import" 
+                                                   class="custom-control-input">
+                                            <label class="custom-control-label" for="option_import">
+                                                <div class="text-center">
+                                                    <i class="fas fa-file-import fa-3x text-info mb-3"></i>
+                                                    <h5>Import from File</h5>
+                                                    <p class="text-muted">Import books from a CSV file (Goodreads, StoryGraph, etc.).</p>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Migration Database Selection -->
+                        {% if databases %}
+                        <div id="migration_options" class="mt-4" style="display: none;">
+                            <h5><i class="fas fa-database"></i> Select Database to Migrate</h5>
+                            {% for db in databases %}
+                            <div class="card mb-2 border-secondary">
+                                <div class="card-body">
+                                    <div class="custom-control custom-radio">
+                                        <input type="radio" 
+                                               id="db_{{ loop.index }}" 
+                                               name="selected_database" 
+                                               value="{{ db.path }}" 
+                                               class="custom-control-input"
+                                               {% if loop.first %}checked{% endif %}>
+                                        <label class="custom-control-label" for="db_{{ loop.index }}">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div>
+                                                    <h6 class="mb-1">
+                                                        {{ db.name }}
+                                                        <span class="badge badge-{{ 'success' if db.version == 'v2_multi_user' else 'info' }}">
+                                                            {{ 'Multi-user' if db.version == 'v2_multi_user' else 'Single-user' }}
+                                                        </span>
+                                                    </h6>
+                                                    <p class="mb-1">
+                                                        <strong>{{ db.analysis.book_count }}</strong> books
+                                                        {% if db.analysis.user_count %}
+                                                            • <strong>{{ db.analysis.user_count }}</strong> users
+                                                        {% endif %}
+                                                        {% if db.analysis.reading_log_count %}
+                                                            • <strong>{{ db.analysis.reading_log_count }}</strong> reading logs
+                                                        {% endif %}
+                                                    </p>
+                                                    <small class="text-muted">{{ db.path }}</small>
+                                                </div>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        
+                        <!-- File Import Options -->
+                        <div id="import_options" class="mt-4" style="display: none;">
+                            <h5><i class="fas fa-file-upload"></i> Select File to Import</h5>
+                            <div class="form-group">
+                                <label for="import_file">Choose CSV File</label>
+                                <input type="file" 
+                                       class="form-control-file" 
+                                       id="import_file" 
+                                       name="import_file" 
+                                       accept=".csv,.txt">
+                                <small class="form-text text-muted">
+                                    Supported formats: Goodreads export, StoryGraph export, custom CSV files.
+                                </small>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <a href="{{ url_for('onboarding.step', step_num=2) }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                            <button type="submit" class="btn btn-primary btn-lg px-4">
+                                <i class="fas fa-arrow-right"></i> Continue
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const dataOptions = document.querySelectorAll('input[name="data_option"]');
+    const migrationOptions = document.getElementById('migration_options');
+    const importOptions = document.getElementById('import_options');
+    
+    function updateVisibility() {
+        const selected = document.querySelector('input[name="data_option"]:checked').value;
+        
+        // Hide all option panels
+        if (migrationOptions) migrationOptions.style.display = 'none';
+        if (importOptions) importOptions.style.display = 'none';
+        
+        // Show relevant panel
+        if (selected === 'migrate' && migrationOptions) {
+            migrationOptions.style.display = 'block';
+        } else if (selected === 'import' && importOptions) {
+            importOptions.style.display = 'block';
+        }
+        
+        // Update card borders
+        document.querySelectorAll('.data-option-card').forEach(card => {
+            card.classList.remove('border-primary', 'shadow-sm');
+        });
+        
+        const selectedCard = document.querySelector(`.data-option-card[data-option="${selected}"]`);
+        if (selectedCard) {
+            selectedCard.classList.add('border-primary', 'shadow-sm');
+        }
+    }
+    
+    // Initialize
+    updateVisibility();
+    
+    // Add event listeners
+    dataOptions.forEach(option => {
+        option.addEventListener('change', updateVisibility);
+    });
+});
+</script>
+{% endblock %}
