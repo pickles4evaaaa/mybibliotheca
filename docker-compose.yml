@@ -1,37 +1,24 @@
 services:
-  # Redis Graph Database Service
-  redis-graph:
-    image: redis/redis-stack:7.2.0-v10
-    volumes:
-      - ./data/redis:/data
-    environment:
-      - REDIS_ARGS=--save 900 1 --save 300 10 --save 60 10000 --appendonly yes --appendfsync everysec
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   bibliotheca:
     build: .
     ports:
       - "5054:5054"
     volumes:
-      # Mount local data directory for migration support
+      # Mount local data directory for migration support and Kuzu database
       - ./data:/app/data
     environment:
       # Security - MUST be set via .env file or environment
       - SECRET_KEY=${SECRET_KEY}
       - SECURITY_PASSWORD_SALT=${SECURITY_PASSWORD_SALT}
       
-      # Database configuration
-      - REDIS_URL=redis://redis-graph:6379/0
+      # Database configuration - KuzuDB
+      - KUZU_DB_PATH=/app/data/kuzu
       - GRAPH_DATABASE_ENABLED=true
       
       # Application settings
       - TIMEZONE=${TIMEZONE:-UTC}
-      - WORKERS=${WORKERS:-4}
+      # CRITICAL: Use single worker for KuzuDB compatibility
+      - WORKERS=1
       
       # Logging settings - disable verbose initialization to prevent duplicate messages
       - BIBLIOTHECA_VERBOSE_INIT=${BIBLIOTHECA_VERBOSE_INIT:-false}
@@ -40,6 +27,3 @@ services:
       - AUTO_MIGRATE=false
       # - MIGRATION_DEFAULT_USER=admin
     restart: unless-stopped
-    depends_on:
-      redis-graph:
-        condition: service_healthy

@@ -1,6 +1,10 @@
 import os
 import secrets
 import platform
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -56,8 +60,8 @@ class Config:
     # File uploads
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
 
-    # Redis Database Configuration
-    REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
+    # Kuzu Database Configuration
+    KUZU_DB_PATH = os.environ.get('KUZU_DB_PATH') or './data/kuzu'
     GRAPH_DATABASE_ENABLED = os.environ.get('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
 
     # External APIs

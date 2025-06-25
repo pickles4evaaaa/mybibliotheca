@@ -53,12 +53,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all source code
 COPY . .
 
-# Create directory for Redis data with proper permissions (no SQLite)
-RUN mkdir -p /app/data && \
-    chmod 755 /app/data
+# Create directory for KuzuDB and application data with proper permissions
+RUN mkdir -p /app/data /app/data/kuzu && \
+    chmod 755 /app/data /app/data/kuzu
 
-# Set environment variables for Redis-only multi-user authentication
+# Set environment variables for KuzuDB-based multi-user authentication
 ENV WTF_CSRF_ENABLED=True
+ENV KUZU_DB_PATH=/app/data/kuzu
+ENV GRAPH_DATABASE_ENABLED=true
 
 # Flask environment (using FLASK_DEBUG instead of deprecated FLASK_ENV)
 ENV FLASK_DEBUG=false
@@ -74,7 +76,7 @@ EXPOSE 5054
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Start the app with Gunicorn in production mode
-# Use WORKERS environment variable for Gunicorn workers Default to 6 workers if not specified
-ENV WORKERS=6
+# CRITICAL: Use single worker for KuzuDB compatibility (KuzuDB doesn't support concurrent access)
+ENV WORKERS=1
 # Set timeout to 300 seconds (5 minutes) to handle bulk imports with rate limiting
-CMD ["sh", "-c", "gunicorn -w $WORKERS -b 0.0.0.0:5054 --timeout 300 run:app"]
+CMD ["sh", "-c", "gunicorn -w $WORKERS -b 0.0.0.0:5054 --timeout 300 run_kuzu:app"]

@@ -33,9 +33,63 @@ def setup():
         debug_auth(f"Error checking user count: {e}")
         # If we can't check, assume no users exist and continue with setup
     
-    # Redirect to the new onboarding system
+    # Handle POST request for simple setup form
+    if request.method == 'POST':
+        debug_auth("Processing simple setup form submission")
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+        
+        # Basic validation
+        if not all([username, email, password, confirm_password]):
+            flash('All fields are required.', 'error')
+            return render_template('auth/simple_setup.html')
+        
+        if password != confirm_password:
+            flash('Passwords do not match.', 'error')
+            return render_template('auth/simple_setup.html')
+        
+        try:
+            # Create the admin user
+            from werkzeug.security import generate_password_hash
+            from ..domain.models import User
+            import uuid
+            from datetime import datetime
+            
+            admin_user = User(
+                id=str(uuid.uuid4()),
+                username=username,
+                email=email,
+                password=generate_password_hash(password),
+                is_admin=True,
+                is_active=True,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            
+            # Save the user
+            created_user = user_service.create_user_sync(admin_user)
+            if created_user:
+                flash('Admin account created successfully! You can now log in.', 'success')
+                return redirect(url_for('auth.login'))
+            else:
+                flash('Failed to create admin account. Please try again.', 'error')
+                return render_template('auth/simple_setup.html')
+                
+        except Exception as e:
+            debug_auth(f"Error creating admin user: {e}")
+            flash('An error occurred while creating the admin account. Please try again.', 'error')
+            return render_template('auth/simple_setup.html')
+    
+    # Handle GET request - try to redirect to onboarding, fall back to simple setup
     flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
-    return redirect(url_for('onboarding.start'))
+    try:
+        return redirect(url_for('onboarding.start'))
+    except Exception:
+        # Fallback: show simple setup form if onboarding system is not available
+        debug_auth("Onboarding system not available, showing simple setup form")
+        return render_template('auth/simple_setup.html')
 
 @auth.route('/setup/status')
 def setup_status():

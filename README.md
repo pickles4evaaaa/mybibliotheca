@@ -37,9 +37,9 @@
 
 ## 🚀 Getting Started
 
-### 📦 Run with Docker
+### 📦 Run with Docker (Recommended)
 
-MyBibliotheca can be run completely in Docker — no need to install Python or dependencies on your machine.
+MyBibliotheca uses **KuzuDB** as its primary database and can be run completely in Docker — no need to install Python or dependencies on your machine.
 
 #### ✅ Prerequisites
 
@@ -48,55 +48,88 @@ MyBibliotheca can be run completely in Docker — no need to install Python or d
 
 ---
 
-#### 🔁 Option 1: One-liner (Docker only)
+#### 🚀 Quick Start
 
 ```bash
-docker run -d \
-  --name mybibliotheca \
-  -p 5054:5054 \
-  -v /path/to/data:/app/data \
-  -e TIMEZONE=America/Chicago \
-  -e WORKERS=6 \
-  --restart unless-stopped \
-  pickles4evaaaa/mybibliotheca:1.1.0
+# Clone the repository
+git clone <repository-url>
+cd mybibliotheca
+
+# Setup environment
+cp .env.docker.example .env
+# Edit .env with your secure keys (see security section below)
+
+# Start the application
+docker-compose up -d
+
+# Access at http://localhost:5054
 ```
+
+#### 🔐 Security Setup (Important!)
+
+Before running in production, generate secure keys:
+
+```bash
+# Generate secure keys
+python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
+python3 -c "import secrets; print('SECURITY_PASSWORD_SALT=' + secrets.token_urlsafe(32))"
+
+# Add these to your .env file
+```
+
+#### 🔧 Docker Configuration
+
+Your `.env` file should contain:
+
+```bash
+# REQUIRED: Generate unique values for production
+SECRET_KEY=your-generated-secret-key-here
+SECURITY_PASSWORD_SALT=your-generated-salt-here
+
+# Application settings
+TIMEZONE=America/Chicago
+FLASK_DEBUG=false
+
+# KuzuDB Configuration (DO NOT CHANGE)
+KUZU_DB_PATH=/app/data/kuzu
+GRAPH_DATABASE_ENABLED=true
+WORKERS=1  # CRITICAL: Must be 1 for KuzuDB compatibility
+```
+
+#### ⚠️ Important Limitations
+
+- **Single Worker Only**: KuzuDB doesn't support concurrent access, so `WORKERS` must remain `1`
+- **No Horizontal Scaling**: Cannot run multiple instances on the same database
+- **Data Persistence**: All data is stored in `./data/` directory (mounted volume)
+
+#### 🧪 Test Your Setup
+
+```bash
+# Run the test script
+./test-docker.sh
+
+# Or manually test
+curl -f http://localhost:5054/
+```
+### 🔧 Environment Variables
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `SECRET_KEY` | Flask secret key for sessions | **Required** | Generate with `secrets.token_urlsafe(32)` |
+| `SECURITY_PASSWORD_SALT` | Password hashing salt | **Required** | Generate with `secrets.token_urlsafe(32)` |
+| `TIMEZONE` | Application timezone | `UTC` | e.g., `America/Chicago` |
+| `WORKERS` | Gunicorn worker processes | `1` | **Must be 1 for KuzuDB** |
+| `KUZU_DB_PATH` | KuzuDB storage path | `/app/data/kuzu` | Docker path |
+| `GRAPH_DATABASE_ENABLED` | Enable KuzuDB | `true` | Required for operation |
 
 ---
 
-#### 🔁 Option 2: Docker Compose
+### 📖 Alternative Installation Methods
 
-Create a `docker-compose.yml` file:
-
-```yaml
-version: '3.8'
-
-services:
-  MyBibliotheca:
-    image: pickles4evaaaa/mybibliotheca:1.1.0
-    container_name: mybibliotheca
-    ports:
-      - "5054:5054"
-    volumes:
-      - /path/to/data:/app/data      # ← bind-mount host
-    restart: unless-stopped
-    environment:
-      - TIMEZONE=America/Chicago  # ✅ Set your preferred timezone here
-      - WORKERS=6  # Change to the number of Gunicorn workers you want
-```
-
-Then run:
-
-```bash
-docker compose up -d
-```
-### 🔧 Configurable Environment Variables
-
-| Variable              | Description                                | Default / Example         |
-|-----------------------|--------------------------------------------|---------------------------|
-| `SECRET_KEY`          | Flask secret key for sessions             | `auto-generated`          |
-| `SECURITY_PASSWORD_SALT` | Password hashing salt               | `auto-generated`          |
-| `TIMEZONE`            | Sets the app's timezone                    | `America/Chicago`         |
-| `WORKERS`             | Number of Gunicorn worker processes        | `6`                      |
+For advanced users, see:
+- [DOCKER.md](DOCKER.md) - Complete Docker guide
+- [PRODUCTION.md](PRODUCTION.md) - Production deployment
+- Manual installation (requires Python setup)
 
 ---
 

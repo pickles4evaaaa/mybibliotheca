@@ -1,8 +1,8 @@
 """
-Redis-only service layer for Bibliotheca.
+Kuzu-only service layer for Bibliotheca.
 
-This module provides service classes for comprehensive book management using Redis 
-as the sole data store with graph database functionality.
+This module provides service classes for comprehensive book management using Kuzu 
+as the sole data store with native graph database functionality.
 """
 
 import os
@@ -23,8 +23,8 @@ from flask_login import current_user
 from werkzeug.local import LocalProxy
 
 from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
-from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository, RedisUserBookRepository, RedisCustomFieldRepository, RedisImportMappingRepository, RedisCategoryRepository
-from .infrastructure.redis_graph import get_graph_storage
+from .infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository, KuzuAuthorRepository, KuzuUserBookRepository, KuzuCustomFieldRepository, KuzuImportMappingRepository, KuzuCategoryRepository
+from .infrastructure.kuzu_graph import get_graph_storage
 
 
 def extract_digits_only(value: str) -> Optional[str]:
@@ -103,31 +103,31 @@ def run_async(async_func):
     return wrapper
 
 
-class RedisBookService:
-    """Service for managing books using Redis as the sole data store."""
+class KuzuBookService:
+    """Service for managing books using Kuzu as the sole data store."""
     
     def __init__(self):
-        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        self.kuzu_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
         
-        if not self.redis_enabled:
-            raise RuntimeError("Redis must be enabled for this version of Bibliotheca")
+        if not self.kuzu_enabled:
+            raise RuntimeError("Kuzu must be enabled for this version of Bibliotheca")
             
         self.storage = get_graph_storage()
-        self.redis_book_repo = RedisBookRepository(self.storage)
-        self.redis_user_repo = RedisUserRepository(self.storage)
-        self.redis_author_repo = RedisAuthorRepository(self.storage)
-        self.redis_user_book_repo = RedisUserBookRepository(self.storage)
-        self.redis_category_repo = RedisCategoryRepository(self.storage)
+        self.kuzu_book_repo = KuzuBookRepository(self.storage)
+        self.kuzu_user_repo = KuzuUserRepository(self.storage)
+        self.kuzu_author_repo = KuzuAuthorRepository(self.storage)
+        self.kuzu_user_book_repo = KuzuUserBookRepository(self.storage)
+        self.kuzu_category_repo = KuzuCategoryRepository(self.storage)
     
     async def create_book(self, domain_book: Book) -> Book:
-        """Create a book in Redis (global, not user-specific)."""
+        """Create a book in Kuzu (global, not user-specific)."""
         try:            
             # Generate ID if not set
             if not domain_book.id:
                 domain_book.id = str(uuid.uuid4())
             
-            # Store book in Redis (globally)
-            await self.redis_book_repo.create(domain_book)
+            # Store book in Kuzu (globally)
+            await self.kuzu_book_repo.create(domain_book)
             
             return domain_book
         except Exception as e:
@@ -153,7 +153,7 @@ class RedisBookService:
             print(f"📚 [ADD_TO_LIBRARY] Custom metadata keys: {list(custom_metadata.keys()) if custom_metadata else 'None'}")
             
             # Check if relationship already exists
-            existing_rel = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
+            existing_rel = await self.kuzu_user_book_repo.get_relationship(str(user_id), book_id)
             if existing_rel:
                 print(f"📚 [ADD_TO_LIBRARY] Relationship already exists for user {user_id} and book {book_id}")
                 return True
@@ -179,8 +179,8 @@ class RedisBookService:
             )
             
             print(f"📚 [ADD_TO_LIBRARY] Created relationship with locations: {relationship.locations}")
-            # Store relationship in Redis
-            await self.redis_user_book_repo.create_relationship(relationship)
+            # Store relationship in Kuzu
+            await self.kuzu_user_book_repo.create_relationship(relationship)
             
             print(f"📚 [ADD_TO_LIBRARY] Successfully stored relationship for user {user_id}, book {book_id}")
             return True
@@ -192,11 +192,11 @@ class RedisBookService:
     async def get_book_by_id(self, book_id: str, user_id: str) -> Optional[Book]:
         """Get a book by ID."""
         try:
-            book = await self.redis_book_repo.get_by_id(book_id)
+            book = await self.kuzu_book_repo.get_by_id(book_id)
             if book:
                 # Get user-specific relationship data
                 try:
-                    relationships = await self.redis_user_book_repo.get_user_library(str(user_id))
+                    relationships = await self.kuzu_user_book_repo.get_user_library(str(user_id))
                     for rel in relationships:
                         if rel.book_id == book_id:
                             # Add user-specific attributes
@@ -223,14 +223,14 @@ class RedisBookService:
         """Get all books for a user."""
         try:
             
-            # Get all UserBookRelationships for this user from Redis
-            relationships = await self.redis_user_book_repo.get_user_library(str(user_id))
+            # Get all UserBookRelationships for this user from Kuzu
+            relationships = await self.kuzu_user_book_repo.get_user_library(str(user_id))
             
             # Convert to Book objects with user-specific attributes stored as dynamic attributes
             books = []
             for rel in relationships:
                 # Get the book data
-                book = await self.redis_book_repo.get_by_id(rel.book_id)
+                book = await self.kuzu_book_repo.get_by_id(rel.book_id)
                 if book:
                     # Store user-specific attributes as dynamic attributes (for backward compatibility)
                     # Note: These are not part of the Book domain model but added for view layer compatibility
@@ -262,7 +262,7 @@ class RedisBookService:
     async def update_book(self, uid: str, user_id: str, **kwargs) -> Optional[Book]:
         """Update a book or user-book relationship fields."""
         try:
-            book = await self.redis_book_repo.get_by_id(uid)
+            book = await self.kuzu_book_repo.get_by_id(uid)
             if not book:
                 return None
             
@@ -288,8 +288,8 @@ class RedisBookService:
             if book_fields:
                 for field, value in book_fields.items():
                     setattr(book, field, value)
-                await self.redis_book_repo.update(book)
-                current_app.logger.info(f"Book {uid} updated in Redis")
+                await self.kuzu_book_repo.update(book)
+                current_app.logger.info(f"Book {uid} updated in Kuzu")
             
             # Handle contributors if provided
             if contributors is not None:
@@ -302,7 +302,7 @@ class RedisBookService:
             # Update relationship fields if any
             if rel_fields:
                 # Get existing relationship
-                relationship = await self.redis_user_book_repo.get_relationship(user_id, uid)
+                relationship = await self.kuzu_user_book_repo.get_relationship(user_id, uid)
                 if relationship:
                     # Update relationship fields
                     for field, value in rel_fields.items():
@@ -330,8 +330,8 @@ class RedisBookService:
                                     continue
                             setattr(relationship, field, value)
                     
-                    # Update the relationship in Redis
-                    await self.redis_user_book_repo.update_relationship(relationship)
+                    # Update the relationship in Kuzu
+                    await self.kuzu_user_book_repo.update_relationship(relationship)
                     current_app.logger.info(f"User-book relationship updated for book {uid} and user {user_id}")
                 else:
                     current_app.logger.warning(f"No relationship found between user {user_id} and book {uid}")
@@ -452,7 +452,7 @@ class RedisBookService:
                 return False
             
             # Delete the user-book relationship
-            success = await self.redis_user_book_repo.delete_relationship(str(user_id), book_to_remove.id)
+            success = await self.kuzu_user_book_repo.delete_relationship(str(user_id), book_to_remove.id)
             if success:
                 return True
             else:
@@ -465,9 +465,9 @@ class RedisBookService:
     async def get_books_by_isbn(self, isbn: str) -> List[Book]:
         """Get books by ISBN (global search, not user-specific)."""
         try:
-            # Search for books by ISBN in Redis globally
+            # Search for books by ISBN in Kuzu globally
             # Use the repository method that searches all books
-            matching_books = await self.redis_book_repo.get_books_by_isbn(isbn)
+            matching_books = await self.kuzu_book_repo.get_books_by_isbn(isbn)
             return matching_books
         except Exception as e:
             return []
@@ -475,7 +475,7 @@ class RedisBookService:
     async def search_books(self, query: str, user_id: str, filter_params: Optional[Dict] = None) -> List[Book]:
         """Search books with optional filters."""
         try:
-            # This would need to be implemented in the Redis repository
+            # This would need to be implemented in the Kuzu repository
             # For now, get all user books and filter in memory
             all_books = await self.get_user_books(user_id)
             
@@ -537,7 +537,7 @@ class RedisBookService:
             # Update the book in storage if changes were made
             if needs_update:
                 existing_book.updated_at = datetime.now()
-                await self.redis_book_repo.update(existing_book)
+                await self.kuzu_book_repo.update(existing_book)
             
             # Process categories for existing book (add any new ones)
             if hasattr(domain_book, 'raw_categories') and domain_book.raw_categories:
@@ -564,19 +564,19 @@ class RedisBookService:
         try:
             
             # First try to get by exact book_id
-            relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book_identifier)
+            relationship = await self.kuzu_user_book_repo.get_relationship(str(user_id), book_identifier)
             book = None
             
             if relationship:
                 # Get the book data using the book_id from the relationship
-                book = await self.redis_book_repo.get_by_id(relationship.book_id)
+                book = await self.kuzu_book_repo.get_by_id(relationship.book_id)
             else:
                 # If no relationship found by exact ID, try to find the book first
                 # The book_identifier might be a UID, so look up the book
-                book = await self.redis_book_repo.get_by_id(book_identifier)
+                book = await self.kuzu_book_repo.get_by_id(book_identifier)
                 if book and book.id:
                     # Now try to get the relationship using the book's ID
-                    relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book.id)
+                    relationship = await self.kuzu_user_book_repo.get_relationship(str(user_id), book.id)
             
             if not relationship:
                 return None
@@ -674,7 +674,7 @@ class RedisBookService:
         """Update a user-book relationship including custom metadata."""
         try:
             # Get existing relationship
-            relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
+            relationship = await self.kuzu_user_book_repo.get_relationship(str(user_id), book_id)
             if not relationship:
                 print(f"❌ [SERVICE] No relationship found between user {user_id} and book {book_id}")
                 return False
@@ -715,8 +715,8 @@ class RedisBookService:
                     setattr(relationship, field, value)
                     print(f"✅ [SERVICE] Updated relationship field {field} = {value}")
             
-            # Update the relationship in Redis
-            await self.redis_user_book_repo.update_relationship(relationship)
+            # Update the relationship in Kuzu
+            await self.kuzu_user_book_repo.update_relationship(relationship)
             print(f"✅ [SERVICE] User-book relationship updated for book {book_id} and user {user_id}")
             return True
             
@@ -735,7 +735,7 @@ class RedisBookService:
     async def get_person_by_id(self, person_id: str):
         """Get a person by their ID."""
         try:
-            # First look for the person in the Redis storage
+            # First look for the person in the Kuzu storage
             person_data = self.storage.get_node('person', person_id)
             
             if person_data:
@@ -747,7 +747,7 @@ class RedisBookService:
                 }
                 clean_person_data = {k: v for k, v in person_data.items() if k in valid_person_fields}
                 
-                # Map _id to id if needed (Redis stores as _id, Person model expects id)
+                # Map _id to id if needed (Kuzu stores as _id, Person model expects id)
                 if 'id' not in clean_person_data and '_id' in person_data:
                     clean_person_data['id'] = person_data['_id']
                 
@@ -822,7 +822,7 @@ class RedisBookService:
                         }
                         clean_person_data = {k: v for k, v in person_data.items() if k in valid_person_fields}
                         
-                        # Map _id to id if needed (Redis stores as _id, Person model expects id)
+                        # Map _id to id if needed (Kuzu stores as _id, Person model expects id)
                         if 'id' not in clean_person_data and '_id' in person_data:
                             clean_person_data['id'] = person_data['_id']
                         
@@ -882,11 +882,11 @@ class RedisBookService:
                        (rel.get('to_type') == 'person' and rel.get('to_id') == person_id):
                         
                         # Get the full book object
-                        book = await self.redis_book_repo.get_by_id(book_id)
+                        book = await self.kuzu_book_repo.get_by_id(book_id)
                         if book:
                             # If user_id is provided, check if user has this book in their library
                             if user_id:
-                                user_book_relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
+                                user_book_relationship = await self.kuzu_user_book_repo.get_relationship(str(user_id), book_id)
                                 if user_book_relationship:
                                     # Add user-specific attributes
                                     setattr(book, 'reading_status', user_book_relationship.reading_status.value)
@@ -971,7 +971,7 @@ class RedisBookService:
         return self.list_all_persons()
 
     async def create_person(self, person):
-        """Create a new person in Redis storage."""
+        """Create a new person in Kuzu storage."""
         try:
             from dataclasses import asdict
             from .domain.models import Person
@@ -1009,7 +1009,7 @@ class RedisBookService:
 
     async def find_or_create_person(self, person_name):
         """Find existing person by name or create a new one."""
-        return await self.redis_book_repo.find_or_create_person(person_name)
+        return await self.kuzu_book_repo.find_or_create_person(person_name)
     
     @run_async
     def find_or_create_person_sync(self, person_name):
@@ -1020,16 +1020,16 @@ class RedisBookService:
     async def get_category_by_id(self, category_id: str, user_id: Optional[str] = None):
         """Get a category by their ID with parent relationship populated."""
         try:
-            category = await self.redis_category_repo.get_by_id(category_id)
+            category = await self.kuzu_category_repo.get_by_id(category_id)
             if category:
                 # Add usage statistics
-                stats = await self.redis_category_repo.get_category_usage_stats(category_id, user_id)
+                stats = await self.kuzu_category_repo.get_category_usage_stats(category_id, user_id)
                 category.book_count = stats.get('total_books', 0)
                 
                 # Populate parent relationship
                 if category.parent_id:
                     try:
-                        parent = await self.redis_category_repo.get_by_id(category.parent_id)
+                        parent = await self.kuzu_category_repo.get_by_id(category.parent_id)
                         category.parent = parent
                         # Recursively populate parent's parent if needed for full ancestry
                         if parent and parent.parent_id:
@@ -1052,12 +1052,12 @@ class RedisBookService:
     async def search_categories(self, query: str, limit: int = 10, user_id: Optional[str] = None):
         """Search for categories by name."""
         try:
-            categories = await self.redis_category_repo.search_by_name(query)
+            categories = await self.kuzu_category_repo.search_by_name(query)
             
             # Add usage statistics to each category
             for category in categories[:limit]:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(category.id, user_id)
+                    stats = await self.kuzu_category_repo.get_category_usage_stats(category.id, user_id)
                     category.book_count = stats.get('total_books', 0)
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error getting stats for category {category.id}: {e}")
@@ -1076,15 +1076,15 @@ class RedisBookService:
     async def list_all_categories(self, user_id: Optional[str] = None):
         """List all categories in the storage and return as Category objects with hierarchy."""
         try:
-            categories = await self.redis_category_repo.get_all()
+            categories = await self.kuzu_category_repo.get_all()
             
             # Build hierarchy relationships
-            categories = await self.redis_category_repo.build_hierarchy_for_categories(categories)
+            categories = await self.kuzu_category_repo.build_hierarchy_for_categories(categories)
             
             # Add usage statistics to each category
             for category in categories:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(category.id, user_id)
+                    stats = await self.kuzu_category_repo.get_category_usage_stats(category.id, user_id)
                     category.book_count = stats.get('total_books', 0)
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error getting stats for category {category.id}: {e}")
@@ -1106,16 +1106,16 @@ class RedisBookService:
     async def get_root_categories(self, user_id: Optional[str] = None):
         """Get top-level categories (no parent)."""
         try:
-            root_categories = await self.redis_category_repo.get_root_categories()
+            root_categories = await self.kuzu_category_repo.get_root_categories()
             
             # Add usage statistics and build partial hierarchy
             for category in root_categories:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(category.id, user_id)
+                    stats = await self.kuzu_category_repo.get_category_usage_stats(category.id, user_id)
                     category.book_count = stats.get('total_books', 0)
                     
                     # Get direct children
-                    children = await self.redis_category_repo.get_children(category.id)
+                    children = await self.kuzu_category_repo.get_children(category.id)
                     category.children = children
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error processing root category {category.id}: {e}")
@@ -1135,12 +1135,12 @@ class RedisBookService:
     async def get_category_children(self, category_id: str, user_id: Optional[str] = None):
         """Get direct children of a category."""
         try:
-            children = await self.redis_category_repo.get_children(category_id)
+            children = await self.kuzu_category_repo.get_children(category_id)
             
             # Add usage statistics
             for child in children:
                 try:
-                    stats = await self.redis_category_repo.get_category_usage_stats(child.id, user_id)
+                    stats = await self.kuzu_category_repo.get_category_usage_stats(child.id, user_id)
                     child.book_count = stats.get('total_books', 0)
                 except Exception as e:
                     print(f"⚠️ [SERVICE] Error getting stats for child category {child.id}: {e}")
@@ -1157,7 +1157,7 @@ class RedisBookService:
         return self.get_category_children(category_id, user_id)
     
     async def create_category(self, category):
-        """Create a new category in Redis storage."""
+        """Create a new category in Kuzu storage."""
         try:
             from dataclasses import asdict
             from .domain.models import Category
@@ -1175,7 +1175,7 @@ class RedisBookService:
                 category.id = str(uuid.uuid4())
             
             # Create the category
-            created_category = await self.redis_category_repo.create(category)
+            created_category = await self.kuzu_category_repo.create(category)
             if created_category:
                 print(f"✅ [SERVICE] Created category: {category.name} (ID: {category.id})")
                 return created_category
@@ -1196,7 +1196,7 @@ class RedisBookService:
     async def update_category(self, category):
         """Update an existing category."""
         try:
-            updated_category = await self.redis_category_repo.update(category)
+            updated_category = await self.kuzu_category_repo.update(category)
             print(f"✅ [SERVICE] Updated category: {category.name} (ID: {category.id})")
             return updated_category
         except Exception as e:
@@ -1213,7 +1213,7 @@ class RedisBookService:
     async def delete_category(self, category_id: str):
         """Delete a category."""
         try:
-            success = await self.redis_category_repo.delete(category_id)
+            success = await self.kuzu_category_repo.delete(category_id)
             if success:
                 print(f"✅ [SERVICE] Deleted category: {category_id}")
             return success
@@ -1229,7 +1229,7 @@ class RedisBookService:
     async def find_or_create_category(self, category_name: str, parent_id: Optional[str] = None):
         """Find existing category by name or create a new one."""
         try:
-            category = await self.redis_category_repo.find_or_create(category_name, parent_id)
+            category = await self.kuzu_category_repo.find_or_create(category_name, parent_id)
             return category
         except Exception as e:
             print(f"❌ [SERVICE] Error in find_or_create_category for {category_name}: {e}")
@@ -1261,56 +1261,52 @@ class RedisBookService:
                 print(f"🔍 [SERVICE] Looking for books in category {cat_id}")
                 
                 # Find books that have HAS_CATEGORY relationships to this category
-                # We need to scan through all book HAS_CATEGORY relationship keys
-                pattern = f"rel:book:*:HAS_CATEGORY"
-                keys = self.storage.redis.keys(pattern)
-                print(f"🔍 [SERVICE] Found {len(keys)} HAS_CATEGORY relationship keys")
-                
-                for key in keys:
-                    rel_strings = self.storage.redis.smembers(key)
+                # Use Kuzu's graph query capabilities
+                try:
+                    # Query for books that have CATEGORIZED_AS relationships to this category
+                    query = """
+                    MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category)
+                    WHERE c.id = $category_id
+                    RETURN b.id as book_id
+                    """
+                    result = await self.storage.execute_query(query, {"category_id": cat_id})
                     
-                    for rel_string in rel_strings:
-                        try:
-                            rel_data = json.loads(rel_string)
-                            
-                            # Check if this relationship points to our target category
-                            if rel_data.get('to_id') == cat_id:
-                                # Extract book_id from the key: rel:book:{book_id}:HAS_CATEGORY
-                                book_id = key.split(':')[2]
-                                print(f"✅ [SERVICE] Found book {book_id} in category {cat_id}")
-                                
-                                # Get the full book object
-                                book = await self.redis_book_repo.get_by_id(book_id)
-                                if book:
-                                    # If user_id is provided, check if user has this book and add user-specific data
-                                    if user_id:
-                                        user_book_relationship = await self.redis_user_book_repo.get_relationship(str(user_id), book_id)
-                                        if user_book_relationship:
-                                            # Add user-specific attributes
-                                            setattr(book, 'reading_status', user_book_relationship.reading_status.value)
-                                            setattr(book, 'ownership_status', user_book_relationship.ownership_status.value)
-                                            setattr(book, 'start_date', user_book_relationship.start_date)
-                                            setattr(book, 'finish_date', user_book_relationship.finish_date)
-                                            setattr(book, 'user_rating', user_book_relationship.user_rating)
-                                            setattr(book, 'personal_notes', user_book_relationship.personal_notes)
-                                            setattr(book, 'date_added', user_book_relationship.date_added)
-                                            setattr(book, 'user_tags', user_book_relationship.user_tags)
-                                            setattr(book, 'locations', user_book_relationship.locations)
-                                            setattr(book, 'custom_metadata', user_book_relationship.custom_metadata or {})
-                                            books_result.append(book)
-                                            print(f"✅ [SERVICE] Added book {book.title} to category books (user has it)")
-                                        else:
-                                            print(f"⚠️ [SERVICE] User {user_id} doesn't have book {book.title}")
-                                    else:
-                                        # No user filter, include all books
-                                        books_result.append(book)
-                                        print(f"✅ [SERVICE] Added book {book.title} to category books (no user filter)")
+                    for record in result:
+                        book_id = record['book_id']
+                        print(f"✅ [SERVICE] Found book {book_id} in category {cat_id}")
+                        
+                        # Get the full book object
+                        book = await self.kuzu_book_repo.get_by_id(book_id)
+                        if book:
+                            # If user_id is provided, check if user has this book and add user-specific data
+                            if user_id:
+                                user_book_relationship = await self.kuzu_user_book_repo.get_relationship(str(user_id), book_id)
+                                if user_book_relationship:
+                                    # Add user-specific attributes
+                                    setattr(book, 'reading_status', user_book_relationship.reading_status.value)
+                                    setattr(book, 'ownership_status', user_book_relationship.ownership_status.value)
+                                    setattr(book, 'start_date', user_book_relationship.start_date)
+                                    setattr(book, 'finish_date', user_book_relationship.finish_date)
+                                    setattr(book, 'user_rating', user_book_relationship.user_rating)
+                                    setattr(book, 'personal_notes', user_book_relationship.personal_notes)
+                                    setattr(book, 'date_added', user_book_relationship.date_added)
+                                    setattr(book, 'user_tags', user_book_relationship.user_tags)
+                                    setattr(book, 'locations', user_book_relationship.locations)
+                                    setattr(book, 'custom_metadata', user_book_relationship.custom_metadata or {})
+                                    books_result.append(book)
+                                    print(f"✅ [SERVICE] Added book {book.title} to category books (user has it)")
                                 else:
-                                    print(f"❌ [SERVICE] Could not load book {book_id}")
-                        except json.JSONDecodeError:
-                            print(f"⚠️ [SERVICE] Invalid JSON in relationship: {rel_string}")
-                        except Exception as e:
-                            print(f"❌ [SERVICE] Error processing relationship: {e}")
+                                    print(f"⚠️ [SERVICE] User {user_id} doesn't have book {book.title}")
+                            else:
+                                # No user filter, include all books
+                                books_result.append(book)
+                                print(f"✅ [SERVICE] Added book {book.title} to category books (no user filter)")
+                        else:
+                            print(f"❌ [SERVICE] Could not load book {book_id}")
+                    
+                except Exception as e:
+                    print(f"❌ [SERVICE] Error querying books for category {cat_id}: {e}")
+                    continue
             
             # Remove duplicates (book might be in multiple subcategories)
             seen_book_ids = set()
@@ -1337,7 +1333,7 @@ class RedisBookService:
     async def _get_category_descendants_recursive(self, category_id: str):
         """Helper method to get all descendants of a category recursively."""
         descendants = []
-        children = await self.redis_category_repo.get_children(category_id)
+        children = await self.kuzu_category_repo.get_children(category_id)
         
         for child in children:
             descendants.append(child)
@@ -1366,27 +1362,45 @@ class RedisBookService:
                         continue
                     
                     # Move all book relationships from merge category to primary category
-                    book_relationships = self.storage.get_relationships('book', None, 'HAS_CATEGORY')
-                    for rel in book_relationships:
-                        if rel.get('to_id') == merge_id:
-                            book_id = rel.get('from_id')
-                            if book_id:
-                                # Remove old relationship
-                                self.storage.delete_relationship('book', book_id, 'HAS_CATEGORY', 'category', merge_id)
-                                # Create new relationship to primary category
-                                self.storage.create_relationship('book', book_id, 'HAS_CATEGORY', 'category', primary_category_id)
-                                print(f"✅ [SERVICE] Moved book {book_id} from category {merge_id} to {primary_category_id}")
+                    # Use Kuzu graph operations to update relationships
+                    try:
+                        # Find all books categorized under the merge category
+                        query = """
+                        MATCH (b:Book)-[r:CATEGORIZED_AS]->(c:Category)
+                        WHERE c.id = $merge_category_id
+                        RETURN b.id as book_id
+                        """
+                        books_result = await self.storage.execute_query(query, {"merge_category_id": merge_id})
+                        
+                        for record in books_result:
+                            book_id = record['book_id']
+                            # Remove old relationship and create new one
+                            await self.storage.execute_query("""
+                                MATCH (b:Book)-[r:CATEGORIZED_AS]->(c:Category)
+                                WHERE b.id = $book_id AND c.id = $merge_id
+                                DELETE r
+                            """, {"book_id": book_id, "merge_id": merge_id})
+                            
+                            await self.storage.execute_query("""
+                                MATCH (b:Book), (c:Category)
+                                WHERE b.id = $book_id AND c.id = $primary_id
+                                CREATE (b)-[:CATEGORIZED_AS]->(c)
+                            """, {"book_id": book_id, "primary_id": primary_category_id})
+                            
+                            print(f"✅ [SERVICE] Moved book {book_id} from category {merge_id} to {primary_category_id}")
+                    except Exception as e:
+                        print(f"❌ [SERVICE] Error moving book relationships: {e}")
                     
                     # Move all child categories to primary category (if hierarchical merge is desired)
-                    children = await self.redis_category_repo.get_children(merge_id)
+                    children = await self.kuzu_category_repo.get_children(merge_id)
                     for child in children:
                         child.parent_id = primary_category_id
                         child.level = primary_category.level + 1
-                        await self.redis_category_repo.update(child)
+                        await self.kuzu_category_repo.update(child)
                         print(f"✅ [SERVICE] Moved child category {child.name} to primary category")
                     
                     # Delete the merged category
-                    await self.redis_category_repo.delete(merge_id)
+                    await self.kuzu_category_repo.delete(merge_id)
                     merged_count += 1
                     
                 except Exception as e:
@@ -1490,7 +1504,7 @@ class RedisBookService:
                                 
                                 # Update category book count
                                 try:
-                                    await self.redis_category_repo.increment_book_count(category.id)
+                                    await self.kuzu_category_repo.increment_book_count(category.id)
                                     print(f"📊 [SERVICE] Incremented book count for category '{category_name}'")
                                 except Exception as count_error:
                                     print(f"⚠️ [SERVICE] Failed to update book count for category '{category_name}': {count_error}")
@@ -1519,17 +1533,17 @@ class RedisBookService:
         return self.process_book_categories(book_id, categories_data)
     
 
-class RedisUserService:
-    """Service for managing users using Redis as the sole data store."""
+class KuzuUserService:
+    """Service for managing users using Kuzu as the sole data store."""
     
     def __init__(self):
-        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        self.kuzu_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
         
-        if not self.redis_enabled:
-            raise RuntimeError("Graph database is disabled, but RedisUserService requires it")
+        if not self.kuzu_enabled:
+            raise RuntimeError("Graph database is disabled, but KuzuUserService requires it")
         
         self.storage = get_graph_storage()
-        self.redis_user_repo = RedisUserRepository(self.storage)
+        self.kuzu_user_repo = KuzuUserRepository(self.storage)
     
     async def get_user_count(self) -> int:
         """Get the total number of users."""
@@ -1549,7 +1563,7 @@ class RedisUserService:
     async def get_user_by_id(self, user_id: str) -> Optional[User]:
         """Get a user by their ID."""
         try:
-            return await self.redis_user_repo.get_by_id(user_id)
+            return await self.kuzu_user_repo.get_by_id(user_id)
         except Exception as e:
             print(f"❌ [USER_SERVICE] Error getting user by ID {user_id}: {e}")
             return None
@@ -1588,8 +1602,8 @@ class RedisUserService:
                 reading_streak_offset=0
             )
             
-            # Create user in Redis
-            created_user = await self.redis_user_repo.create(domain_user)
+            # Create user in Kuzu
+            created_user = await self.kuzu_user_repo.create(domain_user)
             print(f"✅ [USER_SERVICE] User {username} created successfully with ID: {user_id}")
             return created_user
         except Exception as e:
@@ -1608,7 +1622,7 @@ class RedisUserService:
     async def update_user(self, user: User) -> User:
         """Update an existing user."""
         try:
-            return await self.redis_user_repo.update(user)
+            return await self.kuzu_user_repo.update(user)
         except Exception as e:
             print(f"❌ [USER_SERVICE] Error updating user: {e}")
             raise
@@ -1621,7 +1635,7 @@ class RedisUserService:
     async def get_user_by_username(self, username: str) -> Optional[User]:
         """Get a user by username."""
         try:
-            return await self.redis_user_repo.get_by_username(username)
+            return await self.kuzu_user_repo.get_by_username(username)
         except Exception as e:
             print(f"❌ [USER_SERVICE] Error getting user by username {username}: {e}")
             return None
@@ -1634,7 +1648,7 @@ class RedisUserService:
     async def get_user_by_email(self, email: str) -> Optional[User]:
         """Get a user by email."""
         try:
-            return await self.redis_user_repo.get_by_email(email)
+            return await self.kuzu_user_repo.get_by_email(email)
         except Exception as e:
             print(f"❌ [USER_SERVICE] Error getting user by email {email}: {e}")
             return None
@@ -1648,12 +1662,12 @@ class RedisUserService:
         """Get a user by username or email."""
         try:
             # First try to get by username
-            user = await self.redis_user_repo.get_by_username(username_or_email)
+            user = await self.kuzu_user_repo.get_by_username(username_or_email)
             if user:
                 return user
             
             # If not found by username, try by email
-            user = await self.redis_user_repo.get_by_email(username_or_email)
+            user = await self.kuzu_user_repo.get_by_email(username_or_email)
             return user
         except Exception as e:
             print(f"❌ [USER_SERVICE] Error getting user by username or email {username_or_email}: {e}")
@@ -1667,7 +1681,7 @@ class RedisUserService:
     async def get_all_users(self) -> List[User]:
         """Get all users."""
         try:
-            return await self.redis_user_repo.get_all()
+            return await self.kuzu_user_repo.get_all()
         except Exception as e:
             print(f"❌ [USER_SERVICE] Error getting all users: {e}")
             return []
@@ -1678,14 +1692,14 @@ class RedisUserService:
         return self.get_all_users()
 
 
-class RedisReadingLogService:
-    """Service for managing reading logs using Redis as the sole data store."""
+class KuzuReadingLogService:
+    """Service for managing reading logs using Kuzu as the sole data store."""
     
     def __init__(self):
-        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        self.kuzu_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
         
-        if not self.redis_enabled:
-            raise RuntimeError("Redis must be enabled for this version of Bibliotheca")
+        if not self.kuzu_enabled:
+            raise RuntimeError("Kuzu must be enabled for this version of Bibliotheca")
             
         self.storage = get_graph_storage()
     
@@ -1700,17 +1714,17 @@ class RedisReadingLogService:
         return self.get_existing_log(book_id, user_id, log_date)
 
 
-class RedisCustomFieldService:
-    """Service for managing custom fields using Redis as the sole data store."""
+class KuzuCustomFieldService:
+    """Service for managing custom fields using Kuzu as the sole data store."""
     
     def __init__(self):
-        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        self.kuzu_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
         
-        if not self.redis_enabled:
-            raise RuntimeError("Redis must be enabled for this version of Bibliotheca")
+        if not self.kuzu_enabled:
+            raise RuntimeError("Kuzu must be enabled for this version of Bibliotheca")
             
         self.storage = get_graph_storage()
-        self.custom_field_repo = RedisCustomFieldRepository(self.storage)
+        self.custom_field_repo = KuzuCustomFieldRepository(self.storage)
 
     async def create_field(self, field_definition: CustomFieldDefinition) -> CustomFieldDefinition:
         """Create a new custom field definition."""
@@ -1768,17 +1782,17 @@ class RedisCustomFieldService:
         return []
 
 
-class RedisImportMappingService:
-    """Service for managing import mapping templates using Redis as the sole data store."""
+class KuzuImportMappingService:
+    """Service for managing import mapping templates using Kuzu as the sole data store."""
     
     def __init__(self):
-        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        self.kuzu_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
         
-        if not self.redis_enabled:
-            raise RuntimeError("Redis must be enabled for this version of Bibliotheca")
+        if not self.kuzu_enabled:
+            raise RuntimeError("Kuzu must be enabled for this version of Bibliotheca")
             
         self.storage = get_graph_storage()
-        self.import_mapping_repo = RedisImportMappingRepository(self.storage)
+        self.import_mapping_repo = KuzuImportMappingRepository(self.storage)
     
     async def get_templates_for_user(self, user_id: str):
         """Get import mapping templates for a user."""
@@ -1868,14 +1882,14 @@ class RedisImportMappingService:
         return self.detect_template(headers, user_id)
 
 
-class RedisDirectImportService:
-    """Service for direct import operations using Redis as the sole data store."""
+class KuzuDirectImportService:
+    """Service for direct import operations using Kuzu as the sole data store."""
     
     def __init__(self):
-        self.redis_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
+        self.kuzu_enabled = os.getenv('GRAPH_DATABASE_ENABLED', 'true').lower() == 'true'
         
-        if not self.redis_enabled:
-            raise RuntimeError("Redis must be enabled for this version of Bibliotheca")
+        if not self.kuzu_enabled:
+            raise RuntimeError("Kuzu must be enabled for this version of Bibliotheca")
             
         self.storage = get_graph_storage()
 
@@ -1926,10 +1940,69 @@ def _parse_date_with_fallbacks(date_str: str, field_name: str = "date") -> Optio
         return None
 
 
-# Global service instances
-book_service = RedisBookService()
-user_service = RedisUserService()
-reading_log_service = RedisReadingLogService()
-custom_field_service = RedisCustomFieldService()
-import_mapping_service = RedisImportMappingService()
-direct_import_service = RedisDirectImportService()
+# Global service instances - lazy loading to avoid initialization issues
+_book_service = None
+_user_service = None
+_reading_log_service = None
+_custom_field_service = None
+_import_mapping_service = None
+_direct_import_service = None
+
+def get_book_service():
+    global _book_service
+    if _book_service is None:
+        _book_service = KuzuBookService()
+    return _book_service
+
+def get_user_service():
+    global _user_service
+    if _user_service is None:
+        _user_service = KuzuUserService()
+    return _user_service
+
+def get_reading_log_service():
+    global _reading_log_service
+    if _reading_log_service is None:
+        _reading_log_service = KuzuReadingLogService()
+    return _reading_log_service
+
+def get_custom_field_service():
+    global _custom_field_service
+    if _custom_field_service is None:
+        _custom_field_service = KuzuCustomFieldService()
+    return _custom_field_service
+
+def get_import_mapping_service():
+    global _import_mapping_service
+    if _import_mapping_service is None:
+        _import_mapping_service = KuzuImportMappingService()
+    return _import_mapping_service
+
+def get_direct_import_service():
+    global _direct_import_service
+    if _direct_import_service is None:
+        _direct_import_service = KuzuDirectImportService()
+    return _direct_import_service
+
+# For backward compatibility, initialize these when first accessed
+class LazyService:
+    def __init__(self, getter_func):
+        self._getter = getter_func
+        self._instance = None
+    
+    def __getattr__(self, name):
+        if self._instance is None:
+            self._instance = self._getter()
+        return getattr(self._instance, name)
+    
+    def __call__(self, *args, **kwargs):
+        if self._instance is None:
+            self._instance = self._getter()
+        return self._instance(*args, **kwargs)
+
+book_service = LazyService(get_book_service)
+user_service = LazyService(get_user_service)
+reading_log_service = LazyService(get_reading_log_service)
+custom_field_service = LazyService(get_custom_field_service)
+import_mapping_service = LazyService(get_import_mapping_service)
+direct_import_service = LazyService(get_direct_import_service)

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting MyBibliotheca with setup page..."
+echo "🚀 Starting MyBibliotheca with KuzuDB setup..."
 
 # Generate a secure secret key if not provided
 if [ -z "$SECRET_KEY" ]; then
@@ -10,11 +10,27 @@ if [ -z "$SECRET_KEY" ]; then
     echo "🔑 Generated SECRET_KEY for this session"
 fi
 
-# Ensure data directory exists
+# Ensure data directories exist
 mkdir -p /app/data
+mkdir -p /app/data/kuzu
 
 # Ensure proper permissions on data directory
 chown -R 1000:1000 /app/data 2>/dev/null || true
+
+# KuzuDB-specific setup
+echo "🗄️  Setting up KuzuDB..."
+export KUZU_DB_PATH=${KUZU_DB_PATH:-/app/data/kuzu}
+export GRAPH_DATABASE_ENABLED=${GRAPH_DATABASE_ENABLED:-true}
+
+# Clean up any stale KuzuDB lock files (critical for Docker restarts)
+if [ -f "$KUZU_DB_PATH/.lock" ]; then
+    echo "🧹 Removing stale KuzuDB lock file..."
+    rm -f "$KUZU_DB_PATH/.lock" 2>/dev/null || true
+fi
+
+# Warn about single worker requirement
+echo "⚠️  NOTE: Running with single worker (WORKERS=1) due to KuzuDB concurrency limitations"
+echo "📊 KuzuDB path: $KUZU_DB_PATH"
 
 # Check for SQLite migration if enabled
 if [ "$AUTO_MIGRATE" = "true" ]; then

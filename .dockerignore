@@ -1,24 +1,81 @@
-# Git
+# Git and version control
 .git
 .gitignore
+.gitattributes
 
 # Documentation
 *.md
+docs/
+DOCKER.md
 MULTI_USER_PROJECT_PLAN.md
 
-# Python cache
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
+# Environment and config files
 .env
-.venv
+.env.*
+!.env.docker.example
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 env/
 venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Testing
-.pytest_cache
+# Data directories (will be mounted as volumes)
+data/
+data-test/
+flask_session/
+
+# Logs
+*.log
+logs/
+
+# Test files
+test_files/
+*_test.py
+test_*.py
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Migration and backup files
+*.sqlite
+*.sqlite3
+*.db
+
+# Lock files (except requirements)
+*.lock
+!uv.lock
+
+# Development tools
+scripts/
+migrations/
 .coverage
 htmlcov/
 .tox/

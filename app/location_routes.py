@@ -6,17 +6,15 @@ from flask import Blueprint, render_template, request, flash, redirect, url_for,
 from flask_login import login_required, current_user
 import os
 
-from app.redis_services import RedisBookService
 from app.location_service import LocationService
-from app.infrastructure.redis_graph import RedisGraphConnection
+from app.infrastructure.kuzu_graph import get_kuzu_connection
 
 bp = Blueprint('locations', __name__, url_prefix='/locations')
 
 def get_location_service():
     """Get location service instance."""
-    redis_url = os.getenv('REDIS_URL', 'redis://redis-graph:6379/0')
-    connection = RedisGraphConnection(redis_url=redis_url)
-    return LocationService(connection.client)
+    connection = get_kuzu_connection()
+    return LocationService(connection.connection)
 
 
 @bp.route('/')

@@ -2,23 +2,6 @@
 # DO NOT USE IN PRODUCTION - Use docker-compose.yml instead
 
 services:
-  # Redis Graph Database Service
-  redis-graph:
-    image: redis/redis-stack:7.2.0-v10
-    ports:
-      - "6379:6379"
-      - "8001:8001"  # Redis Insight web UI
-    volumes:
-      - ./data/redis:/data
-    environment:
-      - REDIS_ARGS=--requirepass dev-redis-password --save 900 1 --save 300 10 --save 60 10000 --appendonly yes --appendfsync everysec
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "dev-redis-password", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   bibliotheca:
     build: .
     ports:
@@ -31,8 +14,8 @@ services:
       - SECURITY_PASSWORD_SALT=dev-salt-change-in-production
       - WTF_CSRF_ENABLED=true
       
-      # Database - Redis as primary datastore
-      - REDIS_URL=redis://:dev-redis-password@redis-graph:6379/0
+      # Database - KuzuDB as primary datastore
+      - KUZU_DB_PATH=/app/data/kuzu
       - GRAPH_DATABASE_ENABLED=true
       
       # Application settings
@@ -40,12 +23,9 @@ services:
       - READING_STREAK_OFFSET=0
       - FLASK_DEBUG=true
       
-      # Development Gunicorn settings
-      - WORKERS=2
+      # CRITICAL: Single worker for KuzuDB compatibility
+      - WORKERS=1
     restart: unless-stopped
-    depends_on:
-      redis-graph:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5054/"]
       interval: 30s

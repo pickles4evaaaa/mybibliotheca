@@ -10,7 +10,7 @@ We've successfully implemented a comprehensive web-based migration wizard that p
 - **Smart Detection**: App automatically detects SQLite databases on startup
 - **User-Friendly Redirect**: Admin users are automatically redirected to the migration wizard when:
   - SQLite databases are found
-  - Redis database is empty (suggesting fresh installation)
+  - KuzuDB database is empty (suggesting fresh installation)
   - Migration hasn't been dismissed
 - **Non-Intrusive**: Can be dismissed if users prefer manual migration
 

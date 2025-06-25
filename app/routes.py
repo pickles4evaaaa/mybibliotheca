@@ -588,7 +588,7 @@ def edit_book(uid):
                     debug_log(f"Finding or creating person: {person_name}", "PERSON_CREATION")
                     
                     # Use the same logic as the repository's find_or_create_person method
-                    from .infrastructure.redis_graph import get_graph_storage
+                    from .infrastructure.kuzu_graph import get_graph_storage
                     storage = get_graph_storage()
                     
                     # Search for existing person by name (same as repository method)
@@ -762,11 +762,11 @@ def view_book_enhanced(uid):
     user_locations = []
     try:
         from app.location_service import LocationService
-        from app.infrastructure.redis_graph import RedisGraphConnection
+        from app.infrastructure.kuzu_graph import get_kuzu_connection
         from config import Config
         
-        redis_connection = RedisGraphConnection(Config.REDIS_URL)
-        location_service = LocationService(redis_connection.client)
+        kuzu_connection = get_kuzu_connection()
+        location_service = LocationService(kuzu_connection.connection)
         user_locations = location_service.get_user_locations(str(current_user.id))
         debug_log(f"Found {len(user_locations)} locations for user {current_user.id}", "VIEW")
     except Exception as e:
@@ -1452,20 +1452,20 @@ def stats():
     
     # Community stats (only if users share their activity)
     try:
-        # Import the redis book service for community features
-        from .redis_services import redis_book_service
+        # Use the Kuzu book service for community features
+        book_service = current_app.book_service
         
         # Get sharing users count
         sharing_users = user_service.get_sharing_users_sync() if hasattr(user_service, 'get_sharing_users_sync') else []
         
         # Recent community activity (books finished in last 30 days)
-        recent_finished_books = redis_book_service.get_books_with_sharing_users_sync(days_back=30, limit=20)
+        recent_finished_books = []  # TODO: Implement community features with Kuzu
         
         # Community currently reading
-        community_currently_reading = redis_book_service.get_currently_reading_shared_sync(limit=20)
+        community_currently_reading = []  # TODO: Implement community features with Kuzu
         
         # Community stats summary - count finished books this month
-        month_finished_books = redis_book_service.get_books_with_sharing_users_sync(days_back=30, limit=1000)
+        month_finished_books = []  # TODO: Implement community features with Kuzu
         month_start = datetime.now().date().replace(day=1)
         
         # Helper function to safely get date from finish_date for community stats
@@ -1925,11 +1925,11 @@ def add_book_manual():
         try:
             print(f"📍 [MANUAL] Attempting to get default location for user {current_user.id}")
             from .location_service import LocationService
-            from .infrastructure.redis_graph import RedisGraphConnection
+            from .infrastructure.kuzu_graph import get_kuzu_connection
             from config import Config
             
-            redis_connection = RedisGraphConnection(Config.REDIS_URL)
-            location_service = LocationService(redis_connection.client)
+            kuzu_connection = get_kuzu_connection()
+            location_service = LocationService(kuzu_connection.connection)
             
             print(f"📍 [MANUAL] Created location service, getting default location...")
             default_location = location_service.get_default_location(str(current_user.id))
@@ -3160,11 +3160,11 @@ def start_import_job(task_id):
                             try:
                                 print(f"📍 [IMPORT] Getting default location for user {user_id}")
                                 from app.location_service import LocationService
-                                from app.infrastructure.redis_graph import RedisGraphConnection
+                                from app.infrastructure.kuzu_graph import get_kuzu_connection
                                 from config import Config
                                 
-                                redis_connection = RedisGraphConnection(Config.REDIS_URL)
-                                location_service = LocationService(redis_connection.client)
+                                kuzu_connection = get_kuzu_connection()
+                                location_service = LocationService(kuzu_connection.connection)
                                 default_location = location_service.get_default_location(str(user_id))
                                 
                                 if default_location:
@@ -3355,8 +3355,9 @@ def normalize_goodreads_value(value, field_type='text'):
 def store_job_in_redis(task_id, job_data):
     """Store import job data in Redis."""
     try:
-        from .infrastructure.redis_graph import get_graph_storage
-        redis_client = get_graph_storage().redis
+        # Note: This function still uses Redis for job storage compatibility
+        from .infrastructure.redis_graph import get_redis_connection
+        redis_client = get_redis_connection().client
         job_key = f'import_job:{task_id}'
         
         # Convert job data to JSON and store with expiration (24 hours)
@@ -3371,8 +3372,9 @@ def store_job_in_redis(task_id, job_data):
 def get_job_from_redis(task_id):
     """Retrieve import job data from Redis."""
     try:
-        from .infrastructure.redis_graph import get_graph_storage
-        redis_client = get_graph_storage().redis
+        # Note: This function still uses Redis for job storage compatibility
+        from .infrastructure.redis_graph import get_redis_connection
+        redis_client = get_redis_connection().client
         job_key = f'import_job:{task_id}'
         
         job_data_str = redis_client.get(job_key)
@@ -3391,8 +3393,9 @@ def get_job_from_redis(task_id):
 def update_job_in_redis(task_id, updates):
     """Update specific fields in an import job stored in Redis."""
     try:
-        from .infrastructure.redis_graph import get_graph_storage
-        redis_client = get_graph_storage().redis
+        from .infrastructure.kuzu_graph import get_graph_storage
+        # Note: KuzuDB doesn't have Redis client, using in-memory job storage
+        storage = get_graph_storage()
         job_key = f'import_job:{task_id}'
         
         # Get existing job data
@@ -3614,8 +3617,8 @@ def add_person():
                 updated_at=datetime.now()
             )
             
-            # Store person in Redis
-            from .infrastructure.redis_graph import get_graph_storage
+            # Store person in KuzuDB
+            from .infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
             
             person_data = {
@@ -3709,8 +3712,8 @@ def edit_person(person_id):
             # Update normalized name
             person.normalized_name = Person._normalize_name(person.name)
             
-            # Update in Redis
-            from .infrastructure.redis_graph import get_graph_storage
+            # Update in KuzuDB
+            from .infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
             
             person_data = {
@@ -3773,7 +3776,7 @@ def delete_person(person_id):
         
         # Check if person has associated books by directly querying the storage layer
         # This bypasses any user filtering and checks for ANY books associated with this person
-        from .infrastructure.redis_graph import get_graph_storage
+        from .infrastructure.kuzu_graph import get_graph_storage
         storage = get_graph_storage()
         
         # FIRST: Clean up orphaned relationships - relationships pointing to books that no longer exist
@@ -4076,7 +4079,7 @@ def bulk_delete_persons():
                 print(f"Force deleting person {person_id} ({person_name}) - removing {total_books} book associations")
                 try:
                     # Get the storage instance for cleanup
-                    from .infrastructure.redis_graph import get_graph_storage
+                    from .infrastructure.kuzu_graph import get_graph_storage
                     storage = get_graph_storage()
                     
                     # Clean up all relationships TO this person
@@ -4121,7 +4124,7 @@ def bulk_delete_persons():
                     # Continue with deletion even if cleanup partially failed
             
             # Perform the deletion manually like the individual delete
-            from .infrastructure.redis_graph import get_graph_storage
+            from .infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
             
             deletion_success = False
@@ -4252,7 +4255,7 @@ def merge_persons():
                 return redirect(url_for('main.merge_persons'))
             
             # Perform merge operation
-            from .infrastructure.redis_graph import get_graph_storage
+            from .infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
             
             merged_count = 0
@@ -4415,10 +4418,12 @@ def toggle_theme():
         
         # Store theme preference in Redis for authenticated users
         if current_user.is_authenticated:
-            from .infrastructure.redis_graph import get_graph_storage
-            redis_client = get_graph_storage().redis
-            theme_key = f'user_theme:{current_user.id}'
-            redis_client.set(theme_key, new_theme)
+            from .infrastructure.kuzu_graph import get_graph_storage
+            # For themes, we'll use session storage instead of KuzuDB
+            # since themes are UI preferences, not core data
+            # redis_client = get_graph_storage().redis
+            # theme_key = f'user_theme:{current_user.id}'
+            # redis_client.set(theme_key, new_theme)
         
         # Also store in session as fallback
         session['theme'] = new_theme

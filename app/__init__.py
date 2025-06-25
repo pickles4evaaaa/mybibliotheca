@@ -1,7 +1,7 @@
 """
-Flask application factory for Redis-only Bibliotheca.
+Flask application factory for Kuzu-based Bibliotheca.
 
-This version completely removes SQLite dependency and uses Redis as the sole data store.
+This version completely removes SQLite dependency and uses Kuzu as the sole data store.
 """
 
 import os
@@ -17,7 +17,7 @@ sess = Session()
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load user from Redis via the user service."""
+    """Load user from Kuzu via the user service."""
     from .services import user_service
     try:
         user = user_service.get_user_by_id_sync(user_id)
@@ -254,13 +254,10 @@ def create_app():
     @app.context_processor
     def inject_site_name():
         """Make site name available in all templates."""
-        from .infrastructure.redis_graph import get_graph_storage
+        from .services import user_service  # Assuming settings are managed by user_service
         try:
-            redis_client = get_graph_storage().redis
-            site_name = redis_client.get('site_name')
-            if site_name:
-                site_name = site_name.decode('utf-8') if isinstance(site_name, bytes) else site_name
-            else:
+            site_name = user_service.get_setting_sync('site_name')
+            if not site_name:
                 site_name = 'MyBibliotheca'
         except Exception:
             site_name = 'MyBibliotheca'
@@ -270,17 +267,16 @@ def create_app():
     def inject_theme_preference():
         """Make theme preference available in all templates."""
         from flask_login import current_user
+        from .services import user_service
+        theme = 'light'  # Default theme
         try:
             if current_user.is_authenticated:
-                # Try to get user's theme preference from Redis
-                from .infrastructure.redis_graph import get_graph_storage
-                redis_client = get_graph_storage().redis
-                theme_key = f'user_theme:{current_user.id}'
-                theme = redis_client.get(theme_key)
-                if theme:
-                    theme = theme.decode('utf-8') if isinstance(theme, bytes) else theme
+                # Try to get user's theme preference from Kuzu
+                user_theme = user_service.get_user_setting_sync(current_user.id, 'theme')
+                if user_theme:
+                    theme = user_theme
                 else:
-                    # Check session as fallback for Redis
+                    # Fallback to session
                     from flask import session
                     theme = session.get('theme', 'light')
             else:
@@ -288,7 +284,9 @@ def create_app():
                 from flask import session
                 theme = session.get('theme', 'light')
         except Exception:
-            theme = 'light'
+            # In case of error, fallback to session or default
+            from flask import session
+            theme = session.get('theme', 'light')
         return dict(current_theme=theme)
 
     # CSRF error handler
@@ -326,37 +324,37 @@ def create_app():
         # Migration is available through the admin panel -> /admin/migration
         pass
 
-    # REDIS DATABASE INITIALIZATION
+    # KUZU DATABASE INITIALIZATION
     with app.app_context():
         # Use environment variable to control verbose logging across multiple workers
         verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
         
         if verbose_init:
-            print("🚀 Initializing Redis-only MyBibliotheca...")
+            print("🚀 Initializing Kuzu-based MyBibliotheca...")
         
-        # Test Redis connection
+        # Test Kuzu connection
         try:
-            from .infrastructure.redis_graph import get_graph_storage
+            from .infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
             # Simple connection test
             if verbose_init:
-                print("✅ Redis connection successful")
+                print("✅ Kuzu connection successful")
             
-            # Initialize services and attach to app
+            # Initialize services and attach to app using Kuzu service instances
             from .services import (
-                RedisBookService, RedisUserService, RedisReadingLogService,
-                RedisCustomFieldService, RedisImportMappingService, RedisDirectImportService
+                book_service, user_service, reading_log_service,
+                custom_field_service, import_mapping_service, direct_import_service
             )
             
             try:
-                app.book_service = RedisBookService()
-                app.user_service = RedisUserService()
-                app.reading_log_service = RedisReadingLogService()
-                app.custom_field_service = RedisCustomFieldService()
-                app.import_mapping_service = RedisImportMappingService()
-                app.direct_import_service = RedisDirectImportService()
+                app.book_service = book_service
+                app.user_service = user_service
+                app.reading_log_service = reading_log_service
+                app.custom_field_service = custom_field_service
+                app.import_mapping_service = import_mapping_service
+                app.direct_import_service = direct_import_service
                 if verbose_init:
-                    print("📦 Services initialized successfully")
+                    print("📦 Kuzu services initialized successfully")
             except Exception as e:
                 print(f"⚠️ Warning: Could not initialize some services: {e}")
             
@@ -371,13 +369,13 @@ def create_app():
                     pass  # Fail silently for worker processes
             
         except Exception as e:
-            print(f"❌ Redis connection failed: {e}")
-            print("🔧 Make sure Redis is running and accessible")
+            print(f"❌ Kuzu connection failed: {e}")
+            print("🔧 Make sure KuzuDB is running and accessible")
         
         # Development mode - skip auto admin creation, use setup page instead
         if verbose_init:
             print("🔧 Development mode: Use the setup page to create your admin user")
-            print("🎉 Redis-only initialization completed successfully!")
+            print("🎉 Kuzu-based initialization completed successfully!")
         
         # Check for SQLite databases that might need migration
         check_for_migration_reminder()

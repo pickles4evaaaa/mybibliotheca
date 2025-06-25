@@ -6,7 +6,6 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime
 import json
-import redis
 from dataclasses import asdict
 
 from .domain.models import Location
@@ -16,10 +15,10 @@ from .debug_system import debug_log, get_debug_manager
 class LocationService:
     """Service for managing user locations."""
     
-    def __init__(self, redis_client):
-        self.redis = redis_client
+    def __init__(self, kuzu_connection):
+        self.kuzu_conn = kuzu_connection
         self.debug_manager = get_debug_manager()
-        debug_log(f"LocationService initialized with Redis client: {type(redis_client)}", "LOCATION")
+        debug_log(f"LocationService initialized with Kuzu connection: {type(kuzu_connection)}", "LOCATION")
     
     def create_location(self, user_id: str, name: str, description: Optional[str] = None, 
                        location_type: str = "home", address: Optional[str] = None,
@@ -38,8 +37,14 @@ class LocationService:
             # Clear other defaults if setting this as default
             if is_default:
                 debug_log(f"Clearing other defaults for user {user_id}", "LOCATION")
-                for loc_id in existing_locations:
-                    self.redis.hset(f"location:{loc_id}", "is_default", "false")
+                for existing_location in existing_locations:
+                    # Update existing locations to not be default
+                    update_query = """
+                    MATCH (l:Location) 
+                    WHERE l.id = $location_id 
+                    SET l.is_default = false
+                    """
+                    self.kuzu_conn.execute(update_query, {"location_id": existing_location.id})
             is_default = True
             debug_log(f"Setting as default location for user {user_id}", "LOCATION")
             
@@ -56,23 +61,38 @@ class LocationService:
             updated_at=datetime.utcnow()
         )
         
-        # Store in Redis
-        location_data = asdict(location)
-        # Convert datetime objects to strings for Redis storage
-        location_data['created_at'] = location.created_at.isoformat()
-        location_data['updated_at'] = location.updated_at.isoformat()
+        # Store in KuzuDB
+        create_query = """
+        CREATE (l:Location {
+            id: $id,
+            user_id: $user_id,
+            name: $name,
+            description: $description,
+            location_type: $location_type,
+            address: $address,
+            is_default: $is_default,
+            is_active: $is_active,
+            created_at: $created_at,
+            updated_at: $updated_at
+        })
+        """
         
-        # Convert boolean values to strings for Redis storage
-        location_data['is_default'] = str(location_data['is_default']).lower()
-        location_data['is_active'] = str(location_data['is_active']).lower()
-        
-        # Filter out None values (Redis doesn't accept None)
-        location_data = {k: v for k, v in location_data.items() if v is not None}
+        location_data = {
+            "id": location.id,
+            "user_id": location.user_id,
+            "name": location.name,
+            "description": location.description,
+            "location_type": location.location_type,
+            "address": location.address,
+            "is_default": location.is_default,
+            "is_active": location.is_active,
+            "created_at": location.created_at,
+            "updated_at": location.updated_at
+        }
         
         print(f"🏠 [CREATE_LOCATION] Storing location data: {location_data}")
         
-        self.redis.hmset(f"location:{location_id}", location_data)
-        self.redis.sadd(f"user:{user_id}:locations", location_id)
+        self.kuzu_conn.execute(create_query, location_data)
         
         print(f"🏠 [CREATE_LOCATION] Created location {location_id} for user {user_id}: '{name}' (default: {is_default})")
         return location
@@ -81,27 +101,28 @@ class LocationService:
         """Get a location by ID."""
         print(f"🏠 [GET_LOCATION] Fetching location {location_id}")
         
-        location_data = self.redis.hgetall(f"location:{location_id}")
-        if not location_data:
+        query = "MATCH (l:Location) WHERE l.id = $location_id RETURN l"
+        result = self.kuzu_conn.execute(query, {"location_id": location_id})
+        
+        if not result.has_next():
             print(f"🏠 [GET_LOCATION] Location {location_id} not found")
             return None
             
-        # Convert byte strings to strings and handle datetime conversion
-        location_dict = {}
-        for key, value in location_data.items():
-            key = key.decode('utf-8') if isinstance(key, bytes) else key
-            value = value.decode('utf-8') if isinstance(value, bytes) else value
-            
-            # Convert boolean strings back to booleans
-            if key in ('is_default', 'is_active'):
-                value = value.lower() == 'true'
-            # Convert datetime strings back to datetime objects
-            elif key in ('created_at', 'updated_at'):
-                value = datetime.fromisoformat(value)
-                
-            location_dict[key] = value
-            
-        location = Location(**location_dict)
+        location_data = dict(result.get_next()[0])
+        
+        location = Location(
+            id=location_data['id'],
+            user_id=location_data['user_id'],
+            name=location_data['name'],
+            description=location_data.get('description'),
+            location_type=location_data['location_type'],
+            address=location_data.get('address'),
+            is_default=location_data['is_default'],
+            is_active=location_data['is_active'],
+            created_at=location_data['created_at'],
+            updated_at=location_data['updated_at']
+        )
+        
         print(f"🏠 [GET_LOCATION] Found location {location_id}: '{location.name}' (default: {location.is_default})")
         return location
     
@@ -109,26 +130,30 @@ class LocationService:
         """Get all locations for a user."""
         print(f"🏠 [GET_USER_LOCATIONS] Fetching locations for user {user_id} (active_only: {active_only})")
         
-        location_ids = self.redis.smembers(f"user:{user_id}:locations")
-        if not location_ids:
-            print(f"🏠 [GET_USER_LOCATIONS] No location IDs found for user {user_id}")
-            return []
-            
-        print(f"🏠 [GET_USER_LOCATIONS] Found {len(location_ids)} location IDs for user {user_id}")
+        query = "MATCH (l:Location) WHERE l.user_id = $user_id"
+        if active_only:
+            query += " AND l.is_active = true"
+        query += " RETURN l ORDER BY l.is_default DESC, l.created_at ASC"
+        
+        result = self.kuzu_conn.execute(query, {"user_id": user_id})
         
         locations = []
-        for location_id in location_ids:
-            location_id = location_id.decode('utf-8') if isinstance(location_id, bytes) else location_id
-            location = self.get_location(location_id)
-            if location:
-                if not active_only or location.is_active:
-                    locations.append(location)
-                    print(f"🏠 [GET_USER_LOCATIONS] Added location: '{location.name}' (default: {location.is_default}, active: {location.is_active})")
-                else:
-                    print(f"🏠 [GET_USER_LOCATIONS] Skipped inactive location: '{location.name}'")
-            else:
-                print(f"🏠 [GET_USER_LOCATIONS] Location {location_id} not found, removing from user set")
-                self.redis.srem(f"user:{user_id}:locations", location_id)
+        while result.has_next():
+            location_data = dict(result.get_next()[0])
+            location = Location(
+                id=location_data['id'],
+                user_id=location_data['user_id'],
+                name=location_data['name'],
+                description=location_data.get('description'),
+                location_type=location_data['location_type'],
+                address=location_data.get('address'),
+                is_default=location_data['is_default'],
+                is_active=location_data['is_active'],
+                created_at=location_data['created_at'],
+                updated_at=location_data['updated_at']
+            )
+            locations.append(location)
+            print(f"🏠 [GET_USER_LOCATIONS] Added location: '{location.name}' (default: {location.is_default}, active: {location.is_active})")
         
         print(f"🏠 [GET_USER_LOCATIONS] Returning {len(locations)} locations for user {user_id}")
         return locations
@@ -146,36 +171,36 @@ class LocationService:
         if updates.get('is_default') and not location.is_default:
             print(f"🏠 [UPDATE_LOCATION] Setting location {location_id} as default, clearing others for user {location.user_id}")
             # Clear other defaults for this user
-            user_locations = self.get_user_locations(location.user_id, active_only=False)
-            for loc in user_locations:
-                if loc.id != location_id and loc.is_default:
-                    print(f"🏠 [UPDATE_LOCATION] Clearing default from location {loc.id}: '{loc.name}'")
-                    self.redis.hset(f"location:{loc.id}", "is_default", "false")
+            clear_defaults_query = """
+            MATCH (l:Location) 
+            WHERE l.user_id = $user_id AND l.id <> $location_id 
+            SET l.is_default = false
+            """
+            self.kuzu_conn.execute(clear_defaults_query, {"user_id": location.user_id, "location_id": location_id})
         
-        # Update fields
+        # Build update query
+        set_clauses = []
+        params = {"location_id": location_id}
+        
         for key, value in updates.items():
             if hasattr(location, key):
-                old_value = getattr(location, key)
-                setattr(location, key, value)
-                print(f"🏠 [UPDATE_LOCATION] Updated {key}: '{old_value}' -> '{value}'")
-                
-        location.updated_at = datetime.utcnow()
+                set_clauses.append(f"l.{key} = ${key}")
+                params[key] = value
+                print(f"🏠 [UPDATE_LOCATION] Will update {key}: -> '{value}'")
         
-        # Store updated location
-        location_data = asdict(location)
-        location_data['created_at'] = location.created_at.isoformat()
-        location_data['updated_at'] = location.updated_at.isoformat()
-        
-        # Convert boolean values to strings for Redis storage
-        location_data['is_default'] = str(location_data['is_default']).lower()
-        location_data['is_active'] = str(location_data['is_active']).lower()
-        
-        # Filter out None values (Redis doesn't accept None)
-        location_data = {k: v for k, v in location_data.items() if v is not None}
-        
-        self.redis.hmset(f"location:{location_id}", location_data)
-        print(f"🏠 [UPDATE_LOCATION] Updated location {location_id}: '{location.name}' (default: {location.is_default})")
-        return location
+        if set_clauses:
+            set_clauses.append("l.updated_at = $updated_at")
+            params["updated_at"] = datetime.utcnow()
+            
+            update_query = f"""
+            MATCH (l:Location) 
+            WHERE l.id = $location_id 
+            SET {', '.join(set_clauses)}
+            """
+            
+            self.kuzu_conn.execute(update_query, params)
+        # Return updated location
+        return self.get_location(location_id)
     
     def delete_location(self, location_id: str) -> bool:
         """Delete a location."""
@@ -186,9 +211,9 @@ class LocationService:
             print(f"🏠 [DELETE_LOCATION] Location {location_id} not found")
             return False
         
-        # Remove from Redis
-        self.redis.delete(f"location:{location_id}")
-        self.redis.srem(f"user:{location.user_id}:locations", location_id)
+        # Delete from KuzuDB
+        delete_query = "MATCH (l:Location) WHERE l.id = $location_id DELETE l"
+        self.kuzu_conn.execute(delete_query, {"location_id": location_id})
         
         print(f"🏠 [DELETE_LOCATION] Deleted location {location_id}: '{location.name}' for user {location.user_id}")
         return True

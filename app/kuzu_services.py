@@ -1,8 +1,8 @@
 """
-Redis-only Application Services.
+Kuzu-only Application Services.
 
-This module provides service classes that use Redis as the primary database,
-replacing the dual-write approach with a simplified Redis-first architecture.
+This module provides service classes that use Kuzu as the primary database,
+replacing the Redis approach with a proper graph database architecture.
 """
 
 import os
@@ -16,8 +16,8 @@ from functools import wraps
 from flask import current_app
 
 from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus
-from .infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository, RedisAuthorRepository
-from .infrastructure.redis_graph import get_graph_storage
+from .infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository, KuzuAuthorRepository
+from .infrastructure.kuzu_graph import get_graph_storage
 from app.domain.models import ImportMappingTemplate, ReadingStatus
 
 
@@ -49,18 +49,18 @@ def run_async(async_func):
     return wrapper
 
 
-class RedisBookService:
-    """Service for managing books using Redis as primary database."""
+class KuzuBookService:
+    """Service for managing books using Kuzu as primary database."""
     
     def __init__(self):
         self.graph_storage = get_graph_storage()
-        self.book_repo = RedisBookRepository(self.graph_storage)
-        self.author_repo = RedisAuthorRepository(self.graph_storage)
-        self.user_repo = RedisUserRepository(self.graph_storage)
+        self.book_repo = KuzuBookRepository(self.graph_storage)
+        self.author_repo = KuzuAuthorRepository(self.graph_storage)
+        self.user_repo = KuzuUserRepository(self.graph_storage)
     
     @run_async
     async def create_book(self, domain_book: Book, user_id: str) -> Book:
-        """Create a book in Redis."""
+        """Create a book in Kuzu."""
         try:
             # Debug logging
             print(f"create_book called with domain_book type: {type(domain_book)}")
@@ -77,7 +77,7 @@ class RedisBookService:
             domain_book.updated_at = datetime.utcnow()
             
             print(f"About to call book_repo.create")
-            # Create the book in Redis
+            # Create the book in Kuzu
             created_book = await self.book_repo.create(domain_book)
             print(f"book_repo.create returned: {created_book}")
             
@@ -89,7 +89,7 @@ class RedisBookService:
                 date_added=datetime.utcnow()
             )
             
-            # Store the relationship in Redis
+            # Store the relationship in Kuzu
             rel_key = f"user_book:{user_id}:{created_book.id}"
             rel_data = asdict(relationship)
             
@@ -112,7 +112,7 @@ class RedisBookService:
             await self.graph_storage.set_json(rel_key, rel_data)
             print(f"Successfully stored relationship")
             
-            print(f"Created book {created_book.id} for user {user_id} in Redis")
+            print(f"Created book {created_book.id} for user {user_id} in Kuzu")
             return created_book
             
         except Exception as e:
@@ -491,13 +491,13 @@ class RedisBookService:
 
 
 # Create service instances
-redis_book_service = RedisBookService()
+kuzu_book_service = KuzuBookService()
 
-class RedisImportMappingRepository:
-    """Repository for managing import mapping templates in Redis."""
+class KuzuImportMappingRepository:
+    """Repository for managing import mapping templates in Kuzu."""
     
-    def __init__(self, redis):
-        self.redis = redis
+    def __init__(self, storage):
+        self.storage = storage
     
     async def create(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
         """Create a new import mapping template."""
@@ -510,15 +510,15 @@ class RedisImportMappingRepository:
         # Serialize the template data
         template_data = template.to_dict()
         
-        # Save to Redis
-        await self.redis.hset(template_key, mapping=template_data)
+        # Save to Kuzu
+        await self.storage.set_json(template_key, template_data)
         
         return template
 
     async def get_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
         """Get an import mapping template by ID."""
         template_key = f"template:{template_id}"
-        template_data = await self.redis.hgetall(template_key)
+        template_data = await self.storage.get_json(template_key)
         
         if not template_data:
             return None
@@ -533,31 +533,31 @@ class RedisImportMappingRepository:
         template_key = f"template:{template.id}"
         
         # Check if the template exists
-        if not await self.redis.exists(template_key):
+        if not await self.storage.exists(template_key):
             raise ValueError(f"Template with id {template.id} not found")
 
         # Serialize the updated template data
         template.updated_at = datetime.utcnow()
         template_data = template.to_dict()
 
-        # Save the updated data to Redis
-        await self.redis.hset(template_key, mapping=template_data)
+        # Save the updated data to Kuzu
+        await self.storage.set_json(template_key, template_data)
         
         return template
 
     async def delete(self, template_id: str) -> bool:
         """Delete an import mapping template by ID."""
         template_key = f"template:{template_id}"
-        result = await self.redis.delete(template_key)
-        return result > 0
+        result = await self.storage.delete(template_key)
+        return result
 
     async def get_all(self) -> List[ImportMappingTemplate]:
         """Get all import mapping templates."""
-        template_keys = await self.redis.scan_keys("template:*")
+        template_keys = await self.storage.scan_keys("template:*")
         templates = []
         
         for key in template_keys:
-            template_data = await self.redis.hgetall(key)
+            template_data = await self.storage.get_json(key)
             if template_data:
                 template_data['id'] = key.split(':')[1]  # Extract ID from key
                 template = ImportMappingTemplate(**template_data)
