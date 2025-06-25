@@ -4,6 +4,54 @@
 
 {% block content %}
 <style>
+.accordion-button {
+    font-weight: 500;
+    border-radius: 0.375rem;
+}
+
+.accordion-button:not(.collapsed) {
+    color: white;
+    box-shadow: none;
+}
+
+.accordion-button.bg-danger:not(.collapsed) {
+    background-color: var(--bs-danger) !important;
+}
+
+.accordion-button.bg-warning:not(.collapsed) {
+    background-color: var(--bs-warning) !important;
+}
+
+.accordion-button.bg-info:not(.collapsed) {
+    background-color: var(--bs-info) !important;
+}
+
+.accordion-button.bg-secondary:not(.collapsed) {
+    background-color: var(--bs-secondary) !important;
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.25);
+}
+
+.accordion-body {
+    padding: 1.25rem;
+}
+
+.breadcrumb-item a {
+    text-decoration: none;
+}
+
+/* Smooth transitions for accordion */
+.accordion-collapse {
+    transition: height 0.35s ease;
+}
+
+/* Better spacing between accordion items */
+.accordion-item:not(:last-child) {
+    margin-bottom: 0.5rem;
+}
+
 /* Dark mode enhancements for Admin Settings */
 [data-theme="dark"] .text-muted {
     color: #b0b0b0 !important;
@@ -17,19 +65,17 @@
     color: #c0c0c0 !important;
 }
 
-[data-theme="dark"] .card {
+[data-theme="dark"] .accordion-item {
     background-color: rgba(40, 40, 40, 0.8) !important;
     border-color: #404040 !important;
+}
+
+[data-theme="dark"] .accordion-body {
+    background-color: rgba(40, 40, 40, 0.8) !important;
     color: #e0e0e0 !important;
 }
 
-[data-theme="dark"] .card-header {
-    background-color: rgba(60, 60, 60, 0.8) !important;
-    border-bottom-color: #404040 !important;
-    color: #e0e0e0 !important;
-}
-
-[data-theme="dark"] .card-body {
+[data-theme="dark"] .accordion-body p {
     color: #e0e0e0 !important;
 }
 
@@ -38,126 +84,223 @@
     border-color: rgba(13, 110, 253, 0.3) !important;
     color: #6ea8fe !important;
 }
-</style>
-<div class="row">
-    <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>Admin Settings</h2>
-            <div class="btn-group">
-                <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-primary">
-                    Dashboard
-                </a>
-                <a href="{{ url_for('admin.users') }}" class="btn btn-outline-secondary">
-                    👥 Users
-                </a>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- System Configuration -->
-<div class="row mb-4">
-    <div class="col-md-8">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">🔧 System Configuration</h5>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="{{ url_for('admin.settings') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                    
-                    <div class="mb-3">
-                        <label for="site_name" class="form-label">Site Name</label>
-                        <input type="text" class="form-control" id="site_name" name="site_name" value="{{ site_name }}">
-                        <small class="form-text text-muted">The name displayed in the site header</small>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary">Save Settings</button>
-                    
-                    <!-- Note: Additional features will be added in future updates -->
-                    <div class="alert alert-info mt-3">
-                        <strong>ℹ️ Note:</strong> Additional system configuration options will be available in future updates.
-                    </div>
-                </form>
-            </div>
+[data-theme="dark"] .alert-warning {
+    background-color: rgba(255, 193, 7, 0.1) !important;
+    border-color: rgba(255, 193, 7, 0.3) !important;
+    color: #ffda6a !important;
+}
+
+[data-theme="dark"] .alert-danger {
+    background-color: rgba(220, 53, 69, 0.1) !important;
+    border-color: rgba(220, 53, 69, 0.3) !important;
+    color: #ea868f !important;
+}
+</style>
+
+<div class="container mt-4">
+    <!-- Page Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h2 mb-0">
+            <i class="bi bi-shield-exclamation me-2"></i>Admin Settings
+        </h1>
+        <div>
+            <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-speedometer2 me-1"></i>Dashboard
+            </a>
         </div>
     </div>
-    
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">🔐 Security Actions</h5>
-            </div>
-            <div class="card-body">
-                <div class="d-grid gap-2">
-                    <button class="btn btn-warning" onclick="showPasswordResetModal()">
-                        🔑 Change Admin Password
-                    </button>
-                    
-                    <button class="btn btn-info" onclick="exportData()">
-                        📤 Export User Data
-                    </button>
-                    
-                    <button class="btn btn-secondary" onclick="clearSessions()">
-                        🚪 Clear All User Sessions
-                    </button>
-                    
-                    <hr>
-                    
-                    <button class="btn btn-danger" onclick="showMaintenanceModal()">
-                        🚨 Maintenance Mode
-                    </button>
-                </div>
-            </div>
+            <a href="{{ url_for('admin.users') }}" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-people me-1"></i>User Management
+            </a>
         </div>
-        
-        <div class="card mt-3">
-            <div class="card-header">
-                <h5 class="card-title mb-0">🐛 Debug System</h5>
-            </div>
-            <div class="card-body">
-                <div class="d-grid gap-2">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span>Debug Mode</span>
-                        <span id="debugStatus" class="badge bg-{{ 'success' if debug_manager.is_debug_enabled() else 'secondary' }}">
-                            {{ 'ON' if debug_manager.is_debug_enabled() else 'OFF' }}
-                        </span>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <!-- Admin Settings Accordion -->
+            <div class="accordion" id="adminSettingsAccordion">
+                
+                <!-- System Configuration -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button bg-danger text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseSystemConfig" 
+                                aria-expanded="true" aria-controls="collapseSystemConfig">
+                            <i class="bi bi-gear-wide-connected me-2"></i>System Configuration
+                        </button>
+                    </h2>
+                    <div id="collapseSystemConfig" class="accordion-collapse collapse show" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Configure global system settings and site information.</p>
+                            
+                            <form method="POST" action="{{ url_for('admin.settings') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="site_name" class="form-label">Site Name</label>
+                                        <input type="text" class="form-control" id="site_name" name="site_name" 
+                                               value="{{ site_name }}" placeholder="MyBibliotheca">
+                                        <small class="form-text text-muted">The name displayed in the site header</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="server_timezone" class="form-label">Server Timezone</label>
+                                        <select class="form-select" id="server_timezone" name="server_timezone">
+                                            <optgroup label="Common Timezones">
+                                                {% for tz in common_timezones %}
+                                                <option value="{{ tz }}" {% if tz == server_timezone %}selected{% endif %}>{{ tz }}</option>
+                                                {% endfor %}
+                                            </optgroup>
+                                            <optgroup label="All Timezones">
+                                                {% for tz in available_timezones %}
+                                                {% if tz not in common_timezones %}
+                                                <option value="{{ tz }}" {% if tz == server_timezone %}selected{% endif %}>{{ tz }}</option>
+                                                {% endif %}
+                                                {% endfor %}
+                                            </optgroup>
+                                        </select>
+                                        <small class="form-text text-muted">Default timezone for the server and new users</small>
+                                    </div>
+                                    <div class="col-12">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="bi bi-check-lg me-1"></i>Save Settings
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                            
+                            <div class="alert alert-info mt-3">
+                                <strong><i class="bi bi-info-circle me-1"></i>Note:</strong> Additional system configuration options will be available in future updates.
+                            </div>
+                        </div>
                     </div>
-                    
-                    <button id="toggleDebugBtn" class="btn btn-{{ 'warning' if debug_manager.is_debug_enabled() else 'success' }}" onclick="toggleDebugMode()">
-                        {{ '🟡 Disable Debug' if debug_manager.is_debug_enabled() else '🟢 Enable Debug' }}
-                    </button>
-                    
-                    <a href="{{ url_for('debug_admin.debug_dashboard') }}" class="btn btn-outline-info">
-                        📊 Debug Dashboard
-                    </a>
-                    
-                    <a href="{{ url_for('debug_admin.view_logs') }}" class="btn btn-outline-secondary">
-                        📋 View Debug Logs
-                    </a>
+                </div>
+
+                <!-- Security & Administrative Actions -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseSecurity" 
+                                aria-expanded="false" aria-controls="collapseSecurity">
+                            <i class="bi bi-shield-lock me-2"></i>Security & Administrative Actions
+                        </button>
+                    </h2>
+                    <div id="collapseSecurity" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Manage security settings and perform administrative actions.</p>
+                            
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <button class="btn btn-warning w-100" onclick="showPasswordResetModal()">
+                                        <i class="bi bi-key me-1"></i>Change Admin Password
+                                    </button>
+                                </div>
+                                <div class="col-md-6">
+                                    <button class="btn btn-info w-100" onclick="exportData()">
+                                        <i class="bi bi-download me-1"></i>Export User Data
+                                    </button>
+                                </div>
+                                <div class="col-md-6">
+                                    <button class="btn btn-secondary w-100" onclick="clearSessions()">
+                                        <i class="bi bi-door-open me-1"></i>Clear All User Sessions
+                                    </button>
+                                </div>
+                                <div class="col-md-6">
+                                    <button class="btn btn-danger w-100" onclick="showMaintenanceModal()">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>Maintenance Mode
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Debug System -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-info text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseDebug" 
+                                aria-expanded="false" aria-controls="collapseDebug">
+                            <i class="bi bi-bug me-2"></i>Debug System
+                        </button>
+                    </h2>
+                    <div id="collapseDebug" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Control debug mode and access debugging tools.</p>
+                            
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <div class="border rounded p-3 text-center">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span><strong>Debug Mode</strong></span>
+                                            <span id="debugStatus" class="badge bg-{{ 'success' if debug_manager.is_debug_enabled() else 'secondary' }} fs-6">
+                                                {{ 'ON' if debug_manager.is_debug_enabled() else 'OFF' }}
+                                            </span>
+                                        </div>
+                                        <button id="toggleDebugBtn" 
+                                                class="btn btn-{{ 'warning' if debug_manager.is_debug_enabled() else 'success' }} w-100" 
+                                                onclick="toggleDebugMode()">
+                                            {{ '🟡 Disable Debug' if debug_manager.is_debug_enabled() else '🟢 Enable Debug' }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="d-grid gap-2">
+                                        <a href="{{ url_for('debug_admin.debug_dashboard') }}" class="btn btn-outline-info">
+                                            <i class="bi bi-graph-up me-1"></i>Debug Dashboard
+                                        </a>
+                                        <a href="{{ url_for('debug_admin.view_logs') }}" class="btn btn-outline-secondary">
+                                            <i class="bi bi-journal-text me-1"></i>View Debug Logs
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Information -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-secondary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseSystemInfo" 
+                                aria-expanded="false" aria-controls="collapseSystemInfo">
+                            <i class="bi bi-info-square me-2"></i>System Information
+                        </button>
+                    </h2>
+                    <div id="collapseSystemInfo" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">View current system status and information.</p>
+                            
+                            <div class="row text-center g-3">
+                                <div class="col-md-4">
+                                    <div class="border rounded p-3">
+                                        <h5 class="text-primary">{{ current_user.username }}</h5>
+                                        <small class="text-muted">Logged in as Admin</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="border rounded p-3">
+                                        <h5 class="text-success">Online</h5>
+                                        <small class="text-muted">System Status</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="border rounded p-3">
+                                        <h5 class="text-info">Multi-User Platform</h5>
+                                        <small class="text-muted">Version</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-        
-        <div class="card mt-3">
-            <div class="card-header">
-                <h5 class="card-title mb-0">Quick Stats</h5>
-            </div>
-            <div class="card-body">
-                <div class="row text-center">
-                    <div class="col-12 mb-2">
-                        <strong>{{ current_user.username }}</strong>
-                        <br><small class="text-muted">Logged in as Admin</small>
-                    </div>
-                    <div class="col-6">
-                        <h5 class="text-primary">Online</h5>
-                        <small class="text-muted">System Status</small>
-                    </div>
-                    <div class="col-6">
-                        <h5 class="text-success">Multi-User Platform</h5>
-                        <small class="text-muted">Version</small>
-                    </div>
-                </div>
+
+            <div class="text-center mt-4">
+                <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Library
+                </a>
             </div>
         </div>
     </div>
@@ -168,12 +311,12 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">🔑 Change Admin Password</h5>
+                <h5 class="modal-title"><i class="bi bi-key me-2"></i>Change Admin Password</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <div class="alert alert-warning">
-                    <strong>⚠️ Security Notice:</strong> For security reasons, admin passwords should be changed using the CLI tool.
+                    <strong><i class="bi bi-exclamation-triangle me-1"></i>Security Notice:</strong> For security reasons, admin passwords should be changed using the CLI tool.
                 </div>
                 <p>To change your admin password, run the following command on the server:</p>
                 <div class="bg-dark text-light p-3 rounded">
@@ -192,12 +335,12 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">🚨 Maintenance Mode</h5>
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Maintenance Mode</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <div class="alert alert-danger">
-                    <strong>⚠️ Warning:</strong> Maintenance mode will prevent all users (except admins) from accessing the system.
+                    <strong><i class="bi bi-exclamation-triangle me-1"></i>Warning:</strong> Maintenance mode will prevent all users (except admins) from accessing the system.
                 </div>
                 <p>This feature is not yet implemented in the current version.</p>
             </div>
@@ -248,10 +391,10 @@ async function toggleDebugMode() {
             
             // Update status badge
             status.textContent = data.debug_enabled ? 'ON' : 'OFF';
-            status.className = data.debug_enabled ? 'badge bg-success' : 'badge bg-secondary';
+            status.className = data.debug_enabled ? 'badge bg-success fs-6' : 'badge bg-secondary fs-6';
             
             // Update button
-            btn.className = data.debug_enabled ? 'btn btn-warning' : 'btn btn-success';
+            btn.className = data.debug_enabled ? 'btn btn-warning w-100' : 'btn btn-success w-100';
             btn.innerHTML = data.debug_enabled ? '🟡 Disable Debug' : '🟢 Enable Debug';
             
             // Show success message

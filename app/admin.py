@@ -10,6 +10,7 @@ from flask_login import login_required, current_user
 from .services import user_service, book_service, reading_log_service
 from .forms import UserProfileForm, AdminPasswordResetForm
 from datetime import datetime, timedelta, timezone
+import pytz
 import os
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
@@ -286,19 +287,45 @@ def settings():
     
     if request.method == 'POST':
         site_name = request.form.get('site_name', 'MyBibliotheca')
-        # Store the site name in Redis
+        server_timezone = request.form.get('server_timezone', 'UTC')
+        
+        # Store the settings in Redis
         redis_client.set('site_name', site_name)
-        flash(f'Settings updated! Site name set to: {site_name}', 'success')
+        redis_client.set('server_timezone', server_timezone)
+        
+        flash(f'Settings updated! Site name: {site_name}, Server timezone: {server_timezone}', 'success')
         return redirect(url_for('admin.settings'))
     
-    # Get the current site name from Redis, default to 'MyBibliotheca'
+    # Get the current settings from Redis
     current_site_name = redis_client.get('site_name')
     if current_site_name:
         current_site_name = current_site_name.decode('utf-8') if isinstance(current_site_name, bytes) else current_site_name
     else:
         current_site_name = 'MyBibliotheca'
     
-    return render_template('admin/settings.html', title='Admin Settings', site_name=current_site_name)
+    current_timezone = redis_client.get('server_timezone')
+    if current_timezone:
+        current_timezone = current_timezone.decode('utf-8') if isinstance(current_timezone, bytes) else current_timezone
+    else:
+        current_timezone = 'UTC'
+    
+    # Get available timezones
+    available_timezones = pytz.all_timezones
+    common_timezones = [
+        'UTC',
+        'US/Eastern', 'US/Central', 'US/Mountain', 'US/Pacific',
+        'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Rome',
+        'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata',
+        'Australia/Sydney', 'Australia/Melbourne',
+        'America/Toronto', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles'
+    ]
+    
+    return render_template('admin/settings.html', 
+                         title='Admin Settings', 
+                         site_name=current_site_name,
+                         server_timezone=current_timezone,
+                         common_timezones=common_timezones,
+                         available_timezones=sorted(available_timezones))
 
 @admin.route('/api/stats')
 @login_required

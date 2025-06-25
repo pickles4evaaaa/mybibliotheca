@@ -13,36 +13,6 @@
     --hover-shadow: rgba(0,0,0,0.2);
   }
 
-  .locations-header {
-    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
-    color: white;
-    padding: 2rem 0;
-    margin-bottom: 2rem;
-    border-radius: 15px;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .locations-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: url('{{ url_for('static', filename='paper-fibers.png') }}');
-    opacity: 0.3;
-  }
-
-  .locations-header h1 {
-    font-size: clamp(1.5rem, 4vw, 2.5rem);
-    font-weight: 700;
-    margin: 0;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-    position: relative;
-    z-index: 1;
-  }
-
   .card {
     transition: transform 0.2s ease, box-shadow 0.2s ease;
   }
@@ -54,11 +24,6 @@
 </style>
 
 <div class="container mt-4">
-    <div class="locations-header text-center">
-        <h1><i class="bi bi-geo-alt-fill"></i> Add New Location</h1>
-        <p class="mb-0 opacity-75">Create a new storage location for your books</p>
-    </div>
-
     <div class="row justify-content-center">
         <div class="col-md-6">
             <div class="card">

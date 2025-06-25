@@ -4,100 +4,395 @@
 
 {% block content %}
 <style>
-  :root {
-    --primary-brown: #8B4513;
-    --light-brown: #D2B48C;
-    --cream: #F5F5DC;
-    --warm-white: #FEFEFE;
-    --gold: #DAA520;
-    --shadow: rgba(0,0,0,0.1);
-    --hover-shadow: rgba(0,0,0,0.2);
-  }
+.accordion-item {
+    border: 1px solid rgba(0,0,0,.125);
+    border-radius: 0.375rem;
+}
 
-  .stats-header {
-    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+.accordion-button {
+    font-weight: 500;
+    border-radius: 0.375rem;
+}
+
+.accordion-button:not(.collapsed) {
     color: white;
-    padding: 2rem 0;
-    margin-bottom: 2rem;
-    border-radius: 15px;
-    position: relative;
-    overflow: hidden;
-  }
+    box-shadow: none;
+}
 
-  .stats-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: url('{{ url_for('static', filename='paper-fibers.png') }}');
-    opacity: 0.3;
-  }
+.accordion-button.bg-primary:not(.collapsed) {
+    background-color: var(--bs-primary) !important;
+}
 
-  .stats-header h1 {
-    font-size: clamp(1.5rem, 4vw, 2.5rem);
-    font-weight: 700;
-    margin: 0;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-    position: relative;
-    z-index: 1;
-  }
+.accordion-button.bg-success:not(.collapsed) {
+    background-color: var(--bs-success) !important;
+}
 
-  .stat-card {
-    background: var(--warm-white);
-    border: 2px solid var(--light-brown);
-    border-radius: 15px;
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 6px 20px var(--shadow);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
+.accordion-button.bg-info:not(.collapsed) {
+    background-color: var(--bs-info) !important;
+}
 
-  .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px var(--hover-shadow);
-  }
+.accordion-button.bg-warning:not(.collapsed) {
+    background-color: var(--bs-warning) !important;
+}
 
-  .stat-number {
-    font-size: 2.5rem;
-    font-weight: bold;
-    color: var(--primary-brown);
-    margin: 0;
-  }
+.accordion-button.bg-secondary:not(.collapsed) {
+    background-color: var(--bs-secondary) !important;
+}
 
-  .stat-label {
-    color: #666;
-    font-size: 1rem;
-    margin: 0;
-  }
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
 
-  .section-divider {
-    border: none;
-    height: 3px;
-    background: linear-gradient(to right, var(--primary-brown), var(--light-brown), var(--primary-brown));
-    margin: 3rem 0 2rem 0;
-    border-radius: 2px;
-  }
+.accordion-body {
+    padding: 1.25rem;
+}
 
-  .community-stat-card {
-    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-    cursor: pointer;
-    border: 2px solid var(--light-brown);
-    background: var(--warm-white);
-    color: var(--primary-brown);
-  }
+/* Smooth transitions for accordion */
+.accordion-collapse {
+    transition: height 0.35s ease;
+}
 
-  .community-stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px var(--hover-shadow);
-  }
+/* Better spacing between accordion items */
+.accordion-item:not(:last-child) {
+    margin-bottom: 0.5rem;
+}
 
-  .community-stat-card .stat-number {
-    font-size: 2.5rem;
-    font-weight: bold;
-    color: var(--primary-brown);
-    margin: 0;
+.stat-card {
+  background: var(--warm-white);
+  border: 2px solid var(--light-brown);
+  border-radius: 15px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 6px 20px var(--shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px var(--hover-shadow);
+}
+
+.stat-number {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: var(--primary-brown);
+  margin: 0;
+}
+
+.stat-label {
+  color: #666;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.book-item {
+  text-align: center;
+}
+
+.book-cover {
+  height: 120px;
+  width: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  margin: 0 auto 8px auto;
+  display: block;
+}
+
+.book-placeholder {
+  height: 120px;
+  width: 80px;
+  background: var(--light-brown);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 8px auto;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .accordion-body {
+        padding: 1rem;
+    }
+    
+    .book-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 0.5rem;
+    }
+    
+    .book-cover, .book-placeholder {
+        height: 100px;
+        width: 70px;
+    }
+}
+
+/* Dark mode enhancements for Stats */
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+
+[data-theme="dark"] small.text-muted {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .accordion-item {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+}
+
+[data-theme="dark"] .accordion-body {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .accordion-body p {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .stat-card {
+    background-color: rgba(40, 40, 40, 0.9) !important;
+    border-color: #606060 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .stat-number {
+    color: #8a7ca8 !important;
+}
+
+[data-theme="dark"] .stat-label {
+    color: #b0b0b0 !important;
+}
+</style>
+
+<div class="container mt-4">
+    <!-- Page Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h2 mb-0">
+            <i class="bi bi-graph-up me-2"></i>Reading Statistics
+        </h1>
+        <div>
+            <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Library
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <!-- Stats Accordion -->
+            <div class="accordion" id="statsAccordion">
+                
+                <!-- Personal Reading Stats -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button bg-primary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapsePersonalStats" 
+                                aria-expanded="true" aria-controls="collapsePersonalStats">
+                            <i class="bi bi-person-circle me-2"></i>Your Reading Statistics
+                        </button>
+                    </h2>
+                    <div id="collapsePersonalStats" class="accordion-collapse collapse show" data-bs-parent="#statsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Track your reading progress and achievements over time.</p>
+                            
+                            <!-- Reading Progress Stats -->
+                            <div class="row mb-4">
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ books_finished_this_week }}</p>
+                                        <p class="stat-label">Books This Week</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ books_finished_this_month }}</p>
+                                        <p class="stat-label">Books This Month</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ books_finished_this_year }}</p>
+                                        <p class="stat-label">Books This Year</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ books_finished_total }}</p>
+                                        <p class="stat-label">Total Books Finished</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Library Status Stats -->
+                            <div class="row">
+                                <div class="col-lg-4 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ currently_reading|length }}</p>
+                                        <p class="stat-label">Currently Reading</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ want_to_read|length }}</p>
+                                        <p class="stat-label">Want to Read</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4 col-md-6 mb-3">
+                                    <div class="stat-card text-center">
+                                        <p class="stat-number">{{ streak }}</p>
+                                        <p class="stat-label">Day Reading Streak</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Community Statistics -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-success text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseCommunityStats" 
+                                aria-expanded="false" aria-controls="collapseCommunityStats">
+                            <i class="bi bi-people me-2"></i>Community Reading Activity
+                        </button>
+                    </h2>
+                    <div id="collapseCommunityStats" class="accordion-collapse collapse" data-bs-parent="#statsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">See what the reading community has been up to lately.</p>
+                            
+                            <!-- Community Statistics Cards -->
+                            <div class="row mb-4">
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center" onclick="showCommunityDetail('active-readers')">
+                                        <p class="stat-number">{{ total_active_readers }}</p>
+                                        <p class="stat-label">Active Readers</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center" onclick="showCommunityDetail('books-this-month')">
+                                        <p class="stat-number">{{ total_books_this_month }}</p>
+                                        <p class="stat-label">Books This Month</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center" onclick="showCommunityDetail('currently-reading')">
+                                        <p class="stat-number">{{ community_currently_reading|length }}</p>
+                                        <p class="stat-label">Currently Reading</p>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center" onclick="showCommunityDetail('recent-activity')">
+                                        <p class="stat-number">{{ recent_logs|length }}</p>
+                                        <p class="stat-label">Recent Activity</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Detailed Community Views (Hidden by default) -->
+                            <div id="community-detail-container" style="display: none;">
+                                <hr class="my-4">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h5 id="community-detail-title" class="mb-0">Community Detail</h5>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideCommunityDetail()">
+                                        <i class="bi bi-x"></i> Close
+                                    </button>
+                                </div>
+                                <div id="community-detail-content">
+                                    <!-- Content will be loaded dynamically -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recently Finished Books -->
+                {% if recent_finished_books %}
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-info text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseRecentFinished" 
+                                aria-expanded="false" aria-controls="collapseRecentFinished">
+                            <i class="bi bi-book-check me-2"></i>Recently Finished Books
+                        </button>
+                    </h2>
+                    <div id="collapseRecentFinished" class="accordion-collapse collapse" data-bs-parent="#statsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Books recently completed by community members.</p>
+                            
+                            <div class="book-grid">
+                                {% for book in recent_finished_books[:12] %}
+                                <div class="book-item">
+                                    {% if book.cover_url %}
+                                        <img src="{{ book.cover_url }}" alt="{{ book.title }}" class="book-cover">
+                                    {% else %}
+                                        <div class="book-placeholder">
+                                            <i class="bi bi-book text-white"></i>
+                                        </div>
+                                    {% endif %}
+                                    <small class="d-block text-truncate" style="font-size: 0.8rem;">{{ book.title }}</small>
+                                    <small class="text-muted" style="font-size: 0.7rem;">{{ book.user.username }}</small>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Currently Reading Community -->
+                {% if community_currently_reading %}
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseCurrentlyReading" 
+                                aria-expanded="false" aria-controls="collapseCurrentlyReading">
+                            <i class="bi bi-book-half me-2"></i>Community Currently Reading
+                        </button>
+                    </h2>
+                    <div id="collapseCurrentlyReading" class="accordion-collapse collapse" data-bs-parent="#statsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Books that community members are currently enjoying.</p>
+                            
+                            <div class="book-grid">
+                                {% for book in community_currently_reading[:12] %}
+                                <div class="book-item">
+                                    {% if book.cover_url %}
+                                        <img src="{{ book.cover_url }}" alt="{{ book.title }}" class="book-cover">
+                                    {% else %}
+                                        <div class="book-placeholder">
+                                            <i class="bi bi-book text-white"></i>
+                                        </div>
+                                    {% endif %}
+                                    <small class="d-block text-truncate" style="font-size: 0.8rem;">{{ book.title }}</small>
+                                    <small class="text-muted" style="font-size: 0.7rem;">{{ book.user.username }}</small>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="text-center mt-4">
+                <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Library
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
   }
 
   .community-stat-card .stat-label {
@@ -115,168 +410,6 @@
     box-shadow: 0 6px 20px var(--shadow);
   }
 </style>
-
-<div class="stats-header text-center">
-  <h1><i class="bi bi-graph-up"></i> Reading Statistics</h1>
-  <p class="mb-0 opacity-75">Your reading journey and community insights</p>
-</div>
-
-<!-- User Stats Section -->
-<div class="row mb-4">
-  <div class="col-12">
-    <h3 class="mb-3"><i class="bi bi-person-circle"></i> Your Reading Stats</h3>
-  </div>
-</div>
-
-<div class="row">
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ books_finished_this_week }}</p>
-      <p class="stat-label">Books This Week</p>
-    </div>
-  </div>
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ books_finished_this_month }}</p>
-      <p class="stat-label">Books This Month</p>
-    </div>
-  </div>
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ books_finished_this_year }}</p>
-      <p class="stat-label">Books This Year</p>
-    </div>
-  </div>
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ books_finished_total }}</p>
-      <p class="stat-label">Total Books Finished</p>
-    </div>
-  </div>
-</div>
-
-<div class="row">
-  <div class="col-lg-4 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ currently_reading|length }}</p>
-      <p class="stat-label">Currently Reading</p>
-    </div>
-  </div>
-  <div class="col-lg-4 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ want_to_read|length }}</p>
-      <p class="stat-label">Want to Read</p>
-    </div>
-  </div>
-  <div class="col-lg-4 col-md-6 mb-3">
-    <div class="stat-card text-center">
-      <p class="stat-number">{{ streak }}</p>
-      <p class="stat-label">Day Reading Streak</p>
-    </div>
-  </div>
-</div>
-
-<!-- Community Stats Section -->
-<hr class="section-divider">
-
-<div class="row mb-4">
-  <div class="col-12">
-    <h3 class="mb-3"><i class="bi bi-people"></i> Community Reading Activity</h3>
-  </div>
-</div>
-
-<!-- Community Statistics Cards -->
-<div class="row mb-4">
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('active-readers')">
-      <p class="stat-number">{{ total_active_readers }}</p>
-      <p class="stat-label">Active Readers</p>
-    </div>
-  </div>
-  
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('books-this-month')">
-      <p class="stat-number">{{ total_books_this_month }}</p>
-      <p class="stat-label">Books This Month</p>
-    </div>
-  </div>
-  
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('currently-reading')">
-      <p class="stat-number">{{ community_currently_reading|length }}</p>
-      <p class="stat-label">Currently Reading</p>
-    </div>
-  </div>
-  
-  <div class="col-lg-3 col-md-6 mb-3">
-    <div class="stat-card community-stat-card text-center" onclick="showCommunityDetail('recent-activity')">
-      <p class="stat-number">{{ recent_logs|length }}</p>
-      <p class="stat-label">Recent Activity</p>
-    </div>
-  </div>
-</div>
-
-<!-- Recent Community Activity -->
-{% if recent_finished_books %}
-<div class="reading-activity">
-  <h5 class="mb-3"><i class="bi bi-book-check"></i> Recently Finished Books</h5>
-  <div class="row">
-    {% for book in recent_finished_books[:12] %}
-    <div class="col-lg-2 col-md-3 col-sm-4 col-6 mb-3">
-      <div class="text-center">
-        {% if book.cover_url %}
-          <img src="{{ book.cover_url }}" alt="{{ book.title }}" class="img-fluid rounded mb-1" style="height: 120px; width: auto; object-fit: cover;">
-        {% else %}
-          <div class="bg-secondary rounded d-flex align-items-center justify-content-center mb-1" style="height: 120px; width: 80px; margin: 0 auto;">
-            <i class="bi bi-book text-white"></i>
-          </div>
-        {% endif %}
-        <small class="d-block text-truncate" style="font-size: 0.8rem;">{{ book.title }}</small>
-        <small class="text-muted" style="font-size: 0.7rem;">{{ book.user.username }}</small>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-<!-- Currently Reading Community -->
-{% if community_currently_reading %}
-<div class="reading-activity">
-  <h5 class="mb-3"><i class="bi bi-book-half"></i> Community Currently Reading</h5>
-  <div class="row">
-    {% for book in community_currently_reading[:12] %}
-    <div class="col-lg-2 col-md-3 col-sm-4 col-6 mb-3">
-      <div class="text-center">
-        {% if book.cover_url %}
-          <img src="{{ book.cover_url }}" alt="{{ book.title }}" class="img-fluid rounded mb-1" style="height: 120px; width: auto; object-fit: cover;">
-        {% else %}
-          <div class="bg-secondary rounded d-flex align-items-center justify-content-center mb-1" style="height: 120px; width: 80px; margin: 0 auto;">
-            <i class="bi bi-book text-white"></i>
-          </div>
-        {% endif %}
-        <small class="d-block text-truncate" style="font-size: 0.8rem;">{{ book.title }}</small>
-        <small class="text-muted" style="font-size: 0.7rem;">{{ book.user.username }}</small>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-<!-- Detailed Community Views (Hidden by default) -->
-<div id="community-detail-container" style="display: none;">
-  <hr class="section-divider">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 id="community-detail-title">Community Detail</h4>
-    <button type="button" class="btn btn-outline-secondary" onclick="hideCommunityDetail()">
-      <i class="bi bi-x"></i> Close
-    </button>
-  </div>
-  <div id="community-detail-content">
-    <!-- Content will be loaded dynamically -->
-  </div>
-</div>
 
 <script>
 function showCommunityDetail(type) {

@@ -31,50 +31,6 @@
     --card-text: #e0e0e0;
   }
 
-  .library-header {
-    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
-    color: var(--header-text);
-    padding: 2rem 0;
-    margin-bottom: 2rem;
-    border-radius: 15px;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .library-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: url('{{ url_for('static', filename='paper-fibers.png') }}');
-    opacity: 0.3;
-  }
-
-  .library-header h1 {
-    font-size: clamp(1.5rem, 4vw, 2.5rem);
-    font-weight: 700;
-    margin: 0;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-    position: relative;
-    z-index: 1;
-  }
-
-  .library-header p {
-    font-size: clamp(0.9rem, 2vw, 1.25rem);
-  }
-
-  /* Dark mode styling */
-  [data-theme="dark"] .library-header h1 {
-    color: var(--header-text) !important;
-  }
-
-  [data-theme="dark"] .library-header p {
-    color: var(--header-text) !important;
-    opacity: 0.9;
-  }
-
   [data-theme="dark"] .library-stats {
     background: var(--card-bg) !important;
     border-color: #404040 !important;
@@ -369,10 +325,21 @@
   }
 </style>
 
-<div class="library-header text-center">
-  <h1>📚 My Library</h1>
-  <p class="lead mb-0">Your personal collection of books</p>
-</div>
+<div class="container-fluid">
+    <!-- Page Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h2 mb-0">
+            <i class="bi bi-book me-2"></i>My Library
+        </h1>
+        <div>
+            <a href="{{ url_for('main.add_book') }}" class="btn btn-success me-2">
+                <i class="bi bi-plus-circle me-1"></i>Add Book
+            </a>
+            <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#bulkActionsModal">
+                <i class="bi bi-gear me-1"></i>Bulk Actions
+            </button>
+        </div>
+    </div>
 
 <!-- Library Stats -->
 <div class="library-stats">
@@ -725,6 +692,8 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 </script>
+
+</div>
 
 <!-- Debug Panel (Admin Only) -->
 {% include 'components/debug_panel.html' %}
