@@ -230,7 +230,6 @@ api_test_results.json
 cookies.txt
 
 # Development and testing files
-debug_*.py
 test_*.py
 tests/
 scripts/debug/
