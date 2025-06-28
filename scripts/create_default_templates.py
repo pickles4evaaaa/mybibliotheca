@@ -40,10 +40,10 @@ def create_goodreads_template():
             "Book Id": {"action": "map_existing", "target_field": "custom_global_goodreads_book_id"},
             "Title": {"action": "map_existing", "target_field": "title"},
             "Author": {"action": "map_existing", "target_field": "author"}, 
-            "Author l-f": {"action": "map_existing", "target_field": "author"},  # Alternative author format
+            "Author l-f": {"action": "skip"},  # Skip alternate author format - we'll use primary Author field
             "Additional Authors": {"action": "map_existing", "target_field": "additional_authors"},
-            "ISBN13": {"action": "map_existing", "target_field": "isbn"},
             "ISBN": {"action": "map_existing", "target_field": "isbn"}, 
+            "ISBN13": {"action": "map_existing", "target_field": "isbn"},
             "My Rating": {"action": "map_existing", "target_field": "rating"},
             "Average Rating": {"action": "map_existing", "target_field": "custom_global_average_rating"},
             "Publisher": {"action": "map_existing", "target_field": "publisher"},
@@ -53,9 +53,9 @@ def create_goodreads_template():
             "Original Publication Year": {"action": "map_existing", "target_field": "custom_global_original_publication_year"},
             "Date Read": {"action": "map_existing", "target_field": "date_read"},
             "Date Added": {"action": "map_existing", "target_field": "date_added"},
-            "Bookshelves": {"action": "map_existing", "target_field": "reading_status"},
-            "Bookshelves with positions": {"action": "map_existing", "target_field": "reading_status"},
-            "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},
+            "Bookshelves": {"action": "map_existing", "target_field": "categories"},  # Fixed: Bookshelves are categories, not reading status
+            "Bookshelves with positions": {"action": "map_existing", "target_field": "categories"},  # Fixed: These are also categories
+            "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},  # Correct: This is the reading status
             "My Review": {"action": "map_existing", "target_field": "notes"},
             "Spoiler": {"action": "map_existing", "target_field": "custom_global_spoiler_review"},
             "Private Notes": {"action": "map_existing", "target_field": "custom_personal_private_notes"},
@@ -96,11 +96,12 @@ def create_storygraph_template():
             "Read Status": {"action": "map_existing", "target_field": "reading_status"},
             "Date Added": {"action": "map_existing", "target_field": "date_added"},
             "Last Date Read": {"action": "map_existing", "target_field": "date_read"},
+            "Dates Read": {"action": "skip"},  # Skip - complex format that's hard to parse
             "Read Count": {"action": "map_existing", "target_field": "custom_global_read_count"},
             "Star Rating": {"action": "map_existing", "target_field": "rating"},
             "Review": {"action": "map_existing", "target_field": "notes"},
             "Tags": {"action": "map_existing", "target_field": "categories"},
-            "Moods": {"action": "map_existing", "target_field": "categories"},
+            "Moods": {"action": "map_existing", "target_field": "custom_global_moods"},  # Fixed: Create separate field for moods
             "Pace": {"action": "map_existing", "target_field": "custom_global_pace"},
             "Character- or Plot-Driven?": {"action": "map_existing", "target_field": "custom_global_character_plot_driven"},
             "Strong Character Development?": {"action": "map_existing", "target_field": "custom_global_strong_character_development"},

@@ -115,21 +115,21 @@ def reading_history():
     books_data = []
     for user_book in domain_books:
         book_dict = {
-            'id': user_book.id,
-            'uid': user_book.uid,
-            'title': user_book.title,
-            'author': user_book.author,
-            'isbn': user_book.isbn,
-            'description': user_book.description,
-            'start_date': getattr(user_book, 'start_date', None).isoformat() if getattr(user_book, 'start_date', None) else None,
-            'finish_date': getattr(user_book, 'finish_date', None).isoformat() if getattr(user_book, 'finish_date', None) else None,
-            'want_to_read': user_book.want_to_read,
-            'library_only': user_book.library_only,
-            'cover_url': user_book.cover_url,
-            'user_rating': user_book.user_rating,
-            'personal_notes': user_book.personal_notes,
-            'status': user_book.status,
-            'date_added': user_book.date_added.isoformat() if user_book.date_added else None
+            'id': user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', ''),
+            'uid': user_book.get('uid') if isinstance(user_book, dict) else getattr(user_book, 'uid', ''),
+            'title': user_book.get('title') if isinstance(user_book, dict) else getattr(user_book, 'title', ''),
+            'author': user_book.get('author') if isinstance(user_book, dict) else getattr(user_book, 'author', ''),
+            'isbn': user_book.get('isbn') if isinstance(user_book, dict) else getattr(user_book, 'isbn', ''),
+            'description': user_book.get('description') if isinstance(user_book, dict) else getattr(user_book, 'description', ''),
+            'start_date': (user_book.get('start_date') if isinstance(user_book, dict) else getattr(user_book, 'start_date', None)).isoformat() if (user_book.get('start_date') if isinstance(user_book, dict) else getattr(user_book, 'start_date', None)) else None,
+            'finish_date': (user_book.get('finish_date') if isinstance(user_book, dict) else getattr(user_book, 'finish_date', None)).isoformat() if (user_book.get('finish_date') if isinstance(user_book, dict) else getattr(user_book, 'finish_date', None)) else None,
+            'want_to_read': user_book.get('want_to_read') if isinstance(user_book, dict) else getattr(user_book, 'want_to_read', False),
+            'library_only': user_book.get('library_only') if isinstance(user_book, dict) else getattr(user_book, 'library_only', False),
+            'cover_url': user_book.get('cover_url') if isinstance(user_book, dict) else getattr(user_book, 'cover_url', None),
+            'user_rating': user_book.get('user_rating') if isinstance(user_book, dict) else getattr(user_book, 'user_rating', None),
+            'personal_notes': user_book.get('personal_notes') if isinstance(user_book, dict) else getattr(user_book, 'personal_notes', None),
+            'status': user_book.get('status') if isinstance(user_book, dict) else getattr(user_book, 'status', None),
+            'date_added': (user_book.get('date_added') if isinstance(user_book, dict) else getattr(user_book, 'date_added', None)).isoformat() if (user_book.get('date_added') if isinstance(user_book, dict) else getattr(user_book, 'date_added', None)) else None
         }
         books_data.append(book_dict)
     
@@ -210,13 +210,17 @@ def log_reading(uid):
     log_date = datetime.strptime(log_date_str, '%Y-%m-%d').date() if log_date_str else date.today()
     
     # Check for existing log using service layer
-    existing_log = reading_log_service.get_existing_log_sync(user_book.id, current_user.id, log_date)
-    if existing_log:
-        flash('You have already logged reading for this day.')
+    book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+    if book_id:
+        existing_log = reading_log_service.get_existing_log_sync(book_id, current_user.id, log_date)
+        if existing_log:
+            flash('You have already logged reading for this day.')
+        else:
+            # Create reading log using service layer
+            reading_log_service.create_reading_log_sync(book_id, current_user.id, log_date)
+            flash('Reading day logged.')
     else:
-        # Create reading log using service layer
-        reading_log_service.create_reading_log_sync(user_book.id, current_user.id, log_date)
-        flash('Reading day logged.')
+        flash('Error: Book ID not found.', 'error')
     return redirect(url_for('main.view_book', uid=uid))
 
 @bp.route('/book/<uid>/delete', methods=['POST'])
@@ -240,7 +244,8 @@ def toggle_finished(uid):
     if not user_book:
         abort(404)
     
-    if getattr(user_book, 'finish_date', None):
+    finish_date = user_book.get('finish_date') if isinstance(user_book, dict) else getattr(user_book, 'finish_date', None)
+    if finish_date:
         # Mark as currently reading
         book_service.update_book_sync(uid, str(current_user.id), finish_date=None)
         flash('Book marked as currently reading.')
@@ -260,11 +265,13 @@ def start_reading(uid):
         abort(404)
     
     update_data = {'want_to_read': False}
-    if not getattr(user_book, 'start_date', None):
+    start_date = user_book.get('start_date') if isinstance(user_book, dict) else getattr(user_book, 'start_date', None)
+    if not start_date:
         update_data['start_date'] = datetime.today().date()
     
     book_service.update_book_sync(uid, str(current_user.id), **update_data)
-    flash(f'Started reading "{user_book.title}".')
+    title = user_book.get('title', 'Unknown Title') if isinstance(user_book, dict) else getattr(user_book, 'title', 'Unknown Title')
+    flash(f'Started reading "{title}".')
     return redirect(url_for('main.library'))
 
 @bp.route('/book/<uid>/update_status', methods=['POST'])
@@ -298,7 +305,8 @@ def update_status(uid):
             'want_to_read': False,
             'library_only': False
         })
-        if not getattr(user_book, 'start_date', None):
+        start_date = user_book.get('start_date') if isinstance(user_book, dict) else getattr(user_book, 'start_date', None)
+        if not start_date:
             update_data['start_date'] = datetime.now().date()
     elif want_to_read:
         update_data.update({
@@ -338,26 +346,40 @@ def library():
     location_counts = {}
     
     for book in user_books:
-        if hasattr(book, 'locations') and book.locations:
+        # Handle both dict and object formats for compatibility
+        book_title = book.get('title') if isinstance(book, dict) else getattr(book, 'title', 'Unknown Title')
+        book_locations = book.get('locations') if isinstance(book, dict) else getattr(book, 'locations', None)
+        
+        if book_locations:
             books_with_locations += 1
-            for loc_id in book.locations:
+            for loc_id in book_locations:
                 location_counts[loc_id] = location_counts.get(loc_id, 0) + 1
-            debug_log(f"Book '{book.title}' has locations: {book.locations}", "LIBRARY")
+            debug_log(f"Book '{book_title}' has locations: {book_locations}", "LIBRARY")
         else:
             books_without_locations += 1
-            debug_log(f"Book '{book.title}' has NO locations", "LIBRARY")
+            debug_log(f"Book '{book_title}' has NO locations", "LIBRARY")
     
     debug_log(f"Summary: {books_with_locations} books WITH locations, {books_without_locations} books WITHOUT locations", "LIBRARY")
     debug_log(f"Location distribution: {location_counts}", "LIBRARY")
     
-    # Calculate statistics for filter buttons
+    # Calculate statistics for filter buttons - handle both dict and object formats
+    def get_reading_status(book):
+        if isinstance(book, dict):
+            return book.get('ownership', {}).get('reading_status')
+        return getattr(book, 'reading_status', None)
+    
+    def get_ownership_status(book):
+        if isinstance(book, dict):
+            return book.get('ownership', {}).get('ownership_status')
+        return getattr(book, 'ownership_status', None)
+    
     stats = {
         'total_books': len(user_books),
-        'books_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'read']),
-        'currently_reading': len([b for b in user_books if getattr(b, 'reading_status', None) == 'reading']),
-        'want_to_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']),
-        'on_hold': len([b for b in user_books if getattr(b, 'reading_status', None) == 'on_hold']),
-        'wishlist': len([b for b in user_books if getattr(b, 'ownership_status', None) == 'wishlist']),
+        'books_read': len([b for b in user_books if get_reading_status(b) == 'read']),
+        'currently_reading': len([b for b in user_books if get_reading_status(b) == 'reading']),
+        'want_to_read': len([b for b in user_books if get_reading_status(b) == 'plan_to_read']),
+        'on_hold': len([b for b in user_books if get_reading_status(b) == 'on_hold']),
+        'wishlist': len([b for b in user_books if get_ownership_status(b) == 'wishlist']),
         # Add location stats
         'books_with_locations': books_with_locations,
         'books_without_locations': books_without_locations,
@@ -368,66 +390,86 @@ def library():
     filtered_books = user_books
     if status_filter and status_filter != 'all':
         if status_filter == 'wishlist':
-            filtered_books = [book for book in filtered_books if getattr(book, 'ownership_status', None) == 'wishlist']
+            filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
         else:
-            filtered_books = [book for book in filtered_books if getattr(book, 'reading_status', None) == status_filter]
+            filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
     
     # Apply other filters
     if search_query:
         search_lower = search_query.lower()
         filtered_books = [
             book for book in filtered_books 
-            if (search_lower in book.title.lower() if book.title else False) or
-               (search_lower in book.author.lower() if book.author else False) or
-               (search_lower in book.description.lower() if book.description else False)
+            if (search_lower in (book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')).lower()) or
+               (search_lower in (book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')).lower()) or
+               (search_lower in (book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')).lower())
         ]
     
     if publisher_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.publisher and publisher_filter.lower() in book.publisher.lower()
+            if (book.get('publisher') if isinstance(book, dict) else getattr(book, 'publisher', None)) and 
+               publisher_filter.lower() in (book.get('publisher', '') if isinstance(book, dict) else getattr(book, 'publisher', '')).lower()
         ]
     
     if language_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.language == language_filter
+            if (book.get('language') if isinstance(book, dict) else getattr(book, 'language', None)) == language_filter
         ]
     
     if location_filter:
+        # Note: This may need adjustment based on how locations are stored in the dict format
         filtered_books = [
             book for book in filtered_books 
-            if book.locations and any(
-                location_filter.lower() in loc.name.lower() 
-                for loc in book.locations 
-                if hasattr(loc, 'name')
+            if (book.get('locations') if isinstance(book, dict) else getattr(book, 'locations', None)) and any(
+                location_filter.lower() in (loc.get('name', '') if isinstance(loc, dict) else getattr(loc, 'name', '')).lower() 
+                for loc in (book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', []))
             )
         ]
     
     if category_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.categories and any(category_filter.lower() in cat.name.lower() for cat in book.categories if hasattr(cat, 'name'))
+            if (book.get('categories') if isinstance(book, dict) else getattr(book, 'categories', None)) and any(
+                category_filter.lower() in (cat.get('name', '') if isinstance(cat, dict) else getattr(cat, 'name', '')).lower() 
+                for cat in (book.get('categories', []) if isinstance(book, dict) else getattr(book, 'categories', []))
+            )
         ]
 
     # Apply sorting
     def get_author_name(book):
         """Helper function to get author name safely"""
-        if hasattr(book, 'authors') and book.authors:
-            # Handle list of Author objects
-            if isinstance(book.authors, list) and len(book.authors) > 0:
-                author = book.authors[0]
-                if hasattr(author, 'name'):
-                    return author.name
-                elif hasattr(author, 'first_name') and hasattr(author, 'last_name'):
-                    return f"{author.first_name} {author.last_name}".strip()
+        if isinstance(book, dict):
+            authors = book.get('authors', [])
+            author = book.get('author', '')
+            if authors and isinstance(authors, list) and len(authors) > 0:
+                first_author = authors[0]
+                if isinstance(first_author, dict):
+                    return first_author.get('name', 'Unknown Author')
+                elif hasattr(first_author, 'name'):
+                    return first_author.name
                 else:
-                    return str(author)
-            else:
-                return str(book.authors)
-        elif hasattr(book, 'author') and book.author:
-            return book.author
-        return "Unknown Author"
+                    return str(first_author)
+            elif author:
+                return author
+            return "Unknown Author"
+        else:
+            # Handle object format
+            if hasattr(book, 'authors') and book.authors:
+                # Handle list of Author objects
+                if isinstance(book.authors, list) and len(book.authors) > 0:
+                    author = book.authors[0]
+                    if hasattr(author, 'name'):
+                        return author.name
+                    elif hasattr(author, 'first_name') and hasattr(author, 'last_name'):
+                        return f"{author.first_name} {author.last_name}".strip()
+                    else:
+                        return str(author)
+                else:
+                    return str(book.authors)
+            elif hasattr(book, 'author') and book.author:
+                return book.author
+            return "Unknown Author"
     
     def get_author_last_first(book):
         """Helper function to get author name in Last, First format"""
@@ -442,9 +484,9 @@ def library():
         return author_name
     
     if sort_option == 'title_asc':
-        filtered_books.sort(key=lambda x: (x.title or "").lower())
+        filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower())
     elif sort_option == 'title_desc':
-        filtered_books.sort(key=lambda x: (x.title or "").lower(), reverse=True)
+        filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower(), reverse=True)
     elif sort_option == 'author_first_asc':
         filtered_books.sort(key=lambda x: get_author_name(x).lower())
     elif sort_option == 'author_first_desc':
@@ -455,10 +497,49 @@ def library():
         filtered_books.sort(key=lambda x: get_author_last_first(x).lower(), reverse=True)
     else:
         # Default to title A-Z
-        filtered_books.sort(key=lambda x: (x.title or "").lower())
+        filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower())
 
     # Books are already in the right format for the template
     books = filtered_books
+
+    # Convert dictionary books to object-like structures for template compatibility
+    converted_books = []
+    for book in books:
+        if isinstance(book, dict):
+            # Create an object-like structure that the template can work with
+            class BookObj:
+                def __init__(self, data):
+                    for key, value in data.items():
+                        setattr(self, key, value)
+                    # Ensure common attributes have defaults
+                    if not hasattr(self, 'authors'):
+                        self.authors = []
+                    if not hasattr(self, 'contributors'):
+                        self.contributors = []
+                    if not hasattr(self, 'categories'):
+                        self.categories = []
+                    if not hasattr(self, 'publisher'):
+                        self.publisher = None
+                    if not hasattr(self, 'series'):
+                        self.series = None
+                    if not hasattr(self, 'locations'):
+                        self.locations = []
+                    # Handle ownership data
+                    ownership = data.get('ownership', {})
+                    for key, value in ownership.items():
+                        setattr(self, key, value)
+                
+                def get_contributors_by_type(self, contribution_type):
+                    """Get contributors by type for template compatibility."""
+                    if hasattr(self, 'contributors') and self.contributors:
+                        return [c for c in self.contributors if getattr(c, 'contribution_type', None) == contribution_type]
+                    return []
+            
+            converted_books.append(BookObj(book))
+        else:
+            converted_books.append(book)
+    
+    books = converted_books
 
     # Get distinct values for filter dropdowns (from all books, not filtered)
     all_books = user_books
@@ -469,18 +550,46 @@ def library():
     locations = set()
 
     for book in all_books:
-        if book.categories:
+        # Handle categories
+        book_categories = book.get('categories', []) if isinstance(book, dict) else getattr(book, 'categories', [])
+        if book_categories:
             # book.categories is a list of Category objects, not a string
-            categories.update([cat.name for cat in book.categories if hasattr(cat, 'name')])
-        if book.publisher:
+            for cat in book_categories:
+                if isinstance(cat, dict):
+                    categories.add(cat.get('name', ''))
+                elif hasattr(cat, 'name'):
+                    categories.add(cat.name)
+                else:
+                    categories.add(str(cat))
+        
+        # Handle publisher
+        book_publisher = book.get('publisher') if isinstance(book, dict) else getattr(book, 'publisher', None)
+        if book_publisher:
             # Handle Publisher domain object or string
-            publisher_name = book.publisher.name if hasattr(book.publisher, 'name') else str(book.publisher)
+            if isinstance(book_publisher, dict):
+                publisher_name = book_publisher.get('name', str(book_publisher))
+            elif hasattr(book_publisher, 'name'):
+                publisher_name = book_publisher.name
+            else:
+                publisher_name = str(book_publisher)
             publishers.add(publisher_name)
-        if book.language:
-            languages.add(book.language)
-        if book.locations:
+        
+        # Handle language
+        book_language = book.get('language') if isinstance(book, dict) else getattr(book, 'language', None)
+        if book_language:
+            languages.add(book_language)
+        
+        # Handle locations
+        book_locations = book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', [])
+        if book_locations:
             # book.locations is a list of Location objects
-            locations.update([loc.name for loc in book.locations if hasattr(loc, 'name')])
+            for loc in book_locations:
+                if isinstance(loc, dict):
+                    locations.add(loc.get('name', ''))
+                elif hasattr(loc, 'name'):
+                    locations.add(loc.name)
+                else:
+                    locations.add(str(loc))
 
     # Get users through Redis service layer
     domain_users = user_service.get_all_users_sync()
@@ -707,9 +816,55 @@ def edit_book(uid):
     # Get book categories for editing
     book_categories = []
     try:
-        book_categories = book_service.get_book_categories_sync(user_book.id)
+        book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+        if book_id:
+            book_categories = book_service.get_book_categories_sync(book_id)
     except Exception as e:
         print(f"❌ [EDIT] Error loading book categories: {e}")
+    
+    # Convert dictionary to object-like structure for template compatibility
+    if isinstance(user_book, dict):
+        class BookObj:
+            def __init__(self, data):
+                for key, value in data.items():
+                    setattr(self, key, value)
+                # Ensure common attributes have defaults
+                if not hasattr(self, 'authors'):
+                    self.authors = []
+                if not hasattr(self, 'contributors'):
+                    self.contributors = []
+                if not hasattr(self, 'categories'):
+                    self.categories = []
+                if not hasattr(self, 'publisher'):
+                    self.publisher = None
+                # Handle ownership data
+                ownership = data.get('ownership', {})
+                for key, value in ownership.items():
+                    setattr(self, key, value)
+            
+            def get_contributors_by_type(self, contribution_type):
+                """Get contributors filtered by type."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                # Handle both string and enum contribution types
+                type_str = contribution_type.upper() if isinstance(contribution_type, str) else str(contribution_type).upper()
+                
+                filtered = []
+                for contributor in self.contributors:
+                    if isinstance(contributor, dict):
+                        role = contributor.get('role', '').upper()
+                        if role == type_str or role == type_str.replace('ED', ''):  # Handle past tense
+                            filtered.append(contributor)
+                    else:
+                        # Handle object-like contributors
+                        role = getattr(contributor, 'role', '').upper()
+                        if role == type_str or role == type_str.replace('ED', ''):
+                            filtered.append(contributor)
+                
+                return filtered
+        
+        user_book = BookObj(user_book)
     
     return render_template('edit_book_enhanced.html', book=user_book, book_categories=book_categories)
 
@@ -718,62 +873,142 @@ def edit_book(uid):
 @login_required
 def view_book_enhanced(uid):
     """Enhanced book view with new status system."""
-    from app.debug_system import debug_log
+    from app.debug_system import debug_log, debug_book_details, debug_service_call, debug_template_data
     
-    debug_log(f"Loading enhanced view for book {uid}, user {current_user.id}", "VIEW")
+    debug_log(f"🔍 [VIEW] Starting enhanced book view for UID: {uid}, User: {current_user.id}", "BOOK_VIEW")
     
+    # Service call debugging
+    debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, None, "BEFORE")
     user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
+    debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, user_book, "AFTER")
+    
     if not user_book:
-        debug_log(f"Book {uid} not found for user {current_user.id}", "VIEW")
+        debug_log(f"❌ [VIEW] Book {uid} not found for user {current_user.id}", "BOOK_VIEW")
         abort(404)
 
-    debug_log(f"Found book: {user_book.title}", "VIEW")
+    # Enhanced book debugging
+    debug_book_details(user_book, uid, str(current_user.id), "VIEW")
+
+    title = user_book.get('title', 'Unknown Title') if isinstance(user_book, dict) else getattr(user_book, 'title', 'Unknown Title')
+    debug_log(f"✅ [VIEW] Found book: {title}", "BOOK_VIEW")
+
+    # Convert dictionary to object-like structure for template compatibility
+    if isinstance(user_book, dict):
+        debug_log(f"🔄 [VIEW] Converting dict to object for template compatibility", "BOOK_VIEW")
+        # Create an object-like structure that the template can work with
+        class BookObj:
+            def __init__(self, data):
+                for key, value in data.items():
+                    setattr(self, key, value)
+                # Ensure common attributes have defaults
+                if not hasattr(self, 'authors'):
+                    self.authors = []
+                if not hasattr(self, 'contributors'):
+                    self.contributors = []
+                if not hasattr(self, 'categories'):
+                    self.categories = []
+                if not hasattr(self, 'publisher'):
+                    self.publisher = None
+                if not hasattr(self, 'series'):
+                    self.series = None
+                if not hasattr(self, 'custom_metadata'):
+                    self.custom_metadata = {}
+                # Handle ownership data
+                ownership = data.get('ownership', {})
+                for key, value in ownership.items():
+                    setattr(self, key, value)
+            
+            def get_contributors_by_type(self, contribution_type):
+                """Get contributors filtered by type."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                # Handle both string and enum contribution types
+                type_str = contribution_type.upper() if isinstance(contribution_type, str) else str(contribution_type).upper()
+                
+                filtered = []
+                for contributor in self.contributors:
+                    if isinstance(contributor, dict):
+                        role = contributor.get('role', '').upper()
+                        if role == type_str or role == type_str.replace('ED', ''):  # Handle past tense
+                            filtered.append(contributor)
+                    else:
+                        # Handle object-like contributors
+                        role = getattr(contributor, 'role', '').upper()
+                        if role == type_str or role == type_str.replace('ED', ''):
+                            filtered.append(contributor)
+                
+                return filtered
+        
+        user_book = BookObj(user_book)
+        debug_log(f"✅ [VIEW] Converted dictionary to object for template compatibility", "BOOK_VIEW")
 
     # Get book categories
     book_categories = []
     try:
-        book_categories = book_service.get_book_categories_sync(user_book.id)
-        debug_log(f"Found {len(book_categories)} categories", "VIEW")
+        book_id = getattr(user_book, 'id', None)
+        debug_log(f"🔍 [VIEW] Getting categories for book ID: {book_id}", "BOOK_VIEW")
+        if book_id:
+            debug_service_call("book_service", "get_book_categories_sync", {"book_id": book_id}, None, "BEFORE")
+            book_categories = book_service.get_book_categories_sync(book_id)
+            debug_service_call("book_service", "get_book_categories_sync", {"book_id": book_id}, book_categories, "AFTER")
+            debug_log(f"✅ [VIEW] Found {len(book_categories)} categories", "BOOK_VIEW")
+        else:
+            debug_log(f"❌ [VIEW] No book ID found for category lookup", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading book categories: {e}")
-        debug_log(f"Error loading book categories: {e}", "VIEW_ERROR")
+        debug_log(f"❌ [VIEW] Error loading book categories: {e}", "BOOK_VIEW")
 
     # Get custom metadata for display
     global_metadata_display = []
     personal_metadata_display = []
     
     try:
+        debug_log(f"🔍 [VIEW] Processing custom metadata", "BOOK_VIEW")
         # Global metadata is stored on the book itself, but we don't have a separate method to get just the book
         # For now, assume no global metadata since we're storing everything on relationships
         # TODO: Implement proper global vs personal metadata separation
         
-        if hasattr(user_book, 'custom_metadata') and user_book.custom_metadata:
-            debug_log(f"Personal metadata found: {user_book.custom_metadata}", "VIEW")
+        custom_metadata = getattr(user_book, 'custom_metadata', None)
+        if custom_metadata:
+            debug_log(f"✅ [VIEW] Personal metadata found: {custom_metadata}", "BOOK_VIEW")
             personal_metadata_display = custom_field_service.get_custom_metadata_for_display(
-                user_book.custom_metadata
+                custom_metadata
             )
+            debug_log(f"✅ [VIEW] Converted to {len(personal_metadata_display)} display items", "BOOK_VIEW")
         else:
-            debug_log("No personal metadata found", "VIEW")
+            debug_log(f"ℹ️ [VIEW] No personal metadata found", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading custom metadata for display: {e}")
-        debug_log(f"Error loading custom metadata for display: {e}", "VIEW_ERROR")
+        debug_log(f"❌ [VIEW] Error loading custom metadata for display: {e}", "BOOK_VIEW")
     
     # Get user locations for the location dropdown and debug info
     user_locations = []
     try:
+        debug_log(f"🔍 [VIEW] Getting user locations", "BOOK_VIEW")
         from app.location_service import LocationService
         from app.infrastructure.kuzu_graph import get_kuzu_connection
         from config import Config
         
         kuzu_connection = get_kuzu_connection()
-        location_service = LocationService(kuzu_connection.connection)
+        location_service = LocationService(kuzu_connection.connect())
         user_locations = location_service.get_user_locations(str(current_user.id))
-        debug_log(f"Found {len(user_locations)} locations for user {current_user.id}", "VIEW")
+        debug_log(f"✅ [VIEW] Found {len(user_locations)} locations for user {current_user.id}", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading user locations: {e}")
-        debug_log(f"Error loading user locations: {e}", "VIEW_ERROR")
+        debug_log(f"❌ [VIEW] Error loading user locations: {e}", "BOOK_VIEW")
     
-    debug_log(f"Returning with {len(global_metadata_display)} global and {len(personal_metadata_display)} personal metadata items", "VIEW")
+    # Prepare template data
+    template_data = {
+        'book': user_book,
+        'book_categories': book_categories,
+        'global_metadata_display': global_metadata_display,
+        'personal_metadata_display': personal_metadata_display,
+        'user_locations': user_locations
+    }
+    
+    debug_template_data('view_book_enhanced.html', template_data, "VIEW")
+    debug_log(f"🎨 [VIEW] Rendering template with {len(global_metadata_display)} global and {len(personal_metadata_display)} personal metadata items", "BOOK_VIEW")
     
     return render_template(
         'view_book_enhanced.html', 
@@ -811,9 +1046,9 @@ def update_book_details(uid):
         update_data['media_type'] = media_type
     
     # Location
-    primary_location_id = request.form.get('primary_location_id')
-    if primary_location_id:
-        update_data['primary_location_id'] = primary_location_id
+    location_id = request.form.get('location_id')
+    if location_id:
+        update_data['location_id'] = location_id
     
     # Borrowing details
     borrowed_from = request.form.get('borrowed_from', '').strip()
@@ -832,11 +1067,14 @@ def update_book_details(uid):
             update_data['loaned_due_date'] = datetime.strptime(loaned_due_date, '%Y-%m-%d').date()
     
     # Update reading dates based on status
-    if reading_status == 'reading' and not getattr(user_book, 'start_date', None):
+    start_date = user_book.get('start_date') if isinstance(user_book, dict) else getattr(user_book, 'start_date', None)
+    finish_date = user_book.get('finish_date') if isinstance(user_book, dict) else getattr(user_book, 'finish_date', None)
+    
+    if reading_status == 'reading' and not start_date:
         update_data['start_date'] = date.today()
-    elif reading_status == 'read' and not getattr(user_book, 'finish_date', None):
+    elif reading_status == 'read' and not finish_date:
         update_data['finish_date'] = date.today()
-        if not getattr(user_book, 'start_date', None):
+        if not start_date:
             update_data['start_date'] = date.today()
     
     # Use service layer to update
@@ -935,36 +1173,51 @@ def update_book_notes(uid):
 @login_required
 def edit_book_custom_metadata(uid):
     """Edit custom metadata for a book."""
+    from app.debug_system import debug_log, debug_metadata_operation, debug_service_call, debug_template_data
+    
     try:
-        print(f"🔍 [EDIT_META] Starting custom metadata edit for book {uid}, user {current_user.id}")
+        debug_log(f"🔍 [EDIT_META] Starting custom metadata edit for book {uid}, user {current_user.id}", "METADATA")
         
         # Get user book with relationship data (includes custom metadata)
-        print(f"🔍 [EDIT_META] Getting user book...")
-        user_book = book_service.get_user_book_sync(str(current_user.id), uid)
+        debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, None, "BEFORE")
+        user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
+        debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, user_book, "AFTER")
+        
         if not user_book:
-            print(f"❌ [EDIT_META] User book {uid} not found for user {current_user.id}")
+            debug_log(f"❌ [EDIT_META] User book {uid} not found for user {current_user.id}", "METADATA")
             flash('Book not found in your library.', 'error')
             return redirect(url_for('main.library'))
         
-        print(f"✅ [EDIT_META] Found user book: {user_book.title}")
-        print(f"📊 [EDIT_META] User book custom metadata: {getattr(user_book, 'custom_metadata', 'NO ATTR')}")
+        # Enhanced metadata debugging
+        book_id = getattr(user_book, 'id', 'NO_ID')
+        existing_metadata = getattr(user_book, 'custom_metadata', {})
+        debug_metadata_operation(book_id, uid, str(current_user.id), existing_metadata, "LOAD")
+        
+        title = user_book.get('title', 'Unknown Title') if isinstance(user_book, dict) else getattr(user_book, 'title', 'Unknown Title')
+        debug_log(f"✅ [EDIT_META] Found user book: {title}", "METADATA")
+        debug_log(f"📊 [EDIT_META] User book custom metadata: {getattr(user_book, 'custom_metadata', 'NO ATTR')}", "METADATA")
         
         if request.method == 'POST':
-            print(f"🔍 [EDIT_META] Processing POST request")
-            print(f"🔍 [EDIT_META] Form data keys: {list(request.form.keys())}")
-            print(f"🔍 [EDIT_META] Full form data: {dict(request.form)}")
+            debug_log(f"🔍 [EDIT_META] Processing POST request", "METADATA")
+            debug_log(f"🔍 [EDIT_META] Form data keys: {list(request.form.keys())}", "METADATA")
+            debug_log(f"🔍 [EDIT_META] Full form data: {dict(request.form)}", "METADATA")
             
             # Process form data for custom metadata
             # Note: In current architecture, we're storing everything as personal metadata
             personal_metadata = {}
             
             # Get available fields (treating all as personal for now)
+            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": False}, None, "BEFORE")
             personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
-            # Also get global fields but treat them as personal
+            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": False}, personal_fields, "AFTER")
+            
+            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": True}, None, "BEFORE")
             global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
+            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": True}, global_fields, "AFTER")
+            
             all_fields = personal_fields + global_fields
             
-            print(f"🔍 [EDIT_META] Found {len(personal_fields)} personal fields, {len(global_fields)} global fields")
+            debug_log(f"🔍 [EDIT_META] Found {len(personal_fields)} personal fields, {len(global_fields)} global fields", "METADATA")
             
             # Process all fields as personal metadata
             for field in all_fields:
@@ -991,7 +1244,8 @@ def edit_book_custom_metadata(uid):
                 print(f"📝 [EDIT_META] Updating personal metadata: {personal_metadata}")
                 
                 # Update user book relationship with personal metadata
-                success = book_service.update_user_book_sync(str(current_user.id), user_book.id, custom_metadata=personal_metadata)
+                book_id = user_book.get('id') or uid  # user_book is a dict, not an object
+                success = book_service.update_user_book_sync(str(current_user.id), book_id, custom_metadata=personal_metadata)
                 if success:
                     print(f"✅ [EDIT_META] Updated user book personal metadata")
                     flash('Custom metadata updated successfully!', 'success')
@@ -1075,10 +1329,10 @@ def month_review(year, month):
     for book in books:
         # Create a simple object with the expected attributes
         book_obj = type('Book', (), {
-            'title': book.title,
-            'author': book.author,
-            'cover_url': book.cover_url,
-            'finish_date': getattr(book, 'finish_date', None)
+            'title': book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', ''),
+            'author': book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', ''),
+            'cover_url': book.get('cover_url', '') if isinstance(book, dict) else getattr(book, 'cover_url', ''),
+            'finish_date': book.get('finish_date') if isinstance(book, dict) else getattr(book, 'finish_date', None)
         })()
         book_objects.append(book_obj)
 
@@ -1219,7 +1473,8 @@ def download_db():
             notes = getattr(book, 'personal_notes', '') or ''
             reading_status = getattr(book, 'reading_status', '') or ''
             
-            writer.writerow([book.title, author_names, isbn, reading_status, start_date, finish_date, rating, notes])
+            title = book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')
+            writer.writerow([title, author_names, isbn, reading_status, start_date, finish_date, rating, notes])
         
         # Create response
         output.seek(0)
@@ -1370,9 +1625,13 @@ def bulk_delete_books():
     if not selected_uids:
         single_value = request.form.get('selected_books') or request.form.get('book_ids')
         if single_value:
-            selected_uids = [single_value]
+            # Split by comma or newline if multiple values in single field
+            selected_uids = [uid.strip() for uid in single_value.replace(',', '\n').split('\n') if uid.strip()]
     
-    print(f"Selected UIDs: {selected_uids}")
+    # Filter out empty strings
+    selected_uids = [uid for uid in selected_uids if uid and uid.strip()]
+    
+    print(f"Selected UIDs after filtering: {selected_uids}")
     
     if not selected_uids:
         print("No books selected for deletion")
@@ -1452,8 +1711,7 @@ def stats():
     
     # Community stats (only if users share their activity)
     try:
-        # Use the Kuzu book service for community features
-        book_service = current_app.book_service
+        # Use the imported book service for community features
         
         # Get sharing users count
         sharing_users = user_service.get_sharing_users_sync() if hasattr(user_service, 'get_sharing_users_sync') else []
@@ -1559,19 +1817,19 @@ def search_books_in_library():
         search_lower = search_query.lower()
         filtered_books = [
             book for book in filtered_books 
-            if (search_lower in book.title.lower() if book.title else False) or
-               (search_lower in book.author.lower() if book.author else False) or
-               (search_lower in book.description.lower() if book.description else False)
+            if (search_lower in (book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')).lower()) or
+               (search_lower in (book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')).lower()) or
+               (search_lower in (book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')).lower())
         ]
     if publisher_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.publisher and publisher_filter.lower() in book.publisher.lower()
+            if (book.get('publisher', '') if isinstance(book, dict) else getattr(book, 'publisher', '')) and publisher_filter.lower() in (book.get('publisher', '') if isinstance(book, dict) else getattr(book, 'publisher', '')).lower()
         ]
     if language_filter:
         filtered_books = [
             book for book in filtered_books 
-            if book.language == language_filter
+            if (book.get('language', '') if isinstance(book, dict) else getattr(book, 'language', '')) == language_filter
         ]
     if location_filter:
         filtered_books = [
@@ -1919,46 +2177,50 @@ def add_book_manual():
         else:
             print(f"📚 [MANUAL] No categories found for book {title}")
         
-        # Add to user's library with custom metadata and default location
-        # Get user's default location
-        default_locations = []
+        # Add to user's library with custom metadata and location
+        # Determine location to use: form-selected location takes priority, then default location
+        final_locations = []
         try:
-            print(f"📍 [MANUAL] Attempting to get default location for user {current_user.id}")
             from .location_service import LocationService
             from .infrastructure.kuzu_graph import get_kuzu_connection
             from config import Config
             
             kuzu_connection = get_kuzu_connection()
-            location_service = LocationService(kuzu_connection.connection)
+            location_service = LocationService(kuzu_connection.connect())
             
-            print(f"📍 [MANUAL] Created location service, getting default location...")
-            default_location = location_service.get_default_location(str(current_user.id))
-            
-            if default_location:
-                default_locations = [default_location.id]
-                print(f"📍 [MANUAL] ✅ Found default location: {default_location.name} (ID: {default_location.id})")
-                print(f"📍 [MANUAL] Assigning to default location: {default_location.name} (ID: {default_location.id})")
+            # Check if user selected a location in the form
+            if location_id:
+                print(f"📍 [MANUAL] User selected location from form: {location_id}")
+                final_locations = [location_id]
             else:
-                print(f"📍 [MANUAL] ❌ No default location found for user {current_user.id}")
-                # Check if user has any locations at all
-                all_locations = location_service.get_user_locations(str(current_user.id))
-                if not all_locations:
-                    print(f"📍 [MANUAL] 🏗️ User has no locations, creating default location...")
-                    default_locations_created = location_service.setup_default_locations(str(current_user.id))
-                    if default_locations_created:
-                        default_locations = [default_locations_created[0].id]
-                        print(f"📍 [MANUAL] ✅ Created and assigned default location: {default_locations_created[0].name} (ID: {default_locations_created[0].id})")
-                    else:
-                        print(f"📍 [MANUAL] ❌ Failed to create default locations")
+                print(f"📍 [MANUAL] No location selected in form, attempting to get default location for user {current_user.id}")
+                
+                default_location = location_service.get_default_location(str(current_user.id))
+                
+                if default_location:
+                    final_locations = [default_location.id]
+                    print(f"📍 [MANUAL] ✅ Found default location: {default_location.name} (ID: {default_location.id})")
                 else:
-                    print(f"📍 [MANUAL] User has {len(all_locations)} locations but none are default")
+                    print(f"📍 [MANUAL] ❌ No default location found for user {current_user.id}")
+                    # Check if user has any locations at all
+                    all_locations = location_service.get_user_locations(str(current_user.id))
+                    if not all_locations:
+                        print(f"📍 [MANUAL] 🏗️ User has no locations, creating default location...")
+                        default_locations_created = location_service.setup_default_locations(str(current_user.id))
+                        if default_locations_created:
+                            final_locations = [default_locations_created[0].id]
+                            print(f"📍 [MANUAL] ✅ Created and assigned default location: {default_locations_created[0].name} (ID: {default_locations_created[0].id})")
+                        else:
+                            print(f"📍 [MANUAL] ❌ Failed to create default locations")
+                    else:
+                        print(f"📍 [MANUAL] User has {len(all_locations)} locations but none are default")
                 
         except Exception as e:
-            print(f"❌ [MANUAL] Error getting default location: {e}")
+            print(f"❌ [MANUAL] Error handling location: {e}")
             import traceback
             traceback.print_exc()
         
-        print(f"📍 [MANUAL] Final default_locations list: {default_locations}")
+        print(f"📍 [MANUAL] Final locations list: {final_locations}")
         
         # Convert reading status string to enum
         reading_status_enum = ReadingStatus.PLAN_TO_READ  # Default
@@ -1991,7 +2253,7 @@ def add_book_manual():
             user_id=current_user.id,
             book_id=existing_book.id,
             reading_status=reading_status_enum,
-            locations=default_locations,
+            locations=final_locations,
             custom_metadata=custom_metadata if custom_metadata else None
         )
         print(f"📚 [MANUAL] Add to library result: {result}")
@@ -2012,8 +2274,7 @@ def add_book_manual():
             update_data['start_date'] = start_date
         if finish_date:
             update_data['finish_date'] = finish_date
-        if location_id:
-            update_data['primary_location_id'] = location_id
+        # Note: location is already handled via the locations parameter above
             
         if update_data:
             print(f"📚 [MANUAL] Updating book with additional data: {update_data}")
@@ -2373,14 +2634,14 @@ def import_books_execute():
     except:
         job_data['total'] = 0
     
-    # Store job data in Redis instead of memory
+    # Store job data in Kuzu instead of Redis
     print(f"🏗️ [EXECUTE] Creating job {task_id} for user {current_user.id}")
-    redis_success = store_job_in_redis(task_id, job_data)
+    kuzu_success = store_job_in_kuzu(task_id, job_data)
     
     # Also keep in memory for backward compatibility
     import_jobs[task_id] = job_data
     
-    print(f"📊 [EXECUTE] Redis storage: {'✅' if redis_success else '❌'}")
+    print(f"📊 [EXECUTE] Kuzu storage: {'✅' if kuzu_success else '❌'}")
     print(f"💾 [EXECUTE] Memory storage: ✅")
     print(f"🔧 [EXECUTE] Job status: {job_data['status']}")
     print(f"📈 [EXECUTE] Total rows to process: {job_data['total']}")
@@ -2395,7 +2656,9 @@ def import_books_execute():
                 # Update job with error
                 if task_id in import_jobs:
                     import_jobs[task_id]['status'] = 'failed'
-                    import_jobs[task_id]['error_message'] = str(e)
+                    if 'error_messages' not in import_jobs[task_id]:
+                        import_jobs[task_id]['error_messages'] = []
+                    import_jobs[task_id]['error_messages'].append(str(e))
                     app.logger.error(f"Import job {task_id} failed: {e}")
     
     # Start the import process in background
@@ -2411,14 +2674,14 @@ def import_books_progress(task_id):
     """Show import progress page."""
     print(f"🔍 [PROGRESS] Looking for job {task_id}")
     
-    # Try Redis first, then fall back to memory
-    redis_job = get_job_from_redis(task_id)
+    # Try Kuzu first, then fall back to memory
+    kuzu_job = get_job_from_kuzu(task_id)
     memory_job = import_jobs.get(task_id)
     
-    print(f"📊 [PROGRESS] Redis job found: {bool(redis_job)}")
+    print(f"📊 [PROGRESS] Kuzu job found: {bool(kuzu_job)}")
     print(f"💾 [PROGRESS] Memory job found: {bool(memory_job)}")
     
-    job = redis_job or memory_job
+    job = kuzu_job or memory_job
     
     if not job:
         print(f"❌ [PROGRESS] No job found for {task_id}")
@@ -2445,8 +2708,8 @@ def api_import_progress(task_id):
     print(f"Progress API called for task_id: {task_id} by user: {current_user.id}")
     
     # Try Redis first, then fall back to memory
-    job = get_job_from_redis(task_id) or import_jobs.get(task_id)
-    print(f"Redis job found: {bool(get_job_from_redis(task_id))}")
+    job = get_job_from_kuzu(task_id) or import_jobs.get(task_id)
+    print(f"Kuzu job found: {bool(get_job_from_kuzu(task_id))}")
     print(f"Memory job found: {bool(import_jobs.get(task_id))}")
     print(f"Job data: {job}")
     
@@ -2466,7 +2729,7 @@ def api_import_progress(task_id):
         'total': job['total'],
         'current_book': job['current_book'],
         'recent_activity': job['recent_activity'][-10:],  # Last 10 activities
-        'error': job.get('error_message')
+        'error_messages': job.get('error_messages', [])
     })
 
 @bp.route('/api/import/errors/<task_id>')
@@ -2746,20 +3009,20 @@ def start_import_job(task_id):
     print(f"🚀 [START] Starting import job {task_id}")
     
     # Try to get job from both sources
-    redis_job = get_job_from_redis(task_id)
+    kuzu_job = get_job_from_kuzu(task_id)
     memory_job = import_jobs.get(task_id)
     
-    print(f"📊 [START] Redis job found: {bool(redis_job)}")
+    print(f"📊 [START] Kuzu job found: {bool(kuzu_job)}")
     print(f"💾 [START] Memory job found: {bool(memory_job)}")
     
-    job = redis_job or memory_job
+    job = kuzu_job or memory_job
     if not job:
         print(f"❌ [START] Import job {task_id} not found in start_import_job")
         return
 
     print(f"✅ [START] Starting import job {task_id} for user {job['user_id']}")
     job['status'] = 'running'
-    update_job_in_redis(task_id, {'status': 'running'})
+    update_job_in_kuzu(task_id, {'status': 'running'})
     if task_id in import_jobs:
         import_jobs[task_id]['status'] = 'running'
 
@@ -2897,7 +3160,7 @@ def start_import_job(task_id):
                             isbn10 = clean_isbn
                             print(f"Assigned to ISBN10: {isbn10}")
                         else:
-                            print(f"WARNING: ISBN '{clean_isbn}' has unexpected length {len(clean_isbn)}")
+                            current_app.logger.warning(f"ISBN '{clean_isbn}' has unexpected length {len(clean_isbn)}")
                             # Still try to use it, in case it's a valid format we don't recognize
                             if len(clean_isbn) > 10:
                                 isbn13 = clean_isbn
@@ -3164,7 +3427,7 @@ def start_import_job(task_id):
                                 from config import Config
                                 
                                 kuzu_connection = get_kuzu_connection()
-                                location_service = LocationService(kuzu_connection.connection)
+                                location_service = LocationService(kuzu_connection.connect())
                                 default_location = location_service.get_default_location(str(user_id))
                                 
                                 if default_location:
@@ -3288,16 +3551,16 @@ def start_import_job(task_id):
                     job['recent_activity'].append(f"Row {row_num}: Error - {str(e)}")
                 
                 job['processed'] += 1
-                # Update progress in Redis every 10 books to avoid too many updates
+                # Update progress in Kuzu every 10 books to avoid too many updates
                 if job['processed'] % 10 == 0:
-                    update_job_in_redis(task_id, {'processed': job['processed']})
+                    update_job_in_kuzu(task_id, {'processed': job['processed']})
                 print(f"Row {row_num} processed. Total processed: {job['processed']}")
         
         print(f"CSV processing completed. Success: {job['success']}, Errors: {job['errors']}")
         
         # Mark as completed
         job['status'] = 'completed'
-        update_job_in_redis(task_id, {
+        update_job_in_kuzu(task_id, {
             'status': 'completed',
             'processed': job['processed'],
             'success': job['success'],
@@ -3317,11 +3580,15 @@ def start_import_job(task_id):
             
     except Exception as e:
         job['status'] = 'failed'
-        job['error_message'] = str(e)
-        update_job_in_redis(task_id, {'status': 'failed', 'error_message': str(e)})
+        if 'error_messages' not in job:
+            job['error_messages'] = []
+        job['error_messages'].append(str(e))
+        update_job_in_kuzu(task_id, {'status': 'failed', 'error_messages': job['error_messages']})
         if task_id in import_jobs:
             import_jobs[task_id]['status'] = 'failed'
-            import_jobs[task_id]['error_message'] = str(e)
+            if 'error_messages' not in import_jobs[task_id]:
+                import_jobs[task_id]['error_messages'] = []
+            import_jobs[task_id]['error_messages'].append(str(e))
         print(f"Import job {task_id} failed: {e}")
 
 def normalize_goodreads_value(value, field_type='text'):
@@ -3347,75 +3614,51 @@ def normalize_goodreads_value(value, field_type='text'):
         # Validate that it looks like an ISBN (digits, X, hyphens only)
         if value and not all(c.isdigit() or c in 'X-' for c in value):
             # If it doesn't look like an ISBN, it might be corrupted
-            print(f"WARNING: Potentially corrupted ISBN value: '{value}'")
+            current_app.logger.warning(f"Potentially corrupted ISBN value: '{value}'")
     
     return value.strip()
 
-# Redis functions for job storage
-def store_job_in_redis(task_id, job_data):
-    """Store import job data in Redis."""
+# Kuzu functions for job storage
+def store_job_in_kuzu(task_id, job_data):
+    """Store import job data in Kuzu."""
     try:
-        # Note: This function still uses Redis for job storage compatibility
-        from .infrastructure.redis_graph import get_redis_connection
-        redis_client = get_redis_connection().client
-        job_key = f'import_job:{task_id}'
-        
-        # Convert job data to JSON and store with expiration (24 hours)
-        import json
-        redis_client.setex(job_key, 86400, json.dumps(job_data, default=str))
-        print(f"✅ Stored job {task_id} in Redis")
-        return True
+        from .kuzu_services import job_service
+        success = job_service.store_job(task_id, job_data)
+        if success:
+            print(f"✅ Stored job {task_id} in Kuzu")
+        else:
+            print(f"❌ Failed to store job {task_id} in Kuzu")
+        return success
     except Exception as e:
-        print(f"❌ Error storing job {task_id} in Redis: {e}")
+        print(f"❌ Error storing job {task_id} in Kuzu: {e}")
         return False
 
-def get_job_from_redis(task_id):
-    """Retrieve import job data from Redis."""
+def get_job_from_kuzu(task_id):
+    """Retrieve import job data from Kuzu."""
     try:
-        # Note: This function still uses Redis for job storage compatibility
-        from .infrastructure.redis_graph import get_redis_connection
-        redis_client = get_redis_connection().client
-        job_key = f'import_job:{task_id}'
-        
-        job_data_str = redis_client.get(job_key)
-        if job_data_str:
-            import json
-            job_data = json.loads(job_data_str)
-            print(f"✅ Retrieved job {task_id} from Redis")
-            return job_data
+        from .kuzu_services import job_service
+        job_data = job_service.get_job(task_id)
+        if job_data:
+            print(f"✅ Retrieved job {task_id} from Kuzu")
         else:
-            print(f"❌ Job {task_id} not found in Redis")
-            return None
+            print(f"❌ Job {task_id} not found in Kuzu")
+        return job_data
     except Exception as e:
-        print(f"❌ Error retrieving job {task_id} from Redis: {e}")
+        print(f"❌ Error retrieving job {task_id} from Kuzu: {e}")
         return None
 
-def update_job_in_redis(task_id, updates):
-    """Update specific fields in an import job stored in Redis."""
+def update_job_in_kuzu(task_id, updates):
+    """Update specific fields in an import job stored in Kuzu."""
     try:
-        from .infrastructure.kuzu_graph import get_graph_storage
-        # Note: KuzuDB doesn't have Redis client, using in-memory job storage
-        storage = get_graph_storage()
-        job_key = f'import_job:{task_id}'
-        
-        # Get existing job data
-        job_data_str = redis_client.get(job_key)
-        if job_data_str:
-            import json
-            job_data = json.loads(job_data_str)
-            
-            # Update with new values
-            job_data.update(updates)
-            
-            # Store back with same expiration
-            redis_client.setex(job_key, 86400, json.dumps(job_data, default=str))
-            print(f"✅ Updated job {task_id} in Redis with: {list(updates.keys())}")
-            return True
+        from .kuzu_services import job_service
+        success = job_service.update_job(task_id, updates)
+        if success:
+            print(f"✅ Updated job {task_id} in Kuzu with: {list(updates.keys())}")
         else:
-            print(f"❌ Job {task_id} not found in Redis for update")
-            return False
+            print(f"❌ Failed to update job {task_id} in Kuzu")
+        return success
     except Exception as e:
-        print(f"❌ Error updating job {task_id} in Redis: {e}")
+        print(f"❌ Error updating job {task_id} in Kuzu: {e}")
         return False
 
 # ========================================
@@ -3426,9 +3669,12 @@ def update_job_in_redis(task_id, updates):
 @login_required
 def people():
     """Display all people with management options."""
+    from app.debug_system import debug_log, debug_service_call, debug_template_data
+    
     try:
-        # Get all persons with error handling for async issues
+        debug_log(f"🔍 [PEOPLE] Starting people page for user {current_user.id}", "PEOPLE_VIEW")
         
+        # Get all persons with error handling for async issues
         # Helper function to handle potential coroutine returns
         def safe_call_sync_method(method, *args, **kwargs):
             """Safely call a sync method that might return a coroutine."""
@@ -3440,70 +3686,121 @@ def people():
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         # Can't use loop.run_until_complete if loop is already running
-                        print(f"⚠️ [PEOPLE] Loop is running, method {method.__name__} returned coroutine")
+                        debug_log(f"⚠️ [PEOPLE] Loop is running, method {method.__name__} returned coroutine", "PEOPLE_VIEW")
                         return []  # Return empty list as fallback
                     else:
                         return loop.run_until_complete(result)
                 except Exception as e:
-                    print(f"⚠️ [PEOPLE] Error running coroutine for {method.__name__}: {e}")
+                    debug_log(f"⚠️ [PEOPLE] Error running coroutine for {method.__name__}: {e}", "PEOPLE_VIEW")
                     return []
             return result
         
+        debug_service_call("book_service", "list_all_persons_sync", {}, None, "BEFORE")
         all_persons = safe_call_sync_method(book_service.list_all_persons_sync)
+        debug_service_call("book_service", "list_all_persons_sync", {}, all_persons, "AFTER")
         
         # Ensure we have a list
         if not isinstance(all_persons, list):
-            print(f"⚠️ [PEOPLE] Expected list, got {type(all_persons)}")
+            debug_log(f"⚠️ [PEOPLE] Expected list, got {type(all_persons)}", "PEOPLE_VIEW")
             all_persons = []
+        
+        debug_log(f"📊 [PEOPLE] Found {len(all_persons)} persons in database", "PEOPLE_VIEW")
+        
+        # Convert dictionaries to objects for template compatibility
+        processed_persons = []
         
         # Add book counts for each person
         for i, person in enumerate(all_persons):
-            # Initialize safe defaults
-            person.book_count = 0
-            person.contributions = {}
+            debug_log(f"🔍 [PEOPLE] Processing person {i+1}/{len(all_persons)}: {person.get('name', 'unknown') if isinstance(person, dict) else getattr(person, 'name', 'unknown')}", "PEOPLE_VIEW")
+            
+            # Convert dictionary to object if needed
+            if isinstance(person, dict):
+                class PersonObj:
+                    def __init__(self, data):
+                        for key, value in data.items():
+                            setattr(self, key, value)
+                        # Initialize safe defaults
+                        self.book_count = 0
+                        self.contributions = {}
+                
+                person_obj = PersonObj(person)
+                person_id = person.get('id')
+                person_name = person.get('name', 'unknown')
+            else:
+                person_obj = person
+                person_obj.book_count = 0
+                person_obj.contributions = {}
+                person_id = getattr(person, 'id', None)
+                person_name = getattr(person, 'name', 'unknown')
             
             try:
                 # Try to get books for this person with safe call
                 try:
-                    books_by_type = safe_call_sync_method(book_service.get_books_by_person_sync, person.id, str(current_user.id))
+                    debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, None, "BEFORE")
+                    books_by_type = safe_call_sync_method(book_service.get_books_by_person_sync, person_id, str(current_user.id))
+                    debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, books_by_type, "AFTER")
                     
                     # Safely handle the result
                     if books_by_type and isinstance(books_by_type, dict):
-                        person.contributions = books_by_type
+                        person_obj.contributions = books_by_type
+                        debug_log(f"📚 [PEOPLE] Found contributions for {person_name}: {list(books_by_type.keys())}", "PEOPLE_VIEW")
+                        
                         # Calculate total books safely
                         try:
                             total_books = 0
-                            for book_list in books_by_type.values():
+                            for contrib_type, book_list in books_by_type.items():
                                 if book_list and hasattr(book_list, '__len__'):
-                                    total_books += len(book_list)
-                            person.book_count = total_books
+                                    list_length = len(book_list)
+                                    total_books += list_length
+                                    debug_log(f"📊 [PEOPLE] {contrib_type}: {list_length} books - {book_list}", "PEOPLE_VIEW")
+                                else:
+                                    debug_log(f"📊 [PEOPLE] {contrib_type}: empty or invalid - {book_list}", "PEOPLE_VIEW")
+                            
+                            person_obj.book_count = total_books
+                            debug_log(f"📊 [PEOPLE] Total books for {person_name}: {total_books}", "PEOPLE_VIEW")
                         except Exception as count_error:
-                            print(f"⚠️ [PEOPLE] Error counting books for {getattr(person, 'name', 'unknown')}: {count_error}")
-                            person.book_count = 0
+                            debug_log(f"❌ [PEOPLE] Error counting books for {person_name}: {count_error}", "PEOPLE_VIEW")
+                            person_obj.book_count = 0
                     else:
-                        pass  # No books found
+                        debug_log(f"❌ [PEOPLE] No contributions found for {person_name}", "PEOPLE_VIEW")
+                        person_obj.book_count = 0
                 
                 except Exception as book_error:
-                    print(f"⚠️ [PEOPLE] Error getting books for person {getattr(person, 'name', 'unknown')}: {book_error}")
+                    debug_log(f"⚠️ [PEOPLE] Error getting books for person {person_name}: {book_error}", "PEOPLE_VIEW")
                     # Keep defaults: book_count = 0, contributions = {}
                 
+                # Add the processed person to our list
+                processed_persons.append(person_obj)
+                
             except Exception as person_error:
-                print(f"❌ [PEOPLE] Error processing person {getattr(person, 'name', 'unknown')} ({getattr(person, 'id', 'unknown')}): {person_error}")
+                debug_log(f"❌ [PEOPLE] Error processing person {person_name} ({person_id}): {person_error}", "PEOPLE_VIEW")
                 import traceback
                 traceback.print_exc()
+                # Still add the person with defaults
+                processed_persons.append(person_obj)
                 current_app.logger.error(f"Error processing person: {person_error}")
-                # Keep defaults: book_count = 0, contributions = {}
         
         # Sort by name safely
         try:
-            all_persons.sort(key=lambda p: getattr(p, 'name', '').lower())
+            processed_persons.sort(key=lambda p: getattr(p, 'name', '').lower())
+            debug_log(f"✅ [PEOPLE] Sorted {len(processed_persons)} persons by name", "PEOPLE_VIEW")
         except Exception as sort_error:
-            print(f"⚠️ [PEOPLE] Error sorting persons: {sort_error}")
+            debug_log(f"⚠️ [PEOPLE] Error sorting persons: {sort_error}", "PEOPLE_VIEW")
         
-        return render_template('people.html', persons=all_persons)
+        # Show summary of what we found
+        try:
+            total_with_books = sum(1 for p in processed_persons if getattr(p, 'book_count', 0) > 0)
+            debug_log(f"📊 [PEOPLE] Summary: {len(processed_persons)} total persons, {total_with_books} with books", "PEOPLE_VIEW")
+        except Exception as summary_error:
+            debug_log(f"⚠️ [PEOPLE] Error calculating summary: {summary_error}", "PEOPLE_VIEW")
+        
+        template_data = {'persons': processed_persons}
+        debug_template_data('people.html', template_data, "PEOPLE_VIEW")
+        
+        return render_template('people.html', persons=processed_persons)
     
     except Exception as e:
-        print(f"❌ [PEOPLE] Error loading people page: {e}")
+        debug_log(f"❌ [PEOPLE] Error loading people page: {e}", "PEOPLE_VIEW")
         import traceback
         traceback.print_exc()
         current_app.logger.error(f"Error loading people page: {e}")
@@ -3515,39 +3812,56 @@ def people():
 @login_required
 def person_details(person_id):
     """Display detailed information about a person."""
+    from app.debug_system import debug_log, debug_person_details, debug_service_call, debug_template_data
+    
     try:
-        print(f"🔍 [PERSON] Starting person details page for person_id: {person_id}, user: {current_user.id}")
+        debug_log(f"🔍 [PERSON] Starting person details page for person_id: {person_id}, user: {current_user.id}", "PERSON_DETAILS")
         
         # Get person details
-        print(f"🔍 [PERSON] Calling get_person_by_id_sync for person_id: {person_id}")
+        debug_log(f"🔍 [PERSON] Calling get_person_by_id_sync for person_id: {person_id}", "PERSON_DETAILS")
+        debug_service_call("book_service", "get_person_by_id_sync", {"person_id": person_id}, None, "BEFORE")
         person = book_service.get_person_by_id_sync(person_id)
-        print(f"📊 [PERSON] Got person: {person}")
-        print(f"📊 [PERSON] Person type: {type(person)}")
+        debug_service_call("book_service", "get_person_by_id_sync", {"person_id": person_id}, person, "AFTER")
+        
+        debug_log(f"📊 [PERSON] Got person: {person}", "PERSON_DETAILS")
+        debug_log(f"📊 [PERSON] Person type: {type(person)}", "PERSON_DETAILS")
         
         if not person:
-            print(f"❌ [PERSON] Person not found for ID: {person_id}")
+            debug_log(f"❌ [PERSON] Person not found for ID: {person_id}", "PERSON_DETAILS")
             flash('Person not found.', 'error')
             return redirect(url_for('main.people'))
         
-        print(f"✅ [PERSON] Found person: {person.name} (ID: {person.id})")
+        debug_log(f"✅ [PERSON] Found person: {person.name} (ID: {person.id})", "PERSON_DETAILS")
+        
+        # Enhanced person debugging
+        debug_person_details(person, person_id, str(current_user.id), "DETAILS_VIEW")
         
         # Get books by this person for current user
-        print(f"🔍 [PERSON] Getting books by person for user {current_user.id}")
+        debug_log(f"🔍 [PERSON] Getting books by person for user {current_user.id}", "PERSON_DETAILS")
+        debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, None, "BEFORE")
         books_by_type = book_service.get_books_by_person_sync(person_id, str(current_user.id))
-        print(f"📊 [PERSON] Got books_by_type: {type(books_by_type)}")
-        print(f"📊 [PERSON] Books by type keys: {list(books_by_type.keys()) if books_by_type else 'None'}")
+        debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, books_by_type, "AFTER")
+        debug_log(f"📊 [PERSON] Got books_by_type: {type(books_by_type)}", "PERSON_DETAILS")
+        debug_log(f"📊 [PERSON] Books by type keys: {list(books_by_type.keys()) if books_by_type else 'None'}", "PERSON_DETAILS")
         
         if books_by_type:
             for contribution_type, books in books_by_type.items():
-                print(f"📋 [PERSON] {contribution_type}: {len(books)} books")
+                debug_log(f"📋 [PERSON] {contribution_type}: {len(books)} books", "PERSON_DETAILS")
         
-        print(f"✅ [PERSON] Rendering template")
+        # Prepare template data
+        template_data = {
+            'person': person,
+            'contributions_by_type': books_by_type
+        }
+        debug_template_data('person_details.html', template_data, "PERSON_DETAILS")
+        
+        debug_log(f"✅ [PERSON] Rendering template", "PERSON_DETAILS")
         return render_template('person_details.html', 
                              person=person, 
                              contributions_by_type=books_by_type)
     
     except Exception as e:
-        print(f"❌ [PERSON] Error loading person details for {person_id}: {e}")
+        debug_log(f"❌ [PERSON] Error loading person details for {person_id}: {e}", "PERSON_DETAILS")
         import traceback
         traceback.print_exc()
         current_app.logger.error(f"Error loading person details: {e}")
@@ -3611,33 +3925,55 @@ def add_person():
                 bio=bio if bio else None,
                 birth_year=birth_year_int,
                 death_year=death_year_int,
-                birth_place=birth_place if birth_place else None,
-                website=website if website else None,
-                created_at=datetime.now(),
-                updated_at=datetime.now()
+                created_at=datetime.now()
             )
             
-            # Store person in KuzuDB
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            person_data = {
-                '_id': person.id,
-                'name': person.name,
-                'normalized_name': person.normalized_name,
-                'bio': person.bio,
-                'birth_year': person.birth_year,
-                'death_year': person.death_year,
-                'birth_place': person.birth_place,
-                'website': person.website,
-                'created_at': person.created_at.isoformat(),
-                'updated_at': person.updated_at.isoformat()
-            }
-            
-            storage.store_node('person', person.id, person_data)
-            
-            flash(f'Person "{name}" added successfully!', 'success')
-            return redirect(url_for('main.person_details', person_id=person.id))
+            # Store person using the repository pattern
+            try:
+                # Create person data compatible with repository
+                person_dict = {
+                    'id': person.id,
+                    'name': person.name,
+                    'normalized_name': person.normalized_name,
+                    'bio': person.bio,
+                    'birth_year': person.birth_year,
+                    'death_year': person.death_year,
+                    'created_at': person.created_at
+                }
+                
+                # Use the clean repository to create the person
+                from .infrastructure.kuzu_clean_repositories import CleanKuzuPersonRepository
+                person_repo = CleanKuzuPersonRepository()
+                created_person = person_repo.create(person_dict)
+                
+                if created_person:
+                    flash(f'Person "{name}" added successfully!', 'success')
+                    return redirect(url_for('main.person_details', person_id=person.id))
+                else:
+                    flash('Failed to create person. Please try again.', 'error')
+                    return render_template('add_person.html', current_year=datetime.now().year)
+                    
+            except Exception as storage_error:
+                current_app.logger.error(f"Error storing person: {storage_error}")
+                flash('Error saving person to database. Please try again.', 'error')
+                return render_template('add_person.html', current_year=datetime.now().year)
+                
+                # Use the clean repository to create the person
+                from .infrastructure.kuzu_clean_repositories import CleanKuzuPersonRepository
+                person_repo = CleanKuzuPersonRepository()
+                created_person = person_repo.create(person_dict)
+                
+                if created_person:
+                    flash(f'Person "{name}" added successfully!', 'success')
+                    return redirect(url_for('main.person_details', person_id=person.id))
+                else:
+                    flash('Failed to create person. Please try again.', 'error')
+                    return render_template('add_person.html', current_year=datetime.now().year)
+                    
+            except Exception as storage_error:
+                current_app.logger.error(f"Error storing person: {storage_error}")
+                flash('Error saving person to database. Please try again.', 'error')
+                return render_template('add_person.html', current_year=datetime.now().year)
             
         except Exception as e:
             current_app.logger.error(f"Error adding person: {e}")
@@ -3926,27 +4262,20 @@ def delete_person(person_id):
         
         print(f"🗑️ [DELETE_PERSON] Final cleanup removed {final_cleanup_count} remaining relationships")
         
-        # Delete the person node from Redis
+        # Delete the person node from Kuzu
         print(f"🗑️ [DELETE_PERSON] Deleting person node {person_id}")
         print(f"🔍 [DELETE_PERSON] Storage object: {storage}")
-        print(f"🔍 [DELETE_PERSON] Redis client: {storage.redis}")
         
-        # First, check what keys exist for this person
-        person_key = f"node:person:{person_id}"
-        author_key = f"node:author:{person_id}"
+        # Check if person or author node exists in Kuzu
+        print(f"🔍 [DELETE_PERSON] Checking if person node exists: {person_id}")
+        person_node = storage.get_node('person', person_id)
+        person_exists = person_node is not None
+        print(f"🔍 [DELETE_PERSON] Person node exists: {person_exists}")
         
-        print(f"🔍 [DELETE_PERSON] Checking if person key exists: {person_key}")
-        person_exists = storage.redis.exists(person_key)
-        print(f"🔍 [DELETE_PERSON] Person key exists: {person_exists}")
-        
-        print(f"🔍 [DELETE_PERSON] Checking if author key exists: {author_key}")
-        author_exists = storage.redis.exists(author_key)
-        print(f"🔍 [DELETE_PERSON] Author key exists: {author_exists}")
-        
-        # Check what keys match the pattern
-        pattern = f"*{person_id}*"
-        matching_keys = storage.redis.keys(pattern)
-        print(f"🔍 [DELETE_PERSON] Keys matching {pattern}: {matching_keys}")
+        print(f"🔍 [DELETE_PERSON] Checking if author node exists: {person_id}")
+        author_node = storage.get_node('author', person_id)
+        author_exists = author_node is not None
+        print(f"🔍 [DELETE_PERSON] Author node exists: {author_exists}")
         
         deletion_success = False
         
@@ -3957,29 +4286,11 @@ def delete_person(person_id):
                 deletion_success = storage.delete_node('person', person_id)
                 print(f"🔍 [DELETE_PERSON] Person delete result: {deletion_success}")
             
-            # Try deleting as author if person deletion failed or person key didn't exist
+            # Try deleting as author if person deletion failed or person node didn't exist
             if not deletion_success and author_exists:
                 print(f"🗑️ [DELETE_PERSON] Attempting to delete author node")
                 deletion_success = storage.delete_node('author', person_id)
                 print(f"🔍 [DELETE_PERSON] Author delete result: {deletion_success}")
-            
-            # If neither worked, try manual deletion of any matching keys
-            if not deletion_success and matching_keys:
-                print(f"🗑️ [DELETE_PERSON] Attempting manual deletion of matching keys")
-                deleted_count = 0
-                for key in matching_keys:
-                    try:
-                        key_str = key.decode('utf-8') if isinstance(key, bytes) else str(key)
-                        result = storage.redis.delete(key_str)
-                        if result:
-                            deleted_count += 1
-                            print(f"🗑️ [DELETE_PERSON] Manually deleted key: {key_str}")
-                    except Exception as key_error:
-                        print(f"⚠️ [DELETE_PERSON] Failed to delete key {key}: {key_error}")
-                
-                if deleted_count > 0:
-                    deletion_success = True
-                    print(f"✅ [DELETE_PERSON] Manually deleted {deleted_count} keys")
             
         except Exception as delete_error:
             print(f"💥 [DELETE_PERSON] Exception during delete operations: {delete_error}")
@@ -4129,28 +4440,30 @@ def bulk_delete_persons():
             
             deletion_success = False
             try:
-                # Get all keys for this person
-                person_key = f"node:person:{person_id}"
-                author_key = f"node:author:{person_id}"
+                # Check if person or author node exists in Kuzu
+                person_node = storage.get_node('person', person_id)
+                author_node = storage.get_node('author', person_id)
                 
-                keys_to_delete = []
-                if storage.redis.exists(person_key):
-                    keys_to_delete.append(person_key)
-                if storage.redis.exists(author_key):
-                    keys_to_delete.append(author_key)
+                deleted_nodes_count = 0
                 
-                # Delete the keys
-                deleted_keys_count = 0
-                for key in keys_to_delete:
-                    if storage.redis.delete(key):
-                        deleted_keys_count += 1
+                # Delete person node if it exists
+                if person_node:
+                    if storage.delete_node('person', person_id):
+                        deleted_nodes_count += 1
+                        print(f"✅ [BULK_DELETE_PERSONS] Deleted person node for {person_id}")
                 
-                if deleted_keys_count > 0:
+                # Delete author node if it exists
+                if author_node:
+                    if storage.delete_node('author', person_id):
+                        deleted_nodes_count += 1
+                        print(f"✅ [BULK_DELETE_PERSONS] Deleted author node for {person_id}")
+                
+                if deleted_nodes_count > 0:
                     deletion_success = True
-                    print(f"✅ [BULK_DELETE_PERSONS] Deleted {deleted_keys_count} keys for {person_id}")
+                    print(f"✅ [BULK_DELETE_PERSONS] Deleted {deleted_nodes_count} nodes for {person_id}")
                 else:
-                    print(f"⚠️ [BULK_DELETE_PERSONS] No keys found to delete for {person_id}")
-                    # Still count as success if no keys were found (person might have been already deleted)
+                    print(f"⚠️ [BULK_DELETE_PERSONS] No nodes found to delete for {person_id}")
+                    # Still count as success if no nodes were found (person might have been already deleted)
                     deletion_success = True
                 
             except Exception as delete_error:
@@ -4537,10 +4850,10 @@ def direct_import():
         
         # Store job data
         print(f"🏗️ [CREATE] Creating job {task_id} for user {current_user.id}")
-        redis_success = store_job_in_redis(task_id, job_data)
+        kuzu_success = store_job_in_kuzu(task_id, job_data)
         import_jobs[task_id] = job_data
         
-        print(f"📊 [CREATE] Redis storage: {'✅' if redis_success else '❌'}")
+        print(f"📊 [CREATE] Kuzu storage: {'✅' if kuzu_success else '❌'}")
         print(f"💾 [CREATE] Memory storage: ✅")
         print(f"🔧 [CREATE] Job status: {job_data['status']}")
         
@@ -4556,7 +4869,9 @@ def direct_import():
                 except Exception as e:
                     if task_id in import_jobs:
                         import_jobs[task_id]['status'] = 'failed'
-                        import_jobs[task_id]['error_message'] = str(e)
+                        if 'error_messages' not in import_jobs[task_id]:
+                            import_jobs[task_id]['error_messages'] = []
+                        import_jobs[task_id]['error_messages'].append(str(e))
                     app.logger.error(f"Direct import job {task_id} failed: {e}")
         
         thread = threading.Thread(target=run_import)

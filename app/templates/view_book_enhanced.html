@@ -214,10 +214,10 @@
                                 
                                 <!-- Location (for physical books) -->
                                 <div class="mb-3" id="location-section">
-                                    <label for="primary_location_id" class="form-label fw-medium">
+                                    <label for="location_id" class="form-label fw-medium">
                                         <i class="bi bi-geo-alt me-1"></i>Location
                                     </label>
-                                    <select class="form-select" id="primary_location_id" name="primary_location_id">
+                                    <select class="form-select" id="location_id" name="location_id">
                                         <option value="">Select location...</option>
                                     </select>
                                     <div class="form-text">
@@ -448,7 +448,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const locationSection = document.getElementById('location-section');
     const borrowedSection = document.getElementById('borrowed-section');
     const loanedSection = document.getElementById('loaned-section');
-    const locationSelect = document.getElementById('primary_location_id');
+    const locationSelect = document.getElementById('location_id');
     
     // Load user locations
     function loadLocations() {

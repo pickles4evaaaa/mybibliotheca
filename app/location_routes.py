@@ -13,8 +13,9 @@ bp = Blueprint('locations', __name__, url_prefix='/locations')
 
 def get_location_service():
     """Get location service instance."""
-    connection = get_kuzu_connection()
-    return LocationService(connection.connection)
+    db = get_kuzu_connection()
+    connection = db.connect()
+    return LocationService(connection)
 
 
 @bp.route('/')
@@ -174,7 +175,7 @@ def view_location(location_id):
         from app.services import book_service
         for book_id in book_ids:
             try:
-                book = book_service.get_book_by_id_sync(book_id, str(current_user.id))
+                book = book_service.get_book_by_uid_sync(book_id, str(current_user.id))
                 if book:
                     books.append(book)
             except Exception as e:

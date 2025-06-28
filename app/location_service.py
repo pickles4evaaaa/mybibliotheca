@@ -61,38 +61,44 @@ class LocationService:
             updated_at=datetime.utcnow()
         )
         
-        # Store in KuzuDB
+        # Store in KuzuDB using new schema (no user_id property, use relationship)
         create_query = """
         CREATE (l:Location {
             id: $id,
-            user_id: $user_id,
             name: $name,
             description: $description,
             location_type: $location_type,
-            address: $address,
             is_default: $is_default,
-            is_active: $is_active,
-            created_at: $created_at,
-            updated_at: $updated_at
+            created_at: $created_at
         })
         """
         
         location_data = {
             "id": location.id,
-            "user_id": location.user_id,
             "name": location.name,
             "description": location.description,
             "location_type": location.location_type,
-            "address": location.address,
             "is_default": location.is_default,
-            "is_active": location.is_active,
-            "created_at": location.created_at,
-            "updated_at": location.updated_at
+            "created_at": location.created_at
+            # Note: Removed user_id and is_active as they're not in the new schema
         }
         
         print(f"🏠 [CREATE_LOCATION] Storing location data: {location_data}")
         
+        # Create the location node
         self.kuzu_conn.execute(create_query, location_data)
+        
+        # Create the relationship between user and location
+        relationship_query = """
+        MATCH (u:User {id: $user_id}), (l:Location {id: $location_id})
+        CREATE (u)-[:LOCATED_AT {is_primary: $is_primary}]->(l)
+        """
+        
+        self.kuzu_conn.execute(relationship_query, {
+            "user_id": user_id,
+            "location_id": location.id,
+            "is_primary": location.is_default
+        })
         
         print(f"🏠 [CREATE_LOCATION] Created location {location_id} for user {user_id}: '{name}' (default: {is_default})")
         return location
@@ -101,26 +107,33 @@ class LocationService:
         """Get a location by ID."""
         print(f"🏠 [GET_LOCATION] Fetching location {location_id}")
         
-        query = "MATCH (l:Location) WHERE l.id = $location_id RETURN l"
+        # Get location and its associated user through the LOCATED_AT relationship
+        query = """
+        MATCH (u:User)-[:LOCATED_AT]->(l:Location) 
+        WHERE l.id = $location_id 
+        RETURN l, u.id as user_id
+        """
         result = self.kuzu_conn.execute(query, {"location_id": location_id})
         
         if not result.has_next():
             print(f"🏠 [GET_LOCATION] Location {location_id} not found")
             return None
             
-        location_data = dict(result.get_next()[0])
+        row = result.get_next()
+        location_data = dict(row[0])
+        user_id = row[1]  # user_id from the query
         
         location = Location(
             id=location_data['id'],
-            user_id=location_data['user_id'],
+            user_id=user_id,  # Get from relationship
             name=location_data['name'],
             description=location_data.get('description'),
             location_type=location_data['location_type'],
             address=location_data.get('address'),
             is_default=location_data['is_default'],
-            is_active=location_data['is_active'],
+            is_active=True,  # Default since not stored anymore
             created_at=location_data['created_at'],
-            updated_at=location_data['updated_at']
+            updated_at=location_data.get('updated_at', location_data['created_at'])
         )
         
         print(f"🏠 [GET_LOCATION] Found location {location_id}: '{location.name}' (default: {location.is_default})")
@@ -130,9 +143,9 @@ class LocationService:
         """Get all locations for a user."""
         print(f"🏠 [GET_USER_LOCATIONS] Fetching locations for user {user_id} (active_only: {active_only})")
         
-        query = "MATCH (l:Location) WHERE l.user_id = $user_id"
-        if active_only:
-            query += " AND l.is_active = true"
+        query = "MATCH (u:User {id: $user_id})-[:LOCATED_AT]->(l:Location)"
+        # Note: In the new schema, we use is_default instead of is_active
+        # For now, we'll return all locations when active_only is requested
         query += " RETURN l ORDER BY l.is_default DESC, l.created_at ASC"
         
         result = self.kuzu_conn.execute(query, {"user_id": user_id})
@@ -142,18 +155,18 @@ class LocationService:
             location_data = dict(result.get_next()[0])
             location = Location(
                 id=location_data['id'],
-                user_id=location_data['user_id'],
+                user_id='',  # Not stored in new schema, use empty string
                 name=location_data['name'],
                 description=location_data.get('description'),
                 location_type=location_data['location_type'],
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
-                is_active=location_data['is_active'],
+                is_active=True,  # Default to True since we don't store this anymore
                 created_at=location_data['created_at'],
-                updated_at=location_data['updated_at']
+                updated_at=location_data.get('updated_at', location_data['created_at'])
             )
             locations.append(location)
-            print(f"🏠 [GET_USER_LOCATIONS] Added location: '{location.name}' (default: {location.is_default}, active: {location.is_active})")
+            print(f"🏠 [GET_USER_LOCATIONS] Added location: '{location.name}' (default: {location.is_default})")
         
         print(f"🏠 [GET_USER_LOCATIONS] Returning {len(locations)} locations for user {user_id}")
         return locations
@@ -169,14 +182,15 @@ class LocationService:
             
         # Handle setting as default
         if updates.get('is_default') and not location.is_default:
-            print(f"🏠 [UPDATE_LOCATION] Setting location {location_id} as default, clearing others for user {location.user_id}")
-            # Clear other defaults for this user
+            print(f"🏠 [UPDATE_LOCATION] Setting location {location_id} as default, clearing others")
+            # Clear other defaults for this user by finding the user through the relationship
             clear_defaults_query = """
-            MATCH (l:Location) 
-            WHERE l.user_id = $user_id AND l.id <> $location_id 
+            MATCH (u:User)-[:LOCATED_AT]->(target_loc:Location {id: $location_id})
+            MATCH (u)-[:LOCATED_AT]->(l:Location) 
+            WHERE l.id <> $location_id 
             SET l.is_default = false
             """
-            self.kuzu_conn.execute(clear_defaults_query, {"user_id": location.user_id, "location_id": location_id})
+            self.kuzu_conn.execute(clear_defaults_query, {"location_id": location_id})
         
         # Build update query
         set_clauses = []
@@ -262,36 +276,24 @@ class LocationService:
                  {"location_id": location_id, "user_id": user_id})
         
         try:
-            # Use graph storage to get user-book relationships
-            from app.infrastructure.redis_graph import RedisGraphStorage, RedisGraphConnection
-            import os
+            # Use direct Cypher query to avoid data type mismatch issues
+            from app.infrastructure.kuzu_graph import get_graph_storage
             
-            redis_url = os.getenv('REDIS_URL', 'redis://redis-graph:6379/0')
-            connection = RedisGraphConnection(redis_url=redis_url)
-            storage = RedisGraphStorage(connection)
+            storage = get_graph_storage()
             
-            # Get all books owned by the user
-            relationships = storage.get_relationships('user', user_id, 'owns')
+            # Query for books owned by user that contain this location_id
+            # Handle location_id as either a string or potentially in a list format
+            query = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book)
+            WHERE r.location_id = $location_id
+            RETURN COUNT(b) as book_count
+            """
+            
+            result = storage.query(query, {'user_id': user_id, 'location_id': location_id})
+            
             count = 0
-            
-            for rel in relationships:
-                properties = rel.get('properties', {})
-                locations = properties.get('locations', [])
-                
-                # Handle both string and list formats for locations
-                if isinstance(locations, str):
-                    try:
-                        import json
-                        locations = json.loads(locations)
-                    except (json.JSONDecodeError, TypeError):
-                        locations = [locations] if locations else []
-                elif not isinstance(locations, list):
-                    locations = []
-                
-                if location_id in locations:
-                    count += 1
-                    debug_log(f"Found book at location: {rel.get('to_id')}", "LOCATION", 
-                             {"book_id": rel.get('to_id'), "location_id": location_id})
+            if result and len(result) > 0 and 'col_0' in result[0]:
+                count = int(result[0]['col_0']) if result[0]['col_0'] is not None else 0
             
             debug_log(f"Location {location_id} has {count} books for user {user_id}", "LOCATION", 
                      {"location_id": location_id, "user_id": user_id, "book_count": count})
@@ -323,38 +325,28 @@ class LocationService:
                  {"location_id": location_id, "user_id": user_id})
         
         try:
-            # Use graph storage to get user-book relationships
-            from app.infrastructure.redis_graph import RedisGraphStorage, RedisGraphConnection
-            import os
+            # Use direct Cypher query to avoid data type mismatch issues
+            from app.infrastructure.kuzu_graph import get_graph_storage
             
-            redis_url = os.getenv('REDIS_URL', 'redis://redis-graph:6379/0')
-            connection = RedisGraphConnection(redis_url=redis_url)
-            storage = RedisGraphStorage(connection)
+            storage = get_graph_storage()
             
-            # Get all books owned by the user
-            relationships = storage.get_relationships('user', user_id, 'owns')
+            # Query for books owned by user that contain this location_id
+            # Handle location_id as either a string or potentially in a list format
+            query = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book)
+            WHERE r.location_id = $location_id
+            RETURN b.id as book_id
+            """
+            
+            result = storage.query(query, {'user_id': user_id, 'location_id': location_id})
             book_ids = []
             
-            for rel in relationships:
-                properties = rel.get('properties', {})
-                locations = properties.get('locations', [])
-                
-                # Handle both string and list formats for locations
-                if isinstance(locations, str):
-                    try:
-                        import json
-                        locations = json.loads(locations)
-                    except (json.JSONDecodeError, TypeError):
-                        locations = [locations] if locations else []
-                elif not isinstance(locations, list):
-                    locations = []
-                
-                if location_id in locations:
-                    book_id = rel.get('to_id')
-                    if book_id:
-                        book_ids.append(book_id)
-                        debug_log(f"Found book {book_id} at location", "LOCATION", 
-                                 {"book_id": book_id, "location_id": location_id})
+            for record in result:
+                if 'col_0' in record and record['col_0']:
+                    book_id = record['col_0']
+                    book_ids.append(book_id)
+                    debug_log(f"Found book {book_id} at location", "LOCATION", 
+                             {"book_id": book_id, "location_id": location_id})
             
             debug_log(f"Found {len(book_ids)} books at location {location_id}", "LOCATION", 
                      {"location_id": location_id, "user_id": user_id, "book_count": len(book_ids), "book_ids": book_ids})

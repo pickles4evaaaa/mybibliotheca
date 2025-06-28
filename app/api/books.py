@@ -120,7 +120,7 @@ def get_book(book_id):
     """Get a specific book by ID."""
     try:
         # Use service layer to get book
-        domain_book = book_service.get_book_by_id_sync(book_id, current_user.id)
+        domain_book = book_service.get_book_by_uid_sync(book_id, current_user.id)
         
         if not domain_book:
             return jsonify({

@@ -31,14 +31,30 @@ def ensure_data_directory():
 # Initialize data directory
 data_dir = ensure_data_directory()
 
+# Ensure Flask-Session directory exists
+flask_sessions_dir = os.path.join(data_dir, 'flask_sessions')
+if not os.path.exists(flask_sessions_dir):
+    os.makedirs(flask_sessions_dir, exist_ok=True)
+    if platform.system() != "Windows":
+        try:
+            os.chmod(flask_sessions_dir, 0o755)
+        except (OSError, PermissionError):
+            pass
+
 class Config:
     # Security
     SECRET_KEY = os.environ.get('SECRET_KEY')
     if not SECRET_KEY:
-        # In a multi-worker setup (like Gunicorn), it's critical that all workers
-        # share the same secret key. Generating a random key per worker will
-        # lead to session corruption and CSRF failures.
-        raise ValueError("No SECRET_KEY set for Flask application. Please set it in your .env file.")
+        # For development, generate a temporary secret key
+        # In production, always set SECRET_KEY environment variable
+        if os.environ.get('FLASK_ENV') == 'development' or os.environ.get('FLASK_DEBUG'):
+            SECRET_KEY = secrets.token_hex(32)
+            print("⚠️  WARNING: Using temporary SECRET_KEY for development. Set SECRET_KEY in .env for production!")
+        else:
+            # In a multi-worker setup (like Gunicorn), it's critical that all workers
+            # share the same secret key. Generating a random key per worker will
+            # lead to session corruption and CSRF failures.
+            raise ValueError("No SECRET_KEY set for Flask application. Please set it in your .env file.")
     
     # CSRF Settings with better defaults
     WTF_CSRF_ENABLED = True
@@ -52,10 +68,22 @@ class Config:
     SESSION_COOKIE_SAMESITE = 'Lax'
     SESSION_PERMANENT = False  # Don't require permanent sessions for CSRF
     PERMANENT_SESSION_LIFETIME = 86400  # 24 hours
-    
-    # Additional session settings to ensure sessions work properly
-    SESSION_TYPE = 'filesystem'  # Use filesystem sessions for reliability
+
+    # Flask-Session Configuration
+    # Use filesystem sessions for development/Docker, Redis for production
+    SESSION_TYPE = os.environ.get('SESSION_TYPE', 'filesystem')  # 'filesystem', 'redis', 'null'
     SESSION_USE_SIGNER = True  # Sign session cookies for security
+    SESSION_KEY_PREFIX = 'bibliotheca:'
+    
+    # Filesystem session configuration (for development/Docker)
+    SESSION_FILE_DIR = os.path.join(data_dir, 'flask_sessions')
+    SESSION_FILE_THRESHOLD = 500  # Maximum number of sessions to store
+    
+    # Redis session configuration (for production)
+    SESSION_REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
+    SESSION_REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
+    SESSION_REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD')
+    SESSION_REDIS_DB = int(os.environ.get('REDIS_SESSION_DB', 0))
 
     # File uploads
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size

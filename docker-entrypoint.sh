@@ -2,6 +2,11 @@
 set -e
 
 echo "🚀 Starting MyBibliotheca with KuzuDB setup..."
+echo "📅 Container startup time: $(date)"
+echo "🔍 Container environment:"
+echo "  - HOSTNAME: $HOSTNAME"
+echo "  - PWD: $PWD"
+echo "  - USER: $(whoami)"
 
 # Generate a secure secret key if not provided
 if [ -z "$SECRET_KEY" ]; then
@@ -11,22 +16,70 @@ if [ -z "$SECRET_KEY" ]; then
 fi
 
 # Ensure data directories exist
+echo "📁 Creating data directories..."
 mkdir -p /app/data
 mkdir -p /app/data/kuzu
 
+# Log directory structure and permissions
+echo "📂 Data directory structure:"
+ls -la /app/data/ || echo "❌ Failed to list /app/data/"
+echo "📂 Kuzu directory details:"
+ls -la /app/data/kuzu/ || echo "❌ Failed to list /app/data/kuzu/"
+
+# Check if this is a fresh container or restart
+if [ -f "/app/data/kuzu/.container_marker" ]; then
+    echo "🔄 Container restart detected - existing database should persist"
+    echo "📊 Previous container info:"
+    cat /app/data/kuzu/.container_marker || echo "❌ Failed to read container marker"
+else
+    echo "🆕 Fresh container startup - creating container marker"
+    echo "Container created: $(date)" > /app/data/kuzu/.container_marker
+    echo "Hostname: $HOSTNAME" >> /app/data/kuzu/.container_marker
+fi
+
 # Ensure proper permissions on data directory
-chown -R 1000:1000 /app/data 2>/dev/null || true
+echo "🔐 Setting permissions on data directory..."
+chown -R 1000:1000 /app/data 2>/dev/null || echo "⚠️  Could not change ownership (running as non-root?)"
+chmod -R 755 /app/data 2>/dev/null || echo "⚠️  Could not change permissions"
 
 # KuzuDB-specific setup
 echo "🗄️  Setting up KuzuDB..."
 export KUZU_DB_PATH=${KUZU_DB_PATH:-/app/data/kuzu}
 export GRAPH_DATABASE_ENABLED=${GRAPH_DATABASE_ENABLED:-true}
 
+echo "🔍 KuzuDB setup details:"
+echo "  - KUZU_DB_PATH: $KUZU_DB_PATH"
+echo "  - GRAPH_DATABASE_ENABLED: $GRAPH_DATABASE_ENABLED"
+
+# Check if database files exist
+echo "📊 Checking for existing KuzuDB files..."
+if [ -d "$KUZU_DB_PATH" ]; then
+    echo "✅ KuzuDB directory exists"
+    KUZU_FILES=$(find "$KUZU_DB_PATH" -type f 2>/dev/null | wc -l)
+    echo "📄 Found $KUZU_FILES files in KuzuDB directory"
+    if [ $KUZU_FILES -gt 0 ]; then
+        echo "📋 KuzuDB files found:"
+        find "$KUZU_DB_PATH" -type f -exec ls -lh {} \; 2>/dev/null || echo "❌ Could not list files"
+        echo "✅ Database persistence detected - existing data should be available"
+    else
+        echo "📭 KuzuDB directory is empty - fresh database will be initialized"
+    fi
+else
+    echo "❌ KuzuDB directory does not exist - will be created"
+fi
+
 # Clean up any stale KuzuDB lock files (critical for Docker restarts)
 if [ -f "$KUZU_DB_PATH/.lock" ]; then
     echo "🧹 Removing stale KuzuDB lock file..."
-    rm -f "$KUZU_DB_PATH/.lock" 2>/dev/null || true
+    rm -f "$KUZU_DB_PATH/.lock" 2>/dev/null || echo "❌ Failed to remove lock file"
+else
+    echo "✅ No stale lock files found"
 fi
+
+# Additional KuzuDB diagnostic info
+echo "🔧 KuzuDB diagnostics:"
+echo "  - Directory permissions: $(ls -ld $KUZU_DB_PATH 2>/dev/null || echo 'N/A')"
+echo "  - Available disk space: $(df -h $KUZU_DB_PATH 2>/dev/null | tail -1 || echo 'N/A')"
 
 # Warn about single worker requirement
 echo "⚠️  NOTE: Running with single worker (WORKERS=1) due to KuzuDB concurrency limitations"
@@ -50,6 +103,17 @@ fi
 
 echo "✅ Initialization complete, starting application..."
 echo "📝 Visit the application to complete setup using the interactive setup page"
+echo "🕒 Application startup time: $(date)"
+
+# Run persistence diagnostics
+echo "🔍 Running persistence diagnostics..."
+python3 log_persistence_diagnostics.py || echo "⚠️ Diagnostics script failed but continuing..."
+
+# Log final state before starting app
+echo "🏁 Final pre-startup state:"
+echo "  - Data directory size: $(du -sh /app/data 2>/dev/null || echo 'N/A')"
+echo "  - KuzuDB directory size: $(du -sh $KUZU_DB_PATH 2>/dev/null || echo 'N/A')"
+echo "  - Process ID: $$"
 
 # Execute the main command
 exec "$@"

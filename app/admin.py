@@ -282,32 +282,21 @@ def delete_user(user_id):
 @admin_required
 def settings():
     """Admin settings page"""
-    from .infrastructure.redis_graph import get_graph_storage
-    redis_client = get_graph_storage().redis
+    from .infrastructure.kuzu_graph import get_graph_storage
+    storage = get_graph_storage()
     
     if request.method == 'POST':
         site_name = request.form.get('site_name', 'MyBibliotheca')
         server_timezone = request.form.get('server_timezone', 'UTC')
         
-        # Store the settings in Redis
-        redis_client.set('site_name', site_name)
-        redis_client.set('server_timezone', server_timezone)
-        
-        flash(f'Settings updated! Site name: {site_name}, Server timezone: {server_timezone}', 'success')
+        # For Kuzu version, settings are managed via environment variables
+        # Store settings notification (in production, these would be environment variables)
+        flash(f'Settings noted! Site name: {site_name}, Server timezone: {server_timezone}. Configure via environment variables for persistence.', 'info')
         return redirect(url_for('admin.settings'))
     
-    # Get the current settings from Redis
-    current_site_name = redis_client.get('site_name')
-    if current_site_name:
-        current_site_name = current_site_name.decode('utf-8') if isinstance(current_site_name, bytes) else current_site_name
-    else:
-        current_site_name = 'MyBibliotheca'
-    
-    current_timezone = redis_client.get('server_timezone')
-    if current_timezone:
-        current_timezone = current_timezone.decode('utf-8') if isinstance(current_timezone, bytes) else current_timezone
-    else:
-        current_timezone = 'UTC'
+    # Get the current settings from environment variables
+    current_site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
+    current_timezone = os.getenv('SERVER_TIMEZONE', 'UTC')
     
     # Get available timezones
     available_timezones = pytz.all_timezones

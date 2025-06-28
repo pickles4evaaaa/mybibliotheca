@@ -12,7 +12,7 @@
 <ul class="list-group mb-4">
   {% for book in currently_reading %}
     <li class="list-group-item text-center d-flex flex-column align-items-center">
-      <a href="{{ url_for('main.view_book', uid=book.uid) }}">
+      <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}">
         {% if book.cover_url %}
           <img src="{{ book.cover_url }}" alt="cover"
                style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
@@ -23,7 +23,7 @@
         {% endif %}
       </a>
       <div>
-        <a href="{{ url_for('main.view_book', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
+        <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
         <br>
         <small>by {{ book.author }} (ISBN: {{ book.isbn }})</small>
       </div>
@@ -37,7 +37,7 @@
 <ul class="list-group mb-4">
   {% for book in want_to_read %}
     <li class="list-group-item text-center d-flex flex-column align-items-center">
-      <a href="{{ url_for('main.view_book', uid=book.uid) }}">
+      <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}">
         {% if book.cover_url %}
           <img src="{{ book.cover_url }}" alt="cover"
                style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
@@ -48,7 +48,7 @@
         {% endif %}
       </a>
       <div>
-        <a href="{{ url_for('main.view_book', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
+        <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
         <br>
         <small>by {{ book.author }} (ISBN: {{ book.isbn }})</small>
       </div>
@@ -67,7 +67,7 @@
 <ul class="list-group mb-2">
   {% for book in finished[:5] %}
     <li class="list-group-item text-center d-flex flex-column align-items-center">
-      <a href="{{ url_for('main.view_book', uid=book.uid) }}">
+      <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}">
         {% if book.cover_url %}
           <img src="{{ book.cover_url }}" alt="cover"
                style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
@@ -78,7 +78,7 @@
         {% endif %}
       </a>
       <div>
-        <a href="{{ url_for('main.view_book', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
+        <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
         <br>
         <small>
           by {{ book.author }} (ISBN: {{ book.isbn }})
@@ -95,7 +95,7 @@
   <ul class="list-group">
     {% for book in finished[5:] %}
       <li class="list-group-item text-center d-flex flex-column align-items-center">
-        <a href="{{ url_for('main.view_book', uid=book.uid) }}">
+        <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}">
           {% if book.cover_url %}
             <img src="{{ book.cover_url }}" alt="cover"
                  style="height:120px;width:auto;margin-bottom:16px;border-radius:4px;"
@@ -106,7 +106,7 @@
           {% endif %}
         </a>
         <div>
-          <a href="{{ url_for('main.view_book', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
+          <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
           <br>
           <small>
             by {{ book.author }} (ISBN: {{ book.isbn }})

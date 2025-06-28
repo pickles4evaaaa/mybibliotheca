@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Advanced SQLite to Redis Migration System for Bibliotheca
-=========================================================
+Advanced SQLite to Kuzu Migration System for Bibliotheca
+========================================================
 
 This module provides a comprehensive migration system that handles:
 1. Detection of V1 (single-user) and V2 (multi-user) SQLite databases
@@ -26,7 +26,6 @@ import shutil
 import json
 import logging
 import asyncio
-import redis
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any, Union
 from pathlib import Path
@@ -41,9 +40,9 @@ from app.domain.models import (
     Book, User, UserBookRelationship, Author, Publisher, Category, 
     ReadingStatus, Person, BookContribution, ContributionType
 )
-from app.infrastructure.redis_repositories import RedisBookRepository, RedisUserRepository
-from app.infrastructure.redis_graph import RedisGraphStorage, RedisGraphConnection
-from app.services import RedisBookService, RedisUserService
+from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
+from app.infrastructure.kuzu_graph import KuzuGraphStorage, get_graph_storage
+from app.services import book_service, user_service
 from config import Config
 
 # Setup logging
@@ -72,36 +71,32 @@ class MigrationStatus:
 
 class AdvancedMigrationSystem:
     """
-    Comprehensive migration system for converting SQLite databases to Redis.
+    Comprehensive migration system for converting SQLite databases to Kuzu.
     Handles both V1 (single-user) and V2 (multi-user) databases with full backup support.
     """
     
-    def __init__(self, redis_url: str = None):
+    def __init__(self, kuzu_db_path: str = None):
         """
         Initialize the advanced migration system.
         
         Args:
-            redis_url: Redis connection URL (defaults to config)
+            kuzu_db_path: Kuzu database path (defaults to config)
         """
         self.backup_dir = Path("migration_backups") / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup Redis connection
-        self.redis_client = redis.from_url(redis_url or Config.REDIS_URL)
-        
-        # Initialize repositories with proper connection object
-        redis_connection = RedisGraphConnection(redis_url or Config.REDIS_URL)
-        self.graph_store = RedisGraphStorage(redis_connection)
-        self.book_repo = RedisBookRepository(self.graph_store)
-        self.user_repo = RedisUserRepository(self.graph_store)
+        # Setup Kuzu connection
+        self.graph_store = get_graph_storage()
+        self.book_repo = KuzuBookRepository(self.graph_store)
+        self.user_repo = KuzuUserRepository(self.graph_store)
         
         # Initialize services for migration operations
-        self.book_service = RedisBookService()
-        self.user_service = RedisUserService()
+        self.book_service = book_service
+        self.user_service = user_service
         
         # Initialize location service
         from .location_service import LocationService
-        self.location_service = LocationService(self.redis_client)
+        self.location_service = LocationService(self.graph_store)
         
         # Migration state
         self.current_status = MigrationStatus.NOT_STARTED

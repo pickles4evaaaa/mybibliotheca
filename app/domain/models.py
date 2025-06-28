@@ -434,9 +434,29 @@ class Book:
         if not self.normalized_title and self.title:
             self.normalized_title = self._normalize_title(self.title)
         
-        # Ensure published_date is a date object, not datetime
-        if self.published_date and isinstance(self.published_date, datetime):
-            self.published_date = self.published_date.date()
+        # Ensure published_date is a date object, not datetime or string
+        if self.published_date:
+            if isinstance(self.published_date, str):
+                try:
+                    # Try parsing as ISO date string
+                    self.published_date = datetime.fromisoformat(self.published_date).date()
+                except ValueError:
+                    try:
+                        # Try parsing as date-only string (YYYY-MM-DD)
+                        self.published_date = datetime.strptime(self.published_date, '%Y-%m-%d').date()
+                    except ValueError:
+                        try:
+                            # Try parsing year-only (common in Google Books API)
+                            if len(self.published_date) == 4 and self.published_date.isdigit():
+                                self.published_date = datetime.strptime(f"{self.published_date}-01-01", '%Y-%m-%d').date()
+                            else:
+                                print(f"[BOOK_MODEL][WARN] Could not parse published_date string: {self.published_date}")
+                                self.published_date = None
+                        except ValueError:
+                            print(f"[BOOK_MODEL][WARN] Could not parse published_date string: {self.published_date}")
+                            self.published_date = None
+            elif isinstance(self.published_date, datetime):
+                self.published_date = self.published_date.date()
     
     @staticmethod
     def _normalize_title(title: str) -> str:
@@ -544,6 +564,7 @@ class User:
     
     # System fields
     created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
     
     # Flask-Login compatibility methods
     def is_authenticated(self) -> bool:

@@ -4,7 +4,7 @@ Routes for custom metadata management.
 Provides endpoints for managing custom field definitions and import mapping templates.
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify, flash
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify, flash, current_app
 from flask_login import login_required, current_user
 from datetime import datetime
 import uuid
@@ -79,6 +79,8 @@ def create_field():
             is_shareable = request.form.get('is_shareable') == 'on'
             is_global = request.form.get('is_global') == 'on'
             
+            current_app.logger.info(f"ℹ️ [METADATA_ROUTES] Received request to create custom field '{name}' for user {current_user.id}")
+
             # Validation
             if not name or not display_name:
                 flash('Name and Display Name are required', 'error')
@@ -90,6 +92,8 @@ def create_field():
                 flash('A field with this name already exists', 'error')
                 return redirect(request.url)
             
+            current_app.logger.info(f"ℹ️ [METADATA_ROUTES] Validation passed for custom field '{name}'. Creating definition.")
+
             # Create field definition
             field_def = CustomFieldDefinition(
                 id=str(uuid.uuid4()),
@@ -134,13 +138,21 @@ def create_field():
             if help_text:
                 field_def.help_text = help_text
             
+            current_app.logger.info(f"ℹ️ [METADATA_ROUTES] Custom field definition for '{name}' created. Saving...")
             # Save field definition
-            custom_field_service.create_field_sync(field_def)
+            success = custom_field_service.create_field_sync(field_def)
             
-            flash(f'Custom field "{display_name}" created successfully!', 'success')
+            if success:
+                flash(f'Custom field "{display_name}" created successfully!', 'success')
+                current_app.logger.info(f"✅ [METADATA_ROUTES] Successfully saved custom field '{name}' for user {current_user.id}")
+            else:
+                flash('Error creating custom field. Please check logs for details.', 'error')
+                current_app.logger.error(f"❌ [METADATA_ROUTES] Failed to save custom field '{name}' for user {current_user.id}")
+
             return redirect(url_for('metadata.fields'))
             
         except Exception as e:
+            current_app.logger.error(f"❌ [METADATA_ROUTES] Unhandled exception in create_field: {e}", exc_info=True)
             flash(f'Error creating custom field: {str(e)}', 'error')
             return redirect(request.url)
     

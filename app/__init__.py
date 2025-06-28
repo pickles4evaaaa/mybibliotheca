@@ -5,6 +5,8 @@ This version completely removes SQLite dependency and uses Kuzu as the sole data
 """
 
 import os
+from datetime import datetime
+from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
@@ -225,6 +227,14 @@ def _initialize_default_templates():
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+    
+    # Explicitly set the secret key for Flask-Session compatibility
+    # Must be set before Flask-Session initialization
+    app.secret_key = app.config['SECRET_KEY']
+    
+    # Verify the secret key is set
+    if not app.secret_key:
+        raise RuntimeError("SECRET_KEY must be set in environment or config")
 
     # Initialize debug utilities
     from .debug_utils import setup_debug_logging, print_debug_banner, debug_middleware
@@ -331,6 +341,9 @@ def create_app():
         
         if verbose_init:
             print("🚀 Initializing Kuzu-based MyBibliotheca...")
+            print(f"🔍 App initialization - Container: {os.getenv('HOSTNAME', 'unknown')}")
+            print(f"🔍 App initialization - Process ID: {os.getpid()}")
+            print(f"🔍 App initialization - Database path: {os.getenv('KUZU_DB_PATH', 'default')}")
         
         # Test Kuzu connection
         try:
@@ -339,6 +352,18 @@ def create_app():
             # Simple connection test
             if verbose_init:
                 print("✅ Kuzu connection successful")
+                
+                # Log database state at app startup
+                try:
+                    user_count = storage.count_nodes('User')
+                    book_count = storage.count_nodes('Book')
+                    owns_count = storage.count_relationships('OWNS')
+                    print(f"📊 Database state at startup:")
+                    print(f"📊   - Users: {user_count}")
+                    print(f"📊   - Books: {book_count}")
+                    print(f"📊   - OWNS relationships: {owns_count}")
+                except Exception as count_e:
+                    print(f"⚠️ Could not get database counts at startup: {count_e}")
             
             # Initialize services and attach to app using Kuzu service instances
             from .services import (
@@ -371,6 +396,8 @@ def create_app():
         except Exception as e:
             print(f"❌ Kuzu connection failed: {e}")
             print("🔧 Make sure KuzuDB is running and accessible")
+            import traceback
+            traceback.print_exc()
         
         # Development mode - skip auto admin creation, use setup page instead
         if verbose_init:
@@ -449,18 +476,26 @@ def create_app():
         # Check if setup is needed (no users exist)
         try:
             user_count = user_service.get_user_count_sync()
+            debug_auth(f"Before request user count check: {user_count} for endpoint: {request.endpoint}")
+            
             if user_count == 0:
                 # Skip for setup route, onboarding routes, and static files
                 if (request.endpoint in ['auth.setup', 'static'] or 
                     (request.endpoint and (request.endpoint.startswith('static') or 
                                          request.endpoint.startswith('onboarding.')))):
+                    debug_auth(f"Skipping setup redirect for allowed endpoint: {request.endpoint}")
                     return
                 # Redirect to setup page
+                debug_auth(f"No users found, redirecting to setup from: {request.endpoint}")
                 return redirect(url_for('auth.setup'))
+            else:
+                debug_auth(f"Users exist ({user_count}), allowing access to: {request.endpoint}")
         except Exception as e:
+            debug_auth(f"Error checking user count: {e}")
             print(f"Error checking user count: {e}")
-            # If we can't check users, assume setup is needed
-            if request.endpoint not in ['auth.setup', 'static']:
+            # If we can't check users, be more conservative about redirecting
+            if request.endpoint not in ['auth.setup', 'static', 'auth.login']:
+                debug_auth(f"User count check failed, redirecting to setup from: {request.endpoint}")
                 return redirect(url_for('auth.setup'))
         
         # For API endpoints, skip the session-based authentication checks
@@ -579,5 +614,42 @@ def create_app():
     app.register_blueprint(books_api)
     app.register_blueprint(reading_logs_api)
     app.register_blueprint(users_api)
+
+    # Add shutdown logging
+    import atexit
+    from datetime import datetime
+    from pathlib import Path
+    
+    def shutdown_handler():
+        """Log database state at application shutdown."""
+        try:
+            print(f"🛑 [APP_SHUTDOWN] Application shutting down - Container: {os.getenv('HOSTNAME', 'unknown')}")
+            print(f"🛑 [APP_SHUTDOWN] Process ID: {os.getpid()}")
+            print(f"🛑 [APP_SHUTDOWN] Shutdown time: {datetime.now()}")
+            
+            # Try to get final database state
+            from .infrastructure.kuzu_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            user_count = storage.count_nodes('User')
+            book_count = storage.count_nodes('Book')
+            owns_count = storage.count_relationships('OWNS')
+            
+            print(f"🛑 [APP_SHUTDOWN] Final database state:")
+            print(f"🛑 [APP_SHUTDOWN]   - Users: {user_count}")
+            print(f"🛑 [APP_SHUTDOWN]   - Books: {book_count}")
+            print(f"🛑 [APP_SHUTDOWN]   - OWNS relationships: {owns_count}")
+            
+            # Check database files
+            db_path = Path(os.getenv('KUZU_DB_PATH', '/app/data/kuzu'))
+            if db_path.exists():
+                files = list(db_path.glob("*"))
+                total_size = sum(f.stat().st_size for f in files if f.is_file())
+                print(f"🛑 [APP_SHUTDOWN] Database files: {len(files)} files, {total_size} bytes total")
+            
+        except Exception as e:
+            print(f"🛑 [APP_SHUTDOWN] Error during shutdown logging: {e}")
+    
+    atexit.register(shutdown_handler)
 
     return app

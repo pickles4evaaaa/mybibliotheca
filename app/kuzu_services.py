@@ -319,6 +319,37 @@ class KuzuBookService:
                 book.finish_date = datetime.fromisoformat(book.finish_date).date()
             except:
                 book.finish_date = None
+        
+        # Load custom metadata for this user-book combination
+        try:
+            custom_metadata = {}
+            # Query for HAS_CUSTOM_FIELD relationships from this user for this book
+            query = """
+            MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField)
+            WHERE r.book_id = $book_id
+            RETURN cf.name, cf.value
+            """
+            
+            results = self.graph_storage.query(query, {
+                "user_id": user_id,
+                "book_id": book_id
+            })
+            
+            for result in results:
+                # Extract field name and value from result
+                if len(result) >= 2:
+                    field_name = list(result.values())[0]  # First column
+                    field_value = list(result.values())[1]  # Second column
+                    if field_name and field_value:
+                        custom_metadata[field_name] = field_value
+                        
+            book.custom_metadata = custom_metadata
+            print(f"🔍 [LOAD_CUSTOM_META] Loaded {len(custom_metadata)} custom fields for book {book_id}, user {user_id}: {custom_metadata}")
+        except Exception as e:
+            print(f"❌ Error loading custom metadata for book {book_id}, user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            book.custom_metadata = {}
                 
         return book
 
@@ -337,6 +368,28 @@ class KuzuBookService:
         """Sync wrapper for get_book_by_id_for_user (uid is same as book_id)."""
         # get_book_by_id_for_user already has @run_async decorator, so just call it directly
         return self.get_book_by_id_for_user(uid, user_id)
+    
+    def get_user_book_sync(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
+        """Get user's book by book ID - alias for get_book_by_uid_sync for compatibility."""
+        result = self.get_book_by_uid_sync(book_id, user_id)
+        if result:
+            # Convert Book object to dictionary if needed
+            if hasattr(result, '__dict__'):
+                return result.__dict__
+            elif isinstance(result, dict):
+                return result
+            else:
+                # Try to convert to dict
+                try:
+                    return vars(result)
+                except:
+                    # Fallback - create basic dict
+                    return {
+                        'id': getattr(result, 'id', book_id),
+                        'title': getattr(result, 'title', 'Unknown'),
+                        'custom_metadata': getattr(result, 'custom_metadata', {})
+                    }
+        return None
     
     def get_user_books_sync(self, user_id: str) -> List[Book]:
         """Sync wrapper for get_books_for_user."""
@@ -564,3 +617,309 @@ class KuzuImportMappingRepository:
                 templates.append(template)
         
         return templates
+
+
+class KuzuJobService:
+    """Service for managing import jobs using Kuzu graph database."""
+    
+    def __init__(self):
+        self._storage = None
+    
+    @property
+    def storage(self):
+        """Lazy initialization of storage."""
+        if self._storage is None:
+            self._storage = get_graph_storage()
+        return self._storage
+    
+    @run_async
+    async def store_job(self, task_id: str, job_data: dict) -> bool:
+        """Store import job data in Kuzu."""
+        try:
+            import json
+            from datetime import datetime, timedelta
+            
+            # Set expiration time (24 hours from now)
+            expires_at = datetime.utcnow() + timedelta(hours=24)
+            
+            # Prepare job data for Kuzu storage
+            job_record = {
+                'id': f"job_{task_id}",
+                'task_id': task_id,
+                'user_id': job_data.get('user_id', ''),
+                'csv_file_path': job_data.get('csv_file_path', ''),
+                'field_mappings': json.dumps(job_data.get('field_mappings', {})),
+                'default_reading_status': job_data.get('default_reading_status', ''),
+                'duplicate_handling': job_data.get('duplicate_handling', 'skip'),
+                'custom_fields_enabled': job_data.get('custom_fields_enabled', False),
+                'status': job_data.get('status', 'pending'),
+                'processed': job_data.get('processed', 0),
+                'success': job_data.get('success', 0),
+                'errors': job_data.get('errors', 0),
+                'total': job_data.get('total', 0),
+                'start_time': datetime.fromisoformat(job_data['start_time']) if isinstance(job_data.get('start_time'), str) else job_data.get('start_time', datetime.utcnow()),
+                'end_time': datetime.fromisoformat(job_data['end_time']) if job_data.get('end_time') and isinstance(job_data.get('end_time'), str) else job_data.get('end_time'),
+                'current_book': job_data.get('current_book', ''),
+                'error_messages': json.dumps(job_data.get('error_messages', [])),
+                'recent_activity': json.dumps(job_data.get('recent_activity', [])),
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow(),
+                'expires_at': expires_at
+            }
+            
+            # Use the store_node method to create the job
+            success = self.storage.store_node('ImportJob', f"job_{task_id}", job_record)
+            
+            if success:
+                print(f"✅ Stored job {task_id} in Kuzu")
+            else:
+                print(f"❌ Failed to store job {task_id} in Kuzu")
+            return success
+            
+        except Exception as e:
+            print(f"❌ Error storing job {task_id} in Kuzu: {e}")
+            return False
+    
+    @run_async
+    async def get_job(self, task_id: str) -> Optional[dict]:
+        """Retrieve import job data from Kuzu."""
+        try:
+            import json
+            
+            # Get the job node by task_id
+            job_record = self.storage.get_node('ImportJob', f"job_{task_id}")
+            
+            if job_record:
+                # Check if the job has expired
+                expires_at = job_record.get('expires_at')
+                if expires_at and isinstance(expires_at, datetime) and expires_at < datetime.utcnow():
+                    print(f"❌ Job {task_id} has expired")
+                    return None
+                
+                # Convert back to the expected job data format
+                job_data = {
+                    'task_id': job_record.get('task_id'),
+                    'user_id': job_record.get('user_id'),
+                    'csv_file_path': job_record.get('csv_file_path'),
+                    'field_mappings': json.loads(job_record.get('field_mappings', '{}')),
+                    'default_reading_status': job_record.get('default_reading_status'),
+                    'duplicate_handling': job_record.get('duplicate_handling'),
+                    'custom_fields_enabled': job_record.get('custom_fields_enabled', False),
+                    'status': job_record.get('status'),
+                    'processed': job_record.get('processed', 0),
+                    'success': job_record.get('success', 0),
+                    'errors': job_record.get('errors', 0),
+                    'total': job_record.get('total', 0),
+                    'start_time': job_record.get('start_time').isoformat() if job_record.get('start_time') else None,
+                    'end_time': job_record.get('end_time').isoformat() if job_record.get('end_time') else None,
+                    'current_book': job_record.get('current_book'),
+                    'error_messages': json.loads(job_record.get('error_messages', '[]')),
+                    'recent_activity': json.loads(job_record.get('recent_activity', '[]'))
+                }
+                
+                print(f"✅ Retrieved job {task_id} from Kuzu")
+                return job_data
+            else:
+                print(f"❌ Job {task_id} not found in Kuzu")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error retrieving job {task_id} from Kuzu: {e}")
+            return None
+    
+    @run_async
+    async def update_job(self, task_id: str, updates: dict) -> bool:
+        """Update specific fields in an import job stored in Kuzu."""
+        try:
+            import json
+            from datetime import datetime
+            
+            # Prepare updates by filtering out system fields and serializing JSON fields
+            clean_updates = {}
+            
+            # Define fields that should be datetime objects
+            datetime_fields = {'start_time', 'end_time', 'created_at', 'updated_at', 'expires_at'}
+            
+            for key, value in updates.items():
+                # Skip system fields
+                if key in ['id', '_id']:
+                    continue
+                    
+                # Handle JSON fields
+                if key in ['error_messages', 'recent_activity', 'field_mappings']:
+                    if isinstance(value, (list, dict)):
+                        value = json.dumps(value)
+                elif key in datetime_fields and isinstance(value, str) and value:
+                    # Convert ISO timestamp strings to datetime objects
+                    try:
+                        if value.endswith('Z'):
+                            value = value[:-1] + '+00:00'
+                        value = datetime.fromisoformat(value)
+                    except (ValueError, TypeError):
+                        # If conversion fails, keep as string and let Kuzu handle it
+                        pass
+                        
+                clean_updates[key] = value
+            
+            # Add updated timestamp
+            clean_updates['updated_at'] = datetime.utcnow()
+            
+            # Use update_node method with only the clean updates
+            success = self.storage.update_node('ImportJob', f"job_{task_id}", clean_updates)
+            
+            if success:
+                print(f"✅ Updated job {task_id} in Kuzu with: {list(updates.keys())}")
+            else:
+                print(f"❌ Failed to update job {task_id} in Kuzu")
+            return success
+            
+        except Exception as e:
+            print(f"❌ Error updating job {task_id} in Kuzu: {e}")
+            return False
+    
+    @run_async
+    async def delete_expired_jobs(self) -> int:
+        """Delete expired import jobs from Kuzu."""
+        try:
+            # Use execute_cypher to delete expired jobs
+            query = """
+            MATCH (j:ImportJob)
+            WHERE j.expires_at < $current_time
+            DELETE j
+            """
+            
+            result = self.storage.execute_cypher(query, {
+                'current_time': datetime.utcnow()
+            })
+            
+            print(f"✅ Cleaned up expired jobs from Kuzu")
+            return 0  # Kuzu doesn't return delete count easily
+            
+        except Exception as e:
+            print(f"❌ Error cleaning up expired jobs from Kuzu: {e}")
+            return 0
+
+
+# Global service instances
+job_service = KuzuJobService()
+
+class KuzuUserBookService:
+    """Service for managing user-book relationships in Kuzu."""
+    
+    def __init__(self):
+        self.graph_storage = get_graph_storage()
+    
+    @run_async
+    async def update_user_book(self, user_id: str, book_id: str, custom_metadata: Dict[str, Any] = None, **kwargs) -> bool:
+        """Update user-book relationship with custom metadata."""
+        try:
+            if not custom_metadata:
+                return True  # Nothing to update
+            
+            # For each custom field, create or update the HAS_CUSTOM_FIELD relationship
+            for field_name, field_value in custom_metadata.items():
+                if field_value is not None and field_value != '':
+                    # Create a CustomField node for this field
+                    field_node_id = f"custom_{user_id}_{book_id}_{field_name}"
+                    
+                    # Store the custom field
+                    field_data = {
+                        'id': field_node_id,
+                        'name': field_name,
+                        'field_type': 'text',  # Default to text for now
+                        'value': str(field_value),
+                        'created_at': datetime.utcnow()
+                    }
+                    
+                    success = self.graph_storage.store_node('CustomField', field_node_id, field_data)
+                    if success:
+                        # Create the HAS_CUSTOM_FIELD relationship
+                        rel_props = {
+                            'book_id': book_id,
+                            'field_name': field_name
+                        }
+                        self.graph_storage.create_relationship('User', user_id, 'HAS_CUSTOM_FIELD', 'CustomField', field_node_id, rel_props)
+                        print(f"✅ Saved custom field {field_name} = {field_value} for user {user_id}, book {book_id}")
+                    else:
+                        print(f"❌ Failed to save custom field {field_name}")
+                        
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error updating user book custom metadata: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def update_user_book_sync(self, user_id: str, book_id: str, custom_metadata: Dict[str, Any] = None, **kwargs) -> bool:
+        """Synchronous version of update_user_book."""
+        try:
+            print(f"🔍 [UPDATE_USER_BOOK] Called with user_id={user_id}, book_id={book_id}, custom_metadata={custom_metadata}")
+            
+            if not custom_metadata:
+                print(f"🔍 [UPDATE_USER_BOOK] No custom metadata to update")
+                return True  # Nothing to update
+            
+            # Verify user and book exist
+            user_exists = self.graph_storage.get_node('User', user_id)
+            book_exists = self.graph_storage.get_node('Book', book_id)
+            print(f"🔍 [UPDATE_USER_BOOK] User exists: {user_exists is not None}, Book exists: {book_exists is not None}")
+            
+            if not user_exists:
+                print(f"❌ [UPDATE_USER_BOOK] User {user_id} not found")
+                return False
+            if not book_exists:
+                print(f"❌ [UPDATE_USER_BOOK] Book {book_id} not found")
+                return False
+            
+            # For each custom field, create or update the HAS_CUSTOM_FIELD relationship
+            for field_name, field_value in custom_metadata.items():
+                print(f"🔍 [UPDATE_USER_BOOK] Processing field {field_name} = {field_value}")
+                
+                if field_value is not None and field_value != '':
+                    # Create a CustomField node for this field
+                    field_node_id = f"custom_{user_id}_{book_id}_{field_name}"
+                    print(f"🔍 [UPDATE_USER_BOOK] Creating CustomField node with id: {field_node_id}")
+                    
+                    # Store the custom field
+                    field_data = {
+                        'id': field_node_id,
+                        'name': field_name,
+                        'field_type': 'text',  # Default to text for now
+                        'value': str(field_value),
+                        'created_at': datetime.utcnow()
+                    }
+                    
+                    success = self.graph_storage.store_node('CustomField', field_node_id, field_data)
+                    print(f"🔍 [UPDATE_USER_BOOK] CustomField node creation success: {success}")
+                    
+                    if success:
+                        # Create the HAS_CUSTOM_FIELD relationship
+                        rel_props = {
+                            'book_id': book_id,
+                            'field_name': field_name
+                        }
+                        rel_success = self.graph_storage.create_relationship('User', user_id, 'HAS_CUSTOM_FIELD', 'CustomField', field_node_id, rel_props)
+                        print(f"🔍 [UPDATE_USER_BOOK] Relationship creation success: {rel_success}")
+                        
+                        if rel_success:
+                            print(f"✅ Saved custom field {field_name} = {field_value} for user {user_id}, book {book_id}")
+                        else:
+                            print(f"❌ Failed to create relationship for custom field {field_name}")
+                    else:
+                        print(f"❌ Failed to save custom field {field_name}")
+                else:
+                    print(f"🔍 [UPDATE_USER_BOOK] Skipping empty field {field_name}")
+                        
+            print(f"🔍 [UPDATE_USER_BOOK] Completed processing all custom fields")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error updating user book custom metadata: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+# Global service instances
+user_book_service = KuzuUserBookService()

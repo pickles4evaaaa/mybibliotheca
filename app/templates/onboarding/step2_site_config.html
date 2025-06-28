@@ -37,7 +37,8 @@
                                    id="site_name" 
                                    name="site_name" 
                                    value="{{ current_config.get('site_name', 'MyBibliotheca') }}" 
-                                   placeholder="Enter your library name">
+                                   placeholder="Enter your library name"
+                                   tabindex="1">
                             <small class="form-text text-muted">This will appear in the header and page titles.</small>
                         </div>
                         
@@ -45,7 +46,7 @@
                             <label for="timezone" class="font-weight-bold">
                                 <i class="fas fa-clock"></i> Time Zone
                             </label>
-                            <select class="form-control" id="timezone" name="timezone">
+                            <select class="form-control" id="timezone" name="timezone" tabindex="2">
                                 {% for tz in timezones %}
                                 <option value="{{ tz }}" {% if tz == current_config.get('timezone', 'UTC') %}selected{% endif %}>
                                     {{ tz }}
@@ -64,7 +65,8 @@
                                    name="location" 
                                    class="form-control" 
                                    value="{{ current_config.get('location', '') }}" 
-                                   placeholder="e.g., New York, NY">
+                                   placeholder="e.g., New York, NY"
+                                   tabindex="3">
                             <small class="form-text text-muted">Set a default location for your books and reading logs</small>
                         </div>
                         
@@ -74,7 +76,8 @@
                                        class="custom-control-input" 
                                        id="location_set_as_default" 
                                        name="location_set_as_default"
-                                       {% if current_config.get('location_set_as_default') %}checked{% endif %}>
+                                       {% if current_config.get('location_set_as_default') %}checked{% endif %}
+                                       tabindex="4">
                                 <label class="custom-control-label" for="location_set_as_default">
                                     <strong>Set as default location for all new/migrated/imported books</strong>
                                 </label>
@@ -85,10 +88,10 @@
                         </div>
                         
                         <div class="d-flex justify-content-between mt-4">
-                            <a href="{{ url_for('onboarding.step', step_num=1) }}" class="btn btn-outline-secondary">
+                            <a href="{{ url_for('onboarding.step', step_num=1) }}" class="btn btn-outline-secondary" tabindex="6">
                                 <i class="fas fa-arrow-left"></i> Back
                             </a>
-                            <button type="submit" class="btn btn-primary btn-lg px-4">
+                            <button type="submit" class="btn btn-primary btn-lg px-4" tabindex="5">
                                 <i class="fas fa-arrow-right"></i> Continue to Data Options
                             </button>
                         </div>
@@ -115,15 +118,18 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Toggle location fields based on checkbox
-document.getElementById('enable_location_features').addEventListener('change', function() {
-    const locationFields = document.querySelectorAll('#location, #location_set_as_default');
-    locationFields.forEach(field => {
-        field.disabled = !this.checked;
-        if (!this.checked) {
-            field.value = '';
-            field.checked = false;
-        }
+const enableLocationElement = document.getElementById('enable_location_features');
+if (enableLocationElement) {
+    enableLocationElement.addEventListener('change', function() {
+        const locationFields = document.querySelectorAll('#location, #location_set_as_default');
+        locationFields.forEach(field => {
+            field.disabled = !this.checked;
+            if (!this.checked) {
+                field.value = '';
+                field.checked = false;
+            }
+        });
     });
-});
+}
 </script>
 {% endblock %}

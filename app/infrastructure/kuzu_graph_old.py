@@ -9,11 +9,9 @@ import os
 import json
 import kuzu
 import logging
-import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime, date
 from pathlib import Path
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -25,57 +23,18 @@ class KuzuGraphDB:
         self.database_path = database_path or os.getenv('KUZU_DB_PATH', 'data/kuzu')
         self._database = None
         self._connection = None
-        self._is_initialized = False
         
     def connect(self) -> kuzu.Connection:
         """Establish connection and initialize schema."""
         if self._connection is None:
             try:
-                print(f"🔌 [KUZU_CONNECT] Connecting to database at {self.database_path}")
-                print(f"🔌 [KUZU_CONNECT] Container environment check:")
-                print(f"🔌 [KUZU_CONNECT]   - HOSTNAME: {os.getenv('HOSTNAME', 'N/A')}")
-                print(f"🔌 [KUZU_CONNECT]   - PWD: {os.getcwd()}")
-                print(f"🔌 [KUZU_CONNECT]   - Process ID: {os.getpid()}")
-                
-                # Check if database path exists and log file info
-                db_path = Path(self.database_path)
-                print(f"🔌 [KUZU_CONNECT] Database path analysis:")
-                print(f"🔌 [KUZU_CONNECT]   - Path exists: {db_path.exists()}")
-                print(f"🔌 [KUZU_CONNECT]   - Parent exists: {db_path.parent.exists()}")
-                print(f"🔌 [KUZU_CONNECT]   - Is directory: {db_path.is_dir()}")
-                
-                if db_path.exists():
-                    files = list(db_path.glob("*"))
-                    print(f"🔌 [KUZU_CONNECT]   - Files in directory: {len(files)}")
-                    for file in files[:10]:  # Limit to first 10 files
-                        print(f"🔌 [KUZU_CONNECT]     * {file.name} ({file.stat().st_size} bytes)")
-                    if len(files) > 10:
-                        print(f"🔌 [KUZU_CONNECT]     ... and {len(files) - 10} more files")
-                
                 Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-                print(f"🔌 [KUZU_CONNECT] Creating KuzuDB connection...")
                 self._database = kuzu.Database(self.database_path)
                 self._connection = kuzu.Connection(self._database)
-                print("🔌 [KUZU_CONNECT] Database connection established, initializing schema...")
                 self._initialize_schema()
                 logger.info(f"Kuzu connected at {self.database_path}")
-                print(f"🔌 [KUZU_CONNECT] Connection completed successfully")
-                
-                # Log post-connection state
-                print(f"🔌 [KUZU_CONNECT] Post-connection analysis:")
-                if db_path.exists():
-                    files = list(db_path.glob("*"))
-                    print(f"🔌 [KUZU_CONNECT]   - Files after connection: {len(files)}")
-                    total_size = sum(f.stat().st_size for f in files if f.is_file())
-                    print(f"🔌 [KUZU_CONNECT]   - Total database size: {total_size} bytes")
-                    
             except Exception as e:
                 logger.error(f"Failed to connect to Kuzu: {e}")
-                print(f"❌ [KUZU_CONNECT] Failed to connect to Kuzu: {e}")
-                print(f"❌ [KUZU_CONNECT] Database path: {self.database_path}")
-                print(f"❌ [KUZU_CONNECT] Current working directory: {os.getcwd()}")
-                import traceback
-                traceback.print_exc()
                 raise
         return self._connection
     
@@ -84,88 +43,45 @@ class KuzuGraphDB:
         try:
             # Skip if already initialized
             if self._is_initialized:
-                print("🔍 [KUZU_INIT] Already initialized, skipping")
                 return
-            
-            print("🔍 [KUZU_INIT] Starting schema initialization...")
-            print(f"🔍 [KUZU_INIT] Database path: {self.database_path}")
             
             # Check environment variable for forced reset
             force_reset = os.getenv('KUZU_FORCE_RESET', 'false').lower() == 'true'
-            print(f"🔍 [KUZU_INIT] Force reset: {force_reset}")
             
-            # Log database file state before initialization
-            db_path = Path(self.database_path)
-            if db_path.exists():
-                files = list(db_path.glob("*"))
-                print(f"🔍 [KUZU_INIT] Database files before init: {len(files)}")
-                for file in files[:5]:  # Show first 5 files
-                    print(f"🔍 [KUZU_INIT]   - {file.name} ({file.stat().st_size} bytes, modified: {file.stat().st_mtime})")
-            
-            # Check if database already has User table and determine initialization strategy
-            has_existing_users = False
             if not force_reset:
+                # Check if database already has User table (indicating it's been initialized)
                 try:
-                    print("🔍 [KUZU_INIT] Checking for existing users...")
                     result = self._connection.execute("MATCH (u:User) RETURN COUNT(u) as count LIMIT 1")
                     if result.has_next():
                         user_count = result.get_next()[0]
-                        print(f"🔍 [KUZU_INIT] Found {user_count} users in database")
                         if user_count > 0:
-                            # Database has existing users - ensure all tables exist but preserve data
-                            has_existing_users = True
-                            logger.info(f"🗄️ Database contains {user_count} users - will ensure all tables exist")
-                            print(f"🗄️ Database contains {user_count} users - will ensure all tables exist")
-                            
-                            # Check for books too
-                            try:
-                                book_result = self._connection.execute("MATCH (b:Book) RETURN COUNT(b) as count LIMIT 1")
-                                if book_result.has_next():
-                                    book_count = book_result.get_next()[0]
-                                    print(f"🗄️ Database also contains {book_count} books")
-                            except Exception as book_e:
-                                print(f"🔍 [KUZU_INIT] Could not count books: {book_e}")
-                                
+                            logger.info(f"🗄️ Database already contains {user_count} users - skipping schema initialization")
+                            self._is_initialized = True
+                            return
                         else:
                             logger.info("🗄️ Database exists but is empty - will initialize schema")
-                            print("🗄️ Database exists but is empty - will initialize schema")
                     else:
                         logger.info("🗄️ Database is empty - will initialize schema")
-                        print("🗄️ Database is empty - will initialize schema")
                 except Exception as e:
                     # If User table doesn't exist, we need to initialize schema
                     logger.info(f"🗄️ User table doesn't exist - will initialize schema: {e}")
-                    print(f"🗄️ User table doesn't exist - will initialize schema: {e}")
             else:
                 logger.warning("⚠️ KUZU_FORCE_RESET=true - forcing schema reset (all data will be lost)")
-                print("⚠️ KUZU_FORCE_RESET=true - forcing schema reset (all data will be lost)")
             
-            # If we reach here, we need to initialize the schema
-            logger.info("🔧 Initializing Kuzu schema...")
-            print("🔧 Initializing Kuzu schema...")
+            # Only drop and recreate if we're really starting fresh
+            # This should only happen on first run or if explicitly requested
+            logger.info("🔧 Initializing fresh Kuzu schema...")
             
-            # Only drop tables if we're forcing a reset
-            if force_reset:
-                logger.info("🗑️ Dropping existing tables due to forced reset...")
-                print("🗑️ Dropping existing tables due to forced reset...")
-                drop_tables = ["OWNS", "WRITTEN_BY", "CONTRIBUTED", "AUTHORED", "PUBLISHED_BY", "PUBLISHED", "CATEGORIZED_AS", "PART_OF_SERIES", "IN_SERIES", "LOGGED", "PARENT_CATEGORY", "LOCATED_AT", "STORED_AT", "HAS_CUSTOM_FIELD",
-                              "Book", "User", "Author", "Person", "Publisher", "Category", "Series", "ReadingLog", 
-                              "Location", "ImportMapping", "ImportJob", "CustomFieldDefinition", "ImportTask"]
-                
-                for table in drop_tables:
-                    try:
-                        self._connection.execute(f"DROP TABLE {table}")
-                        logger.debug(f"Dropped table: {table}")
-                        print(f"🗑️ Dropped table: {table}")
-                    except Exception as e:
-                        logger.debug(f"Table {table} doesn't exist or couldn't be dropped: {e}")
-                        print(f"🔍 Table {table} doesn't exist or couldn't be dropped: {e}")
-            elif has_existing_users:
-                logger.info("🔧 Ensuring all tables exist (preserving existing data)...")
-                print("🔧 Ensuring all tables exist (preserving existing data)...")
-            else:
-                logger.info("🔧 Creating new database schema...")
-                print("🔧 Creating new database schema...")
+            # Try to drop existing tables (ignore errors if they don't exist)
+            drop_tables = ["OWNS", "WRITTEN_BY", "CONTRIBUTED", "AUTHORED", "PUBLISHED_BY", "PUBLISHED", "CATEGORIZED_AS", "PART_OF_SERIES", "IN_SERIES", "LOGGED", "PARENT_CATEGORY",
+                          "Book", "User", "Author", "Person", "Publisher", "Category", "Series", "ReadingLog", 
+                          "Location", "ImportMapping", "ImportJob", "CustomFieldDefinition", "ImportTask"]
+            
+            for table in drop_tables:
+                try:
+                    self._connection.execute(f"DROP TABLE {table}")
+                except:
+                    pass  # Ignore errors if table doesn't exist
             
             # Create node tables
             node_queries = [
@@ -414,9 +330,6 @@ class KuzuGraphDB:
                     display_name STRING,
                     field_type STRING,
                     description STRING,
-                    created_by_user_id STRING,
-                    is_shareable BOOLEAN,
-                    is_global BOOLEAN,
                     default_value STRING,
                     placeholder_text STRING,
                     help_text STRING,
@@ -425,7 +338,6 @@ class KuzuGraphDB:
                     rating_min INT64,
                     rating_max INT64,
                     rating_labels STRING,
-                    usage_count INT64,
                     is_required BOOLEAN,
                     is_active BOOLEAN,
                     created_at TIMESTAMP,
@@ -454,7 +366,7 @@ class KuzuGraphDB:
                     loaned_to_user_id STRING,
                     loaned_date TIMESTAMP,
                     loaned_due_date TIMESTAMP,
-                    location_id STRING,
+                    primary_location_id STRING,
                     user_rating DOUBLE,
                     rating_date TIMESTAMP,
                     user_review STRING,
@@ -473,7 +385,6 @@ class KuzuGraphDB:
                     FROM Book TO Person,
                     contribution_type STRING,
                     role STRING,
-                    order_index INT64,
                     created_at TIMESTAMP
                 )
                 """,
@@ -482,7 +393,6 @@ class KuzuGraphDB:
                     FROM Person TO Book,
                     contribution_type STRING,
                     role STRING,
-                    order_index INT64,
                     created_at TIMESTAMP
                 )
                 """,
@@ -519,122 +429,37 @@ class KuzuGraphDB:
                     FROM Category TO Category,
                     created_at TIMESTAMP
                 )
-                """,
-                """
-                CREATE REL TABLE LOCATED_AT(
-                    FROM User TO Location,
-                    is_primary BOOLEAN,
-                    created_at TIMESTAMP
-                )
-                """,
-                """
-                CREATE REL TABLE STORED_AT(
-                    FROM Book TO Location,
-                    user_id STRING,
-                    created_at TIMESTAMP
-                )
-                """,
-                """
-                CREATE REL TABLE HAS_CUSTOM_FIELD(
-                    FROM User TO CustomField,
-                    book_id STRING,
-                    field_name STRING
-                )
                 """
             ]
             
             # Execute all creation queries with individual error handling
             all_queries = node_queries + relationship_queries
-            tables_created = 0
-            tables_existed = 0
-            
             for i, query in enumerate(all_queries):
                 try:
                     self._connection.execute(query)
-                    tables_created += 1
-                    logger.debug(f"Successfully created table/relationship {i+1}/{len(all_queries)}")
+                    logger.debug(f"Successfully executed query {i+1}/{len(all_queries)}")
                 except Exception as e:
                     # Check if it's a "already exists" error and skip if so
                     if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                        tables_existed += 1
                         logger.debug(f"Table/relationship already exists, skipping query {i+1}")
                         continue
                     else:
                         logger.error(f"Failed to execute query {i+1}: {e}")
                         raise
                 
-            logger.info(f"✅ Kuzu schema ensured: {tables_created} created, {tables_existed} already existed")
-            print(f"✅ Kuzu schema ensured: {tables_created} created, {tables_existed} already existed")
+            logger.info("✅ Kuzu schema initialized successfully")
             self._is_initialized = True
-            
-            # Log final database state after initialization
-            db_path = Path(self.database_path)
-            if db_path.exists():
-                files = list(db_path.glob("*"))
-                total_size = sum(f.stat().st_size for f in files if f.is_file())
-                print(f"✅ [KUZU_INIT] Post-initialization state:")
-                print(f"✅ [KUZU_INIT]   - Database files: {len(files)}")
-                print(f"✅ [KUZU_INIT]   - Total size: {total_size} bytes")
-                print(f"✅ [KUZU_INIT]   - Database should persist across container restarts")
             
         except Exception as e:
             logger.error(f"❌ Failed to initialize Kuzu schema: {e}")
-            print(f"❌ Failed to initialize Kuzu schema: {e}")
-            print(f"❌ [KUZU_INIT] Database path: {self.database_path}")
-            import traceback
-            traceback.print_exc()
             raise
     
     def disconnect(self):
         """Close Kuzu connection."""
         if self._connection:
-            print(f"🔌 [KUZU_DISCONNECT] Closing database connection...")
-            print(f"🔌 [KUZU_DISCONNECT] Database path: {self.database_path}")
-            
-            # Log final database state before closing
-            db_path = Path(self.database_path)
-            if db_path.exists():
-                files = list(db_path.glob("*"))
-                total_size = sum(f.stat().st_size for f in files if f.is_file())
-                print(f"🔌 [KUZU_DISCONNECT] Final database state:")
-                print(f"🔌 [KUZU_DISCONNECT]   - Files: {len(files)}")
-                print(f"🔌 [KUZU_DISCONNECT]   - Total size: {total_size} bytes")
-                
-                # Try to get final counts
-                try:
-                    user_result = self._connection.execute("MATCH (u:User) RETURN COUNT(u) as count")
-                    if user_result.has_next():
-                        user_count = user_result.get_next()[0]
-                        print(f"🔌 [KUZU_DISCONNECT]   - Users: {user_count}")
-                    
-                    book_result = self._connection.execute("MATCH (b:Book) RETURN COUNT(b) as count")
-                    if book_result.has_next():
-                        book_count = book_result.get_next()[0]
-                        print(f"🔌 [KUZU_DISCONNECT]   - Books: {book_count}")
-                    
-                    owns_result = self._connection.execute("MATCH ()-[r:OWNS]->() RETURN COUNT(r) as count")
-                    if owns_result.has_next():
-                        owns_count = owns_result.get_next()[0]
-                        print(f"🔌 [KUZU_DISCONNECT]   - OWNS relationships: {owns_count}")
-                        
-                except Exception as e:
-                    print(f"🔌 [KUZU_DISCONNECT] Could not get final counts: {e}")
-            
-            # CRITICAL: Force final commit before closing to ensure all data is persisted
-            print(f"🔌 [KUZU_DISCONNECT] Forcing final commit before closing...")
-            try:
-                self._connection.commit()
-                print(f"🔌 [KUZU_DISCONNECT] ✅ Final commit successful")
-            except Exception as commit_error:
-                print(f"🔌 [KUZU_DISCONNECT] ⚠️ Final commit warning: {commit_error}")
-            
             self._connection.close()
             self._connection = None
-            self._database = None
             logger.info("Kuzu connection closed")
-            print(f"🔌 [KUZU_DISCONNECT] Connection closed successfully")
-        else:
-            print(f"🔌 [KUZU_DISCONNECT] No active connection to close")
     
     @property
     def connection(self) -> kuzu.Connection:
@@ -642,92 +467,7 @@ class KuzuGraphDB:
         if self._connection is None:
             return self.connect()
         return self._connection
-    
-    # Repository-expected methods that delegate to storage layer
-    
-    def create_node(self, node_type: str, data: Dict[str, Any]) -> bool:
-        """Create a node using the storage layer."""
-        storage = KuzuGraphStorage(self)
-        node_id = data.get('id', str(uuid.uuid4()))
-        return storage.store_node(node_type, node_id, data)
-    
-    def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
-        """Get a node using the storage layer."""
-        storage = KuzuGraphStorage(self)
-        return storage.get_node(node_type, node_id)
-    
-    def update_node(self, node_type: str, node_id: str, updates: Dict[str, Any]) -> bool:
-        """Update a node using the storage layer."""
-        storage = KuzuGraphStorage(self)
-        return storage.update_node(node_type, node_id, updates)
-    
-    def delete_node(self, node_type: str, node_id: str) -> bool:
-        """Delete a node using the storage layer."""
-        storage = KuzuGraphStorage(self)
-        return storage.delete_node(node_type, node_id)
-    
-    def get_nodes_by_type(self, node_type: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get nodes by type using the storage layer."""
-        storage = KuzuGraphStorage(self)
-        return storage.get_nodes_by_type(node_type, limit, offset)
-    
-    def find_nodes_by_type(self, node_type: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
-        """Find nodes by type using the storage layer."""
-        storage = KuzuGraphStorage(self)
-        return storage.find_nodes_by_type(node_type, limit, offset)
-    
-    def query(self, cypher_query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Execute a Cypher query and return results."""
-        try:
-            result = self.connection.execute(cypher_query, params or {})
-            rows = []
-            while result.has_next():
-                row = result.get_next()
-                # Convert row to dict
-                if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': row[0]})
-                else:
-                    # Multiple columns - create dict with column names
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[f'col_{i}'] = value
-                    rows.append(row_dict)
-            return rows
-        except Exception as e:
-            logger.error(f"Query execution failed: {e}")
-            return []
-    
-    def create_relationship(self, from_type: str, from_id: str, rel_type: str,
-                          to_type: str, to_id: str, properties: Dict[str, Any] = None) -> bool:
-        """Create a relationship between two nodes."""
-        try:
-            props_str = ""
-            params = {
-                "from_id": from_id,
-                "to_id": to_id
-            }
-            
-            if properties:
-                prop_assignments = []
-                for key, value in properties.items():
-                    params[key] = value
-                    prop_assignments.append(f"{key}: ${key}")
-                props_str = f" {{{', '.join(prop_assignments)}}}"
-            
-            query = f"""
-            MATCH (from:{from_type}), (to:{to_type})
-            WHERE from.id = $from_id AND to.id = $to_id
-            CREATE (from)-[:{rel_type}{props_str}]->(to)
-            """
-            
-            self.connection.execute(query, params)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to create relationship {rel_type}: {e}")
-            return False
-        
+
 
 class KuzuGraphStorage:
     """Kuzu-based graph storage implementation.
@@ -736,43 +476,15 @@ class KuzuGraphStorage:
     This provides true graph query capabilities with Cypher-like syntax.
     """
     
-    def __init__(self, connection: KuzuGraphDB):
+    def __init__(self, connection: KuzuGraphConnection):
         self.connection = connection
         self.kuzu_conn = connection.connection
-    
-    def query(self, cypher_query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Execute a Cypher query and return results - compatibility method for services."""
-        try:
-            params = params or {}
-            result = self.kuzu_conn.execute(cypher_query, params)
-            
-            rows = []
-            while result.has_next():
-                row = result.get_next()
-                # Convert row to dict format expected by services
-                if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': row[0]})
-                else:
-                    # Multiple columns - create dict with generic column names
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[f'col_{i}'] = value
-                    rows.append(row_dict)
-            return rows
-            
-        except Exception as e:
-            logger.error(f"Query execution failed: {e}")
-            return []
     
     # Node Operations
     
     def store_node(self, node_type: str, node_id: str, data: Dict[str, Any]) -> bool:
         """Store a node in Kuzu."""
         try:
-            print(f"[KUZU_STORAGE] 📝 Storing {node_type} node: {node_id}")
-            print(f"[KUZU_STORAGE] 📊 Node data keys: {list(data.keys())}")
-            
             # Print debug info for TIMESTAMP fields
             for ts_field in ['created_at', 'updated_at']:
                 if ts_field in data:
@@ -799,7 +511,6 @@ class KuzuGraphStorage:
             
             # Debug: Print what fields we're actually storing
             logger.info(f"[KUZU_GRAPH][DEBUG] Storing {node_type} with fields: {list(serialized_data.keys())}")
-            print(f"[KUZU_STORAGE] 🔧 Final fields to store: {list(serialized_data.keys())}")
             
             # Handle published_date specifically - convert to date if needed
             if 'published_date' in serialized_data and serialized_data['published_date'] is not None:
@@ -842,38 +553,11 @@ class KuzuGraphStorage:
                 {', '.join(f"{col}: ${col}" for col in columns)}
             }})
             """
-            
-            print(f"[KUZU_STORAGE] 🚀 Executing CREATE query for {node_type}")
             self.kuzu_conn.execute(query, serialized_data)
-            
-            # CRITICAL: Force commit after every node creation to ensure persistence
-            print(f"[KUZU_STORAGE] 💾 Forcing commit after {node_type} creation")
-            try:
-                self.kuzu_conn.commit()
-                print(f"[KUZU_STORAGE] ✅ Commit successful for {node_type}")
-            except Exception as commit_error:
-                print(f"[KUZU_STORAGE] ⚠️ Commit warning for {node_type}: {commit_error}")
-            
-            print(f"[KUZU_STORAGE] ✅ Successfully stored {node_type} node: {node_id}")
-            
-            # Verify the node was actually stored
-            verification_query = f"MATCH (n:{node_type}) WHERE n.id = $node_id RETURN COUNT(n) as count"
-            verify_result = self.kuzu_conn.execute(verification_query, {"node_id": node_id})
-            if verify_result.has_next():
-                count = verify_result.get_next()[0]
-                if count > 0:
-                    print(f"[KUZU_STORAGE] ✅ Verification: {node_type} node {node_id} exists in database")
-                else:
-                    print(f"[KUZU_STORAGE] ❌ Verification failed: {node_type} node {node_id} not found after creation!")
-            
             return True
             
         except Exception as e:
             logger.error(f"Failed to store {node_type} node {node_id}: {e}")
-            print(f"[KUZU_STORAGE] ❌ Failed to store {node_type} node {node_id}: {e}")
-            print(f"[KUZU_STORAGE] 🔍 Database path: {getattr(self.connection, 'database_path', 'Unknown')}")
-            import traceback
-            traceback.print_exc()
             return False
     
     def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
@@ -903,23 +587,12 @@ class KuzuGraphStorage:
             logger.error(f"Failed to get {node_type} node {node_id}: {e}")
             return None
     
-    def _serialize_datetime_values(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Keep datetime objects as datetime objects for Kuzu storage."""
-        serialized = {}
-        for key, value in data.items():
-            if isinstance(value, datetime):
-                # Keep as datetime object - Kuzu expects datetime objects, not strings
-                serialized[key] = value
-            else:
-                serialized[key] = value
-        return serialized
-    
     def update_node(self, node_type: str, node_id: str, updates: Dict[str, Any]) -> bool:
         """Update specific fields of a node."""
         try:
             # Serialize updates
-            serialized_updates = self._serialize_datetime_values(updates)
-            serialized_updates['updated_at'] = datetime.utcnow()
+            serialized_updates = serialize_datetime_values(updates)
+            serialized_updates['updated_at'] = datetime.utcnow().isoformat()
             
             # Build SET clause
             set_clauses = [f"n.{key} = ${key}" for key in serialized_updates.keys()]
@@ -999,9 +672,6 @@ class KuzuGraphStorage:
         """Create a relationship between two nodes."""
         try:
             properties = properties or {}
-            
-            print(f"[KUZU_STORAGE] 🔗 Creating {rel_type} relationship: {from_type}({from_id}) -> {to_type}({to_id})")
-            print(f"[KUZU_STORAGE] 🔧 Relationship properties: {list(properties.keys()) if properties else 'None'}")
             
             # Debug: Print incoming properties
             logger.info(f"[KUZU_GRAPH][DEBUG] Creating {rel_type} relationship with properties: {properties}")
@@ -1091,42 +761,11 @@ class KuzuGraphStorage:
             """
             
             params = {"from_id": from_id, "to_id": to_id, **processed_props}
-            
-            print(f"[KUZU_STORAGE] 🚀 Executing CREATE RELATIONSHIP query")
             self.kuzu_conn.execute(query, params)
-            
-            # CRITICAL: Force commit after every relationship creation to ensure persistence
-            print(f"[KUZU_STORAGE] 💾 Forcing commit after {rel_type} relationship creation")
-            try:
-                self.kuzu_conn.commit()
-                print(f"[KUZU_STORAGE] ✅ Commit successful for {rel_type} relationship")
-            except Exception as commit_error:
-                print(f"[KUZU_STORAGE] ⚠️ Commit warning for {rel_type} relationship: {commit_error}")
-            
-            print(f"[KUZU_STORAGE] ✅ Successfully created {rel_type} relationship")
-            
-            # Verify the relationship was created
-            verify_query = f"""
-            MATCH (from:{from_type})-[r:{rel_type}]->(to:{to_type})
-            WHERE from.id = $from_id AND to.id = $to_id
-            RETURN COUNT(r) as count
-            """
-            verify_result = self.kuzu_conn.execute(verify_query, {"from_id": from_id, "to_id": to_id})
-            if verify_result.has_next():
-                count = verify_result.get_next()[0]
-                if count > 0:
-                    print(f"[KUZU_STORAGE] ✅ Verification: {rel_type} relationship exists")
-                else:
-                    print(f"[KUZU_STORAGE] ❌ Verification failed: {rel_type} relationship not found after creation!")
-            
             return True
             
         except Exception as e:
             logger.error(f"Failed to create relationship {from_id} -{rel_type}-> {to_id}: {e}")
-            print(f"[KUZU_STORAGE] ❌ Failed to create relationship {from_id} -{rel_type}-> {to_id}: {e}")
-            print(f"[KUZU_STORAGE] 🔍 Database path: {getattr(self.connection, 'database_path', 'Unknown')}")
-            import traceback
-            traceback.print_exc()
             return False
     
     def get_relationships(self, from_type: str, from_id: str, rel_type: str = None) -> List[Dict[str, Any]]:
@@ -1224,32 +863,16 @@ class KuzuGraphStorage:
 # Global connection instance
 _kuzu_connection = None
 
-# Global instances for singleton pattern
-_kuzu_database = None
-_graph_storage = None
 
-
-def get_kuzu_connection() -> KuzuGraphDB:
+def get_kuzu_connection() -> KuzuGraphConnection:
     """Get the global Kuzu connection instance."""
     global _kuzu_connection
     if _kuzu_connection is None:
-        _kuzu_connection = KuzuGraphDB()
+        _kuzu_connection = KuzuGraphConnection()
     return _kuzu_connection
 
 
-def get_kuzu_database() -> 'KuzuGraphDB':
-    """Get global KuzuGraphDB instance."""
-    global _kuzu_database
-    if _kuzu_database is None:
-        _kuzu_database = KuzuGraphDB()
-        _kuzu_database.connect()
-    return _kuzu_database
-
-
-def get_graph_storage() -> 'KuzuGraphStorage':
-    """Get global KuzuGraphStorage instance."""
-    global _graph_storage
-    if _graph_storage is None:
-        database = get_kuzu_database()
-        _graph_storage = KuzuGraphStorage(database)
-    return _graph_storage
+def get_graph_storage() -> KuzuGraphStorage:
+    """Get a Kuzu graph storage instance."""
+    connection = get_kuzu_connection()
+    return KuzuGraphStorage(connection)

@@ -62,6 +62,10 @@ ENV WTF_CSRF_ENABLED=True
 ENV KUZU_DB_PATH=/app/data/kuzu
 ENV GRAPH_DATABASE_ENABLED=true
 
+# Create data directory and make it a volume for persistence
+RUN mkdir -p /app/data/kuzu
+VOLUME ["/app/data"]
+
 # Flask environment (using FLASK_DEBUG instead of deprecated FLASK_ENV)
 ENV FLASK_DEBUG=false
 

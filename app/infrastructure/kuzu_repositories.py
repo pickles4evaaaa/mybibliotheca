@@ -11,6 +11,8 @@ from datetime import datetime, date
 from dataclasses import asdict
 from enum import Enum
 
+from flask import current_app
+
 from ..domain.models import Book, User, Author, Person, BookContribution, ContributionType, Publisher, Series, Category, UserBookRelationship, ReadingStatus, OwnershipStatus, MediaType, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
 from ..domain.repositories import BookRepository, UserRepository, AuthorRepository, UserBookRepository, CustomFieldRepository, ImportMappingRepository
 from .kuzu_graph import KuzuGraphStorage
@@ -36,18 +38,86 @@ def _serialize_for_kuzu(obj: Any) -> Any:
 
 
 def _ensure_datetime_fields(data: dict, fields: list):
-    """Ensure specified fields in data are Python datetime objects, not strings."""
+    """Ensure specified fields in data are Python datetime objects, handling both strings and datetime objects."""
     for field in fields:
         if field in data:
             val = data[field]
             if isinstance(val, str):
                 try:
-                    data[field] = datetime.fromisoformat(val)
+                    data[field] = _safe_fromisoformat(val)
                 except Exception as e:
                     print(f"[KUZU_REPO][WARN] Could not convert field '{field}' value '{val}' to datetime: {e}")
-            elif not isinstance(val, datetime):
+            elif isinstance(val, datetime):
+                # Already a datetime object, no conversion needed
+                pass
+            elif val is not None:
                 print(f"[KUZU_REPO][WARN] Field '{field}' is not datetime or str: {type(val)}")
     return data
+
+def _safe_fromisoformat(value):
+    """Safely convert a value to datetime, handling both strings and datetime objects."""
+    if isinstance(value, datetime):
+        return value
+    elif isinstance(value, str):
+        return datetime.fromisoformat(value)
+    else:
+        return value
+
+def _safe_date_fromisoformat(value):
+    """Safely convert a value to date, handling both strings, dates, and datetime objects."""
+    if isinstance(value, date):
+        return value
+    elif isinstance(value, datetime):
+        return value.date()
+    elif isinstance(value, str):
+        try:
+            # Try parsing as ISO date string
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            try:
+                # Try parsing as date-only string
+                return datetime.strptime(value, '%Y-%m-%d').date()
+            except ValueError:
+                try:
+                    # Try parsing with full timestamp and extract date
+                    return datetime.fromisoformat(value.replace('Z', '+00:00')).date()
+                except ValueError:
+                    print(f"[KUZU_REPO][WARN] Could not parse date string: {value}")
+                    return None
+    else:
+        return value
+
+def _clean_kuzu_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Clean Kuzu data by removing internal fields like _id."""
+    if not isinstance(data, dict):
+        return data
+    
+    cleaned = {}
+    for key, value in data.items():
+        # Skip internal Kuzu fields that start with underscore
+        if key.startswith('_'):
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def _filter_model_fields(data: Dict[str, Any], model_class) -> Dict[str, Any]:
+    """Filter data to only include fields that exist in the target dataclass model."""
+    import dataclasses
+    
+    if not dataclasses.is_dataclass(model_class):
+        return data
+    
+    # Get all field names from the dataclass
+    field_names = {field.name for field in dataclasses.fields(model_class)}
+    
+    # Filter data to only include valid fields
+    filtered = {}
+    for key, value in data.items():
+        if key in field_names:
+            filtered[key] = value
+    
+    return filtered
 
 
 class KuzuBookRepository(BookRepository):
@@ -66,24 +136,47 @@ class KuzuBookRepository(BookRepository):
         
         # Convert book to dictionary for storage
         book_data = asdict(book)
-        # Remove None values for optional fields
-        optional_fields = ['published_date', 'created_at', 'updated_at']
+        
+        # Handle DATE fields specifically - ensure they are proper date objects or None
+        if 'published_date' in book_data and book_data['published_date'] is not None:
+            book_data['published_date'] = _safe_date_fromisoformat(book_data['published_date'])
+            print(f"[KUZU_REPO][DEBUG] published_date converted to: {book_data['published_date']} (type: {type(book_data['published_date'])})")
+        
+        # Remove None values for optional fields that should be omitted if empty
+        optional_fields = ['published_date']
         for field in optional_fields:
             if book_data.get(field) is None:
                 book_data.pop(field, None)
+        
         # Ensure TIMESTAMP fields are datetime objects
         for ts_field in ['created_at', 'updated_at']:
             if ts_field in book_data:
                 if isinstance(book_data[ts_field], str):
                     try:
-                        book_data[ts_field] = datetime.fromisoformat(book_data[ts_field])
+                        book_data[ts_field] = _safe_fromisoformat(book_data[ts_field])
                     except Exception as e:
                         print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
+        
         if not book_data.get('created_at'):
             book_data['created_at'] = datetime.utcnow()
+        if not book_data.get('updated_at'):
+            book_data['updated_at'] = datetime.utcnow()
+            
         # Ensure normalized_title is set (required by schema)
         if not book_data.get('normalized_title'):
             book_data['normalized_title'] = book.title.strip().lower() if book.title else ""
+        
+        # Handle complex fields that need JSON serialization
+        if 'custom_metadata' in book_data and book_data['custom_metadata']:
+            book_data['custom_metadata'] = json.dumps(book_data['custom_metadata'])
+        elif 'custom_metadata' in book_data:
+            book_data['custom_metadata'] = ""  # Empty string for empty dict
+            
+        if 'raw_categories' in book_data and book_data['raw_categories']:
+            book_data['raw_categories'] = json.dumps(book_data['raw_categories'])
+        elif 'raw_categories' in book_data:
+            book_data['raw_categories'] = ""  # Empty string for None
+        
         # Remove legacy/invalid fields for Book dataclass
         book_data.pop('isbn', None)  # Remove if present (not a Book field)
         # Remove nested objects (handled separately)
@@ -100,37 +193,60 @@ class KuzuBookRepository(BookRepository):
         if not success:
             raise Exception(f"Failed to create book: {book.title}")
         
-        # Create author relationships
+        # Create author relationships (store as Person nodes)
         for author in book.authors:
             if not author.id:
                 author.id = str(uuid.uuid4())
             
-            # Store author node if not exists
-            existing_author = self.storage.get_node('Author', author.id)
-            if not existing_author:
-                author_data = asdict(author)
-                self.storage.store_node('Author', author.id, author_data)
+            # Convert Author to Person for storage
+            from ..domain.models import Person
+            person = Person(
+                id=author.id,
+                name=author.name,
+                normalized_name=author.normalized_name,
+                birth_year=author.birth_year,
+                death_year=author.death_year,
+                bio=author.bio,
+                created_at=author.created_at if hasattr(author, 'created_at') else datetime.utcnow()
+            )
             
-            # Create WROTE relationship
+            # Store person node if not exists
+            existing_person = self.storage.get_node('Person', person.id)
+            if not existing_person:
+                person_data = asdict(person)
+                self.storage.store_node('Person', person.id, person_data)
+            
+            # Create AUTHORED relationship
             self.storage.create_relationship(
-                'Author', author.id, 'WROTE', 'Book', book.id,
-                {'contribution_type': 'AUTHOR', 'created_at': datetime.utcnow().isoformat()}
+                'Person', person.id, 'AUTHORED', 'Book', book.id,
+                {'created_at': datetime.utcnow().isoformat()}
             )
         
         # Create category relationships
         for category in book.categories:
-            if not category.id:
-                category.id = str(uuid.uuid4())
+            # Handle both Category objects and strings
+            if isinstance(category, str):
+                # Convert string to Category object
+                from ..domain.models import Category
+                category_obj = Category(
+                    id=str(uuid.uuid4()),
+                    name=category,
+                    normalized_name=category.lower().strip()
+                )
+            else:
+                category_obj = category
+                if not category_obj.id:
+                    category_obj.id = str(uuid.uuid4())
             
             # Store category node if not exists
-            existing_category = self.storage.get_node('Category', category.id)
+            existing_category = self.storage.get_node('Category', category_obj.id)
             if not existing_category:
-                category_data = asdict(category)
-                self.storage.store_node('Category', category.id, category_data)
+                category_data = asdict(category_obj)
+                self.storage.store_node('Category', category_obj.id, category_data)
             
             # Create CATEGORIZED_AS relationship
             self.storage.create_relationship(
-                'Book', book.id, 'CATEGORIZED_AS', 'Category', category.id,
+                'Book', book.id, 'CATEGORIZED_AS', 'Category', category_obj.id,
                 {'created_at': datetime.utcnow().isoformat()}
             )
         
@@ -145,9 +261,9 @@ class KuzuBookRepository(BookRepository):
                 publisher_data = asdict(book.publisher)
                 self.storage.store_node('Publisher', book.publisher.id, publisher_data)
             
-            # Create PUBLISHED relationship
+            # Create PUBLISHED_BY relationship
             self.storage.create_relationship(
-                'Publisher', book.publisher.id, 'PUBLISHED', 'Book', book.id,
+                'Book', book.id, 'PUBLISHED_BY', 'Publisher', book.publisher.id,
                 {'publication_date': book.published_date.isoformat() if book.published_date else None, 'created_at': datetime.utcnow().isoformat()}
             )
         
@@ -162,10 +278,31 @@ class KuzuBookRepository(BookRepository):
                 series_data = asdict(book.series)
                 self.storage.store_node('Series', book.series.id, series_data)
             
-            # Create IN_SERIES relationship
+            # Create PART_OF_SERIES relationship
             self.storage.create_relationship(
-                'Book', book.id, 'IN_SERIES', 'Series', book.series.id,
+                'Book', book.id, 'PART_OF_SERIES', 'Series', book.series.id,
                 {'volume_number': getattr(book, 'volume_number', None), 'created_at': datetime.utcnow().isoformat()}
+            )
+        
+        # Create contributor relationships
+        for contributor in book.contributors:
+            if not contributor.person.id:
+                contributor.person.id = str(uuid.uuid4())
+            
+            # Store person node if not exists
+            existing_person = self.storage.get_node('Person', contributor.person.id)
+            if not existing_person:
+                person_data = asdict(contributor.person)
+                self.storage.store_node('Person', contributor.person.id, person_data)
+            
+            # Create WRITTEN_BY relationship
+            self.storage.create_relationship(
+                'Book', book.id, 'WRITTEN_BY', 'Person', contributor.person.id,
+                {
+                    'contribution_type': contributor.contribution_type.value,  # Convert enum to string
+                    'role': getattr(contributor, 'role', None),
+                    'created_at': datetime.utcnow().isoformat()
+                }
             )
         
         print(f"✅ [KUZU_REPO] Successfully created book: {book.title}")
@@ -183,46 +320,99 @@ class KuzuBookRepository(BookRepository):
     
     def _build_book_from_data(self, book_data: Dict[str, Any], book_id: str) -> Book:
         """Build a complete Book object from stored data and relationships."""
-        # Get authors via WROTE relationships
-        author_rels = self.storage.get_relationships('Author', None, 'WROTE')
+        # Clean Kuzu data
+        book_data = _clean_kuzu_data(book_data)
+        
+        # Get authors via AUTHORED relationships
+        author_rels = self.storage.get_relationships('Author', None, 'AUTHORED')
         authors = []
         for rel in author_rels:
             if rel['target'].get('id') == book_id:
                 author_data = self.storage.get_node('Author', rel['relationship'].get('from_id'))
                 if author_data:
+                    author_data = _clean_kuzu_data(author_data)
                     authors.append(Author(**author_data))
         
         # Get categories via CATEGORIZED_AS relationships
         category_rels = self.storage.get_relationships('Book', book_id, 'CATEGORIZED_AS')
         categories = []
         for rel in category_rels:
-            category_data = rel['target']
+            category_data = _clean_kuzu_data(rel['target'])
             categories.append(Category(**category_data))
         
-        # Get publisher via PUBLISHED relationships
+        # Get publisher via PUBLISHED_BY relationships
         publisher = None
-        publisher_rels = self.storage.get_relationships('Publisher', None, 'PUBLISHED')
+        publisher_rels = self.storage.get_relationships('Book', book_id, 'PUBLISHED_BY')
         for rel in publisher_rels:
             if rel['target'].get('id') == book_id:
                 publisher_data = self.storage.get_node('Publisher', rel['relationship'].get('from_id'))
                 if publisher_data:
+                    publisher_data = _clean_kuzu_data(publisher_data)
                     publisher = Publisher(**publisher_data)
                     break
         
-        # Get series via IN_SERIES relationships
+        # Get series via PART_OF_SERIES relationships
         series = None
-        series_rels = self.storage.get_relationships('Book', book_id, 'IN_SERIES')
+        series_rels = self.storage.get_relationships('Book', book_id, 'PART_OF_SERIES')
         if series_rels:
-            series_data = series_rels[0]['target']
+            series_data = _clean_kuzu_data(series_rels[0]['target'])
             series = Series(**series_data)
         
         # Convert date strings back to date objects
         if book_data.get('published_date'):
-            book_data['published_date'] = datetime.fromisoformat(book_data['published_date']).date()
+            book_data['published_date'] = _safe_date_fromisoformat(book_data['published_date'])
         if book_data.get('created_at'):
-            book_data['created_at'] = datetime.fromisoformat(book_data['created_at'])
+            book_data['created_at'] = _safe_fromisoformat(book_data['created_at'])
         if book_data.get('updated_at'):
-            book_data['updated_at'] = datetime.fromisoformat(book_data['updated_at'])
+            book_data['updated_at'] = _safe_fromisoformat(book_data['updated_at'])
+        
+        # Convert authors to contributors
+        contributors = []
+        for author in authors:
+            # Convert Author to Person first
+            person = Person(
+                id=author.id,
+                name=author.name,
+                normalized_name=author.normalized_name,
+                birth_year=author.birth_year,
+                death_year=author.death_year,
+                bio=author.bio,
+                created_at=author.created_at if hasattr(author, 'created_at') else datetime.utcnow()
+            )
+            
+            # Create BookContribution
+            contribution = BookContribution(
+                person=person,
+                contribution_type=ContributionType.AUTHORED,
+                created_at=datetime.utcnow()
+            )
+            contributors.append(contribution)
+        
+        # Get contributors via WRITTEN_BY relationships
+        contributed_rels = self.storage.get_relationships('Book', book_id, 'WRITTEN_BY')
+        for rel in contributed_rels:
+            if rel['target'].get('id') == book_id:
+                person_data = self.storage.get_node('Person', rel['relationship'].get('from_id'))
+                if person_data:
+                    person_data = _clean_kuzu_data(person_data)
+                    person = Person(**person_data)
+                    
+                    # Get contribution type from relationship properties
+                    rel_props = rel['relationship']
+                    contribution_type_str = rel_props.get('contribution_type', 'contributed')
+                    try:
+                        contribution_type = ContributionType(contribution_type_str)
+                    except ValueError:
+                        contribution_type = ContributionType.CONTRIBUTED
+                    
+                    # Create BookContribution
+                    contribution = BookContribution(
+                        person=person,
+                        contribution_type=contribution_type,
+                        role=rel_props.get('role'),
+                        created_at=_safe_fromisoformat(rel_props.get('created_at')) if rel_props.get('created_at') else datetime.utcnow()
+                    )
+                    contributors.append(contribution)
         
         # Remove legacy/invalid fields for Book dataclass
         book_data.pop('isbn', None)
@@ -235,7 +425,7 @@ class KuzuBookRepository(BookRepository):
         # Create Book object
         book = Book(
             **book_data,
-            authors=authors,
+            contributors=contributors,
             categories=categories,
             publisher=publisher,
             series=series
@@ -259,7 +449,7 @@ class KuzuBookRepository(BookRepository):
             if ts_field in book_data:
                 if isinstance(book_data[ts_field], str):
                     try:
-                        book_data[ts_field] = datetime.fromisoformat(book_data[ts_field])
+                        book_data[ts_field] = _safe_fromisoformat(book_data[ts_field])
                     except Exception as e:
                         print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
         if not book_data.get('updated_at'):
@@ -308,7 +498,7 @@ class KuzuBookRepository(BookRepository):
     async def search_by_author(self, author_name: str, limit: int = 10) -> List[Book]:
         """Search books by author name."""
         query = """
-        MATCH (a:Author)-[:WROTE]->(b:Book)
+        MATCH (a:Author)-[:AUTHORED]->(b:Book)
         WHERE a.name CONTAINS $author_name
         RETURN DISTINCT b
         LIMIT $limit
@@ -376,7 +566,7 @@ class KuzuBookRepository(BookRepository):
         # Add filters if provided
         if filters:
             if filters.get('author'):
-                where_conditions.append("EXISTS((b)-[:WROTE]-(a:Author)) AND a.name CONTAINS $author_filter")
+                where_conditions.append("EXISTS((b)-[:AUTHORED]-(a:Author)) AND a.name CONTAINS $author_filter")
                 params['author_filter'] = f"%{filters['author']}%"
             
             if filters.get('category'):
@@ -441,7 +631,7 @@ class KuzuBookRepository(BookRepository):
     async def get_related_books(self, book_id: str) -> List[Book]:
         """Get books related by the same author or in the same category."""
         query = """
-        MATCH (b:Book)-[:WROTE|CATEGORIZED_AS]-(related:Book)
+        MATCH (b:Book)-[:AUTHORED|CATEGORIZED_AS]-(related:Book)
         WHERE b.id = $book_id AND related.id <> $book_id
         RETURN DISTINCT related
         LIMIT 10
@@ -477,7 +667,7 @@ class KuzuUserRepository(UserRepository):
             if ts_field in user_data:
                 if isinstance(user_data[ts_field], str):
                     try:
-                        user_data[ts_field] = datetime.fromisoformat(user_data[ts_field])
+                        user_data[ts_field] = _safe_fromisoformat(user_data[ts_field])
                     except Exception as e:
                         print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
         if not user_data.get('created_at'):
@@ -499,11 +689,14 @@ class KuzuUserRepository(UserRepository):
         if not user_data:
             return None
         
+        # Clean Kuzu data 
+        user_data = _clean_kuzu_data(user_data)
+        
         # Convert timestamp strings back to datetime objects
         if user_data.get('created_at'):
-            user_data['created_at'] = datetime.fromisoformat(user_data['created_at'])
+            user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
         if user_data.get('updated_at'):
-            user_data['updated_at'] = datetime.fromisoformat(user_data['updated_at'])
+            user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
         
         return User(**user_data)
     
@@ -516,11 +709,11 @@ class KuzuUserRepository(UserRepository):
         """
         results = self.storage.execute_cypher(query, {"username": username})
         if results:
-            user_data = results[0]['col_0']
+            user_data = _clean_kuzu_data(results[0]['col_0'])
             if user_data.get('created_at'):
-                user_data['created_at'] = datetime.fromisoformat(user_data['created_at'])
+                user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
             if user_data.get('updated_at'):
-                user_data['updated_at'] = datetime.fromisoformat(user_data['updated_at'])
+                user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
             return User(**user_data)
         return None
     
@@ -533,11 +726,11 @@ class KuzuUserRepository(UserRepository):
         """
         results = self.storage.execute_cypher(query, {"email": email})
         if results:
-            user_data = results[0]['col_0']
+            user_data = _clean_kuzu_data(results[0]['col_0'])
             if user_data.get('created_at'):
-                user_data['created_at'] = datetime.fromisoformat(user_data['created_at'])
+                user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
             if user_data.get('updated_at'):
-                user_data['updated_at'] = datetime.fromisoformat(user_data['updated_at'])
+                user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
             return User(**user_data)
         return None
     
@@ -557,7 +750,7 @@ class KuzuUserRepository(UserRepository):
             if ts_field in user_data:
                 if isinstance(user_data[ts_field], str):
                     try:
-                        user_data[ts_field] = datetime.fromisoformat(user_data[ts_field])
+                        user_data[ts_field] = _safe_fromisoformat(user_data[ts_field])
                     except Exception as e:
                         print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
         if not user_data.get('updated_at'):
@@ -577,10 +770,11 @@ class KuzuUserRepository(UserRepository):
         user_nodes = self.storage.get_nodes_by_type('User', limit, offset)
         users = []
         for user_data in user_nodes:
+            user_data = _clean_kuzu_data(user_data)
             if user_data.get('created_at'):
-                user_data['created_at'] = datetime.fromisoformat(user_data['created_at'])
+                user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
             if user_data.get('updated_at'):
-                user_data['updated_at'] = datetime.fromisoformat(user_data['updated_at'])
+                user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
             users.append(User(**user_data))
         return users
     
@@ -613,13 +807,16 @@ class KuzuAuthorRepository(AuthorRepository):
         if not author_data:
             return None
         
+        # Clean Kuzu data
+        author_data = _clean_kuzu_data(author_data)
+        
         # Convert date strings back to date objects
         if author_data.get('birth_date'):
-            author_data['birth_date'] = datetime.fromisoformat(author_data['birth_date']).date()
+            author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
         if author_data.get('death_date'):
-            author_data['death_date'] = datetime.fromisoformat(author_data['death_date']).date()
+            author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
         if author_data.get('created_at'):
-            author_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+            author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
         
         return Author(**author_data)
     
@@ -633,13 +830,13 @@ class KuzuAuthorRepository(AuthorRepository):
         normalized_name = name.lower().strip()
         results = self.storage.execute_cypher(query, {"name": name, "normalized_name": normalized_name})
         if results:
-            author_data = results[0]['col_0']
+            author_data = _clean_kuzu_data(results[0]['col_0'])
             if author_data.get('birth_date'):
-                author_data['birth_date'] = datetime.fromisoformat(author_data['birth_date']).date()
+                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
             if author_data.get('death_date'):
-                author_data['death_date'] = datetime.fromisoformat(author_data['death_date']).date()
+                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
             if author_data.get('created_at'):
-                author_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
             return Author(**author_data)
         return None
     
@@ -654,13 +851,13 @@ class KuzuAuthorRepository(AuthorRepository):
         results = self.storage.execute_cypher(query, {"name": name, "limit": limit})
         authors = []
         for result in results:
-            author_data = result['col_0']
+            author_data = _clean_kuzu_data(result['col_0'])
             if author_data.get('birth_date'):
-                author_data['birth_date'] = datetime.fromisoformat(author_data['birth_date']).date()
+                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
             if author_data.get('death_date'):
-                author_data['death_date'] = datetime.fromisoformat(author_data['death_date']).date()
+                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
             if author_data.get('created_at'):
-                author_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
             authors.append(Author(**author_data))
         return authors
     
@@ -688,13 +885,13 @@ class KuzuAuthorRepository(AuthorRepository):
         results = self.storage.execute_cypher(query, {"name": name, "normalized_name": normalized_name})
         authors = []
         for result in results:
-            author_data = result['col_0']
+            author_data = _clean_kuzu_data(result['col_0'])
             if author_data.get('birth_date'):
-                author_data['birth_date'] = datetime.fromisoformat(author_data['birth_date']).date()
+                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
             if author_data.get('death_date'):
-                author_data['death_date'] = datetime.fromisoformat(author_data['death_date']).date()
+                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
             if author_data.get('created_at'):
-                author_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
             authors.append(Author(**author_data))
         return authors
     
@@ -708,13 +905,13 @@ class KuzuAuthorRepository(AuthorRepository):
         results = self.storage.execute_cypher(query, {"author_id": author_id})
         collaborators = []
         for result in results:
-            author_data = result['col_0']
+            author_data = _clean_kuzu_data(result['col_0'])
             if author_data.get('birth_date'):
-                author_data['birth_date'] = datetime.fromisoformat(author_data['birth_date']).date()
+                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
             if author_data.get('death_date'):
-                author_data['death_date'] = datetime.fromisoformat(author_data['death_date']).date()
+                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
             if author_data.get('created_at'):
-                author_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
             collaborators.append(Author(**author_data))
         return collaborators
 
@@ -723,12 +920,13 @@ class KuzuAuthorRepository(AuthorRepository):
         author_nodes = self.storage.get_nodes_by_type('Author', limit, offset)
         authors = []
         for author_data in author_nodes:
+            author_data = _clean_kuzu_data(author_data)
             if author_data.get('birth_date'):
-                author_data['birth_date'] = datetime.fromisoformat(author_data['birth_date']).date()
+                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
             if author_data.get('death_date'):
-                author_data['death_date'] = datetime.fromisoformat(author_data['death_date']).date()
+                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
             if author_data.get('created_at'):
-                author_data['created_at'] = datetime.fromisoformat(author_data['created_at'])
+                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
             authors.append(Author(**author_data))
         return authors
 
@@ -752,13 +950,13 @@ class KuzuUserBookRepository(UserBookRepository):
             
             # Convert date strings back to date objects
             if rel_data.get('reading_start_date'):
-                rel_data['reading_start_date'] = datetime.fromisoformat(rel_data['reading_start_date']).date()
+                rel_data['reading_start_date'] = _safe_date_fromisoformat(rel_data['reading_start_date'])
             if rel_data.get('reading_end_date'):
-                rel_data['reading_end_date'] = datetime.fromisoformat(rel_data['reading_end_date']).date()
+                rel_data['reading_end_date'] = _safe_date_fromisoformat(rel_data['reading_end_date'])
             if rel_data.get('created_at'):
-                rel_data['created_at'] = datetime.fromisoformat(rel_data['created_at'])
+                rel_data['created_at'] = _safe_fromisoformat(rel_data['created_at'])
             if rel_data.get('updated_at'):
-                rel_data['updated_at'] = datetime.fromisoformat(rel_data['updated_at'])
+                rel_data['updated_at'] = _safe_fromisoformat(rel_data['updated_at'])
             
             # Convert string enums back to enum objects
             if rel_data.get('reading_status'):
@@ -806,13 +1004,13 @@ class KuzuUserBookRepository(UserBookRepository):
             
             # Build relationship object
             if rel_data.get('reading_start_date'):
-                rel_data['reading_start_date'] = datetime.fromisoformat(rel_data['reading_start_date']).date()
+                rel_data['reading_start_date'] = _safe_date_fromisoformat(rel_data['reading_start_date'])
             if rel_data.get('reading_end_date'):
-                rel_data['reading_end_date'] = datetime.fromisoformat(rel_data['reading_end_date']).date()
+                rel_data['reading_end_date'] = _safe_date_fromisoformat(rel_data['reading_end_date'])
             if rel_data.get('created_at'):
-                rel_data['created_at'] = datetime.fromisoformat(rel_data['created_at'])
+                rel_data['created_at'] = _safe_fromisoformat(rel_data['created_at'])
             if rel_data.get('updated_at'):
-                rel_data['updated_at'] = datetime.fromisoformat(rel_data['updated_at'])
+                rel_data['updated_at'] = _safe_fromisoformat(rel_data['updated_at'])
             
             if rel_data.get('reading_status'):
                 rel_data['reading_status'] = ReadingStatus(rel_data['reading_status'])
@@ -834,8 +1032,18 @@ class KuzuUserBookRepository(UserBookRepository):
         user_id = rel_data.pop('user_id')
         book_id = rel_data.pop('book_id')
         
+        # Serialize enum values and dates for Kuzu storage
+        serialized_rel_data = {}
+        for key, value in rel_data.items():
+            if isinstance(value, Enum):
+                serialized_rel_data[key] = value.value
+            elif isinstance(value, (datetime, date)):
+                serialized_rel_data[key] = value.isoformat()
+            elif value is not None:  # Only include non-None values
+                serialized_rel_data[key] = value
+        
         success = self.storage.create_relationship(
-            'User', user_id, 'OWNS', 'Book', book_id, rel_data
+            'User', user_id, 'OWNS', 'Book', book_id, serialized_rel_data
         )
         if success:
             return relationship
@@ -874,13 +1082,13 @@ class KuzuUserBookRepository(UserBookRepository):
             
             # Convert date strings back to date objects
             if rel_data.get('reading_start_date'):
-                rel_data['reading_start_date'] = datetime.fromisoformat(rel_data['reading_start_date']).date()
+                rel_data['reading_start_date'] = _safe_date_fromisoformat(rel_data['reading_start_date'])
             if rel_data.get('reading_end_date'):
-                rel_data['reading_end_date'] = datetime.fromisoformat(rel_data['reading_end_date']).date()
+                rel_data['reading_end_date'] = _safe_date_fromisoformat(rel_data['reading_end_date'])
             if rel_data.get('created_at'):
-                rel_data['created_at'] = datetime.fromisoformat(rel_data['created_at'])
+                rel_data['created_at'] = _safe_fromisoformat(rel_data['created_at'])
             if rel_data.get('updated_at'):
-                rel_data['updated_at'] = datetime.fromisoformat(rel_data['updated_at'])
+                rel_data['updated_at'] = _safe_fromisoformat(rel_data['updated_at'])
             
             # Convert string enums back to enum objects
             if rel_data.get('reading_status'):
@@ -978,7 +1186,7 @@ class KuzuUserBookRepository(UserBookRepository):
         
         # Get total authors in library
         authors_query = """
-        MATCH (u:User)-[:OWNS]->(b:Book)<-[:WROTE]-(a:Author)
+        MATCH (u:User)-[:OWNS]->(b:Book)<-[:AUTHORED]-(a:Author)
         WHERE u.id = $user_id
         RETURN COUNT(DISTINCT a) as total_authors
         """
@@ -1000,10 +1208,28 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
             field_def.id = str(uuid.uuid4())
         
         field_data = asdict(field_def)
+        # Convert enum to string to avoid Kuzu parameter type error
+        if 'field_type' in field_data and hasattr(field_data['field_type'], 'value'):
+            field_data['field_type'] = field_data['field_type'].value
+        
+        # Safe logging
+        try:
+            current_app.logger.info(f"🔧 [CUSTOM_FIELD_REPO] Creating custom field '{field_def.name}' with data: {field_data}")
+        except:
+            print(f"🔧 [CUSTOM_FIELD_REPO] Creating custom field '{field_def.name}' with data: {field_data}")
+        
         success = self.storage.store_node('CustomField', field_def.id, field_data)
         if not success:
+            try:
+                current_app.logger.error(f"❌ [CUSTOM_FIELD_REPO] Failed to store custom field '{field_def.name}' to database")
+            except:
+                print(f"❌ [CUSTOM_FIELD_REPO] Failed to store custom field '{field_def.name}' to database")
             raise Exception(f"Failed to create custom field: {field_def.name}")
         
+        try:
+            current_app.logger.info(f"✅ [CUSTOM_FIELD_REPO] Successfully created custom field '{field_def.name}' with id {field_def.id}")
+        except:
+            print(f"✅ [CUSTOM_FIELD_REPO] Successfully created custom field '{field_def.name}' with id {field_def.id}")
         return field_def
     
     async def get_by_id(self, field_id: str) -> Optional[CustomFieldDefinition]:
@@ -1012,8 +1238,9 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         if not field_data:
             return None
         
+        field_data = _clean_kuzu_data(field_data)
         if field_data.get('created_at'):
-            field_data['created_at'] = datetime.fromisoformat(field_data['created_at'])
+            field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
         if field_data.get('field_type'):
             field_data['field_type'] = CustomFieldType(field_data['field_type'])
         
@@ -1029,9 +1256,9 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(query, {"user_id": user_id})
         fields = []
         for result in results:
-            field_data = result['col_0']
+            field_data = _clean_kuzu_data(result['col_0'])
             if field_data.get('created_at'):
-                field_data['created_at'] = datetime.fromisoformat(field_data['created_at'])
+                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
             if field_data.get('field_type'):
                 field_data['field_type'] = CustomFieldType(field_data['field_type'])
             fields.append(CustomFieldDefinition(**field_data))
@@ -1070,9 +1297,9 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(query, params)
         fields = []
         for result in results:
-            field_data = result['col_0']
+            field_data = _clean_kuzu_data(result['col_0'])
             if field_data.get('created_at'):
-                field_data['created_at'] = datetime.fromisoformat(field_data['created_at'])
+                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
             if field_data.get('field_type'):
                 field_data['field_type'] = CustomFieldType(field_data['field_type'])
             fields.append(CustomFieldDefinition(**field_data))
@@ -1106,9 +1333,9 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(cypher_query, params)
         fields = []
         for result in results:
-            field_data = result['col_0']
+            field_data = _clean_kuzu_data(result['col_0'])
             if field_data.get('created_at'):
-                field_data['created_at'] = datetime.fromisoformat(field_data['created_at'])
+                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
             if field_data.get('field_type'):
                 field_data['field_type'] = CustomFieldType(field_data['field_type'])
             fields.append(CustomFieldDefinition(**field_data))
@@ -1139,9 +1366,9 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(query, {"limit": limit})
         fields = []
         for result in results:
-            field_data = result['col_0']
+            field_data = _clean_kuzu_data(result['col_0'])
             if field_data.get('created_at'):
-                field_data['created_at'] = datetime.fromisoformat(field_data['created_at'])
+                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
             if field_data.get('field_type'):
                 field_data['field_type'] = CustomFieldType(field_data['field_type'])
             fields.append(CustomFieldDefinition(**field_data))
@@ -1158,6 +1385,12 @@ class KuzuImportMappingRepository(ImportMappingRepository):
         """Create a new import mapping template."""
         if not template.id:
             template.id = str(uuid.uuid4())
+        
+        # Check if template already exists
+        existing_template = await self.get_by_id(template.id)
+        if existing_template:
+            print(f"[KUZU_REPO][INFO] Import mapping template {template.id} already exists, returning existing template")
+            return existing_template
         
         template_data = asdict(template)
         
@@ -1179,14 +1412,20 @@ class KuzuImportMappingRepository(ImportMappingRepository):
         if not template_data:
             return None
         
+        # Clean Kuzu data to remove internal fields
+        template_data = _clean_kuzu_data(template_data)
+        
         # Map schema field names to model field names
         if 'usage_count' in template_data:
             template_data['times_used'] = template_data.pop('usage_count')
         
+        # Filter to only include fields that exist in ImportMappingTemplate
+        template_data = _filter_model_fields(template_data, ImportMappingTemplate)
+        
         if template_data.get('created_at'):
-            template_data['created_at'] = datetime.fromisoformat(template_data['created_at'])
+            template_data['created_at'] = _safe_fromisoformat(template_data['created_at'])
         if template_data.get('updated_at'):
-            template_data['updated_at'] = datetime.fromisoformat(template_data['updated_at'])
+            template_data['updated_at'] = _safe_fromisoformat(template_data['updated_at'])
         
         return ImportMappingTemplate(**template_data)
     
@@ -1200,16 +1439,19 @@ class KuzuImportMappingRepository(ImportMappingRepository):
         results = self.storage.execute_cypher(query, {"user_id": user_id})
         templates = []
         for result in results:
-            template_data = result['col_0']
+            template_data = _clean_kuzu_data(result['col_0'])
             
             # Map schema field names to model field names
             if 'usage_count' in template_data:
                 template_data['times_used'] = template_data.pop('usage_count')
             
+            # Filter to only include fields that exist in ImportMappingTemplate
+            template_data = _filter_model_fields(template_data, ImportMappingTemplate)
+            
             if template_data.get('created_at'):
-                template_data['created_at'] = datetime.fromisoformat(template_data['created_at'])
+                template_data['created_at'] = _safe_fromisoformat(template_data['created_at'])
             if template_data.get('updated_at'):
-                template_data['updated_at'] = datetime.fromisoformat(template_data['updated_at'])
+                template_data['updated_at'] = _safe_fromisoformat(template_data['updated_at'])
             templates.append(ImportMappingTemplate(**template_data))
         return templates
     
@@ -1223,16 +1465,19 @@ class KuzuImportMappingRepository(ImportMappingRepository):
         results = self.storage.execute_cypher(query)
         templates = []
         for result in results:
-            template_data = result['col_0']
+            template_data = _clean_kuzu_data(result['col_0'])
             
             # Map schema field names to model field names
             if 'usage_count' in template_data:
                 template_data['times_used'] = template_data.pop('usage_count')
             
+            # Filter to only include fields that exist in ImportMappingTemplate
+            template_data = _filter_model_fields(template_data, ImportMappingTemplate)
+            
             if template_data.get('created_at'):
-                template_data['created_at'] = datetime.fromisoformat(template_data['created_at'])
+                template_data['created_at'] = _safe_fromisoformat(template_data['created_at'])
             if template_data.get('updated_at'):
-                template_data['updated_at'] = datetime.fromisoformat(template_data['updated_at'])
+                template_data['updated_at'] = _safe_fromisoformat(template_data['updated_at'])
             templates.append(ImportMappingTemplate(**template_data))
         return templates
     
@@ -1338,9 +1583,9 @@ class KuzuCategoryRepository:
         normalized_name = name.lower().strip()
         results = self.storage.execute_cypher(query, {"name": name, "normalized_name": normalized_name})
         if results:
-            category_data = results[0]['col_0']
+            category_data = _clean_kuzu_data(results[0]['col_0'])
             if category_data.get('created_at'):
-                category_data['created_at'] = datetime.fromisoformat(category_data['created_at'])
+                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
             return Category(**category_data)
         return None
     
@@ -1350,8 +1595,9 @@ class KuzuCategoryRepository:
         if not category_data:
             return None
         
+        category_data = _clean_kuzu_data(category_data)
         if category_data.get('created_at'):
-            category_data['created_at'] = datetime.fromisoformat(category_data['created_at'])
+            category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
         
         return Category(**category_data)
     
@@ -1366,9 +1612,9 @@ class KuzuCategoryRepository:
         results = self.storage.execute_cypher(query, {"name": name, "limit": limit})
         categories = []
         for result in results:
-            category_data = result['col_0']
+            category_data = _clean_kuzu_data(result['col_0'])
             if category_data.get('created_at'):
-                category_data['created_at'] = datetime.fromisoformat(category_data['created_at'])
+                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
             categories.append(Category(**category_data))
         return categories
     
@@ -1377,9 +1623,22 @@ class KuzuCategoryRepository:
         category_nodes = self.storage.get_nodes_by_type('Category')
         categories = []
         for category_data in category_nodes:
-            if category_data.get('created_at'):
-                category_data['created_at'] = datetime.fromisoformat(category_data['created_at'])
-            categories.append(Category(**category_data))
+            # Clean the data - convert _id to id if needed
+            if '_id' in category_data and 'id' not in category_data:
+                category_data['id'] = category_data.pop('_id')
+            
+            # Remove any other unexpected fields
+            expected_fields = {'id', 'name', 'normalized_name', 'parent_id', 'description', 'level', 
+                              'color', 'icon', 'aliases', 'book_count', 'user_book_count', 
+                              'created_at', 'updated_at'}
+            cleaned_data = {k: v for k, v in category_data.items() if k in expected_fields}
+            
+            if cleaned_data.get('created_at'):
+                cleaned_data['created_at'] = _safe_fromisoformat(cleaned_data['created_at'])
+            if cleaned_data.get('updated_at'):
+                cleaned_data['updated_at'] = _safe_fromisoformat(cleaned_data['updated_at'])
+                
+            categories.append(Category(**cleaned_data))
         return categories
     
     async def update(self, category: Category) -> Optional[Category]:
@@ -1423,9 +1682,9 @@ class KuzuCategoryRepository:
         results = self.storage.execute_cypher(query, {"parent_id": category_id})
         categories = []
         for result in results:
-            category_data = result['col_0']
+            category_data = _clean_kuzu_data(result['col_0'])
             if category_data.get('created_at'):
-                category_data['created_at'] = datetime.fromisoformat(category_data['created_at'])
+                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
             categories.append(Category(**category_data))
         return categories
     
@@ -1439,9 +1698,9 @@ class KuzuCategoryRepository:
         results = self.storage.execute_cypher(query)
         categories = []
         for result in results:
-            category_data = result['col_0']
+            category_data = _clean_kuzu_data(result['col_0'])
             if category_data.get('created_at'):
-                category_data['created_at'] = datetime.fromisoformat(category_data['created_at'])
+                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
             categories.append(Category(**category_data))
         return categories
     

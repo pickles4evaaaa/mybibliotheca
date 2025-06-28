@@ -1,9 +1,9 @@
 """
-Placeholder models file for backward compatibility during Redis migration.
+Placeholder models file for backward compatibility during Kuzu migration.
 
 This file provides empty stubs to prevent import errors while the application
-is being migrated to Redis-only architecture. All actual data operations
-should use the Redis-based services and domain models.
+is being migrated to Kuzu graph database architecture. All actual data operations
+should use the Kuzu-based services and domain models.
 """
 
 from flask import current_app
@@ -152,6 +152,5 @@ class ReadingLog(_NoOpModel):
     pass
 
 
-# Print warning when this module is imported
-print("⚠️  WARNING: Legacy SQLite models imported - use Redis services and domain models instead")
-print("🔄 Migration in progress: app.models.py is disabled, use app.services and app.domain.models")
+# Note: Legacy SQLite models are disabled - use Redis services and domain models instead
+# The migration is complete and app.services with app.domain.models should be used

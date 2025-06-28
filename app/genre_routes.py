@@ -1,7 +1,40 @@
 """
 Genre/Category routes for Bibliotheca.
 
-Provides endpoints for managing hierarchical genres and categories,
+Provides endpoints for man        debug_log(f"📊 [GENRES] Found {len(all_categories)} total categories", "GENRE_VIEW")
+        
+        # Convert dictionaries to objects for template compatibility
+        processed_categories = []
+        
+        for cat in all_categories:
+            if isinstance(cat, dict):
+                # Create a simple object from dictionary
+                class CategoryObj:
+                    def __init__(self, data):
+                        for key, value in data.items():
+                            setattr(self, key, value)
+                        # Add missing properties that don't exist in DB schema but are expected by templates
+                        if not hasattr(self, 'parent_id'):
+                            self.parent_id = None
+                        if not hasattr(self, 'level'):
+                            self.level = 0
+                        if not hasattr(self, 'book_count'):
+                            self.book_count = 0
+                
+                cat_obj = CategoryObj(cat)
+                processed_categories.append(cat_obj)
+            else:
+                # Add missing properties to existing objects
+                if not hasattr(cat, 'parent_id'):
+                    cat.parent_id = None
+                if not hasattr(cat, 'level'):
+                    cat.level = 0
+                if not hasattr(cat, 'book_count'):
+                    cat.book_count = 0
+                processed_categories.append(cat)
+        
+        # Use the processed categories
+        all_categories = processed_categoriesenres and categories,
 similar to the person management functionality.
 """
 
@@ -22,7 +55,11 @@ genres_bp = Blueprint('genres', __name__, url_prefix='/genres')
 @login_required
 def index():
     """Display all genres/categories with management options."""
+    from app.debug_system import debug_log, debug_service_call, debug_template_data
+    
     try:
+        debug_log(f"🔍 [GENRES] Starting genres index page for user {current_user.id}", "GENRE_VIEW")
+        
         # Helper function to handle potential coroutine returns
         def safe_call_sync_method(method, *args, **kwargs):
             """Safely call a sync method that might return a coroutine."""
@@ -52,28 +89,100 @@ def index():
                     return result
             except Exception as e:
                 current_app.logger.error(f"Error in safe_call_sync_method: {e}")
+                debug_log(f"❌ [GENRES] Error in safe_call_sync_method: {e}", "GENRE_VIEW")
                 return None
         
+        debug_service_call("book_service", "list_all_categories_sync", {"user_id": str(current_user.id)}, None, "BEFORE")
         all_categories = safe_call_sync_method(book_service.list_all_categories_sync, str(current_user.id))
+        debug_service_call("book_service", "list_all_categories_sync", {"user_id": str(current_user.id)}, all_categories, "AFTER")
         
         # Ensure we have a list
         if not isinstance(all_categories, list):
             print(f"⚠️ [GENRES] Expected list, got {type(all_categories)}")
             all_categories = []
         
-        # Separate root categories from all categories for different views
-        root_categories = [cat for cat in all_categories if cat.parent_id is None]
+        debug_log(f"📊 [GENRES] Found {len(all_categories)} total categories", "GENRE_VIEW")
         
-        # Sort categories by level then by name
-        all_categories.sort(key=lambda c: (c.level, c.name.lower()))
-        root_categories.sort(key=lambda c: c.name.lower())
+        # Add missing properties for template compatibility and calculate book counts
+        for cat in all_categories:
+            if isinstance(cat, dict):
+                # Add missing properties that don't exist in DB schema but are expected by templates
+                if 'parent_id' not in cat:
+                    cat['parent_id'] = None
+                if 'level' not in cat:
+                    cat['level'] = 0
+                
+                # Calculate actual book count for this category
+                try:
+                    category_id = cat.get('id')
+                    if category_id:
+                        debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, None, "BEFORE")
+                        category_books = safe_call_sync_method(book_service.get_books_by_category_sync, category_id, str(current_user.id), False)
+                        debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, category_books, "AFTER")
+                        cat['book_count'] = len(category_books) if category_books else 0
+                        debug_log(f"📊 [GENRES] Category '{cat.get('name')}' has {cat['book_count']} books", "GENRE_VIEW")
+                    else:
+                        cat['book_count'] = 0
+                except Exception as e:
+                    debug_log(f"⚠️ [GENRES] Error calculating book count for category {cat.get('name', 'Unknown')}: {e}", "GENRE_VIEW")
+                    cat['book_count'] = 0
+            else:
+                # Handle object type
+                if not hasattr(cat, 'parent_id'):
+                    cat.parent_id = None
+                if not hasattr(cat, 'level'):
+                    cat.level = 0
+                
+                # Calculate actual book count for this category
+                try:
+                    category_id = getattr(cat, 'id', None)
+                    if category_id:
+                        debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, None, "BEFORE")
+                        category_books = safe_call_sync_method(book_service.get_books_by_category_sync, category_id, str(current_user.id), False)
+                        debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, category_books, "AFTER")
+                        cat.book_count = len(category_books) if category_books else 0
+                        debug_log(f"📊 [GENRES] Category '{getattr(cat, 'name', 'Unknown')}' has {cat.book_count} books", "GENRE_VIEW")
+                    else:
+                        cat.book_count = 0
+                except Exception as e:
+                    debug_log(f"⚠️ [GENRES] Error calculating book count for category {getattr(cat, 'name', 'Unknown')}: {e}", "GENRE_VIEW")
+                    cat.book_count = 0
+        
+        # Separate root categories from all categories for different views
+        # Handle both dict and object types
+        root_categories = []
+        for cat in all_categories:
+            parent_id = cat.get('parent_id') if isinstance(cat, dict) else getattr(cat, 'parent_id', None)
+            if parent_id is None:
+                root_categories.append(cat)
+        
+        debug_log(f"📊 [GENRES] Found {len(root_categories)} root categories", "GENRE_VIEW")
+        
+        # Sort categories by level then by name - handle both dict and object types
+        try:
+            all_categories.sort(key=lambda c: (
+                (c.get('level', 0) if isinstance(c, dict) else getattr(c, 'level', 0)),
+                (c.get('name', '') if isinstance(c, dict) else getattr(c, 'name', '')).lower()
+            ))
+            root_categories.sort(key=lambda c: (c.get('name', '') if isinstance(c, dict) else getattr(c, 'name', '')).lower())
+        except Exception as sort_error:
+            debug_log(f"⚠️ [GENRES] Error sorting categories: {sort_error}", "GENRE_VIEW")
         
         # Get total unique book count for this user
+        debug_service_call("book_service", "get_user_books_sync", {"user_id": str(current_user.id)}, None, "BEFORE")
         user_books = safe_call_sync_method(book_service.get_user_books_sync, str(current_user.id))
+        debug_service_call("book_service", "get_user_books_sync", {"user_id": str(current_user.id)}, user_books, "AFTER")
         total_book_count = len(user_books) if user_books else 0
         
-        print(f"📊 [GENRES] Displaying {len(all_categories)} categories ({len(root_categories)} root)")
-        print(f"📊 [GENRES] Total unique books for user: {total_book_count}")
+        debug_log(f"📊 [GENRES] Displaying {len(all_categories)} categories ({len(root_categories)} root)", "GENRE_VIEW")
+        debug_log(f"📊 [GENRES] Total unique books for user: {total_book_count}", "GENRE_VIEW")
+        
+        template_data = {
+            'categories': all_categories,
+            'root_categories': root_categories,
+            'total_book_count': total_book_count
+        }
+        debug_template_data('genres/index.html', template_data, "GENRE_VIEW")
         
         return render_template('genres/index.html', 
                              categories=all_categories,
@@ -93,53 +202,93 @@ def index():
 @login_required 
 def category_details(category_id):
     """Display detailed information about a category."""
+    from app.debug_system import debug_log, debug_genre_details, debug_service_call, debug_template_data
+    
     try:
-        print(f"🔍 [GENRE] Starting category details page for category_id: {category_id}, user: {current_user.id}")
+        debug_log(f"🔍 [GENRE] Starting category details page for category_id: {category_id}, user: {current_user.id}", "GENRE_DETAILS")
         
         # Get category details
+        debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category_id, "user_id": str(current_user.id)}, None, "BEFORE")
         category = book_service.get_category_by_id_sync(category_id, str(current_user.id))
+        debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category_id, "user_id": str(current_user.id)}, category, "AFTER")
         
         if not category:
-            print(f"❌ [GENRE] Category not found for ID: {category_id}")
+            debug_log(f"❌ [GENRE] Category not found for ID: {category_id}", "GENRE_DETAILS")
             flash('Category not found.', 'error')
             return redirect(url_for('genres.index'))
         
-        print(f"✅ [GENRE] Found category: {category.name} (ID: {category.id})")
+        debug_log(f"✅ [GENRE] Found category: {category.name} (ID: {category.id})", "GENRE_DETAILS")
+        
+        # Enhanced genre debugging
+        debug_genre_details(category, category_id, str(current_user.id), "VIEW")
         
         # Get books in this category for current user
-        print(f"🔍 [GENRE] Getting books by category for user {current_user.id}")
-        books = book_service.get_books_by_category_sync(category_id, str(current_user.id), include_subcategories=True)
-        print(f"📊 [GENRE] Got {len(books)} books for category")
+        debug_log(f"🔍 [GENRE] Getting books in category for user {current_user.id}", "GENRE_DETAILS")
+        debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, None, "BEFORE")
+        books = book_service.get_books_by_category_sync(category_id, str(current_user.id))
+        debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, books, "AFTER")
         
-        # Get category hierarchy info
-        children = book_service.get_category_children_sync(category_id, str(current_user.id))
+        if not books:
+            debug_log(f"ℹ️ [GENRE] No books found in category {category.name}", "GENRE_DETAILS")
+            books = []
         
-        # Calculate total books including descendants
+        debug_log(f"📚 [GENRE] Found {len(books)} books in category {category.name}", "GENRE_DETAILS")
+        
+        # Get subcategories if this is a parent category
+        debug_service_call("book_service", "get_child_categories_sync", {"parent_id": category_id}, None, "BEFORE")
+        subcategories = book_service.get_child_categories_sync(category_id)
+        debug_service_call("book_service", "get_child_categories_sync", {"parent_id": category_id}, subcategories, "AFTER")
+        
+        if not subcategories:
+            subcategories = []
+        
+        debug_log(f"🌿 [GENRE] Found {len(subcategories)} subcategories", "GENRE_DETAILS")
+        
+        # Calculate total books including subcategories
         total_books_with_descendants = len(books)
+        for subcat in subcategories:
+            debug_service_call("book_service", "get_books_by_category_sync", {"category_id": subcat.id, "user_id": str(current_user.id)}, None, "BEFORE")
+            subcat_books = book_service.get_books_by_category_sync(subcat.id, str(current_user.id), True)  # Include subcategories recursively
+            debug_service_call("book_service", "get_books_by_category_sync", {"category_id": subcat.id, "user_id": str(current_user.id)}, subcat_books, "AFTER")
+            if subcat_books:
+                total_books_with_descendants += len(subcat_books)
         
-        # Build breadcrumb trail
-        breadcrumbs = []
-        current_cat = category
-        while current_cat:
-            breadcrumbs.insert(0, current_cat)
-            if current_cat.parent_id:
-                current_cat = book_service.get_category_by_id_sync(current_cat.parent_id, str(current_user.id))
-            else:
-                break
+        debug_log(f"📊 [GENRE] Total books with descendants: {total_books_with_descendants}", "GENRE_DETAILS")
         
-        print(f"✅ [GENRE] Rendering template with {len(breadcrumbs)} breadcrumbs and {len(children)} children")
-        return render_template('genres/details.html', 
+        # Get parent category if this is a child
+        parent_category = None
+        if category.parent_id:
+            debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category.parent_id, "user_id": str(current_user.id)}, None, "BEFORE")
+            parent_category = book_service.get_category_by_id_sync(category.parent_id, str(current_user.id))
+            debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category.parent_id, "user_id": str(current_user.id)}, parent_category, "AFTER")
+            
+            if parent_category:
+                debug_log(f"🌳 [GENRE] Parent category: {parent_category.name}", "GENRE_DETAILS")
+        
+        template_data = {
+            'category': category,
+            'books': books,
+            'subcategories': subcategories,
+            'parent_category': parent_category,
+            'book_count': len(books),
+            'total_books_with_descendants': total_books_with_descendants,
+            'children': subcategories  # Template expects 'children' variable
+        }
+        debug_template_data('genres/details.html', template_data, "GENRE_DETAILS")
+        
+        return render_template('genres/details.html',
                              category=category,
                              books=books,
-                             children=children,
-                             breadcrumbs=breadcrumbs,
+                             subcategories=subcategories,
+                             children=subcategories,
+                             parent_category=parent_category,
                              total_books_with_descendants=total_books_with_descendants)
     
     except Exception as e:
-        print(f"❌ [GENRE] Error loading category details for {category_id}: {e}")
+        debug_log(f"❌ [GENRE] Error in category details for {category_id}: {e}", "GENRE_DETAILS")
         import traceback
         traceback.print_exc()
-        current_app.logger.error(f"Error loading category details: {e}")
+        current_app.logger.error(f"Error in category details: {e}")
         flash('Error loading category details.', 'error')
         return redirect(url_for('genres.index'))
 

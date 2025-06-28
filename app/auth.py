@@ -82,14 +82,31 @@ def setup():
             flash('An error occurred while creating the admin account. Please try again.', 'error')
             return render_template('auth/simple_setup.html')
     
-    # Handle GET request - try to redirect to onboarding, fall back to simple setup
-    flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
+    # Handle GET request - check if setup is actually needed
     try:
+        user_count = user_service.get_user_count_sync()
+        debug_auth(f"Setup route GET: User count is {user_count}")
+        
+        if user_count > 0:
+            debug_auth("Setup already completed, redirecting to login")
+            flash('Setup has already been completed.', 'info')
+            return redirect(url_for('auth.login'))
+        
+        # No users exist, proceed with onboarding
+        debug_auth("No users found, starting onboarding")
+        flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
         return redirect(url_for('onboarding.start'))
-    except Exception:
-        # Fallback: show simple setup form if onboarding system is not available
-        debug_auth("Onboarding system not available, showing simple setup form")
-        return render_template('auth/simple_setup.html')
+        
+    except Exception as e:
+        debug_auth(f"Error checking user count in setup route: {e}")
+        # If we can't check user count, try onboarding, fall back to simple setup
+        flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
+        try:
+            return redirect(url_for('onboarding.start'))
+        except Exception:
+            # Fallback: show simple setup form if onboarding system is not available
+            debug_auth("Onboarding system not available, showing simple setup form")
+            return render_template('auth/simple_setup.html')
 
 @auth.route('/setup/status')
 def setup_status():
@@ -379,17 +396,16 @@ def debug_info():
 @login_required
 def settings():
     """Main user settings page."""
-    from .infrastructure.redis_graph import get_graph_storage
+    from .infrastructure.kuzu_graph import get_graph_storage
     
     # Get site name for admin users
     site_name = None
     if current_user.is_admin:
-        redis_client = get_graph_storage().redis
-        current_site_name = redis_client.get('site_name')
-        if current_site_name:
-            site_name = current_site_name.decode('utf-8') if isinstance(current_site_name, bytes) else current_site_name
-        else:
-            site_name = 'MyBibliotheca'
+        # For Kuzu version, site name is managed via environment variables
+        import os
+        site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
+    else:
+        site_name = 'MyBibliotheca'
     
     return render_template('settings.html', 
                          title='Settings', 
