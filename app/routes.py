@@ -429,11 +429,12 @@ def library():
         ]
     
     if location_filter:
-        # Note: This may need adjustment based on how locations are stored in the dict format
+        # Handle locations which are now returned as strings (location names) from KuzuIntegrationService
         filtered_books = [
             book for book in filtered_books 
             if (book.get('locations') if isinstance(book, dict) else getattr(book, 'locations', None)) and any(
-                location_filter.lower() in (loc.get('name', '') if isinstance(loc, dict) else getattr(loc, 'name', '')).lower() 
+                location_filter.lower() in (loc.lower() if isinstance(loc, str) else 
+                                           (loc.get('name', '') if isinstance(loc, dict) else getattr(loc, 'name', '')).lower())
                 for loc in (book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', []))
             )
         ]
@@ -590,12 +591,14 @@ def library():
         if book_language:
             languages.add(book_language)
         
-        # Handle locations
+        # Handle locations - they are now returned as strings (location names) from KuzuIntegrationService
         book_locations = book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', [])
         if book_locations:
-            # book.locations is a list of Location objects
             for loc in book_locations:
-                if isinstance(loc, dict):
+                if isinstance(loc, str):
+                    # Location is already a string (location name)
+                    locations.add(loc)
+                elif isinstance(loc, dict):
                     locations.add(loc.get('name', ''))
                 elif hasattr(loc, 'name'):
                     locations.add(loc.name)

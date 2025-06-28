@@ -628,13 +628,38 @@ class KuzuIntegrationService:
                         # Get location details from location repository
                         location_data = await self.location_repo.get_by_id(location_id)
                         if location_data:
-                            locations = [location_data.get('name', location_id)]
+                            location_name = location_data.get('name', location_id)
+                            locations = [location_name]
+                            logger.debug(f"Successfully resolved location {location_id} to name: {location_name}")
                         else:
-                            # If location not found, use the ID as fallback
-                            locations = [location_id]
+                            # If location not found, try to get from user's locations list
+                            user_locations = await self.location_repo.get_user_locations(user_id)
+                            location_name = None
+                            for loc in user_locations:
+                                if loc.get('id') == location_id:
+                                    location_name = loc.get('name', location_id)
+                                    break
+                            
+                            if location_name:
+                                locations = [location_name]
+                                logger.debug(f"Resolved location {location_id} from user locations: {location_name}")
+                            else:
+                                # Last resort: use a placeholder name
+                                locations = [f"Location {location_id}"]
+                                logger.warning(f"Could not resolve location {location_id}, using placeholder")
                     except Exception as e:
                         logger.error(f"Failed to get location {location_id}: {e}")
-                        locations = [location_id]  # Use ID as fallback
+                        # Try to get a meaningful name instead of just using ID
+                        try:
+                            user_locations = await self.location_repo.get_user_locations(user_id)
+                            location_name = None
+                            for loc in user_locations:
+                                if loc.get('id') == location_id:
+                                    location_name = loc.get('name', location_id)
+                                    break
+                            locations = [location_name or f"Location {location_id}"]
+                        except:
+                            locations = [f"Location {location_id}"]
                 
                 # Add ownership data to book
                 book_dict['ownership'] = {

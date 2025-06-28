@@ -292,8 +292,12 @@ class LocationService:
             result = storage.query(query, {'user_id': user_id, 'location_id': location_id})
             
             count = 0
-            if result and len(result) > 0 and 'col_0' in result[0]:
-                count = int(result[0]['col_0']) if result[0]['col_0'] is not None else 0
+            if result and len(result) > 0:
+                # Handle both 'result' and 'col_0' keys (different Kuzu versions/formats)
+                if 'result' in result[0]:
+                    count = int(result[0]['result']) if result[0]['result'] is not None else 0
+                elif 'col_0' in result[0]:
+                    count = int(result[0]['col_0']) if result[0]['col_0'] is not None else 0
             
             debug_log(f"Location {location_id} has {count} books for user {user_id}", "LOCATION", 
                      {"location_id": location_id, "user_id": user_id, "book_count": count})
@@ -342,8 +346,16 @@ class LocationService:
             book_ids = []
             
             for record in result:
-                if 'col_0' in record and record['col_0']:
+                book_id = None
+                # Handle different result key formats (different Kuzu versions/formats)
+                if 'result' in record and record['result']:
+                    book_id = record['result']
+                elif 'book_id' in record and record['book_id']:
+                    book_id = record['book_id']
+                elif 'col_0' in record and record['col_0']:
                     book_id = record['col_0']
+                
+                if book_id:
                     book_ids.append(book_id)
                     debug_log(f"Found book {book_id} at location", "LOCATION", 
                              {"book_id": book_id, "location_id": location_id})
