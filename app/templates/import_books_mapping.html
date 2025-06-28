@@ -219,23 +219,41 @@
                                     
                                     <optgroup label="📚 Standard Book Fields">
                                         <option value="title" {% if suggested_mappings.get(header) == 'title' %}selected{% endif %}>Title</option>
+                                        <option value="subtitle" {% if suggested_mappings.get(header) == 'subtitle' %}selected{% endif %}>Subtitle</option>
                                         <option value="author" {% if suggested_mappings.get(header) == 'author' %}selected{% endif %}>Author</option>
+                                        <option value="additional_author" {% if suggested_mappings.get(header) == 'additional_author' %}selected{% endif %}>Additional Author</option>
                                         <option value="isbn" {% if suggested_mappings.get(header) == 'isbn' %}selected{% endif %}>ISBN</option>
+                                        <option value="isbn13" {% if suggested_mappings.get(header) == 'isbn13' %}selected{% endif %}>ISBN-13</option>
+                                        <option value="isbn10" {% if suggested_mappings.get(header) == 'isbn10' %}selected{% endif %}>ISBN-10</option>
+                                        <option value="asin" {% if suggested_mappings.get(header) == 'asin' %}selected{% endif %}>ASIN</option>
                                         <option value="description" {% if suggested_mappings.get(header) == 'description' %}selected{% endif %}>Description</option>
                                         <option value="publisher" {% if suggested_mappings.get(header) == 'publisher' %}selected{% endif %}>Publisher</option>
+                                        <option value="published_date" {% if suggested_mappings.get(header) == 'published_date' %}selected{% endif %}>Published Date</option>
                                         <option value="publication_year" {% if suggested_mappings.get(header) == 'publication_year' %}selected{% endif %}>Publication Year</option>
                                         <option value="page_count" {% if suggested_mappings.get(header) == 'page_count' %}selected{% endif %}>Page Count</option>
                                         <option value="language" {% if suggested_mappings.get(header) == 'language' %}selected{% endif %}>Language</option>
+                                        <option value="cover_url" {% if suggested_mappings.get(header) == 'cover_url' %}selected{% endif %}>Cover URL</option>
+                                        <option value="series" {% if suggested_mappings.get(header) == 'series' %}selected{% endif %}>Series</option>
+                                        <option value="series_volume" {% if suggested_mappings.get(header) == 'series_volume' %}selected{% endif %}>Series Volume</option>
+                                        <option value="series_order" {% if suggested_mappings.get(header) == 'series_order' %}selected{% endif %}>Series Order</option>
                                         <option value="categories" {% if suggested_mappings.get(header) == 'categories' %}selected{% endif %}>Categories/Genres</option>
+                                        <option value="media_type" {% if suggested_mappings.get(header) == 'media_type' %}selected{% endif %}>Media Type/Format</option>
+                                        <option value="average_rating" {% if suggested_mappings.get(header) == 'average_rating' %}selected{% endif %}>Average Rating</option>
+                                        <option value="rating_count" {% if suggested_mappings.get(header) == 'rating_count' %}selected{% endif %}>Rating Count</option>
                                     </optgroup>
                                     
                                     <optgroup label="👤 Personal Reading Data">
                                         <option value="rating" {% if suggested_mappings.get(header) == 'rating' %}selected{% endif %}>My Rating</option>
                                         <option value="reading_status" {% if suggested_mappings.get(header) == 'reading_status' %}selected{% endif %}>Reading Status</option>
+                                        <option value="ownership_status" {% if suggested_mappings.get(header) == 'ownership_status' %}selected{% endif %}>Ownership Status</option>
                                         <option value="date_read" {% if suggested_mappings.get(header) == 'date_read' %}selected{% endif %}>Date Read</option>
                                         <option value="date_added" {% if suggested_mappings.get(header) == 'date_added' %}selected{% endif %}>Date Added</option>
+                                        <option value="start_date" {% if suggested_mappings.get(header) == 'start_date' %}selected{% endif %}>Start Date</option>
+                                        <option value="finish_date" {% if suggested_mappings.get(header) == 'finish_date' %}selected{% endif %}>Finish Date</option>
                                         <option value="notes" {% if suggested_mappings.get(header) == 'notes' %}selected{% endif %}>Notes/Review</option>
+                                        <option value="personal_notes" {% if suggested_mappings.get(header) == 'personal_notes' %}selected{% endif %}>Personal Notes</option>
                                         <option value="tags" {% if suggested_mappings.get(header) == 'tags' %}selected{% endif %}>Tags/Shelves</option>
+                                        <option value="location_id" {% if suggested_mappings.get(header) == 'location_id' %}selected{% endif %}>Location</option>
                                     </optgroup>
                                     
                                     {% if global_custom_fields %}
@@ -243,7 +261,7 @@
                                         {% for field in global_custom_fields %}
                                         <option value="custom_global_{{ field.name }}" 
                                                 {% if suggested_mappings.get(header) == 'custom_global_' + field.name %}selected{% endif %}>
-                                            {{ field.display_name }} ({{ field.field_type }})
+                                            {{ field.display_name }} ({{ field.field_type.value if field.field_type else 'New Custom Field' }})
                                         </option>
                                         {% endfor %}
                                     </optgroup>
@@ -254,7 +272,7 @@
                                         {% for field in personal_custom_fields %}
                                         <option value="custom_personal_{{ field.name }}" 
                                                 {% if suggested_mappings.get(header) == 'custom_personal_' + field.name %}selected{% endif %}>
-                                            {{ field.display_name }} ({{ field.field_type }})
+                                            {{ field.display_name }} ({{ field.field_type.value if field.field_type else 'New Custom Field' }})
                                         </option>
                                         {% endfor %}
                                     </optgroup>

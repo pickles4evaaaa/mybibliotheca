@@ -5,14 +5,19 @@
 {% block content %}
 <div class="container-fluid px-4 py-4">
     <!-- Header -->
-    <div class="row mb-4">
+    <div class="row mb-4 align-items-center">
         <div class="col">
             <nav aria-label="breadcrumb">
-                <ol class="breadcrumb">
+                <ol class="breadcrumb mb-0">
                     <li class="breadcrumb-item"><a href="{{ url_for('main.library') }}">Library</a></li>
                     <li class="breadcrumb-item active" aria-current="page">{{ book.title }}</li>
                 </ol>
             </nav>
+        </div>
+        <div class="col-auto">
+            <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Library
+            </a>
         </div>
     </div>
 
@@ -21,18 +26,46 @@
         <div class="col-lg-8">
             <!-- Book Overview Card -->
             <div class="card shadow-sm mb-4">
-                <div class="card-body">
+                <div class="card-body position-relative">
+                    <!-- Action Icons in Upper Right Corner -->
+                    <div class="position-absolute top-0 end-0 mt-2 me-2">
+                        <div class="d-flex gap-1">
+                            <a href="{{ url_for('main.edit_book', uid=book.uid) }}" 
+                               class="btn btn-outline-primary btn-sm p-1 action-icon-btn" 
+                               title="Edit Book Details">
+                                <i class="bi bi-pencil" style="font-size: 0.875rem;"></i>
+                            </a>
+                            <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" 
+                                  class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book from your library?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <button type="submit" class="btn btn-outline-danger btn-sm p-1 action-icon-btn" 
+                                        title="Remove from Library">
+                                    <i class="bi bi-trash" style="font-size: 0.875rem;"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    
                     <div class="row">
                         <div class="col-md-3 text-center mb-3 mb-md-0">
-                            {% if book.cover_url %}
-                                <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                     class="img-fluid rounded shadow-sm" style="max-height: 300px;">
-                            {% else %}
-                                <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                     style="height: 300px; max-width: 200px; margin: 0 auto;">
-                                    <i class="bi bi-book text-muted" style="font-size: 4rem;"></i>
-                                </div>
-                            {% endif %}
+                            <div class="position-relative d-inline-block">
+                                {% if book.cover_url %}
+                                    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
+                                         class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover-img">
+                                {% else %}
+                                    <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
+                                         style="height: 300px; max-width: 200px; margin: 0 auto;" id="book-cover-placeholder">
+                                        <i class="bi bi-book text-muted" style="font-size: 4rem;"></i>
+                                    </div>
+                                {% endif %}
+                                
+                                <!-- Cover Edit Icon -->
+                                <button type="button" class="btn btn-outline-secondary btn-sm cover-edit-btn" 
+                                        data-bs-toggle="modal" data-bs-target="#coverEditModal" 
+                                        title="Edit Book Cover">
+                                    <i class="bi bi-pencil" style="font-size: 0.75rem;"></i>
+                                </button>
+                            </div>
                         </div>
                         
                         <div class="col-md-9">
@@ -69,6 +102,20 @@
                                 </div>
                                 {% endif %}
                                 
+                                {% if book.isbn13 and book.isbn13 != book.isbn %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">ISBN-13</small>
+                                    <span class="fw-medium">{{ book.isbn13 }}</span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.isbn10 and book.isbn10 != book.isbn %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">ISBN-10</small>
+                                    <span class="fw-medium">{{ book.isbn10 }}</span>
+                                </div>
+                                {% endif %}
+                                
                                 {% if book.publisher %}
                                 <div class="col-sm-6">
                                     <small class="text-muted d-block">Publisher</small>
@@ -87,6 +134,36 @@
                                 <div class="col-sm-6">
                                     <small class="text-muted d-block">Published</small>
                                     <span class="fw-medium">{{ book.published_date }}</span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.language and book.language != 'en' %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">Language</small>
+                                    <span class="fw-medium">
+                                        {% if book.language == 'es' %}Spanish
+                                        {% elif book.language == 'fr' %}French
+                                        {% elif book.language == 'de' %}German
+                                        {% elif book.language == 'it' %}Italian
+                                        {% elif book.language == 'pt' %}Portuguese
+                                        {% elif book.language == 'ru' %}Russian
+                                        {% elif book.language == 'ja' %}Japanese
+                                        {% elif book.language == 'ko' %}Korean
+                                        {% elif book.language == 'zh' %}Chinese
+                                        {% else %}{{ book.language }}
+                                        {% endif %}
+                                    </span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.series %}
+                                <div class="col-sm-6">
+                                    <small class="text-muted d-block">Series</small>
+                                    <span class="fw-medium">
+                                        {{ book.series.name if book.series.name else book.series }}
+                                        {% if book.series_volume %} - {{ book.series_volume }}{% endif %}
+                                        {% if book.series_order %} (#{{ book.series_order }}){% endif %}
+                                    </span>
                                 </div>
                                 {% endif %}
                             </div>
@@ -415,27 +492,130 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- Actions -->
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <div class="d-grid gap-2">
-                        <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
-                            <i class="bi bi-arrow-left me-1"></i>Back to Library
-                        </a>
-                        <a href="{{ url_for('main.edit_book', uid=book.uid) }}" class="btn btn-outline-primary">
-                            <i class="bi bi-pencil me-1"></i>Edit Book Details
-                        </a>
-                        <hr class="my-2">
-                        <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" 
-                              class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book from your library?')">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                            <button type="submit" class="btn btn-outline-danger w-100">
-                                <i class="bi bi-trash me-1"></i>Remove from Library
-                            </button>
-                        </form>
+        </div>
+    </div>
+</div>
+
+<!-- Cover Edit Modal -->
+<div class="modal fade" id="coverEditModal" tabindex="-1" aria-labelledby="coverEditModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="coverEditModalLabel">
+                    <i class="bi bi-image me-2"></i>Edit Book Cover
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <!-- Current Cover Preview -->
+                        <div class="text-center mb-3">
+                            <h6 class="text-muted mb-2">Current Cover</h6>
+                            <div class="cover-preview-container">
+                                {% if book.cover_url %}
+                                    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
+                                         class="img-fluid rounded shadow-sm" style="max-height: 200px;" id="current-cover-preview">
+                                {% else %}
+                                    <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
+                                         style="height: 200px; width: 133px; margin: 0 auto;" id="current-cover-preview">
+                                        <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <!-- New Cover Preview -->
+                        <div class="text-center mb-3">
+                            <h6 class="text-muted mb-2">New Cover Preview</h6>
+                            <div class="cover-preview-container">
+                                <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
+                                     style="height: 200px; width: 133px; margin: 0 auto;" id="new-cover-preview">
+                                    <i class="bi bi-eye text-muted" style="font-size: 3rem;"></i>
+                                    <span class="text-muted ms-2">Preview</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
+                
+                <form id="cover-edit-form" method="post" action="{{ url_for('main.edit_book', uid=book.uid) }}" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <input type="hidden" name="action" value="update_cover"/>
+                    
+                    <!-- Cover URL Input -->
+                    <div class="mb-3">
+                        <label for="cover_url" class="form-label fw-medium">
+                            <i class="bi bi-link me-1"></i>Cover Image URL
+                        </label>
+                        <div class="input-group">
+                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
+                                   value="{{ book.cover_url or '' }}" placeholder="https://example.com/cover.jpg">
+                            <button type="button" class="btn btn-outline-secondary" id="preview-url-btn">
+                                <i class="bi bi-eye me-1"></i>Preview
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- OR Divider -->
+                    <div class="text-center my-3">
+                        <span class="badge bg-secondary">OR</span>
+                    </div>
+                    
+                    <!-- File Upload -->
+                    <div class="mb-3">
+                        <label for="cover_file" class="form-label fw-medium">
+                            <i class="bi bi-upload me-1"></i>Upload from Device
+                        </label>
+                        <input type="file" class="form-control" id="cover_file" name="cover_file" 
+                               accept="image/*">
+                        <div class="form-text">Supported formats: JPG, PNG, GIF, WebP (max 5MB)</div>
+                    </div>
+                    
+                    <!-- OR Divider -->
+                    <div class="text-center my-3">
+                        <span class="badge bg-secondary">OR</span>
+                    </div>
+                    
+                    <!-- API Fetch -->
+                    <div class="mb-3">
+                        <label class="form-label fw-medium">
+                            <i class="bi bi-cloud-download me-1"></i>Fetch from API
+                        </label>
+                        <div class="d-grid gap-2">
+                            <button type="button" class="btn btn-outline-info" id="fetch-cover-btn">
+                                <i class="bi bi-search me-1"></i>Search for Cover by ISBN
+                            </button>
+                            {% if book.title and book.authors %}
+                            <button type="button" class="btn btn-outline-info" id="fetch-cover-title-btn">
+                                <i class="bi bi-search me-1"></i>Search by Title & Author
+                            </button>
+                            {% endif %}
+                        </div>
+                        <div class="form-text">
+                            This will search for a cover image using the book's ISBN or title/author information
+                        </div>
+                    </div>
+                    
+                    <!-- Remove Cover Option -->
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="remove_cover" name="remove_cover">
+                            <label class="form-check-label text-danger" for="remove_cover">
+                                <i class="bi bi-trash me-1"></i>Remove current cover image
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle me-1"></i>Cancel
+                </button>
+                <button type="submit" form="cover-edit-form" class="btn btn-primary">
+                    <i class="bi bi-check-circle me-1"></i>Update Cover
+                </button>
             </div>
         </div>
     </div>
@@ -523,6 +703,157 @@ document.addEventListener('DOMContentLoaded', function() {
     // form.querySelectorAll('select, input').forEach(input => {
     //     input.addEventListener('change', autoSave);
     // });
+    
+    // Cover editing functionality
+    initializeCoverEditing();
+});
+
+function initializeCoverEditing() {
+    const coverUrlInput = document.getElementById('cover_url');
+    const previewUrlBtn = document.getElementById('preview-url-btn');
+    const coverFileInput = document.getElementById('cover_file');
+    const fetchCoverBtn = document.getElementById('fetch-cover-btn');
+    const fetchCoverTitleBtn = document.getElementById('fetch-cover-title-btn');
+    const newCoverPreview = document.getElementById('new-cover-preview');
+    const removeCoverCheck = document.getElementById('remove_cover');
+    
+    // Preview URL functionality
+    if (previewUrlBtn && coverUrlInput) {
+        previewUrlBtn.addEventListener('click', function() {
+            const url = coverUrlInput.value.trim();
+            if (url) {
+                previewCoverImage(url);
+            } else {
+                alert('Please enter a URL first.');
+            }
+        });
+        
+        // Auto-preview when URL changes
+        coverUrlInput.addEventListener('blur', function() {
+            const url = this.value.trim();
+            if (url) {
+                previewCoverImage(url);
+            }
+        });
+    }
+    
+    // File upload preview
+    if (coverFileInput) {
+        coverFileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                // Clear URL input when file is selected
+                if (coverUrlInput) coverUrlInput.value = '';
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewCoverImage(e.target.result);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    }
+    
+    // Fetch cover by ISBN
+    if (fetchCoverBtn) {
+        fetchCoverBtn.addEventListener('click', function() {
+            const isbn = '{{ book.isbn13 or book.isbn10 or book.isbn or "" }}';
+            if (isbn) {
+                fetchCoverFromAPI(isbn, 'isbn');
+            } else {
+                alert('No ISBN available for this book.');
+            }
+        });
+    }
+    
+    // Fetch cover by title and author
+    if (fetchCoverTitleBtn) {
+        fetchCoverTitleBtn.addEventListener('click', function() {
+            const title = '{{ book.title|e }}';
+            const author = '{{ (book.authors[0].name if book.authors else "")|e }}';
+            if (title && author) {
+                fetchCoverFromAPI(`${title} ${author}`, 'title');
+            } else {
+                alert('Missing title or author information.');
+            }
+        });
+    }
+    
+    // Remove cover checkbox
+    if (removeCoverCheck) {
+        removeCoverCheck.addEventListener('change', function() {
+            if (this.checked) {
+                // Clear other inputs and show placeholder
+                if (coverUrlInput) coverUrlInput.value = '';
+                if (coverFileInput) coverFileInput.value = '';
+                showPlaceholderPreview();
+            }
+        });
+    }
+}
+
+function previewCoverImage(src) {
+    const preview = document.getElementById('new-cover-preview');
+    if (preview && src) {
+        preview.innerHTML = `<img src="${src}" alt="Cover Preview" class="img-fluid rounded shadow-sm" style="max-height: 200px;">`;
+        
+        // Uncheck remove cover if checked
+        const removeCoverCheck = document.getElementById('remove_cover');
+        if (removeCoverCheck) removeCoverCheck.checked = false;
+    }
+}
+
+function showPlaceholderPreview() {
+    const preview = document.getElementById('new-cover-preview');
+    if (preview) {
+        preview.innerHTML = `
+            <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
+                 style="height: 200px; width: 133px; margin: 0 auto;">
+                <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
+            </div>
+        `;
+    }
+}
+
+function fetchCoverFromAPI(query, type) {
+    const fetchBtn = type === 'isbn' ? document.getElementById('fetch-cover-btn') : document.getElementById('fetch-cover-title-btn');
+    const originalText = fetchBtn.innerHTML;
+    
+    // Show loading state
+    fetchBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Searching...';
+    fetchBtn.disabled = true;
+    
+    const endpoint = type === 'isbn' ? 
+        `/api/search/book/${query}` :
+        `/api/search/cover?q=${encodeURIComponent(query)}`;
+    
+    fetch(endpoint)
+        .then(response => response.json())
+        .then(data => {
+            if (data.cover) {
+                // Update URL input and preview
+                const coverUrlInput = document.getElementById('cover_url');
+                if (coverUrlInput) {
+                    coverUrlInput.value = data.cover;
+                }
+                previewCoverImage(data.cover);
+                
+                // Clear file input
+                const coverFileInput = document.getElementById('cover_file');
+                if (coverFileInput) coverFileInput.value = '';
+            } else {
+                alert('No cover image found for this book.');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching cover:', error);
+            alert('Failed to fetch cover image. Please try again.');
+        })
+        .finally(() => {
+            // Restore button state
+            fetchBtn.innerHTML = originalText;
+            fetchBtn.disabled = false;
+        });
 });
 </script>
 
@@ -639,6 +970,130 @@ document.addEventListener('DOMContentLoaded', function() {
     border-color: #86b7fe !important;
     color: #e0e0e0 !important;
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+}
+
+/* Action Icon Buttons Styling */
+.action-icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    background-color: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.action-icon-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.action-icon-btn.btn-outline-primary:hover {
+    background-color: var(--bs-primary);
+    border-color: var(--bs-primary);
+    color: white;
+}
+
+.action-icon-btn.btn-outline-danger:hover {
+    background-color: var(--bs-danger);
+    border-color: var(--bs-danger);
+    color: white;
+}
+
+/* Dark mode for action icons */
+[data-theme="dark"] .action-icon-btn {
+    background-color: rgba(40, 40, 40, 0.9);
+    border-color: #555;
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .action-icon-btn.btn-outline-primary {
+    border-color: var(--bs-primary);
+    color: var(--bs-primary);
+}
+
+[data-theme="dark"] .action-icon-btn.btn-outline-danger {
+    border-color: var(--bs-danger);
+    color: var(--bs-danger);
+}
+
+[data-theme="dark"] .action-icon-btn:hover {
+    background-color: rgba(60, 60, 60, 0.9);
+}
+
+/* Cover Edit Button Styling */
+.cover-edit-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    background-color: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    z-index: 10;
+}
+
+.cover-edit-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    background-color: var(--bs-secondary);
+    border-color: var(--bs-secondary);
+    color: white;
+}
+
+/* Dark mode for cover edit button */
+[data-theme="dark"] .cover-edit-btn {
+    background-color: rgba(40, 40, 40, 0.9);
+    border-color: #555;
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .cover-edit-btn:hover {
+    background-color: var(--bs-secondary);
+    border-color: var(--bs-secondary);
+    color: white;
+}
+
+/* Cover preview styling */
+.cover-preview-container {
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Modal enhancements */
+[data-theme="dark"] .modal-content {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .modal-header {
+    border-bottom-color: #404040;
+}
+
+[data-theme="dark"] .modal-footer {
+    border-top-color: #404040;
+}
+
+[data-theme="dark"] .form-check-label {
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .form-check-label.text-danger {
+    color: #ff6b6b !important;
 }
 
 .card {

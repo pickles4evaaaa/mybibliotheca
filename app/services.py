@@ -1262,6 +1262,110 @@ class LegacyImportMappingService:
         except Exception as e:
             current_app.logger.error(f"Error getting user templates: {e}")
             return []
+    
+    def detect_template_sync(self, headers: List[str], user_id: str):
+        """Detect matching template based on CSV headers (sync version)."""
+        try:
+            # For now, return None since template system isn't fully implemented
+            # But check for Goodreads and StoryGraph patterns
+            headers_lower = [h.lower().strip() for h in headers if h]
+            
+            # Check for Goodreads signature
+            goodreads_signatures = ['book id', 'author l-f', 'bookshelves', 'exclusive shelf']
+            goodreads_matches = sum(1 for sig in goodreads_signatures if sig in headers_lower)
+            
+            # Check for StoryGraph signature  
+            storygraph_signatures = ['read status', 'moods', 'pace', 'character- or plot-driven?', 'isbn/uid', 'star rating']
+            storygraph_matches = sum(1 for sig in storygraph_signatures if sig in headers_lower)
+            
+            # Return a basic template object if we detect a known format
+            if goodreads_matches >= 3:
+                # Return a basic Goodreads template
+                from .domain.models import ImportMappingTemplate
+                return ImportMappingTemplate(
+                    id="__system_goodreads__",
+                    name="Goodreads Export",
+                    user_id="__system__",
+                    description="Auto-detected Goodreads export file",
+                    field_mappings={
+                        # Standard Book Fields
+                        'Title': 'title',
+                        'Author': 'author',
+                        'Author l-f': 'ignore',  # Ignore this field as specified
+                        'Additional Authors': 'additional_author',  # Map to separate field for proper processing
+                        'ISBN': 'isbn',
+                        'ISBN13': 'isbn13',  # Map to proper isbn13 field
+                        'Publisher': 'publisher',
+                        'Number of Pages': 'page_count',
+                        'Year Published': 'publication_year',
+                        'Average Rating': 'ignore',  # Ignore this field as specified
+                        'Binding': 'media_type',  # Map to Media Type field
+                        
+                        # Personal Reading Data
+                        'My Rating': 'rating',
+                        'Date Read': 'date_read',
+                        'Date Added': 'date_added',
+                        'Exclusive Shelf': 'reading_status',
+                        'My Review': 'notes',
+                        'Private Notes': 'notes',
+                        
+                        # Custom Fields for Goodreads-specific data
+                        'Book Id': 'custom_global_goodreads_id',
+                        'Original Publication Year': 'custom_global_original_publication_date',
+                        'Bookshelves': 'custom_global_bookshelves',
+                        'Bookshelves with positions': 'custom_global_bookshelves_with_positions',
+                        'Spoiler': 'custom_global_spoiler',
+                        'Read Count': 'custom_global_read_count',
+                        'Owned Copies': 'ignore'  # Ignore this field as specified
+                    },
+                    sample_headers=headers,
+                    created_at=datetime.utcnow()
+                )
+            elif storygraph_matches >= 3:
+                # Return a basic StoryGraph template
+                from .domain.models import ImportMappingTemplate
+                return ImportMappingTemplate(
+                    id="__system_storygraph__",
+                    name="StoryGraph Export", 
+                    user_id="__system__",
+                    description="Auto-detected StoryGraph export file",
+                    field_mappings={
+                        # Standard Book Fields
+                        'Title': 'title',
+                        'Authors': 'author',
+                        'Contributors': 'contributors',  # Map to separate field for proper processing
+                        'ISBN/UID': 'isbn',
+                        'Format': 'media_type',
+                        'Read Status': 'reading_status',
+                        'Date Added': 'date_added',
+                        'Read Count': 'read_count',
+                        'Star Rating': 'rating',
+                        'Review': 'notes',
+                        'Tags': 'categories',  # Map to categories/personal tags
+                        'Owned?': 'ownership_status',
+                        
+                        # Custom Fields for StoryGraph-specific data
+                        'Last Date Read': 'custom_global_last_date_read',
+                        'Dates Read': 'custom_global_dates_read',
+                        'Moods': 'custom_global_moods',
+                        'Pace': 'custom_global_pace',
+                        'Character- or Plot-Driven?': 'custom_global_character_or_plot_driven',
+                        'Strong Character Development?': 'custom_global_strong_character_development',
+                        'Loveable Characters?': 'custom_global_loveable_characters',
+                        'Diverse Characters?': 'custom_global_diverse_characters',
+                        'Flawed Characters?': 'custom_global_flawed_characters',
+                        'Content Warnings': 'custom_global_content_warnings',
+                        'Content Warning Description': 'custom_global_content_warning_description'
+                    },
+                    sample_headers=headers,
+                    created_at=datetime.utcnow()
+                )
+            
+            current_app.logger.debug(f"No template detected for headers: {headers}")
+            return None
+        except Exception as e:
+            current_app.logger.error(f"Error detecting template: {e}")
+            return None
 
 
 class DirectImportService:

@@ -84,7 +84,7 @@
                                                     <option value="{{ field }}" 
                                                         {% if (header.lower() == 'title' and field == 'title') or
                                                            (header.lower() in ['author', 'authors'] and field == 'author') or
-                                                           (header.lower() in ['additional authors', 'contributors'] and field == 'additional_authors') or
+                                                           (header.lower() in ['additional authors', 'contributors'] and field == 'additional_author') or
                                                            (header.lower() in ['isbn', 'isbn13', 'isbn/uid'] and field == 'isbn') or
                                                            (header.lower() in ['summary', 'description', 'review'] and field == 'description') or
                                                            (header.lower() in ['publication year', 'published_date', 'year published'] and field == 'published_date') or
@@ -96,7 +96,7 @@
                                                            (header.lower() in ['date added'] and field == 'date_added') or
                                                            (header.lower() in ['notes', 'my review', 'private notes'] and field == 'notes') or
                                                            (header.lower() in ['tags', 'categories'] and field == 'categories' and header.lower() not in ['moods', 'pace', 'character- or plot-driven?', 'content warnings', 'diverse characters?', 'flawed characters?']) or
-                                                           (header.lower() in ['format', 'binding'] and field == 'format') %}selected{% endif %}>
+                                                           (header.lower() in ['format', 'binding'] and field == 'media_type') %}selected{% endif %}>
                                                         {{ field|replace('_', ' ')|title }}
                                                     </option>
                                                     {% endfor %}

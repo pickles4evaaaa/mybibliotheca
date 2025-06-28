@@ -2350,7 +2350,7 @@ def import_books():
             # Auto-detect field mappings
             suggested_mappings = auto_detect_fields(headers, current_user.id)
             
-            # Check if this is a Goodreads or StoryGraph file for direct import
+            # Check if this is a Goodreads or StoryGraph file - but still show mapping screen
             if not force_custom:
                 goodreads_signatures = ['Book Id', 'Author l-f', 'Bookshelves', 'Exclusive Shelf']
                 storygraph_signatures = ['Read Status', 'Moods', 'Pace', 'Character- or Plot-Driven?']
@@ -2359,7 +2359,7 @@ def import_books():
                 is_storygraph = any(header in headers for header in storygraph_signatures)
                 
                 if is_goodreads or is_storygraph:
-                    # Store the temp file path in the session for the direct import
+                    # Store the temp file path in the session for the direct import option
                     session['direct_import_file'] = temp_path
                     if existing_csv_path:
                         session['direct_import_filename'] = 'existing_import_file.csv'
@@ -2367,11 +2367,8 @@ def import_books():
                         session['direct_import_filename'] = file.filename
                     import_type = 'goodreads' if is_goodreads else 'storygraph'
                     
-                    # Flash a message suggesting direct import
-                    flash(f'This looks like a {import_type.title()} export file! For faster import, use our streamlined direct import process.', 'info')
-                    
-                    # Redirect to direct import with suggestion
-                    return redirect(url_for('main.direct_import', suggested=True, import_type=import_type))
+                    # Flash a message suggesting the file type was detected - but still show mapping
+                    flash(f'Detected {import_type.title()} export file! We\'ve pre-mapped common fields for you. Review and customize the mappings below.', 'info')
             
             # Get custom fields for the user
             try:
@@ -2418,22 +2415,27 @@ def import_books():
                         print(f"DEBUG: Template detection - field_mappings type: {type(detected_template.field_mappings)}")
                         print(f"DEBUG: Template detection - field_mappings bool: {bool(detected_template.field_mappings)}")
                 
-                # If a default system template was detected, skip mapping UI and go straight to confirmation
+                # If a default system template was detected, auto-create fields but still show mapping UI for review
                 if not force_custom and detected_template and detected_template.user_id == "__system__" and detected_template.field_mappings:
                     print(f"DEBUG: System template detected - {detected_template.name}")
-                    print(f"DEBUG: Using template mappings directly: {detected_template.field_mappings}")
+                    print(f"DEBUG: Auto-creating custom fields from template mappings: {detected_template.field_mappings}")
                     
-                    # Auto-create any custom fields referenced in the template
+                    # Auto-create any custom fields referenced in the template BEFORE showing mapping screen
                     auto_create_custom_fields(detected_template.field_mappings, current_user.id)
                     
-                    # Render confirmation screen instead of mapping UI
-                    return render_template('import_books_confirmation.html',
-                                         csv_file_path=temp_path,
-                                         csv_headers=headers,
-                                         csv_preview=preview_rows,
-                                         total_rows=total_rows,
-                                         detected_template=detected_template,
-                                         template_mappings=detected_template.field_mappings)
+                    # Reload custom fields after creating new ones so they appear in the mapping screen
+                    user_fields = custom_field_service.get_user_fields_sync(current_user.id)
+                    global_custom_fields = [f for f in user_fields if f.is_global]
+                    personal_custom_fields = [f for f in user_fields if not f.is_global]
+                    
+                    # Use template mappings as suggested mappings
+                    suggested_mappings = detected_template.field_mappings.copy()
+                    print(f"DEBUG: Using template mappings as suggestions: {suggested_mappings}")
+                    
+                    # Add the detected template to the import_templates list so it appears in dropdown
+                    if detected_template not in import_templates:
+                        import_templates.append(detected_template)
+                        print(f"DEBUG: Added detected template to dropdown: {detected_template.name}")
                 
                 # If a custom template was detected, use its mappings
                 elif detected_template and detected_template.field_mappings:
@@ -2446,6 +2448,11 @@ def import_books():
                     user_fields = custom_field_service.get_user_fields_sync(current_user.id)
                     global_custom_fields = [f for f in user_fields if f.is_global]
                     personal_custom_fields = [f for f in user_fields if not f.is_global]
+                    
+                    # Add the detected template to the import_templates list so it appears in dropdown
+                    if detected_template not in import_templates:
+                        import_templates.append(detected_template)
+                        print(f"DEBUG: Added detected template to dropdown: {detected_template.name}")
                 else:
                     print(f"DEBUG: No template detected, using auto-detected mappings: {suggested_mappings}")
                 
@@ -2791,98 +2798,150 @@ def auto_detect_fields(headers, user_id=None):
     for header in headers:
         header_lower = header.lower().strip()
         
-        # Check for custom field matches first (exact and partial matches)
-        custom_match_found = False
-        for field, is_global in custom_fields:
-            field_name_lower = field.name.lower()
-            field_display_name_lower = field.display_name.lower()
-            
-            # Exact match on name or display_name
-            if header_lower == field_name_lower or header_lower == field_display_name_lower:
-                mappings[header] = f'custom_{"global" if is_global else "personal"}_{field.name}'
-                custom_match_found = True
-                break
-            
-            # Partial match on display_name
-            elif any(word in header_lower for word in field_display_name_lower.split()) and len(field_display_name_lower.split()) > 1:
-                mappings[header] = f'custom_{"global" if is_global else "personal"}_{field.name}'
-                custom_match_found = True
-                break
-        
-        if custom_match_found:
-            continue
-        
-        # Standard field detection if no custom field match
-        # Title mappings
-        if any(word in header_lower for word in ['title', 'book', 'name']):
+        # Use EXACT same mapping as template detection for consistency
+        if header == 'Book Id':
+            mappings[header] = 'custom_global_goodreads_id'
+        elif header == 'Title':
             mappings[header] = 'title'
-        
-        # Author mappings - prefer primary author field
-        elif header_lower in ['author', 'authors']:
+        elif header == 'Author':
             mappings[header] = 'author'
-        elif header_lower in ['additional authors']:
+        elif header == 'Author l-f':
+            mappings[header] = 'ignore'
+        elif header == 'Additional Authors':
             mappings[header] = 'additional_authors'
-        elif any(word in header_lower for word in ['author', 'creator', 'writer']) and 'additional' not in header_lower:
-            mappings[header] = 'author'
-        
-        # ISBN mappings - prefer ISBN13, handle both regular and Goodreads format
-        elif header_lower in ['isbn13', 'isbn/uid']:
+        elif header == 'ISBN':
             mappings[header] = 'isbn'
-        elif header_lower in ['isbn', 'isbn10'] and 'ISBN13' not in mappings.values():
-            mappings[header] = 'isbn'
-        elif any(word in header_lower for word in ['upc', 'barcode']):
-            mappings[header] = 'isbn'
-        
-        # Description mappings
-        elif any(word in header_lower for word in ['description', 'summary', 'plot', 'synopsis', 'review']) and 'my review' not in header_lower:
-            mappings[header] = 'description'
-        
-        # Publisher mappings
-        elif any(word in header_lower for word in ['publisher', 'publishing', 'imprint']):
+        elif header == 'ISBN13':
+            mappings[header] = 'isbn13'
+        elif header == 'My Rating':
+            mappings[header] = 'rating'
+        elif header == 'Average Rating':
+            mappings[header] = 'ignore'
+        elif header == 'Publisher':
             mappings[header] = 'publisher'
-        
-        # Page count mappings
-        elif any(word in header_lower for word in ['number of pages', 'page', 'length']) and 'pages' in header_lower:
+        elif header == 'Binding':
+            mappings[header] = 'custom_global_binding'
+        elif header == 'Number of Pages':
             mappings[header] = 'page_count'
-        
-        # Rating mappings - prefer "My Rating" over "Average Rating"
-        elif header_lower in ['my rating', 'star rating']:
-            mappings[header] = 'rating'
-        elif 'rating' in header_lower and 'my rating' not in [h.lower() for h in headers]:
-            mappings[header] = 'rating'
-        
-        # Reading status mappings - handle both Goodreads and Storygraph
-        elif header_lower in ['exclusive shelf', 'read status']:
+        elif header == 'Year Published':
+            mappings[header] = 'published_date'
+        elif header == 'Original Publication Year':
+            mappings[header] = 'custom_global_original_publication_year'
+        elif header == 'Date Read':
+            mappings[header] = 'finish_date'
+        elif header == 'Date Added':
+            mappings[header] = 'created_at'
+        elif header == 'Bookshelves':
+            mappings[header] = 'custom_global_bookshelves'
+        elif header == 'Bookshelves with positions':
+            mappings[header] = 'custom_global_bookshelves_with_positions'
+        elif header == 'Exclusive Shelf':
             mappings[header] = 'reading_status'
-        elif any(word in header_lower for word in ['status', 'shelf']) and 'read' not in header_lower:
-            mappings[header] = 'reading_status'
+        elif header == 'My Review':
+            mappings[header] = 'custom_global_my_review'
+        elif header == 'Spoiler':
+            mappings[header] = 'custom_global_spoiler'
+        elif header == 'Private Notes':
+            mappings[header] = 'personal_notes'
+        elif header == 'Read Count':
+            mappings[header] = 'custom_global_read_count'
+        elif header == 'Owned Copies':
+            mappings[header] = 'ignore'
         
-        # Date mappings
-        elif any(word in header_lower for word in ['date read', 'last date read', 'finished', 'completed']):
-            mappings[header] = 'date_read'
-        elif any(word in header_lower for word in ['date added', 'added']):
-            mappings[header] = 'date_added'
-        
-        # Categories/genres - exclude Goodreads bookshelves (reading statuses)
-        elif any(word in header_lower for word in ['genre', 'category', 'tag', 'subject']) and 'positions' not in header_lower:
-            mappings[header] = 'categories'
-        
-        # Language
-        elif any(word in header_lower for word in ['language', 'lang']):
-            mappings[header] = 'language'
-        
-        # Year - prefer original publication year
-        elif header_lower in ['original publication year']:
-            mappings[header] = 'publication_year'
-        elif any(word in header_lower for word in ['year published', 'year', 'published', 'publication']) and 'original' not in header_lower:
-            if 'publication_year' not in mappings.values():
-                mappings[header] = 'publication_year'
-        
-        # Notes/Review - prefer private notes over public review
-        elif header_lower in ['private notes']:
-            mappings[header] = 'notes'
-        elif any(word in header_lower for word in ['note', 'comment']) and 'private notes' not in [h.lower() for h in headers]:
-            mappings[header] = 'notes'
+        # Fallback to existing auto-detection logic for non-Goodreads headers
+        else:
+            # Check for custom field matches first (exact and partial matches)
+            custom_match_found = False
+            for field, is_global in custom_fields:
+                field_name_lower = field.name.lower()
+                field_display_name_lower = field.display_name.lower()
+                
+                # Exact match on name or display_name
+                if header_lower == field_name_lower or header_lower == field_display_name_lower:
+                    mappings[header] = f'custom_{"global" if is_global else "personal"}_{field.name}'
+                    custom_match_found = True
+                    break
+                
+                # Partial match on display_name
+                elif any(word in header_lower for word in field_display_name_lower.split()) and len(field_display_name_lower.split()) > 1:
+                    mappings[header] = f'custom_{"global" if is_global else "personal"}_{field.name}'
+                    custom_match_found = True
+                    break
+            
+            if custom_match_found:
+                continue
+            
+            # Standard field detection if no custom field match
+            # Title mappings
+            if any(word in header_lower for word in ['title', 'book', 'name']):
+                mappings[header] = 'title'
+            
+            # Author mappings - prefer primary author field
+            elif header_lower in ['author', 'authors']:
+                mappings[header] = 'author'
+            elif header_lower in ['additional authors']:
+                mappings[header] = 'additional_authors'
+            elif any(word in header_lower for word in ['author', 'creator', 'writer']) and 'additional' not in header_lower:
+                mappings[header] = 'author'
+            
+            # ISBN mappings - prefer ISBN13, handle both regular and Goodreads format
+            elif header_lower in ['isbn13', 'isbn/uid']:
+                mappings[header] = 'isbn13'
+            elif header_lower in ['isbn', 'isbn10'] and 'isbn13' not in mappings.values():
+                mappings[header] = 'isbn'
+            elif any(word in header_lower for word in ['upc', 'barcode']):
+                mappings[header] = 'isbn'
+            
+            # Description mappings
+            elif any(word in header_lower for word in ['description', 'summary', 'plot', 'synopsis', 'review']) and 'my review' not in header_lower:
+                mappings[header] = 'description'
+            
+            # Publisher mappings
+            elif any(word in header_lower for word in ['publisher', 'publishing', 'imprint']):
+                mappings[header] = 'publisher'
+            
+            # Page count mappings
+            elif any(word in header_lower for word in ['number of pages', 'page', 'length']) and 'pages' in header_lower:
+                mappings[header] = 'page_count'
+            
+            # Rating mappings - prefer "My Rating" over "Average Rating"
+            elif header_lower in ['my rating', 'star rating']:
+                mappings[header] = 'rating'
+            elif 'rating' in header_lower and 'my rating' not in [h.lower() for h in headers]:
+                mappings[header] = 'rating'
+            
+            # Reading status mappings - handle both Goodreads and Storygraph
+            elif header_lower in ['exclusive shelf', 'read status']:
+                mappings[header] = 'reading_status'
+            elif any(word in header_lower for word in ['status', 'shelf']) and 'read' not in header_lower:
+                mappings[header] = 'reading_status'
+            
+            # Date mappings
+            elif any(word in header_lower for word in ['date read', 'last date read', 'finished', 'completed']):
+                mappings[header] = 'finish_date'
+            elif any(word in header_lower for word in ['date added', 'added']):
+                mappings[header] = 'created_at'
+            
+            # Categories/genres - exclude Goodreads bookshelves (reading statuses)
+            elif any(word in header_lower for word in ['genre', 'category', 'tag', 'subject']) and 'positions' not in header_lower:
+                mappings[header] = 'categories'
+            
+            # Language
+            elif any(word in header_lower for word in ['language', 'lang']):
+                mappings[header] = 'language'
+            
+            # Year - prefer original publication year
+            elif header_lower in ['original publication year']:
+                mappings[header] = 'custom_global_original_publication_date'
+            elif any(word in header_lower for word in ['year published', 'year', 'published', 'publication']) and 'original' not in header_lower:
+                if 'published_date' not in mappings.values():
+                    mappings[header] = 'published_date'
+            
+            # Notes/Review - prefer private notes over public review
+            elif header_lower in ['private notes']:
+                mappings[header] = 'personal_notes'
+            elif any(word in header_lower for word in ['note', 'comment']) and 'private notes' not in [h.lower() for h in headers]:
+                mappings[header] = 'personal_notes'
     
     return mappings
 
@@ -2905,26 +2964,35 @@ def auto_create_custom_fields(mappings, user_id):
     
     # Predefined field configurations for common platform-specific metadata
     FIELD_CONFIGS = {
-        # Goodreads fields
+        # Goodreads fields - matches template detection exactly
+        'goodreads_id': {'display_name': 'Goodreads_ID', 'type': CustomFieldType.NUMBER, 'global': True},
+        'binding': {'display_name': 'Binding', 'type': CustomFieldType.TEXT, 'global': True},
+        'original_publication_year': {'display_name': 'Original Publication Year', 'type': CustomFieldType.NUMBER, 'global': True},
+        'bookshelves': {'display_name': 'Bookshelves', 'type': CustomFieldType.TAGS, 'global': True},
+        'bookshelves_with_positions': {'display_name': 'Bookshelves with Positions', 'type': CustomFieldType.TEXTAREA, 'global': True},
+        'my_review': {'display_name': 'My Review', 'type': CustomFieldType.TEXTAREA, 'global': True},
+        'spoiler': {'display_name': 'Spoiler', 'type': CustomFieldType.BOOLEAN, 'global': True},
+        'read_count': {'display_name': 'Read Count', 'type': CustomFieldType.NUMBER, 'global': True},
+        
+        # Legacy fields (keep for backward compatibility)
+        'original_publication_date': {'display_name': 'Original Publication Date', 'type': CustomFieldType.DATE, 'global': True},
         'goodreads_book_id': {'display_name': 'Goodreads Book ID', 'type': CustomFieldType.TEXT, 'global': True},
         'average_rating': {'display_name': 'Average Rating', 'type': CustomFieldType.NUMBER, 'global': True},
-        'binding': {'display_name': 'Binding/Format', 'type': CustomFieldType.TEXT, 'global': True},
-        'original_publication_year': {'display_name': 'Original Publication Year', 'type': CustomFieldType.NUMBER, 'global': True},
         'spoiler_review': {'display_name': 'Contains Spoilers', 'type': CustomFieldType.BOOLEAN, 'global': True},
         'private_notes': {'display_name': 'Private Notes', 'type': CustomFieldType.TEXTAREA, 'global': False},
-        'read_count': {'display_name': 'Read Count', 'type': CustomFieldType.NUMBER, 'global': True},
-        'owned_copies': {'display_name': 'Owned Copies', 'type': CustomFieldType.NUMBER, 'global': False},
+        'read_count': {'display_name': 'Number of Times Read', 'type': CustomFieldType.NUMBER, 'global': True},
+        'owned_copies': {'display_name': 'Number of Owned Copies', 'type': CustomFieldType.NUMBER, 'global': False},
         
         # StoryGraph fields
         'format': {'display_name': 'Format', 'type': CustomFieldType.TEXT, 'global': True},
-        'moods': {'display_name': 'Moods', 'type': CustomFieldType.TEXT, 'global': True},
-        'pace': {'display_name': 'Pace', 'type': CustomFieldType.TEXT, 'global': True},
+        'moods': {'display_name': 'Moods', 'type': CustomFieldType.TAGS, 'global': True},
+        'pace': {'display_name': 'Reading Pace', 'type': CustomFieldType.TEXT, 'global': True},
         'character_plot_driven': {'display_name': 'Character or Plot Driven', 'type': CustomFieldType.TEXT, 'global': True},
         'strong_character_development': {'display_name': 'Strong Character Development', 'type': CustomFieldType.BOOLEAN, 'global': True},
         'loveable_characters': {'display_name': 'Loveable Characters', 'type': CustomFieldType.BOOLEAN, 'global': True},
         'diverse_characters': {'display_name': 'Diverse Characters', 'type': CustomFieldType.BOOLEAN, 'global': True},
         'flawed_characters': {'display_name': 'Flawed Characters', 'type': CustomFieldType.BOOLEAN, 'global': True},
-        'content_warnings': {'display_name': 'Content Warnings', 'type': CustomFieldType.TEXT, 'global': True},
+        'content_warnings': {'display_name': 'Content Warnings', 'type': CustomFieldType.TAGS, 'global': True},
         'content_warning_description': {'display_name': 'Content Warning Description', 'type': CustomFieldType.TEXTAREA, 'global': True},
         'owned': {'display_name': 'Owned', 'type': CustomFieldType.BOOLEAN, 'global': False},
     }
@@ -3477,33 +3545,63 @@ def start_import_job(task_id):
                             # Add personal custom metadata if available
                             if success and personal_custom_metadata:
                                 try:
-                                    print(f"Adding personal custom metadata: {personal_custom_metadata}")
+                                    print(f"📝 [CUSTOM_META] Processing personal custom metadata: {personal_custom_metadata}")
+                                    print(f"📝 [CUSTOM_META] Number of fields: {len(personal_custom_metadata)}")
+                                    
                                     # Validate and save personal metadata - TODO: Implement validation
                                     validated, errors = True, []  # custom_field_service.validate_and_save_metadata(personal_custom_metadata, user_id, is_global=False)
                                     if validated:
                                         # Track field usage
                                         # Update the user-book relationship with custom metadata
                                         user_book = book_service.get_user_book_sync(user_id, created_book.id)
+                                        print(f"📝 [CUSTOM_META] Found user-book relationship: {bool(user_book)}")
                                         if user_book:
+                                            print(f"📝 [CUSTOM_META] Updating user-book with metadata: {personal_custom_metadata}")
                                             # Use the new update_user_book_sync method with correct parameters
-                                            success = book_service.update_user_book_sync(user_id, created_book.id, custom_metadata=personal_custom_metadata)
-                                            if success:
-                                                print(f"Successfully added personal custom metadata")
+                                            metadata_success = book_service.update_user_book_sync(user_id, created_book.id, custom_metadata=personal_custom_metadata)
+                                            print(f"📝 [CUSTOM_META] Update result: {metadata_success}")
+                                            if metadata_success:
+                                                print(f"✅ [CUSTOM_META] Successfully added personal custom metadata")
+                                                # Verify the metadata was saved by reading it back
+                                                updated_user_book = book_service.get_user_book_sync(user_id, created_book.id)
+                                                if updated_user_book and hasattr(updated_user_book, 'custom_metadata'):
+                                                    print(f"📝 [CUSTOM_META] Verification - saved metadata: {updated_user_book.custom_metadata}")
+                                                else:
+                                                    print(f"❌ [CUSTOM_META] Verification failed - no custom_metadata attribute found")
                                             else:
-                                                print(f"Failed to update user-book relationship with custom metadata")
+                                                print(f"❌ [CUSTOM_META] Failed to update user-book relationship with custom metadata")
+                                                job['recent_activity'].append(f"Row {row_num}: Failed to save custom metadata")
                                         else:
-                                            print(f"Could not find user-book relationship to add metadata")
+                                            print(f"❌ [CUSTOM_META] Could not find user-book relationship to add metadata")
+                                            job['recent_activity'].append(f"Row {row_num}: Could not find user-book relationship for custom metadata")
                                     else:
-                                        print(f"Personal metadata validation errors: {errors}")
+                                        print(f"❌ [CUSTOM_META] Personal metadata validation errors: {errors}")
                                         job['recent_activity'].append(f"Row {row_num}: Custom metadata validation errors")
                                 except Exception as metadata_error:
-                                    print(f"Error processing personal custom metadata: {metadata_error}")
+                                    print(f"❌ [CUSTOM_META] Error processing personal custom metadata: {metadata_error}")
+                                    import traceback
+                                    traceback.print_exc()
                                     job['recent_activity'].append(f"Row {row_num}: Custom metadata error - {str(metadata_error)}")
                             
+                            # Add global custom metadata if available
+                            if success and global_custom_metadata:
+                                try:
+                                    print(f"🌍 [GLOBAL_META] Processing global custom metadata: {global_custom_metadata}")
+                                    print(f"🌍 [GLOBAL_META] Number of fields: {len(global_custom_metadata)}")
+                                    # Global metadata should have been attached to the book during creation
+                                    # Let's verify it was saved
+                                    # TODO: Add verification and update logic if needed
+                                    print(f"🌍 [GLOBAL_META] Global metadata attached to book during creation")
+                                except Exception as global_metadata_error:
+                                    print(f"❌ [GLOBAL_META] Error processing global custom metadata: {global_metadata_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    job['recent_activity'].append(f"Row {row_num}: Global metadata error - {str(global_metadata_error)}")
+                            
                             if success:
-                                print(f"Successfully added book to user library")
+                                print(f"✅ [IMPORT] Successfully added book to user library")
                             else:
-                                print(f"Failed to add book to user library")
+                                print(f"❌ [IMPORT] Failed to add book to user library")
                             print(f"Created book ID: {created_book.id}")
                     except Exception as create_error:
                         print(f"Error creating book: {create_error}")
