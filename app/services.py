@@ -375,7 +375,8 @@ class KuzuBookService:
                                       ownership_status: str = 'owned',
                                       media_type: str = 'physical',
                                       location_id: str = None,
-                                      notes: str = None) -> bool:
+                                      notes: str = None,
+                                      custom_metadata: Dict[str, Any] = None) -> bool:
         """Add a book to user's library."""
         try:
             ownership_data = {
@@ -384,7 +385,8 @@ class KuzuBookService:
                 'media_type': media_type,
                 'location_id': location_id,
                 'notes': notes,
-                'source': 'manual'
+                'source': 'manual',
+                'custom_metadata': custom_metadata
             }
             
             return await self.kuzu_service.add_book_to_library(user_id, book_id, ownership_data)
@@ -432,12 +434,9 @@ class KuzuBookService:
             if locations and len(locations) > 0 and not location_id:
                 location_id = locations[0]
             
-            # For now, ignore custom_metadata as it's not implemented
-            # TODO: Implement custom metadata handling
-            
             return run_async(self.add_book_to_user_library(
                 user_id, book_id, reading_status, ownership_status, 
-                media_type, location_id, notes
+                media_type, location_id, notes, custom_metadata
             ))
         except Exception as e:
             current_app.logger.error(f"Error adding book to library: {e}")
@@ -508,27 +507,51 @@ class KuzuBookService:
                 graph_storage = get_graph_storage()
                 
                 custom_metadata = {}
-                # Query for HAS_CUSTOM_FIELD relationships from this user for this book
-                query = """
-                MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField)
-                WHERE r.book_id = $book_id
-                RETURN cf.name as field_name, cf.value as field_value
+                
+                # First, try to get custom_metadata from OWNS relationship (primary source)
+                owns_query = """
+                MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+                RETURN r.custom_metadata as metadata
                 """
                 
-                query_result = graph_storage.query(query, {
+                owns_result = graph_storage.execute_cypher(owns_query, {
                     "user_id": user_id,
                     "book_id": uid
                 })
                 
-                for row in query_result:
-                    if 'col_0' in row and 'col_1' in row:
-                        field_name = row['col_0']
-                        field_value = row['col_1']
-                        if field_name and field_value:
-                            custom_metadata[field_name] = field_value
+                if owns_result and owns_result[0]['col_0']:
+                    metadata_json = owns_result[0]['col_0']
+                    if isinstance(metadata_json, str):
+                        import json
+                        custom_metadata = json.loads(metadata_json)
+                    elif isinstance(metadata_json, dict):
+                        custom_metadata = metadata_json
+                    
+                    print(f"🔍 [LOAD_CUSTOM_META_SERVICES] Loaded custom metadata from OWNS for book {uid}, user {user_id}: {custom_metadata}")
+                else:
+                    # Fallback: Get from HAS_CUSTOM_FIELD relationships if OWNS doesn't have data
+                    rel_query = """
+                    MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField)
+                    WHERE r.book_id = $book_id
+                    RETURN cf.name as field_name, r.field_value as field_value
+                    """
+                    
+                    rel_result = graph_storage.execute_cypher(rel_query, {
+                        "user_id": user_id,
+                        "book_id": uid
+                    })
+                    
+                    for row in rel_result:
+                        if 'col_0' in row and 'col_1' in row:
+                            field_name = row['col_0']
+                            field_value = row['col_1']
+                            if field_name and field_value:
+                                custom_metadata[field_name] = field_value
+                    
+                    print(f"🔍 [LOAD_CUSTOM_META_SERVICES] Loaded custom metadata from HAS_CUSTOM_FIELD for book {uid}, user {user_id}: {custom_metadata}")
                             
                 result['custom_metadata'] = custom_metadata
-                print(f"🔍 [LOAD_CUSTOM_META_SERVICES] Loaded {len(custom_metadata)} custom fields for book {uid}, user {user_id}: {custom_metadata}")
+                print(f"✅ [LOAD_CUSTOM_META_SERVICES] Final custom metadata for book {uid}: {custom_metadata}")
             except Exception as e:
                 print(f"❌ [LOAD_CUSTOM_META_SERVICES] Error loading custom metadata for book {uid}, user {user_id}: {e}")
                 import traceback
@@ -1049,8 +1072,8 @@ class KuzuLocationService:
             return []
 
 
-# Legacy service compatibility - use existing implementations for complex features
-class LegacyCustomFieldService:
+# Custom field service using Kuzu repository pattern
+class CustomFieldService:
     """Custom field service using existing Kuzu repository."""
     
     def __init__(self):
@@ -1060,8 +1083,10 @@ class LegacyCustomFieldService:
     def get_user_fields_with_calculated_usage_sync(self, user_id: str):
         """Get user fields with calculated usage statistics."""
         try:
-            # For now, return empty list until full custom fields system is implemented
-            return []
+            # Use run_async to call the async repository method
+            fields = run_async(self.repository.get_by_user(user_id))
+            current_app.logger.info(f"Retrieved {len(fields)} custom fields for user {user_id}")
+            return fields
         except Exception as e:
             current_app.logger.error(f"Error getting user fields with stats: {e}")
             return []
@@ -1069,8 +1094,10 @@ class LegacyCustomFieldService:
     def get_shareable_fields_with_calculated_usage_sync(self, exclude_user_id: str = None):
         """Get shareable fields with calculated usage statistics."""
         try:
-            # For now, return empty list until full shareable fields system is implemented  
-            return []
+            # Use run_async to call the async repository method
+            fields = run_async(self.repository.get_shareable(exclude_user_id))
+            current_app.logger.info(f"Retrieved {len(fields)} shareable custom fields")
+            return fields
         except Exception as e:
             current_app.logger.error(f"Error getting shareable fields with stats: {e}")
             return []
@@ -1078,8 +1105,10 @@ class LegacyCustomFieldService:
     def get_user_fields_sync(self, user_id: str):
         """Get user fields."""
         try:
-            # For now, return empty list until full custom fields system is implemented
-            return []
+            # Use run_async to call the async repository method
+            fields = run_async(self.repository.get_by_user(user_id))
+            current_app.logger.info(f"Retrieved {len(fields)} custom fields for user {user_id}")
+            return fields
         except Exception as e:
             current_app.logger.error(f"Error getting user fields: {e}")
             return []
@@ -1105,8 +1134,9 @@ class LegacyCustomFieldService:
     def get_field_by_id_sync(self, field_id: str):
         """Get field by ID."""
         try:
-            # For now, return None until full custom fields system is implemented
-            return None
+            # Use run_async to call the async repository method
+            field = run_async(self.repository.get_by_id(field_id))
+            return field
         except Exception as e:
             current_app.logger.error(f"Error getting field by ID: {e}")
             return None
@@ -1114,9 +1144,14 @@ class LegacyCustomFieldService:
     def update_field_sync(self, field_def):
         """Update a field."""
         try:
-            # For now, return True to avoid errors until full custom field updating is implemented
-            current_app.logger.info(f"Custom field update requested")
-            return True
+            # Use run_async to call the async repository method
+            updated_field = run_async(self.repository.update(field_def))
+            if updated_field:
+                current_app.logger.info(f"Successfully updated custom field {field_def.name}")
+                return True
+            else:
+                current_app.logger.error(f"Failed to update custom field {field_def.name}")
+                return False
         except Exception as e:
             current_app.logger.error(f"Error updating field: {e}")
             return False
@@ -1124,9 +1159,14 @@ class LegacyCustomFieldService:
     def delete_field_sync(self, field_id: str):
         """Delete a field."""
         try:
-            # For now, return True to avoid errors until full custom field deletion is implemented
-            current_app.logger.info(f"Custom field deletion requested for field {field_id}")
-            return True
+            # Use run_async to call the async repository method
+            success = run_async(self.repository.delete(field_id))
+            if success:
+                current_app.logger.info(f"Successfully deleted custom field {field_id}")
+                return True
+            else:
+                current_app.logger.error(f"Failed to delete custom field {field_id}")
+                return False
         except Exception as e:
             current_app.logger.error(f"Error deleting field: {e}")
             return False
@@ -1134,8 +1174,10 @@ class LegacyCustomFieldService:
     def search_fields_sync(self, query: str, user_id: str):
         """Search fields."""
         try:
-            # For now, return empty list until full custom fields search is implemented
-            return []
+            # Use run_async to call the async repository method
+            fields = run_async(self.repository.search(query, user_id))
+            current_app.logger.info(f"Found {len(fields)} custom fields matching query '{query}'")
+            return fields
         except Exception as e:
             current_app.logger.error(f"Error searching fields: {e}")
             return []
@@ -1147,10 +1189,27 @@ class LegacyCustomFieldService:
             if metadata_dict:
                 for key, value in metadata_dict.items():
                     if value is not None and value != "":
+                        # Try to get field definition for proper display name
+                        field_definition = None
+                        try:
+                            # Look for field by name in the repository
+                            field_definition = run_async(self.repository.get_by_name(key))
+                        except:
+                            pass  # Field might not exist or other error
+                        
+                        display_name = key
+                        if field_definition:
+                            display_name = field_definition.display_name
+                        else:
+                            # Format the field name for display (convert underscores to spaces, title case)
+                            display_name = key.replace('_', ' ').title()
+                        
                         display_items.append({
                             'name': key,
+                            'display_name': display_name,
+                            'display_value': str(value),
                             'value': str(value),
-                            'type': 'text'  # Default type, could be enhanced later
+                            'type': field_definition.field_type.value if field_definition else 'text'
                         })
             return display_items
         except Exception as e:
@@ -1160,9 +1219,18 @@ class LegacyCustomFieldService:
     def get_available_fields_sync(self, user_id: str, is_global: bool = False):
         """Get available fields for a user."""
         try:
-            # For now, return empty list until full custom fields system is implemented
             current_app.logger.info(f"Getting available fields for user {user_id}, global: {is_global}")
-            return []
+            # Get user's personal fields and optionally global fields
+            if is_global:
+                # Get global/shareable fields
+                fields = run_async(self.repository.get_shareable())
+                current_app.logger.info(f"Retrieved {len(fields)} global/shareable custom fields")
+            else:
+                # Get user's personal fields
+                fields = run_async(self.repository.get_by_user(user_id))
+                current_app.logger.info(f"Retrieved {len(fields)} personal custom fields for user {user_id}")
+            
+            return fields
         except Exception as e:
             current_app.logger.error(f"Error getting available fields: {e}")
             return []
@@ -1288,7 +1356,7 @@ user_service = KuzuUserService()
 book_service = KuzuBookService()
 reading_log_service = KuzuReadingLogService()
 location_service = KuzuLocationService()
-custom_field_service = LegacyCustomFieldService()
+custom_field_service = CustomFieldService()
 import_mapping_service = LegacyImportMappingService()
 direct_import_service = DirectImportService()
 

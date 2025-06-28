@@ -377,26 +377,96 @@
               </h6>
             </div>
             <div class="card-body">
-              <div id="custom-metadata-fields">
-                <div class="row mb-2">
-                  <div class="col-md-4">
-                    <input type="text" class="form-control form-control-sm" placeholder="Field name (e.g., Content Warnings)" name="custom_field_name[]">
+              {% if personal_fields or global_fields %}
+                <!-- Personal Custom Fields -->
+                {% if personal_fields %}
+                  <h6 class="small mb-2">Your Custom Fields:</h6>
+                  <div class="row">
+                    {% for field in personal_fields %}
+                      <div class="col-md-6 mb-3">
+                        <label for="custom_field_{{ field.name }}" class="form-label">
+                          {{ field.display_name }}
+                          {% if field.description %}
+                            <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ field.description }}"></i>
+                          {% endif %}
+                        </label>
+                        {% if field.field_type.value == 'select' %}
+                          <select class="form-select" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                            <option value="">Select...</option>
+                            {% for option in field.options %}
+                              <option value="{{ option }}">{{ option }}</option>
+                            {% endfor %}
+                          </select>
+                        {% elif field.field_type.value == 'boolean' %}
+                          <select class="form-select" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                            <option value="">Select...</option>
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                          </select>
+                        {% elif field.field_type.value == 'number' %}
+                          <input type="number" class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}" step="any">
+                        {% elif field.field_type.value == 'date' %}
+                          <input type="date" class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                        {% elif field.field_type.value == 'textarea' %}
+                          <textarea class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}" rows="2"></textarea>
+                        {% else %}
+                          <input type="text" class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                        {% endif %}
+                      </div>
+                    {% endfor %}
                   </div>
-                  <div class="col-md-6">
-                    <input type="text" class="form-control form-control-sm" placeholder="Value (e.g., Violence, Language)" name="custom_field_value[]">
+                {% endif %}
+
+                <!-- Global/Shareable Custom Fields -->
+                {% if global_fields %}
+                  <h6 class="small mb-2 mt-3">Community Custom Fields:</h6>
+                  <div class="row">
+                    {% for field in global_fields %}
+                      <div class="col-md-6 mb-3">
+                        <label for="custom_field_{{ field.name }}" class="form-label">
+                          {{ field.display_name }}
+                          {% if field.description %}
+                            <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ field.description }}"></i>
+                          {% endif %}
+                        </label>
+                        {% if field.field_type.value == 'select' %}
+                          <select class="form-select" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                            <option value="">Select...</option>
+                            {% for option in field.options %}
+                              <option value="{{ option }}">{{ option }}</option>
+                            {% endfor %}
+                          </select>
+                        {% elif field.field_type.value == 'boolean' %}
+                          <select class="form-select" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                            <option value="">Select...</option>
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                          </select>
+                        {% elif field.field_type.value == 'number' %}
+                          <input type="number" class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}" step="any">
+                        {% elif field.field_type.value == 'date' %}
+                          <input type="date" class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                        {% elif field.field_type.value == 'textarea' %}
+                          <textarea class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}" rows="2"></textarea>
+                        {% else %}
+                          <input type="text" class="form-control" id="custom_field_{{ field.name }}" name="custom_field_{{ field.name }}">
+                        {% endif %}
+                      </div>
+                    {% endfor %}
                   </div>
-                  <div class="col-md-2">
-                    <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeCustomField(this)" style="display: none;">
-                      <i class="bi bi-trash"></i>
-                    </button>
-                  </div>
+                {% endif %}
+              {% else %}
+                <div class="text-center py-3">
+                  <i class="bi bi-info-circle text-muted me-2"></i>
+                  <span class="text-muted">No custom fields available. You can create custom fields from the Settings page.</span>
                 </div>
-              </div>
-              <button type="button" class="btn btn-outline-primary btn-sm" onclick="addCustomField()">
-                <i class="bi bi-plus"></i> Add Another Field
-              </button>
+              {% endif %}
+              
               <div class="small help-text mt-2">
-                Add custom metadata like content warnings, mood, pace, or any other information you want to track.
+                <i class="bi bi-lightbulb me-1"></i>
+                Want to create new custom fields? Visit the 
+                <a href="{{ url_for('auth.settings') }}" class="text-decoration-none">Settings page</a> 
+                to manage your custom fields.
               </div>
             </div>
           </div>
@@ -459,6 +529,12 @@
 // Load locations on page load
 document.addEventListener('DOMContentLoaded', function() {
   loadUserLocations();
+  
+  // Initialize tooltips for custom field descriptions
+  var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+    return new bootstrap.Tooltip(tooltipTriggerEl);
+  });
 });
 
 function loadUserLocations() {
@@ -540,46 +616,6 @@ function fetchBookData() {
       fetchBtn.innerHTML = originalText;
       fetchBtn.disabled = false;
     });
-}
-
-function addCustomField() {
-  const container = document.getElementById('custom-metadata-fields');
-  const newRow = document.createElement('div');
-  newRow.className = 'row mb-2';
-  newRow.innerHTML = `
-    <div class="col-md-4">
-      <input type="text" class="form-control form-control-sm" placeholder="Field name" name="custom_field_name[]">
-    </div>
-    <div class="col-md-6">
-      <input type="text" class="form-control form-control-sm" placeholder="Value" name="custom_field_value[]">
-    </div>
-    <div class="col-md-2">
-      <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeCustomField(this)">
-        <i class="bi bi-trash"></i>
-      </button>
-    </div>
-  `;
-  container.appendChild(newRow);
-  
-  // Show remove buttons on all rows if there's more than one
-  updateRemoveButtons();
-}
-
-function removeCustomField(button) {
-  button.closest('.row').remove();
-  updateRemoveButtons();
-}
-
-function updateRemoveButtons() {
-  const rows = document.querySelectorAll('#custom-metadata-fields .row');
-  rows.forEach((row, index) => {
-    const removeBtn = row.querySelector('.btn-outline-danger');
-    if (rows.length > 1) {
-      removeBtn.style.display = 'inline-block';
-    } else {
-      removeBtn.style.display = 'none';
-    }
-  });
 }
 
 // Handle reading status changes to automatically update dates

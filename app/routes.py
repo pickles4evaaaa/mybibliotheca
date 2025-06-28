@@ -157,7 +157,18 @@ def index():
 def add_book():
     """Add a new book to the library"""
     if request.method == 'GET':
-        return render_template('add_book_new.html')
+        # Load existing custom fields for the user
+        try:
+            personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
+            global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
+        except Exception as e:
+            current_app.logger.error(f"Error loading custom fields for add book: {e}")
+            personal_fields = []
+            global_fields = []
+        
+        return render_template('add_book_new.html', 
+                             personal_fields=personal_fields,
+                             global_fields=global_fields)
     
     # Handle POST request for adding book
     # This would handle form submission for manual book entry
@@ -1999,50 +2010,18 @@ def add_book_manual():
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date() if start_date_str else None
     finish_date = datetime.strptime(finish_date_str, '%Y-%m-%d').date() if finish_date_str else None
 
-    # Process custom metadata
+    # Process custom metadata - only allow selection of existing fields
     custom_metadata = {}
-    field_names = request.form.getlist('custom_field_name[]')
-    field_values = request.form.getlist('custom_field_value[]')
     
-    print(f"🔍 [MANUAL] Processing custom metadata: {len(field_names)} fields")
-    
-    for name, value in zip(field_names, field_values):
-        if name and name.strip() and value and value.strip():
-            # Create a simple field definition for this custom field
-            field_name = name.strip()
+    # Get all submitted custom field selections
+    for key, value in request.form.items():
+        if key.startswith('custom_field_') and value and value.strip():
+            # Extract field name from the form key (custom_field_<field_name>)
+            field_name = key.replace('custom_field_', '')
             field_value = value.strip()
             
-            print(f"📋 [MANUAL] Adding custom field: {field_name} = {field_value}")
-            
-            # For manual entry, we'll create temporary field definitions
-            # In a full implementation, you'd want to create proper CustomFieldDefinition objects
-            try:
-                # Create or find custom field definition
-                from .domain.models import CustomFieldDefinition, CustomFieldType
-                field_def = CustomFieldDefinition(
-                    id=str(uuid.uuid4()),
-                    name=field_name.lower().replace(' ', '_'),
-                    display_name=field_name,
-                    field_type=CustomFieldType.TEXT,
-                    description=f"Manual entry field for {field_name}",
-                    created_by_user_id=str(current_user.id),
-                    is_global=False,
-                    is_shareable=False,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now()
-                )
-                
-                # Create the field definition
-                saved_field = custom_field_service.create_field_sync(field_def)
-                # Store metadata using the field name, not the ID
-                custom_metadata[saved_field.name] = field_value
-                
-                print(f"✅ [MANUAL] Created custom field {field_name} with ID {saved_field.id}, stored as {saved_field.name} = {field_value}")
-                
-            except Exception as e:
-                print(f"❌ [MANUAL] Error creating custom field {field_name}: {e}")
-                # Fallback: store with a simple key (not recommended for production)
-                custom_metadata[f"manual_{field_name.lower().replace(' ', '_')}"] = field_value
+            print(f"📋 [MANUAL] Selected existing custom field: {field_name} = {field_value}")
+            custom_metadata[field_name] = field_value
 
     print(f"📊 [MANUAL] Final custom metadata: {custom_metadata}")
 
@@ -2393,8 +2372,19 @@ def import_books():
             
             # Get custom fields for the user
             try:
-                global_custom_fields = custom_field_service.get_user_fields_sync(current_user.id)
-                personal_custom_fields = []  # For Redis version, all are user fields
+                # Get user's personal and global fields separately for proper categorization
+                user_fields = custom_field_service.get_user_fields_sync(current_user.id)
+                global_custom_fields = [f for f in user_fields if f.is_global]
+                personal_custom_fields = [f for f in user_fields if not f.is_global]
+                
+                # Also get shareable fields from other users
+                shareable_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
+                # Add shareable fields to global fields if they're not already included
+                for field in shareable_fields:
+                    if not any(gf.id == field.id for gf in global_custom_fields):
+                        global_custom_fields.append(field)
+                        
+                print(f"🔧 [IMPORT] Loaded {len(global_custom_fields)} global fields and {len(personal_custom_fields)} personal fields")
             except Exception as e:
                 current_app.logger.error(f"Error loading custom fields: {e}")
                 global_custom_fields = []
@@ -2450,8 +2440,9 @@ def import_books():
                     # Auto-create any custom fields referenced in the template
                     auto_create_custom_fields(suggested_mappings, current_user.id)
                     # Reload custom fields after creating new ones
-                    global_custom_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
-                    personal_custom_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
+                    user_fields = custom_field_service.get_user_fields_sync(current_user.id)
+                    global_custom_fields = [f for f in user_fields if f.is_global]
+                    personal_custom_fields = [f for f in user_fields if not f.is_global]
                 else:
                     print(f"DEBUG: No template detected, using auto-detected mappings: {suggested_mappings}")
                 

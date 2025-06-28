@@ -1109,7 +1109,8 @@ class CleanKuzuUserBookRepository:
     async def create_ownership(self, user_id: str, book_id: str, 
                              reading_status, ownership_status, media_type,
                              location_id: str = None, source: str = "manual",
-                             notes: str = "", date_added = None) -> bool:
+                             notes: str = "", date_added = None, 
+                             custom_metadata: Dict[str, Any] = None) -> bool:
         """Create an ownership relationship between user and book."""
         try:
             # Import here to avoid circular imports
@@ -1152,9 +1153,28 @@ class CleanKuzuUserBookRepository:
                 'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
             }
             
+            # Handle custom metadata if provided
+            if custom_metadata:
+                import json
+                owns_props['custom_metadata'] = json.dumps(custom_metadata)
+                print(f"🔍 [CREATE_OWNERSHIP] Adding custom metadata to OWNS relationship: {custom_metadata}")
+            
             success = self.db.create_relationship(
                 'User', user_id, 'OWNS', 'Book', book_id, owns_props
             )
+            
+            if success and custom_metadata:
+                # Also store individual custom field relationships for tracking
+                print(f"🔍 [CREATE_OWNERSHIP] Storing individual custom field relationships")
+                from app.infrastructure.kuzu_graph import get_graph_storage
+                storage = get_graph_storage()
+                
+                for field_name, field_value in custom_metadata.items():
+                    try:
+                        storage.store_custom_metadata(user_id, book_id, field_name, str(field_value))
+                        print(f"✅ [CREATE_OWNERSHIP] Stored custom field: {field_name} = {field_value}")
+                    except Exception as e:
+                        print(f"⚠️ [CREATE_OWNERSHIP] Failed to store custom field {field_name}: {e}")
             
             if success:
                 logger.info(f"✅ Created ownership relationship: user {user_id} owns book {book_id}")

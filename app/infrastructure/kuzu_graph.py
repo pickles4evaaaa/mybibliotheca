@@ -464,6 +464,7 @@ class KuzuGraphDB:
                     pace STRING,
                     character_driven BOOLEAN,
                     source STRING,
+                    custom_metadata STRING,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -538,7 +539,10 @@ class KuzuGraphDB:
                 CREATE REL TABLE HAS_CUSTOM_FIELD(
                     FROM User TO CustomField,
                     book_id STRING,
-                    field_name STRING
+                    field_name STRING,
+                    field_value STRING,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
                 )
                 """
             ]
@@ -620,13 +624,8 @@ class KuzuGraphDB:
                 except Exception as e:
                     print(f"🔌 [KUZU_DISCONNECT] Could not get final counts: {e}")
             
-            # CRITICAL: Force final commit before closing to ensure all data is persisted
-            print(f"🔌 [KUZU_DISCONNECT] Forcing final commit before closing...")
-            try:
-                self._connection.commit()
-                print(f"🔌 [KUZU_DISCONNECT] ✅ Final commit successful")
-            except Exception as commit_error:
-                print(f"🔌 [KUZU_DISCONNECT] ⚠️ Final commit warning: {commit_error}")
+            # NOTE: KuzuDB uses auto-commit mode, no manual commit needed before closing
+            print(f"🔌 [KUZU_DISCONNECT] All transactions auto-committed by KuzuDB")
             
             self._connection.close()
             self._connection = None
@@ -846,13 +845,8 @@ class KuzuGraphStorage:
             print(f"[KUZU_STORAGE] 🚀 Executing CREATE query for {node_type}")
             self.kuzu_conn.execute(query, serialized_data)
             
-            # CRITICAL: Force commit after every node creation to ensure persistence
-            print(f"[KUZU_STORAGE] 💾 Forcing commit after {node_type} creation")
-            try:
-                self.kuzu_conn.commit()
-                print(f"[KUZU_STORAGE] ✅ Commit successful for {node_type}")
-            except Exception as commit_error:
-                print(f"[KUZU_STORAGE] ⚠️ Commit warning for {node_type}: {commit_error}")
+            # NOTE: KuzuDB uses auto-commit mode, no manual commit needed
+            print(f"[KUZU_STORAGE] 💾 Query executed (auto-committed by KuzuDB)")
             
             print(f"[KUZU_STORAGE] ✅ Successfully stored {node_type} node: {node_id}")
             
@@ -1095,13 +1089,8 @@ class KuzuGraphStorage:
             print(f"[KUZU_STORAGE] 🚀 Executing CREATE RELATIONSHIP query")
             self.kuzu_conn.execute(query, params)
             
-            # CRITICAL: Force commit after every relationship creation to ensure persistence
-            print(f"[KUZU_STORAGE] 💾 Forcing commit after {rel_type} relationship creation")
-            try:
-                self.kuzu_conn.commit()
-                print(f"[KUZU_STORAGE] ✅ Commit successful for {rel_type} relationship")
-            except Exception as commit_error:
-                print(f"[KUZU_STORAGE] ⚠️ Commit warning for {rel_type} relationship: {commit_error}")
+            # NOTE: KuzuDB uses auto-commit mode, no manual commit needed
+            print(f"[KUZU_STORAGE] 💾 Query executed (auto-committed by KuzuDB)")
             
             print(f"[KUZU_STORAGE] ✅ Successfully created {rel_type} relationship")
             
@@ -1177,6 +1166,158 @@ class KuzuGraphStorage:
             logger.error(f"Failed to delete relationship {from_id} -{rel_type}-> {to_id}: {e}")
             return False
     
+    def store_custom_metadata(self, user_id: str, book_id: str, field_name: str, field_value: str, field_type: str = None) -> bool:
+        """
+        Store custom metadata for a user-book relationship.
+        
+        This method handles the dual storage system:
+        1. Updates OWNS relationship custom_metadata JSON for display
+        2. Creates HAS_CUSTOM_FIELD relationships for usage tracking  
+        3. Increments usage count on CustomField definitions
+        
+        Args:
+            user_id: The user ID
+            book_id: The book ID  
+            field_name: The custom field name
+            field_value: The field value
+            field_type: Optional field type for new fields
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from datetime import datetime
+            import json
+            
+            print(f"🔍 [STORE_CUSTOM_METADATA] Storing {field_name}={field_value} for user {user_id}, book {book_id}")
+            
+            # Step 1: Update the OWNS relationship custom_metadata
+            # First get the current OWNS relationship
+            query_get_owns = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            RETURN r.custom_metadata as current_metadata
+            """
+            
+            result = self.kuzu_conn.execute(query_get_owns, {"user_id": user_id, "book_id": book_id})
+            current_metadata = {}
+            
+            if result.has_next():
+                metadata_json = result.get_next()[0]
+                if metadata_json:
+                    try:
+                        current_metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+                    except (json.JSONDecodeError, TypeError):
+                        current_metadata = {}
+            
+            # Update the metadata
+            current_metadata[field_name] = field_value
+            metadata_json_str = json.dumps(current_metadata)
+            
+            # Update the OWNS relationship with new metadata
+            query_update_owns = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            SET r.custom_metadata = $metadata_json
+            """
+            
+            self.kuzu_conn.execute(query_update_owns, {
+                "user_id": user_id, 
+                "book_id": book_id, 
+                "metadata_json": metadata_json_str
+            })
+            
+            print(f"✅ [STORE_CUSTOM_METADATA] Updated OWNS relationship metadata")
+            
+            # Step 2: Look for existing CustomField definition by name
+            query_find_field = """
+            MATCH (cf:CustomField)
+            WHERE cf.name = $field_name
+            RETURN cf.id as field_id
+            LIMIT 1
+            """
+            
+            result = self.kuzu_conn.execute(query_find_field, {"field_name": field_name})
+            field_definition_id = None
+            
+            if result.has_next():
+                field_definition_id = result.get_next()[0]
+                print(f"✅ [STORE_CUSTOM_METADATA] Found existing field definition: {field_definition_id}")
+                
+                # Step 3: Increment usage count on the field definition
+                query_increment = """
+                MATCH (cf:CustomField {id: $field_id})
+                SET cf.usage_count = COALESCE(cf.usage_count, 0) + 1
+                """
+                
+                self.kuzu_conn.execute(query_increment, {"field_id": field_definition_id})
+                print(f"✅ [STORE_CUSTOM_METADATA] Incremented usage count for field {field_name}")
+                
+                # Step 4: Create/Update HAS_CUSTOM_FIELD relationship
+                # First check if relationship already exists
+                query_check_rel = """
+                MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField {id: $field_id})
+                WHERE r.book_id = $book_id
+                RETURN COUNT(r) as count
+                """
+                
+                result = self.kuzu_conn.execute(query_check_rel, {
+                    "user_id": user_id, 
+                    "field_id": field_definition_id, 
+                    "book_id": book_id
+                })
+                
+                rel_exists = False
+                if result.has_next():
+                    count = result.get_next()[0]
+                    rel_exists = count > 0
+                
+                if not rel_exists:
+                    # Create new HAS_CUSTOM_FIELD relationship
+                    rel_props = {
+                        'book_id': book_id,
+                        'field_name': field_name,
+                        'field_value': field_value,
+                        'created_at': datetime.utcnow()
+                    }
+                    
+                    success = self.create_relationship(
+                        'User', user_id, 
+                        'HAS_CUSTOM_FIELD', 
+                        'CustomField', field_definition_id, 
+                        rel_props
+                    )
+                    
+                    if success:
+                        print(f"✅ [STORE_CUSTOM_METADATA] Created HAS_CUSTOM_FIELD relationship")
+                    else:
+                        print(f"⚠️ [STORE_CUSTOM_METADATA] Failed to create HAS_CUSTOM_FIELD relationship")
+                else:
+                    # Update existing relationship value
+                    query_update_rel = """
+                    MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField {id: $field_id})
+                    WHERE r.book_id = $book_id
+                    SET r.field_value = $field_value, r.updated_at = $updated_at
+                    """
+                    
+                    self.kuzu_conn.execute(query_update_rel, {
+                        "user_id": user_id,
+                        "field_id": field_definition_id,
+                        "book_id": book_id,
+                        "field_value": field_value,
+                        "updated_at": datetime.utcnow()
+                    })
+                    
+                    print(f"✅ [STORE_CUSTOM_METADATA] Updated existing HAS_CUSTOM_FIELD relationship")
+            else:
+                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - metadata stored in OWNS only")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ [STORE_CUSTOM_METADATA] Error storing custom metadata: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     # Advanced Graph Queries
     
     def execute_cypher(self, query: str, parameters: Dict[str, Any] = None) -> List[Dict[str, Any]]:

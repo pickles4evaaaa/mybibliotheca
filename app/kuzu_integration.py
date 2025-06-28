@@ -545,7 +545,8 @@ class KuzuIntegrationService:
                 location_id=ownership_data.get('location_id'),
                 source=ownership_data.get('source', 'manual'),
                 notes=ownership_data.get('notes'),
-                date_added=final_date_added
+                date_added=final_date_added,
+                custom_metadata=ownership_data.get('custom_metadata')
             )
             
             if success:

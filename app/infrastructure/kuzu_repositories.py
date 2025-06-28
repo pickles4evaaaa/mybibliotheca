@@ -103,6 +103,47 @@ def _clean_kuzu_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _filter_model_fields(data: Dict[str, Any], model_class) -> Dict[str, Any]:
     """Filter data to only include fields that exist in the target dataclass model."""
+    import inspect
+    
+    # Get field names from the dataclass if available
+    if hasattr(model_class, '__dataclass_fields__'):
+        allowed_fields = set(model_class.__dataclass_fields__.keys())
+    else:
+        # Fallback for non-dataclasses - inspect the __init__ method
+        sig = inspect.signature(model_class.__init__)
+        allowed_fields = set(sig.parameters.keys()) - {'self'}
+    
+    return {k: v for k, v in data.items() if k in allowed_fields}
+
+
+def _clean_custom_field_data(field_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Clean and map custom field data from database to model format."""
+    field_data = _clean_kuzu_data(field_data)
+    
+    # Map field names from database schema to model field names
+    if 'user_id' in field_data:
+        field_data['created_by_user_id'] = field_data.pop('user_id')
+    
+    # Remove fields that don't exist in the CustomFieldDefinition model
+    model_fields = {
+        'id', 'name', 'display_name', 'field_type', 'description', 
+        'created_by_user_id', 'is_shareable', 'is_global', 'default_value',
+        'placeholder_text', 'help_text', 'predefined_options', 'allow_custom_options',
+        'rating_min', 'rating_max', 'rating_labels', 'usage_count', 'created_at', 'updated_at'
+    }
+    field_data = {k: v for k, v in field_data.items() if k in model_fields}
+    
+    # Type conversions
+    if field_data.get('created_at'):
+        field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
+    if field_data.get('field_type'):
+        field_data['field_type'] = CustomFieldType(field_data['field_type'])
+    
+    return field_data
+
+
+def _old_filter_model_fields_implementation(data: Dict[str, Any], model_class) -> Dict[str, Any]:
+    """Filter data to only include fields that exist in the target dataclass model."""
     import dataclasses
     
     if not dataclasses.is_dataclass(model_class):
@@ -1238,29 +1279,20 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         if not field_data:
             return None
         
-        field_data = _clean_kuzu_data(field_data)
-        if field_data.get('created_at'):
-            field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
-        if field_data.get('field_type'):
-            field_data['field_type'] = CustomFieldType(field_data['field_type'])
-        
+        field_data = _clean_custom_field_data(field_data)
         return CustomFieldDefinition(**field_data)
     
     async def get_by_user(self, user_id: str) -> List[CustomFieldDefinition]:
         """Get all custom fields for a user."""
         query = """
         MATCH (cf:CustomField)
-        WHERE cf.user_id = $user_id
+        WHERE cf.created_by_user_id = $user_id
         RETURN cf
         """
         results = self.storage.execute_cypher(query, {"user_id": user_id})
         fields = []
         for result in results:
-            field_data = _clean_kuzu_data(result['col_0'])
-            if field_data.get('created_at'):
-                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
-            if field_data.get('field_type'):
-                field_data['field_type'] = CustomFieldType(field_data['field_type'])
+            field_data = _clean_custom_field_data(result['col_0'])
             fields.append(CustomFieldDefinition(**field_data))
         return fields
     
@@ -1283,7 +1315,7 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         params = {}
         
         if exclude_user_id:
-            query_conditions.append("cf.user_id <> $exclude_user_id")
+            query_conditions.append("cf.created_by_user_id <> $exclude_user_id")
             params['exclude_user_id'] = exclude_user_id
         
         where_clause = " AND ".join(query_conditions)
@@ -1297,11 +1329,7 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(query, params)
         fields = []
         for result in results:
-            field_data = _clean_kuzu_data(result['col_0'])
-            if field_data.get('created_at'):
-                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
-            if field_data.get('field_type'):
-                field_data['field_type'] = CustomFieldType(field_data['field_type'])
+            field_data = _clean_custom_field_data(result['col_0'])
             fields.append(CustomFieldDefinition(**field_data))
         return fields
     
@@ -1315,7 +1343,7 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         
         # Optionally filter by user
         if user_id:
-            query_conditions.append("(cf.user_id = $user_id OR cf.is_shareable = true)")
+            query_conditions.append("(cf.created_by_user_id = $user_id OR cf.is_shareable = true)")
             params['user_id'] = user_id
         else:
             # Only show shareable fields if no user specified
@@ -1333,11 +1361,7 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(cypher_query, params)
         fields = []
         for result in results:
-            field_data = _clean_kuzu_data(result['col_0'])
-            if field_data.get('created_at'):
-                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
-            if field_data.get('field_type'):
-                field_data['field_type'] = CustomFieldType(field_data['field_type'])
+            field_data = _clean_custom_field_data(result['col_0'])
             fields.append(CustomFieldDefinition(**field_data))
         return fields
     
@@ -1366,13 +1390,23 @@ class KuzuCustomFieldRepository(CustomFieldRepository):
         results = self.storage.execute_cypher(query, {"limit": limit})
         fields = []
         for result in results:
-            field_data = _clean_kuzu_data(result['col_0'])
-            if field_data.get('created_at'):
-                field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
-            if field_data.get('field_type'):
-                field_data['field_type'] = CustomFieldType(field_data['field_type'])
+            field_data = _clean_custom_field_data(result['col_0'])
             fields.append(CustomFieldDefinition(**field_data))
         return fields
+    
+    async def get_by_name(self, name: str) -> Optional[CustomFieldDefinition]:
+        """Get a custom field by name."""
+        query = """
+        MATCH (cf:CustomField)
+        WHERE cf.name = $name
+        RETURN cf
+        LIMIT 1
+        """
+        results = self.storage.execute_cypher(query, {"name": name})
+        if results:
+            field_data = _clean_custom_field_data(results[0]['col_0'])
+            return CustomFieldDefinition(**field_data)
+        return None
 
 
 class KuzuImportMappingRepository(ImportMappingRepository):
