@@ -130,19 +130,182 @@
 [data-theme="dark"] .autocomplete-item.create-new:hover {
     background-color: #1f3f1f;
 }
+
+/* Enhanced accordion and form styling */
+.card {
+    border: none;
+    transition: box-shadow 0.15s ease-in-out;
+}
+
+.card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
+}
+
+.accordion-item {
+    border: 1px solid rgba(0,0,0,.125);
+    border-radius: 0.375rem;
+}
+
+.accordion-button {
+    font-weight: 500;
+    border-radius: 0.375rem;
+}
+
+.accordion-button:not(.collapsed) {
+    color: white;
+    background-color: var(--bs-primary);
+    box-shadow: none;
+}
+
+.accordion-button.bg-primary:not(.collapsed) {
+    background-color: var(--bs-primary) !important;
+}
+
+.accordion-button.bg-secondary:not(.collapsed) {
+    background-color: var(--bs-secondary) !important;
+}
+
+.accordion-button.bg-success:not(.collapsed) {
+    background-color: var(--bs-success) !important;
+}
+
+.accordion-button.bg-info:not(.collapsed) {
+    background-color: var(--bs-info) !important;
+}
+
+.accordion-button.bg-warning:not(.collapsed) {
+    background-color: var(--bs-warning) !important;
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.accordion-body {
+    padding: 1.25rem;
+}
+
+.form-label {
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.form-label.fw-medium {
+    font-weight: 500;
+}
+
+.badge {
+    font-size: 0.75rem;
+}
+
+.btn {
+    font-size: 0.9rem;
+}
+
+.breadcrumb-item a {
+    text-decoration: none;
+}
+
+/* Smooth transitions for accordion */
+.accordion-collapse {
+    transition: height 0.35s ease;
+}
+
+/* Better spacing between accordion items */
+.accordion-item:not(:last-child) {
+    margin-bottom: 0.5rem;
+}
+
+/* Dark mode enhancements */
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+
+[data-theme="dark"] .form-text {
+    color: #c0c0c0 !important;
+}
+
+[data-theme="dark"] .form-text a {
+    color: #6ea8fe !important;
+}
+
+[data-theme="dark"] .card {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-header {
+    background-color: rgba(60, 60, 60, 0.8) !important;
+    border-bottom-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .card-body {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .form-label {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .fw-medium {
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .accordion-item {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    border-color: #404040 !important;
+}
+
+[data-theme="dark"] .accordion-body {
+    background-color: rgba(40, 40, 40, 0.8) !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .breadcrumb-item a {
+    color: #6ea8fe !important;
+}
+
+[data-theme="dark"] .breadcrumb-item.active {
+    color: #b0b0b0 !important;
+}
+
+/* Form styling for dark mode */
+[data-theme="dark"] .form-control,
+[data-theme="dark"] .form-select {
+    background-color: #2d2d2d !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+[data-theme="dark"] .form-control:focus,
+[data-theme="dark"] .form-select:focus {
+    background-color: #2d2d2d !important;
+    border-color: #86b7fe !important;
+    color: #e0e0e0 !important;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h1 class="h2">Edit Book</h1>
-                <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-outline-secondary">
-                    <i class="bi bi-arrow-left"></i> Back to Book
-                </a>
-            </div>
+<div class="container-fluid px-4 py-4">
+    <!-- Header -->
+    <div class="row mb-4 align-items-center">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-0">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.library') }}">Library</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.view_book', uid=book.uid) }}">{{ book.title }}</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Edit</li>
+                </ol>
+            </nav>
+        </div>
+        <div class="col-auto">
+            <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Book
+            </a>
         </div>
     </div>
     
@@ -150,207 +313,500 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
         
         <div class="row">
-            <!-- Basic Information -->
-            <div class="col-lg-8">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">Basic Information</h5>
+            <!-- Main Content Area -->
+            <div class="col-lg-12">
+                <!-- Accordion for all edit sections -->
+                <div class="accordion" id="editBookAccordion">
+                    <!-- Basic Information -->
+                    <div class="accordion-item shadow-sm mb-2">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button bg-secondary text-white" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#collapseBasicInfo" 
+                                    aria-expanded="true" aria-controls="collapseBasicInfo">
+                                <i class="bi bi-book me-2"></i>Basic Information
+                            </button>
+                        </h2>
+                        <div id="collapseBasicInfo" class="accordion-collapse collapse show" data-bs-parent="#editBookAccordion">
+                            <div class="accordion-body">
+                                <div class="row">
+                                    <div class="col-lg-8">
+                                        <div class="mb-3">
+                                            <label for="title" class="form-label fw-medium">
+                                                <i class="bi bi-book me-1"></i>Title <span class="text-danger">*</span>
+                                            </label>
+                                            <input type="text" class="form-control" id="title" name="title" value="{{ book.title }}" required>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="subtitle" class="form-label fw-medium">
+                                                <i class="bi bi-bookmark me-1"></i>Subtitle
+                                            </label>
+                                            <input type="text" class="form-control" id="subtitle" name="subtitle" value="{{ book.subtitle or '' }}">
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="description" class="form-label fw-medium">
+                                                <i class="bi bi-file-text me-1"></i>Description
+                                            </label>
+                                            <textarea class="form-control" id="description" name="description" rows="4">{{ book.description or '' }}</textarea>
+                                        </div>
+                                        
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="isbn13" class="form-label fw-medium">
+                                                        <i class="bi bi-upc me-1"></i>ISBN-13
+                                                    </label>
+                                                    <input type="text" class="form-control" id="isbn13" name="isbn13" value="{{ book.isbn13 or '' }}">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="isbn10" class="form-label fw-medium">
+                                                        <i class="bi bi-upc me-1"></i>ISBN-10
+                                                    </label>
+                                                    <input type="text" class="form-control" id="isbn10" name="isbn10" value="{{ book.isbn10 or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="published_date" class="form-label fw-medium">
+                                                        <i class="bi bi-calendar me-1"></i>Published Date
+                                                    </label>
+                                                    <input type="text" class="form-control" id="published_date" name="published_date" 
+                                                           value="{{ book.published_date or '' }}" placeholder="YYYY or YYYY-MM-DD">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="page_count" class="form-label fw-medium">
+                                                        <i class="bi bi-file-earmark-text me-1"></i>Page Count
+                                                    </label>
+                                                    <input type="number" class="form-control" id="page_count" name="page_count" value="{{ book.page_count or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="publisher" class="form-label fw-medium">
+                                                        <i class="bi bi-building me-1"></i>Publisher
+                                                    </label>
+                                                    <input type="text" class="form-control" id="publisher" name="publisher" 
+                                                           value="{{ book.publisher.name if book.publisher and book.publisher.name else book.publisher or '' }}">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="language" class="form-label fw-medium">
+                                                        <i class="bi bi-translate me-1"></i>Language
+                                                    </label>
+                                                    <select class="form-select" id="language" name="language">
+                                                        <option value="en" {% if book.language == 'en' or not book.language %}selected{% endif %}>English</option>
+                                                        <option value="es" {% if book.language == 'es' %}selected{% endif %}>Spanish</option>
+                                                        <option value="fr" {% if book.language == 'fr' %}selected{% endif %}>French</option>
+                                                        <option value="de" {% if book.language == 'de' %}selected{% endif %}>German</option>
+                                                        <option value="it" {% if book.language == 'it' %}selected{% endif %}>Italian</option>
+                                                        <option value="pt" {% if book.language == 'pt' %}selected{% endif %}>Portuguese</option>
+                                                        <option value="ru" {% if book.language == 'ru' %}selected{% endif %}>Russian</option>
+                                                        <option value="ja" {% if book.language == 'ja' %}selected{% endif %}>Japanese</option>
+                                                        <option value="ko" {% if book.language == 'ko' %}selected{% endif %}>Korean</option>
+                                                        <option value="zh" {% if book.language == 'zh' %}selected{% endif %}>Chinese</option>
+                                                        <option value="other" {% if book.language == 'other' %}selected{% endif %}>Other</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="cover_url" class="form-label fw-medium">
+                                                <i class="bi bi-image me-1"></i>Cover URL
+                                            </label>
+                                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
+                                                   value="{{ book.cover_url or '' }}" placeholder="https://...">
+                                        </div>
+                                        
+                                        <!-- Series Information -->
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="series" class="form-label fw-medium">
+                                                        <i class="bi bi-collection me-1"></i>Series
+                                                    </label>
+                                                    <input type="text" class="form-control" id="series" name="series" 
+                                                           value="{{ book.series.name if book.series and book.series.name else book.series or '' }}" 
+                                                           placeholder="Series name (if part of a series)">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="mb-3">
+                                                    <label for="series_volume" class="form-label fw-medium">
+                                                        <i class="bi bi-hash me-1"></i>Volume
+                                                    </label>
+                                                    <input type="text" class="form-control" id="series_volume" name="series_volume" 
+                                                           value="{{ book.series_volume or '' }}" placeholder="e.g., Book 1, Vol. 2">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="mb-3">
+                                                    <label for="series_order" class="form-label fw-medium">
+                                                        <i class="bi bi-list-ol me-1"></i>Order
+                                                    </label>
+                                                    <input type="number" class="form-control" id="series_order" name="series_order" 
+                                                           value="{{ book.series_order or '' }}" min="1" placeholder="1">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="title" name="title" value="{{ book.title }}" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="subtitle" class="form-label">Subtitle</label>
-                            <input type="text" class="form-control" id="subtitle" name="subtitle" value="{{ book.subtitle or '' }}">
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="description" class="form-label">Description</label>
-                            <textarea class="form-control" id="description" name="description" rows="4">{{ book.description or '' }}</textarea>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="isbn13" class="form-label">ISBN-13</label>
-                                    <input type="text" class="form-control" id="isbn13" name="isbn13" value="{{ book.isbn13 or '' }}">
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="isbn10" class="form-label">ISBN-10</label>
-                                    <input type="text" class="form-control" id="isbn10" name="isbn10" value="{{ book.isbn10 or '' }}">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="published_date" class="form-label">Published Date</label>
-                                    <input type="text" class="form-control" id="published_date" name="published_date" 
-                                           value="{{ book.published_date or '' }}" placeholder="YYYY or YYYY-MM-DD">
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="page_count" class="form-label">Page Count</label>
-                                    <input type="number" class="form-control" id="page_count" name="page_count" value="{{ book.page_count or '' }}">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="publisher" class="form-label">Publisher</label>
-                                    <input type="text" class="form-control" id="publisher" name="publisher" 
-                                           value="{{ book.publisher.name if book.publisher and book.publisher.name else book.publisher or '' }}">
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label for="language" class="form-label">Language</label>
-                                    <input type="text" class="form-control" id="language" name="language" value="{{ book.language or 'en' }}">
+                    
+                    <!-- Contributors -->
+                    <div class="accordion-item shadow-sm mb-2">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-primary text-white" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#collapseContributors" 
+                                    aria-expanded="false" aria-controls="collapseContributors">
+                                <i class="bi bi-people me-2"></i>Contributors
+                            </button>
+                        </h2>
+                        <div id="collapseContributors" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
+                            <div class="accordion-body">
+                                <div class="row">
+                                    <div class="col-lg-6">
+                                        <!-- Authors -->
+                                        <div class="mb-4">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-person-fill me-1"></i> Authors
+                                            </label>
+                                            <div class="contributor-section" data-type="authored">
+                                                <div class="contributors-display mb-2">
+                                                    {% for author in book.authors %}
+                                                    <div class="contributor-tag" data-id="{{ author.id or '' }}" data-name="{{ author.name }}">
+                                                        {{ author.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing author name..." data-type="authored">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Narrators -->
+                                        <div class="mb-4">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-headphones me-1"></i> Narrators
+                                            </label>
+                                            <div class="contributor-section" data-type="narrated">
+                                                <div class="contributors-display mb-2">
+                                                    {% for narrator in book.narrators %}
+                                                    <div class="contributor-tag" data-id="{{ narrator.id or '' }}" data-name="{{ narrator.name }}">
+                                                        {{ narrator.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing narrator name..." data-type="narrated">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-lg-6">
+                                        <!-- Editors -->
+                                        <div class="mb-4">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-pencil me-1"></i> Editors
+                                            </label>
+                                            <div class="contributor-section" data-type="edited">
+                                                <div class="contributors-display mb-2">
+                                                    {% for editor in book.editors %}
+                                                    <div class="contributor-tag" data-id="{{ editor.id or '' }}" data-name="{{ editor.name }}">
+                                                        {{ editor.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing editor name..." data-type="edited">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Other Contributors -->
+                                        <div class="mb-3">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-people me-1"></i> Other Contributors
+                                            </label>
+                                            <div class="contributor-section" data-type="contributed">
+                                                <div class="contributors-display mb-2">
+                                                    {% for contributor in book.get_contributors_by_type('CONTRIBUTED') %}
+                                                    <div class="contributor-tag" data-id="{{ contributor.id or '' }}" data-name="{{ contributor.name }}">
+                                                        {{ contributor.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing contributor name..." data-type="contributed">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-            
-            <!-- Contributors -->
-            <div class="col-lg-4">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">Contributors</h5>
+                    
+                    <!-- Genres & Categories -->
+                    <div class="accordion-item shadow-sm mb-2">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-success text-white" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#collapseGenres" 
+                                    aria-expanded="false" aria-controls="collapseGenres">
+                                <i class="bi bi-tags me-2"></i>Genres & Categories
+                            </button>
+                        </h2>
+                        <div id="collapseGenres" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
+                            <div class="accordion-body">
+                                <div class="mb-3">
+                                    <div class="categories-section">
+                                        <div class="categories-display mb-2">
+                                            {% if book_categories %}
+                                                {% for category in book_categories %}
+                                                <div class="category-tag" data-id="{{ category.id }}" data-name="{{ category.name }}">
+                                                    {{ category.name }}
+                                                    <span class="remove" onclick="removeCategory(this)">×</span>
+                                                </div>
+                                                {% endfor %}
+                                            {% endif %}
+                                        </div>
+                                        <div class="category-autocomplete">
+                                            <input type="text" class="form-control category-input" 
+                                                   placeholder="Start typing genre or category name...">
+                                            <div class="autocomplete-dropdown-categories"></div>
+                                        </div>
+                                        <div class="form-text">
+                                            <small class="text-muted">
+                                                <i class="bi bi-info-circle me-1"></i>
+                                                Type to search existing genres or add new ones. Popular genres: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <!-- Authors -->
-                        <div class="mb-4">
-                            <label class="form-label">
-                                <i class="bi bi-person-fill"></i> Authors
-                            </label>
-                            <div class="contributor-section" data-type="authored">
-                                <div class="contributors-display mb-2">
-                                    {% for author in book.authors %}
-                                    <div class="contributor-tag" data-id="{{ author.id or '' }}" data-name="{{ author.name }}">
-                                        {{ author.name }}
-                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                    
+                    <!-- Reading Status & Ownership -->
+                    <div class="accordion-item shadow-sm mb-2">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-info text-white" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#collapseStatus" 
+                                    aria-expanded="false" aria-controls="collapseStatus">
+                                <i class="bi bi-bookmark-fill me-2"></i>Reading Status & Ownership
+                            </button>
+                        </h2>
+                        <div id="collapseStatus" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
+                            <div class="accordion-body">
+                                <div class="row">
+                                    <div class="col-lg-6">
+                                        <!-- Reading Status and Ownership -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-12">
+                                                <label for="reading_status" class="form-label fw-medium">
+                                                    <i class="bi bi-book me-1"></i>Reading Status
+                                                </label>
+                                                <select class="form-select" id="reading_status" name="reading_status">
+                                                    <option value="plan_to_read" {% if book.reading_status == 'plan_to_read' %}selected{% endif %}>📚 Plan to Read</option>
+                                                    <option value="reading" {% if book.reading_status == 'reading' %}selected{% endif %}>📖 Currently Reading</option>
+                                                    <option value="read" {% if book.reading_status == 'read' %}selected{% endif %}>✅ Read</option>
+                                                    <option value="on_hold" {% if book.reading_status == 'on_hold' %}selected{% endif %}>⏸️ On Hold</option>
+                                                    <option value="did_not_finish" {% if book.reading_status == 'did_not_finish' %}selected{% endif %}>❌ Did Not Finish</option>
+                                                    <option value="library_only" {% if book.reading_status == 'library_only' %}selected{% endif %}>📚 Library Only</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <label for="ownership_status" class="form-label fw-medium">
+                                                    <i class="bi bi-house me-1"></i>Ownership Status
+                                                </label>
+                                                <select class="form-select" id="ownership_status" name="ownership_status">
+                                                    <option value="owned" {% if book.ownership_status == 'owned' %}selected{% endif %}>🏠 Owned</option>
+                                                    <option value="borrowed" {% if book.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
+                                                    <option value="loaned" {% if book.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
+                                                    <option value="wishlist" {% if book.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="media_type" class="form-label fw-medium">
+                                                    <i class="bi bi-collection me-1"></i>Media Type
+                                                </label>
+                                                <select class="form-select" id="media_type" name="media_type">
+                                                    <option value="physical" {% if book.media_type == 'physical' %}selected{% endif %}>📖 Physical Book</option>
+                                                    <option value="ebook" {% if book.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
+                                                    <option value="audiobook" {% if book.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
+                                                    <option value="kindle" {% if book.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Location and Rating -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <label for="location_id" class="form-label fw-medium">
+                                                    <i class="bi bi-geo-alt me-1"></i>Location
+                                                </label>
+                                                <select class="form-select" id="location_id" name="location_id" data-current-location="{{ book.location_id or '' }}">
+                                                    <option value="">Select a location...</option>
+                                                    <!-- Locations will be populated by JavaScript -->
+                                                </select>
+                                                <div class="form-text">
+                                                    <a href="{{ url_for('locations.manage_locations') }}" target="_blank" class="text-decoration-none">
+                                                        <i class="bi bi-gear me-1"></i>Manage Locations
+                                                    </a>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="user_rating" class="form-label fw-medium">
+                                                    <i class="bi bi-star me-1"></i>My Rating
+                                                </label>
+                                                <select class="form-select" id="user_rating" name="user_rating">
+                                                    <option value="">No Rating</option>
+                                                    <option value="1" {% if book.user_rating == 1 %}selected{% endif %}>⭐ 1 Star</option>
+                                                    <option value="2" {% if book.user_rating == 2 %}selected{% endif %}>⭐⭐ 2 Stars</option>
+                                                    <option value="3" {% if book.user_rating == 3 %}selected{% endif %}>⭐⭐⭐ 3 Stars</option>
+                                                    <option value="4" {% if book.user_rating == 4 %}selected{% endif %}>⭐⭐⭐⭐ 4 Stars</option>
+                                                    <option value="5" {% if book.user_rating == 5 %}selected{% endif %}>⭐⭐⭐⭐⭐ 5 Stars</option>
+                                                </select>
+                                            </div>
+                                        </div>
                                     </div>
-                                    {% endfor %}
-                                </div>
-                                <div class="contributor-autocomplete">
-                                    <input type="text" class="form-control contributor-input" 
-                                           placeholder="Start typing author name..." data-type="authored">
-                                    <div class="autocomplete-dropdown"></div>
+                                    
+                                    <div class="col-lg-6">
+                                        <!-- Reading Dates -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <label for="start_date" class="form-label fw-medium">
+                                                    <i class="bi bi-play-circle me-1"></i>Start Date
+                                                </label>
+                                                <input type="date" class="form-control" id="start_date" name="start_date" 
+                                                       value="{{ book.start_date or '' }}">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="finish_date" class="form-label fw-medium">
+                                                    <i class="bi bi-check-circle me-1"></i>Finish Date
+                                                </label>
+                                                <input type="date" class="form-control" id="finish_date" name="finish_date" 
+                                                       value="{{ book.finish_date or '' }}">
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Personal Notes and Tags -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-12">
+                                                <label for="personal_notes" class="form-label fw-medium">
+                                                    <i class="bi bi-journal-text me-1"></i>Personal Notes
+                                                </label>
+                                                <textarea class="form-control" id="personal_notes" name="personal_notes" rows="3" 
+                                                          placeholder="Your personal thoughts about this book...">{{ book.personal_notes or '' }}</textarea>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="row mb-3">
+                                            <div class="col-md-12">
+                                                <label for="user_tags" class="form-label fw-medium">
+                                                    <i class="bi bi-tags me-1"></i>Personal Tags
+                                                </label>
+                                                <input type="text" class="form-control" id="user_tags" name="user_tags" 
+                                                       placeholder="e.g., favorite, quick-read, beach-book" 
+                                                       value="{{ book.user_tags|join(', ') if book.user_tags else '' }}">
+                                                <div class="form-text">Enter tags separated by commas</div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        
-                        <!-- Narrators -->
-                        <div class="mb-4">
-                            <label class="form-label">
-                                <i class="bi bi-headphones"></i> Narrators
-                            </label>
-                            <div class="contributor-section" data-type="narrated">
-                                <div class="contributors-display mb-2">
-                                    {% for narrator in book.narrators %}
-                                    <div class="contributor-tag" data-id="{{ narrator.id or '' }}" data-name="{{ narrator.name }}">
-                                        {{ narrator.name }}
-                                        <span class="remove" onclick="removeContributor(this)">×</span>
-                                    </div>
-                                    {% endfor %}
+                    </div>
+                    
+                    <!-- Custom Metadata -->
+                    <div class="accordion-item shadow-sm mb-2">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#collapseCustomMetadata" 
+                                    aria-expanded="false" aria-controls="collapseCustomMetadata">
+                                <i class="bi bi-plus-square me-2"></i>Custom Metadata
+                            </button>
+                        </h2>
+                        <div id="collapseCustomMetadata" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
+                            <div class="accordion-body">
+                                <div id="custom-metadata-container">
+                                    {% if book.custom_metadata %}
+                                        {% for key, value in book.custom_metadata.items() %}
+                                        <div class="custom-field mb-3">
+                                            <div class="row">
+                                                <div class="col-md-4">
+                                                    <input type="text" class="form-control custom-field-name" 
+                                                           placeholder="Field name" value="{{ key }}">
+                                                </div>
+                                                <div class="col-md-7">
+                                                    <input type="text" class="form-control custom-field-value" 
+                                                           placeholder="Field value" value="{{ value }}">
+                                                </div>
+                                                <div class="col-md-1">
+                                                    <button type="button" class="btn btn-outline-danger btn-sm remove-custom-field">
+                                                        <i class="bi bi-x"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    {% endif %}
                                 </div>
-                                <div class="contributor-autocomplete">
-                                    <input type="text" class="form-control contributor-input" 
-                                           placeholder="Start typing narrator name..." data-type="narrated">
-                                    <div class="autocomplete-dropdown"></div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Editors -->
-                        <div class="mb-4">
-                            <label class="form-label">
-                                <i class="bi bi-pencil"></i> Editors
-                            </label>
-                            <div class="contributor-section" data-type="edited">
-                                <div class="contributors-display mb-2">
-                                    {% for editor in book.editors %}
-                                    <div class="contributor-tag" data-id="{{ editor.id or '' }}" data-name="{{ editor.name }}">
-                                        {{ editor.name }}
-                                        <span class="remove" onclick="removeContributor(this)">×</span>
-                                    </div>
-                                    {% endfor %}
-                                </div>
-                                <div class="contributor-autocomplete">
-                                    <input type="text" class="form-control contributor-input" 
-                                           placeholder="Start typing editor name..." data-type="edited">
-                                    <div class="autocomplete-dropdown"></div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Other Contributors -->
-                        <div class="mb-3">
-                            <label class="form-label">
-                                <i class="bi bi-people"></i> Other Contributors
-                            </label>
-                            <div class="contributor-section" data-type="contributed">
-                                <div class="contributors-display mb-2">
-                                    {% for contributor in book.get_contributors_by_type('CONTRIBUTED') %}
-                                    <div class="contributor-tag" data-id="{{ contributor.id or '' }}" data-name="{{ contributor.name }}">
-                                        {{ contributor.name }}
-                                        <span class="remove" onclick="removeContributor(this)">×</span>
-                                    </div>
-                                    {% endfor %}
-                                </div>
-                                <div class="contributor-autocomplete">
-                                    <input type="text" class="form-control contributor-input" 
-                                           placeholder="Start typing contributor name..." data-type="contributed">
-                                    <div class="autocomplete-dropdown"></div>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="add-custom-field">
+                                    <i class="bi bi-plus me-1"></i>Add Custom Field
+                                </button>
+                                <div class="form-text mt-2">
+                                    <small class="text-muted">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        Add custom fields like "First Edition", "Signed Copy", "Purchase Price", etc.
+                                    </small>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
                 
-                <!-- Genres/Categories -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">
-                            <i class="bi bi-tags me-1"></i>Genres & Categories
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <div class="categories-section">
-                                <div class="categories-display mb-2">
-                                    {% if book_categories %}
-                                        {% for category in book_categories %}
-                                        <div class="category-tag" data-id="{{ category.id }}" data-name="{{ category.name }}">
-                                            {{ category.name }}
-                                            <span class="remove" onclick="removeCategory(this)">×</span>
-                                        </div>
-                                        {% endfor %}
-                                    {% endif %}
-                                </div>
-                                <div class="category-autocomplete">
-                                    <input type="text" class="form-control category-input" 
-                                           placeholder="Start typing genre or category name...">
-                                    <div class="autocomplete-dropdown-categories"></div>
-                                </div>
-                                <div class="form-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-info-circle me-1"></i>
-                                        Type to search existing genres or add new ones. Popular genres: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
-                                    </small>
-                                </div>
-                            </div>
+                <!-- Save Actions -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="d-flex gap-2 justify-content-center">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-check-lg me-1"></i> Save Changes
+                            </button>
+                            <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-secondary btn-lg">
+                                <i class="bi bi-x-circle me-1"></i>Cancel
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -362,19 +818,6 @@
         
         <!-- Hidden inputs for categories -->
         <div id="categoryInputs"></div>
-        
-        <div class="row">
-            <div class="col-12">
-                <div class="d-flex gap-2">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-check-lg"></i> Save Changes
-                    </button>
-                    <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-secondary">
-                        Cancel
-                    </a>
-                </div>
-            </div>
-        </div>
     </form>
 </div>
 
@@ -414,7 +857,39 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update hidden inputs on page load
     updateHiddenInputs();
     updateCategoryInputs();
+    
+    // Load locations for the location dropdown
+    loadLocations();
+    
+    // Initialize custom metadata functionality
+    initializeCustomMetadata();
+    
+    // Initialize accordion behavior
+    initializeAccordion();
 });
+
+function initializeAccordion() {
+    // Bootstrap accordion should handle this automatically with data-bs-parent,
+    // but let's add explicit handling to ensure only one section is open
+    const accordionButtons = document.querySelectorAll('[data-bs-toggle="collapse"]');
+    
+    accordionButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            // Close all other accordion sections when one is opened
+            const targetId = this.getAttribute('data-bs-target');
+            const allCollapses = document.querySelectorAll('#editBookAccordion .accordion-collapse');
+            
+            allCollapses.forEach(collapse => {
+                if ('#' + collapse.id !== targetId && collapse.classList.contains('show')) {
+                    const bsCollapse = new bootstrap.Collapse(collapse, {
+                        toggle: false
+                    });
+                    bsCollapse.hide();
+                }
+            });
+        });
+    });
+}
 
 function handleInput(e) {
     const input = e.target;
@@ -891,6 +1366,93 @@ function updateCategoryInputs() {
         hiddenContainer.appendChild(nameInput);
         hiddenContainer.appendChild(isNewInput);
     });
+}
+
+// Load locations for dropdown
+function loadLocations() {
+    const locationSelect = document.getElementById('location_id');
+    if (!locationSelect) return;
+    
+    const currentLocationId = locationSelect.dataset.currentLocation;
+    
+    fetch('/locations/api/list')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(locations => {
+            // Clear existing options except the first one
+            while (locationSelect.children.length > 1) {
+                locationSelect.removeChild(locationSelect.lastChild);
+            }
+            
+            // Add location options
+            locations.forEach(location => {
+                const option = document.createElement('option');
+                option.value = location.id;
+                option.textContent = location.name;
+                
+                // Select current location if it matches
+                if (currentLocationId && currentLocationId == location.id) {
+                    option.selected = true;
+                }
+                
+                locationSelect.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading locations:', error);
+        });
+}
+
+// Custom metadata functionality
+function initializeCustomMetadata() {
+    const addButton = document.getElementById('add-custom-field');
+    if (addButton) {
+        addButton.addEventListener('click', addCustomField);
+    }
+    
+    // Initialize remove buttons for existing fields
+    document.querySelectorAll('.remove-custom-field').forEach(button => {
+        button.addEventListener('click', function() {
+            this.closest('.custom-field').remove();
+        });
+    });
+}
+
+function addCustomField() {
+    const container = document.getElementById('custom-metadata-container');
+    const fieldDiv = document.createElement('div');
+    fieldDiv.className = 'custom-field mb-3';
+    fieldDiv.innerHTML = `
+        <div class="row">
+            <div class="col-md-4">
+                <input type="text" class="form-control custom-field-name" 
+                       placeholder="Field name">
+            </div>
+            <div class="col-md-7">
+                <input type="text" class="form-control custom-field-value" 
+                       placeholder="Field value">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-outline-danger btn-sm remove-custom-field">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+        </div>
+    `;
+    
+    container.appendChild(fieldDiv);
+    
+    // Add remove event listener
+    fieldDiv.querySelector('.remove-custom-field').addEventListener('click', function() {
+        fieldDiv.remove();
+    });
+    
+    // Focus on the name field
+    fieldDiv.querySelector('.custom-field-name').focus();
 }
 </script>
 {% endblock %}

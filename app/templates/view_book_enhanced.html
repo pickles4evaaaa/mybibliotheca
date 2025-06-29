@@ -22,25 +22,24 @@
     </div>
 
     <div class="row">
-        <!-- Main Content -->
-        <div class="col-lg-8">
+        <!-- Main Content - Single Column -->
+        <div class="col-12">
             <!-- Book Overview Card -->
             <div class="card shadow-sm mb-4">
                 <div class="card-body position-relative">
                     <!-- Action Icons in Upper Right Corner -->
                     <div class="position-absolute top-0 end-0 mt-2 me-2">
                         <div class="d-flex gap-1">
-                            <a href="{{ url_for('main.edit_book', uid=book.uid) }}" 
-                               class="btn btn-outline-primary btn-sm p-1 action-icon-btn" 
-                               title="Edit Book Details">
-                                <i class="bi bi-pencil" style="font-size: 0.875rem;"></i>
-                            </a>
-                            <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" 
-                                  class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book from your library?')">
+                            <button type="button" class="btn btn-outline-primary action-icon-btn" id="editToggle" title="Edit Book Details">
+                                <i class="bi bi-pencil" id="edit-icon"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary action-icon-btn" data-bs-toggle="modal" data-bs-target="#coverEditModal" title="Edit Cover">
+                                <i class="bi bi-image"></i>
+                            </button>
+                            <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book? This action cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                                <button type="submit" class="btn btn-outline-danger btn-sm p-1 action-icon-btn" 
-                                        title="Remove from Library">
-                                    <i class="bi bi-trash" style="font-size: 0.875rem;"></i>
+                                <button type="submit" class="btn btn-outline-danger action-icon-btn" title="Delete Book">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </form>
                         </div>
@@ -51,96 +50,278 @@
                             <div class="position-relative d-inline-block">
                                 {% if book.cover_url %}
                                     <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                         class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover-img">
+                                         class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover">
                                 {% else %}
                                     <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                         style="height: 300px; max-width: 200px; margin: 0 auto;" id="book-cover-placeholder">
+                                         style="height: 300px; width: 200px; margin: 0 auto;" id="book-cover">
                                         <i class="bi bi-book text-muted" style="font-size: 4rem;"></i>
                                     </div>
                                 {% endif %}
-                                
-                                <!-- Cover Edit Icon -->
-                                <button type="button" class="btn btn-outline-secondary btn-sm cover-edit-btn" 
-                                        data-bs-toggle="modal" data-bs-target="#coverEditModal" 
-                                        title="Edit Book Cover">
-                                    <i class="bi bi-pencil" style="font-size: 0.75rem;"></i>
-                                </button>
                             </div>
                         </div>
                         
                         <div class="col-md-9">
-                            <h1 class="h2 mb-2 fw-bold">{{ book.title }}</h1>
-                            {% if book.subtitle %}
-                                <h2 class="h5 text-muted mb-3">{{ book.subtitle }}</h2>
-                            {% endif %}
+                            <!-- View Mode -->
+                            <div class="view-mode">
+                                <h1 class="h2 mb-2 fw-bold">{{ book.title }}</h1>
+                                {% if book.subtitle %}
+                                    <h2 class="h5 text-muted mb-3">{{ book.subtitle }}</h2>
+                                {% endif %}
+                                
+                                {% if book.series %}
+                                    <div class="mb-2">
+                                        <span class="badge bg-secondary me-2">
+                                            <i class="bi bi-collection me-1"></i>{{ book.series.name if book.series.name else book.series }}
+                                            {% if book.series_volume %} - {{ book.series_volume }}{% endif %}
+                                            {% if book.series_order %} (#{{ book.series_order }}){% endif %}
+                                        </span>
+                                    </div>
+                                {% endif %}
+                                
+                                <!-- Authors -->
+                                {% if book.authors %}
+                                <div class="mb-2">
+                                    <strong class="text-muted">By:</strong>
+                                    {% for author in book.authors %}
+                                        <a href="#" class="text-decoration-none">{{ author.name }}</a>
+                                        {%- if not loop.last %}, {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                
+                                <!-- Genres & Categories -->
+                                {% if book_categories %}
+                                <div class="mb-2">
+                                    <small class="text-muted d-block mb-1">Genres:</small>
+                                    {% for category in book_categories %}
+                                        <span class="badge bg-light text-dark border me-1 mb-1">{{ category.name }}</span>
+                                    {% endfor %}
+                                </div>
+                                {% elif book.categories %}
+                                <div class="mb-2">
+                                    <small class="text-muted d-block mb-1">Genres:</small>
+                                    {% for category in book.categories %}
+                                        <span class="badge bg-light text-dark border me-1 mb-1">{{ category.name }}</span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                
+                                <!-- Location -->
+                                {% if book.locations %}
+                                <div class="mb-2">
+                                    <small class="text-muted">Location:</small>
+                                    <span class="ms-1">
+                                        <i class="bi bi-geo-alt me-1"></i>{{ book.locations[0].name if book.locations[0].name else book.locations[0] }}
+                                    </span>
+                                </div>
+                                {% endif %}
+                                
+                                <!-- Reading Status -->
+                                <div class="mb-2">
+                                    <small class="text-muted">Status:</small>
+                                    <span class="ms-1">
+                                        {% if book.reading_status == 'plan_to_read' %}📚 Plan to Read
+                                        {% elif book.reading_status == 'reading' %}📖 Currently Reading
+                                        {% elif book.reading_status == 'read' %}✅ Read
+                                        {% elif book.reading_status == 'on_hold' %}⏸️ On Hold
+                                        {% elif book.reading_status == 'did_not_finish' %}❌ Did Not Finish
+                                        {% elif book.reading_status == 'library_only' %}📚 Library Only
+                                        {% else %}📚 Plan to Read{% endif %}
+                                    </span>
+                                </div>
+                                
+                                <!-- Your Rating -->
+                                {% if book.user_rating %}
+                                <div class="mb-2">
+                                    <small class="text-muted">Your Rating:</small>
+                                    <span class="ms-1">
+                                        {% for i in range(1, 6) %}
+                                            {% if i <= book.user_rating %}⭐{% endif %}
+                                        {% endfor %}
+                                        ({{ book.user_rating }}/5)
+                                    </span>
+                                </div>
+                                {% endif %}
+                            </div>
                             
-                            <!-- Contributors -->
-                            {% if book.authors %}
-                                <p class="h6 text-primary mb-2">
-                                    {{ display_authors(book, show_icon=true, style_class="") }}
-                                </p>
-                            {% endif %}
-                            
-                            {% if book.narrators %}
-                                <p class="h6 text-info mb-2">
-                                    {{ display_narrators(book, show_icon=true, style_class="") }}
-                                </p>
-                            {% endif %}
-                            
-                            {% if book.editors %}
-                                <p class="h6 text-secondary mb-2">
-                                    {{ display_editors(book, show_icon=true, style_class="") }}
-                                </p>
-                            {% endif %}
-                            
-                            <!-- Book Meta Information -->
-                            <div class="row g-3 mb-3">
+                            <!-- Edit Mode (Hidden by default) -->
+                            <div class="edit-mode" style="display: none;">
+                                <form id="book-edit-form" method="post" action="{{ url_for('main.edit_book', uid=book.uid) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    
+                                    <!-- Title -->
+                                    <div class="mb-3">
+                                        <label for="edit-title" class="form-label fw-medium">Title</label>
+                                        <input type="text" class="form-control" id="edit-title" name="title" value="{{ book.title }}" required>
+                                    </div>
+                                    
+                                    <!-- Subtitle -->
+                                    <div class="mb-3">
+                                        <label for="edit-subtitle" class="form-label fw-medium">Subtitle</label>
+                                        <input type="text" class="form-control" id="edit-subtitle" name="subtitle" value="{{ book.subtitle or '' }}">
+                                    </div>
+                                    
+                                    <!-- Series Information -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="edit-series" class="form-label fw-medium">Series</label>
+                                                <input type="text" class="form-control" id="edit-series" name="series" 
+                                                       value="{{ book.series.name if book.series and book.series.name else book.series or '' }}">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <div class="mb-3">
+                                                <label for="edit-series-volume" class="form-label fw-medium">Volume</label>
+                                                <input type="text" class="form-control" id="edit-series-volume" name="series_volume" 
+                                                       value="{{ book.series_volume or '' }}">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <div class="mb-3">
+                                                <label for="edit-series-order" class="form-label fw-medium">Order</label>
+                                                <input type="number" class="form-control" id="edit-series-order" name="series_order" 
+                                                       value="{{ book.series_order or '' }}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Authors -->
+                                    <div class="mb-3">
+                                        <label for="edit-authors" class="form-label fw-medium">Authors</label>
+                                        <div class="position-relative">
+                                            <input type="text" class="form-control" id="edit-authors" name="authors" 
+                                                   value="{% for author in book.authors %}{{ author.name }}{% if not loop.last %}, {% endif %}{% endfor %}"
+                                                   autocomplete="off">
+                                            <div class="form-text">Separate multiple authors with commas</div>
+                                            <div id="authors-dropdown" class="autocomplete-dropdown"></div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Genres & Categories -->
+                                    <div class="mb-3">
+                                        <label for="edit-categories" class="form-label fw-medium">Genres & Categories</label>
+                                        <div class="position-relative">
+                                            <input type="text" class="form-control" id="edit-categories" name="categories" 
+                                                   value="{% if book_categories %}{% for category in book_categories %}{{ category.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% elif book.categories %}{% for category in book.categories %}{{ category.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}"
+                                                   autocomplete="off">
+                                            <div class="form-text">Separate multiple genres with commas</div>
+                                            <div id="categories-dropdown" class="autocomplete-dropdown"></div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Location -->
+                                    <div class="mb-3">
+                                        <label for="edit_location_id" class="form-label fw-medium">Location</label>
+                                        <select class="form-select" id="edit_location_id" name="location_id" 
+                                                data-current-location="{{ book.locations[0].name if book.locations and book.locations[0].name else (book.locations[0] if book.locations else '') }}">
+                                            <option value="">Select location...</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Reading Status -->
+                                    <div class="mb-3">
+                                        <label for="edit-reading-status" class="form-label fw-medium">Reading Status</label>
+                                        <select class="form-select" id="edit-reading-status" name="reading_status">
+                                            <option value="plan_to_read" {% if book.reading_status == 'plan_to_read' %}selected{% endif %}>📚 Plan to Read</option>
+                                            <option value="reading" {% if book.reading_status == 'reading' %}selected{% endif %}>📖 Currently Reading</option>
+                                            <option value="read" {% if book.reading_status == 'read' %}selected{% endif %}>✅ Read</option>
+                                            <option value="on_hold" {% if book.reading_status == 'on_hold' %}selected{% endif %}>⏸️ On Hold</option>
+                                            <option value="did_not_finish" {% if book.reading_status == 'did_not_finish' %}selected{% endif %}>❌ Did Not Finish</option>
+                                            <option value="library_only" {% if book.reading_status == 'library_only' %}selected{% endif %}>📚 Library Only</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Your Rating -->
+                                    <div class="mb-3">
+                                        <label for="edit-user-rating" class="form-label fw-medium">Your Rating</label>
+                                        <select class="form-select" id="edit-user-rating" name="user_rating">
+                                            <option value="">No rating</option>
+                                            <option value="1" {% if book.user_rating == 1 %}selected{% endif %}>⭐ Poor (1 star)</option>
+                                            <option value="2" {% if book.user_rating == 2 %}selected{% endif %}>⭐⭐ Fair (2 stars)</option>
+                                            <option value="3" {% if book.user_rating == 3 %}selected{% endif %}>⭐⭐⭐ Good (3 stars)</option>
+                                            <option value="4" {% if book.user_rating == 4 %}selected{% endif %}>⭐⭐⭐⭐ Very Good (4 stars)</option>
+                                            <option value="5" {% if book.user_rating == 5 %}selected{% endif %}>⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Save/Cancel Buttons -->
+                                    <div class="d-flex gap-2">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="bi bi-check-lg me-1"></i>Save Changes
+                                        </button>
+                                        <button type="button" class="btn btn-secondary" id="cancelEdit">
+                                            <i class="bi bi-x-lg me-1"></i>Cancel
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Accordion for collapsible sections -->
+            <div class="accordion" id="bookAccordion">
+                <!-- Basic Information -->
+                <div class="accordion-item shadow-sm mb-2">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-secondary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseBasicInfo" 
+                                aria-expanded="false" aria-controls="collapseBasicInfo">
+                            <i class="bi bi-book me-2"></i>Basic Information
+                        </button>
+                    </h2>
+                    <div id="collapseBasicInfo" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
+                        <div class="accordion-body">
+                            <!-- View Mode -->
+                            <div class="basic-info-view-mode">
                                 {% if book.isbn %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">ISBN</small>
-                                    <span class="fw-medium">{{ book.isbn }}</span>
+                                <div class="mb-2">
+                                    <small class="text-muted">ISBN:</small>
+                                    <span class="ms-1">{{ book.isbn }}</span>
                                 </div>
                                 {% endif %}
                                 
                                 {% if book.isbn13 and book.isbn13 != book.isbn %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">ISBN-13</small>
-                                    <span class="fw-medium">{{ book.isbn13 }}</span>
+                                <div class="mb-2">
+                                    <small class="text-muted">ISBN-13:</small>
+                                    <span class="ms-1">{{ book.isbn13 }}</span>
                                 </div>
                                 {% endif %}
                                 
                                 {% if book.isbn10 and book.isbn10 != book.isbn %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">ISBN-10</small>
-                                    <span class="fw-medium">{{ book.isbn10 }}</span>
+                                <div class="mb-2">
+                                    <small class="text-muted">ISBN-10:</small>
+                                    <span class="ms-1">{{ book.isbn10 }}</span>
                                 </div>
                                 {% endif %}
                                 
                                 {% if book.publisher %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">Publisher</small>
-                                    <span class="fw-medium">{{ book.publisher.name if book.publisher.name else book.publisher }}</span>
+                                <div class="mb-2">
+                                    <small class="text-muted">Publisher:</small>
+                                    <span class="ms-1">{{ book.publisher.name if book.publisher.name else book.publisher }}</span>
                                 </div>
                                 {% endif %}
                                 
                                 {% if book.page_count %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">Pages</small>
-                                    <span class="fw-medium">{{ book.page_count }}</span>
+                                <div class="mb-2">
+                                    <small class="text-muted">Pages:</small>
+                                    <span class="ms-1">{{ book.page_count }}</span>
                                 </div>
                                 {% endif %}
                                 
                                 {% if book.published_date %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">Published</small>
-                                    <span class="fw-medium">{{ book.published_date }}</span>
+                                <div class="mb-2">
+                                    <small class="text-muted">Published:</small>
+                                    <span class="ms-1">{{ book.published_date }}</span>
                                 </div>
                                 {% endif %}
                                 
                                 {% if book.language and book.language != 'en' %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">Language</small>
-                                    <span class="fw-medium">
+                                <div class="mb-2">
+                                    <small class="text-muted">Language:</small>
+                                    <span class="ms-1">
                                         {% if book.language == 'es' %}Spanish
                                         {% elif book.language == 'fr' %}French
                                         {% elif book.language == 'de' %}German
@@ -156,193 +337,181 @@
                                 </div>
                                 {% endif %}
                                 
-                                {% if book.series %}
-                                <div class="col-sm-6">
-                                    <small class="text-muted d-block">Series</small>
-                                    <span class="fw-medium">
-                                        {{ book.series.name if book.series.name else book.series }}
-                                        {% if book.series_volume %} - {{ book.series_volume }}{% endif %}
-                                        {% if book.series_order %} (#{{ book.series_order }}){% endif %}
+                                <!-- Ownership and Format -->
+                                <div class="mb-2">
+                                    <small class="text-muted">Ownership:</small>
+                                    <span class="ms-1">
+                                        {% if book.ownership_status == 'owned' %}🏠 Owned
+                                        {% elif book.ownership_status == 'borrowed' %}📚 Borrowed
+                                        {% elif book.ownership_status == 'loaned' %}📤 Loaned Out
+                                        {% elif book.ownership_status == 'wishlist' %}⭐ Wishlist
+                                        {% else %}🏠 Owned{% endif %}
                                     </span>
                                 </div>
+                                
+                                <div class="mb-2">
+                                    <small class="text-muted">Format:</small>
+                                    <span class="ms-1">
+                                        {% if book.media_type == 'physical' %}📖 Physical Book
+                                        {% elif book.media_type == 'ebook' %}💻 E-book
+                                        {% elif book.media_type == 'audiobook' %}🎧 Audiobook
+                                        {% elif book.media_type == 'kindle' %}📱 Kindle
+                                        {% else %}📖 Physical Book{% endif %}
+                                    </span>
+                                </div>
+                                
+                                <!-- Borrowing/Loaning Details if applicable -->
+                                {% if book.ownership_status == 'borrowed' and (book.borrowed_from or book.borrowed_due_date) %}
+                                <div class="border rounded p-2 mb-2 bg-light">
+                                    <h6 class="text-primary mb-1"><i class="bi bi-arrow-down-circle me-1"></i>Borrowing Details</h6>
+                                    {% if book.borrowed_from %}
+                                    <div class="small">
+                                        <span class="text-muted">From:</span> {{ book.borrowed_from }}
+                                    </div>
+                                    {% endif %}
+                                    {% if book.borrowed_due_date %}
+                                    <div class="small">
+                                        <span class="text-muted">Due:</span> {{ book.borrowed_due_date }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                                
+                                {% if book.ownership_status == 'loaned' and (book.loaned_to or book.loaned_due_date) %}
+                                <div class="border rounded p-2 mb-2 bg-light">
+                                    <h6 class="text-warning mb-1"><i class="bi bi-arrow-up-circle me-1"></i>Loaning Details</h6>
+                                    {% if book.loaned_to %}
+                                    <div class="small">
+                                        <span class="text-muted">To:</span> {{ book.loaned_to }}
+                                    </div>
+                                    {% endif %}
+                                    {% if book.loaned_due_date %}
+                                    <div class="small">
+                                        <span class="text-muted">Expected Return:</span> {{ book.loaned_due_date }}
+                                    </div>
+                                    {% endif %}
+                                </div>
                                 {% endif %}
                             </div>
                             
-                            <!-- Categories/Genres -->
-                            {% if book_categories %}
-                            <div class="mb-3">
-                                <small class="text-muted d-block mb-1">
-                                    <i class="bi bi-tags me-1"></i>Genres & Categories
-                                </small>
-                                {% for category in book_categories %}
-                                    <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
-                                       class="badge bg-light text-dark border me-1 mb-1 text-decoration-none" 
-                                       title="Category: {{ category.name }}{% if category.description %} - {{ category.description }}{% endif %}">
-                                        {{ category.name }}
-                                    </a>
-                                {% endfor %}
+                            <!-- Edit Mode (Hidden by default) -->
+                            <div class="basic-info-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('main.edit_book', uid=book.uid) }}" id="basic-info-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    
+                                    <!-- Publisher -->
+                                    <div class="mb-3">
+                                        <label for="publisher" class="form-label fw-medium">Publisher</label>
+                                        <input type="text" class="form-control" id="publisher" name="publisher" 
+                                               value="{{ book.publisher.name if book.publisher and book.publisher.name else book.publisher or '' }}">
+                                    </div>
+                                    
+                                    <!-- ISBN -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="isbn13" class="form-label fw-medium">ISBN-13</label>
+                                                <input type="text" class="form-control" id="isbn13" name="isbn13" 
+                                                       value="{{ book.isbn13 or '' }}">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="isbn10" class="form-label fw-medium">ISBN-10</label>
+                                                <input type="text" class="form-control" id="isbn10" name="isbn10" 
+                                                       value="{{ book.isbn10 or '' }}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Publication Info -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="published_date" class="form-label fw-medium">Published Date</label>
+                                                <input type="text" class="form-control" id="published_date" name="published_date" 
+                                                       value="{{ book.published_date or '' }}">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="page_count" class="form-label fw-medium">Pages</label>
+                                                <input type="number" class="form-control" id="page_count" name="page_count" 
+                                                       value="{{ book.page_count or '' }}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Language -->
+                                    <div class="mb-3">
+                                        <label for="language" class="form-label fw-medium">Language</label>
+                                        <input type="text" class="form-control" id="language" name="language" 
+                                               value="{{ book.language or '' }}">
+                                    </div>
+                                    
+                                    <!-- Ownership and Format -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="ownership_status" class="form-label fw-medium">Ownership</label>
+                                                <select class="form-select" id="ownership_status" name="ownership_status">
+                                                    <option value="owned" {% if book.ownership_status == 'owned' %}selected{% endif %}>🏠 Owned</option>
+                                                    <option value="borrowed" {% if book.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
+                                                    <option value="loaned" {% if book.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
+                                                    <option value="wishlist" {% if book.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="media_type" class="form-label fw-medium">Format</label>
+                                                <select class="form-select" id="media_type" name="media_type">
+                                                    <option value="physical" {% if book.media_type == 'physical' %}selected{% endif %}>📖 Physical Book</option>
+                                                    <option value="ebook" {% if book.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
+                                                    <option value="audiobook" {% if book.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
+                                                    <option value="kindle" {% if book.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Borrowing Details -->
+                                    <div id="borrowed-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
+                                        <h6 class="text-primary mb-2"><i class="bi bi-arrow-down-circle me-1"></i>Borrowing Details</h6>
+                                        <div class="mb-2">
+                                            <label for="borrowed_from" class="form-label">Borrowed From</label>
+                                            <input type="text" class="form-control form-control-sm" id="borrowed_from" name="borrowed_from" 
+                                                   value="{{ book.borrowed_from or '' }}" placeholder="Name or contact">
+                                        </div>
+                                        <div class="mb-2">
+                                            <label for="borrowed_due_date" class="form-label">Due Date</label>
+                                            <input type="date" class="form-control form-control-sm" id="borrowed_due_date" name="borrowed_due_date" 
+                                                   value="{{ book.borrowed_due_date or '' }}">
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Loaning Details -->
+                                    <div id="loaned-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
+                                        <h6 class="text-warning mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Loaning Details</h6>
+                                        <div class="mb-2">
+                                            <label for="loaned_to" class="form-label">Loaned To</label>
+                                            <input type="text" class="form-control form-control-sm" id="loaned_to" name="loaned_to" 
+                                                   value="{{ book.loaned_to or '' }}" placeholder="Name or contact">
+                                        </div>
+                                        <div class="mb-2">
+                                            <label for="loaned_due_date" class="form-label">Expected Return</label>
+                                            <input type="date" class="form-control form-control-sm" id="loaned_due_date" name="loaned_due_date" 
+                                                   value="{{ book.loaned_due_date or '' }}">
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-secondary">
+                                            <i class="bi bi-save me-1"></i>Save Basic Information
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
-                            {% elif book.categories %}
-                            <!-- Categories from domain model -->
-                            <div class="mb-3">
-                                <small class="text-muted d-block mb-1">
-                                    <i class="bi bi-tags me-1"></i>Categories
-                                </small>
-                                {% for category in book.categories %}
-                                    <span class="badge bg-light text-dark border me-1 mb-1">{{ category.name }}</span>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
-                            
-                            <!-- Rating -->
-                            {% if book.average_rating %}
-                            <div class="d-flex align-items-center mb-3">
-                                <div class="me-2">
-                                    {% for i in range(5) %}
-                                        {% if i < book.average_rating %}
-                                            <i class="bi bi-star-fill text-warning"></i>
-                                        {% else %}
-                                            <i class="bi bi-star text-muted"></i>
-                                        {% endif %}
-                                    {% endfor %}
-                                </div>
-                                <span class="fw-medium">{{ "%.1f"|format(book.average_rating) }}</span>
-                                {% if book.rating_count %}
-                                    <small class="text-muted ms-1">({{ book.rating_count }} ratings)</small>
-                                {% endif %}
-                            </div>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Description -->
-            {% if book.description %}
-            <div class="card shadow-sm mb-4">
-                <div class="card-header bg-white">
-                    <h5 class="mb-0"><i class="bi bi-file-text me-2"></i>Description</h5>
-                </div>
-                <div class="card-body">
-                    <p class="mb-0">{{ book.description }}</p>
-                </div>
-            </div>
-            {% endif %}
-        </div>
-        
-        <!-- Sidebar -->
-        <div class="col-lg-4">
-            <!-- Accordion for collapsible sections -->
-            <div class="accordion" id="bookAccordion">
-                <!-- Book Status -->
-                <div class="accordion-item shadow-sm mb-2">
-                    <h2 class="accordion-header">
-                        <button class="accordion-button collapsed bg-primary text-white" type="button" 
-                                data-bs-toggle="collapse" data-bs-target="#collapseStatus" 
-                                aria-expanded="false" aria-controls="collapseStatus">
-                            <i class="bi bi-bookmark-fill me-2"></i>Book Status
-                        </button>
-                    </h2>
-                    <div id="collapseStatus" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
-                        <div class="accordion-body">
-                            <form method="post" action="{{ url_for('main.update_book_details', uid=book.uid) }}" id="status-form">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                                
-                                <!-- Reading Status -->
-                                <div class="mb-3">
-                                    <label for="reading_status" class="form-label fw-medium">
-                                        <i class="bi bi-book me-1"></i>Reading Status
-                                    </label>
-                                    <select class="form-select" id="reading_status" name="reading_status">
-                                        <option value="plan_to_read" {% if book.reading_status == 'plan_to_read' %}selected{% endif %}>📚 Plan to Read</option>
-                                        <option value="reading" {% if book.reading_status == 'reading' %}selected{% endif %}>📖 Currently Reading</option>
-                                        <option value="read" {% if book.reading_status == 'read' %}selected{% endif %}>✅ Read</option>
-                                        <option value="on_hold" {% if book.reading_status == 'on_hold' %}selected{% endif %}>⏸️ On Hold</option>
-                                        <option value="did_not_finish" {% if book.reading_status == 'did_not_finish' %}selected{% endif %}>❌ Did Not Finish</option>
-                                        <option value="library_only" {% if book.reading_status == 'library_only' %}selected{% endif %}>📚 Library Only</option>
-                                    </select>
-                                </div>
-                                
-                                <!-- Ownership Status -->
-                                <div class="mb-3">
-                                    <label for="ownership_status" class="form-label fw-medium">
-                                        <i class="bi bi-house me-1"></i>Ownership
-                                    </label>
-                                    <select class="form-select" id="ownership_status" name="ownership_status">
-                                        <option value="owned" {% if book.ownership_status == 'owned' %}selected{% endif %}>🏠 Owned</option>
-                                        <option value="borrowed" {% if book.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
-                                        <option value="loaned" {% if book.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
-                                        <option value="wishlist" {% if book.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
-                                    </select>
-                                </div>
-                                
-                                <!-- Media Type -->
-                                <div class="mb-3">
-                                    <label for="media_type" class="form-label fw-medium">
-                                        <i class="bi bi-collection me-1"></i>Format
-                                    </label>
-                                    <select class="form-select" id="media_type" name="media_type">
-                                        <option value="physical" {% if book.media_type == 'physical' %}selected{% endif %}>📖 Physical Book</option>
-                                        <option value="ebook" {% if book.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
-                                        <option value="audiobook" {% if book.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
-                                        <option value="kindle" {% if book.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
-                                    </select>
-                                </div>
-                                
-                                <!-- Location (for physical books) -->
-                                <div class="mb-3" id="location-section">
-                                    <label for="location_id" class="form-label fw-medium">
-                                        <i class="bi bi-geo-alt me-1"></i>Location
-                                    </label>
-                                    <select class="form-select" id="location_id" name="location_id">
-                                        <option value="">Select location...</option>
-                                    </select>
-                                    <div class="form-text">
-                                        <a href="{{ url_for('locations.manage_locations') }}" target="_blank" class="text-decoration-none">
-                                            <i class="bi bi-gear me-1"></i>Manage Locations
-                                        </a>
-                                    </div>
-                                </div>
-                                
-                                <!-- Borrowing Details -->
-                                <div id="borrowed-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
-                                    <h6 class="text-primary mb-2"><i class="bi bi-arrow-down-circle me-1"></i>Borrowing Details</h6>
-                                    <div class="mb-2">
-                                        <label for="borrowed_from" class="form-label">Borrowed From</label>
-                                        <input type="text" class="form-control form-control-sm" id="borrowed_from" name="borrowed_from" 
-                                               value="{{ book.borrowed_from or '' }}" placeholder="Name or contact">
-                                    </div>
-                                    <div class="mb-2">
-                                        <label for="borrowed_due_date" class="form-label">Due Date</label>
-                                        <input type="date" class="form-control form-control-sm" id="borrowed_due_date" name="borrowed_due_date" 
-                                               value="{{ book.borrowed_due_date or '' }}">
-                                    </div>
-                                </div>
-                                
-                                <!-- Loaning Details -->
-                                <div id="loaned-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
-                                    <h6 class="text-warning mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Loaning Details</h6>
-                                    <div class="mb-2">
-                                        <label for="loaned_to" class="form-label">Loaned To</label>
-                                        <input type="text" class="form-control form-control-sm" id="loaned_to" name="loaned_to" 
-                                               value="{{ book.loaned_to or '' }}" placeholder="Name or contact">
-                                    </div>
-                                    <div class="mb-2">
-                                        <label for="loaned_due_date" class="form-label">Expected Return</label>
-                                        <input type="date" class="form-control form-control-sm" id="loaned_due_date" name="loaned_due_date" 
-                                               value="{{ book.loaned_due_date or '' }}">
-                                    </div>
-                                </div>
-                                
-                                <div class="d-grid gap-2">
-                                    <button type="submit" class="btn btn-primary">
-                                        <i class="bi bi-check-circle me-1"></i>Update Status
-                                    </button>
-                                    <button type="submit" name="redirect_to_library" value="true" class="btn btn-outline-primary">
-                                        <i class="bi bi-arrow-left me-1"></i>Save & Go to Library
-                                    </button>
-                                </div>
-                            </form>
                         </div>
                     </div>
                 </div>
@@ -358,28 +527,53 @@
                     </h2>
                     <div id="collapseProgress" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
                         <div class="accordion-body">
-                            <form method="post" action="{{ url_for('main.update_reading_dates', uid=book.uid) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                                <div class="mb-3">
-                                    <label for="start_date" class="form-label fw-medium">
-                                        <i class="bi bi-play-circle me-1"></i>Start Date
-                                    </label>
-                                    <input type="date" class="form-control" id="start_date" name="start_date" 
-                                           value="{{ book.start_date or '' }}">
+                            <div class="reading-progress-view-mode">
+                                {% if book.start_date %}
+                                <div class="mb-2">
+                                    <small class="text-muted">Start Date:</small>
+                                    <span class="ms-1">{{ book.start_date }}</span>
                                 </div>
-                                <div class="mb-3">
-                                    <label for="finish_date" class="form-label fw-medium">
-                                        <i class="bi bi-check-circle me-1"></i>Finish Date
-                                    </label>
-                                    <input type="date" class="form-control" id="finish_date" name="finish_date" 
-                                           value="{{ book.finish_date or '' }}">
+                                {% endif %}
+                                
+                                {% if book.finish_date %}
+                                <div class="mb-2">
+                                    <small class="text-muted">Finish Date:</small>
+                                    <span class="ms-1">{{ book.finish_date }}</span>
                                 </div>
-                                <div class="d-grid">
-                                    <button type="submit" class="btn btn-success">
-                                        <i class="bi bi-save me-1"></i>Update Dates
-                                    </button>
+                                {% endif %}
+                                
+                                {% if not book.start_date and not book.finish_date %}
+                                <div class="text-center text-muted py-3">
+                                    <i class="bi bi-calendar-plus mb-2" style="font-size: 2rem;"></i>
+                                    <p class="mb-0">No reading dates recorded.</p>
                                 </div>
-                            </form>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="reading-progress-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('main.update_reading_dates', uid=book.uid) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    <div class="mb-3">
+                                        <label for="start_date" class="form-label fw-medium">
+                                            <i class="bi bi-play-circle me-1"></i>Start Date
+                                        </label>
+                                        <input type="date" class="form-control" id="start_date" name="start_date" 
+                                               value="{{ book.start_date or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="finish_date" class="form-label fw-medium">
+                                            <i class="bi bi-check-circle me-1"></i>Finish Date
+                                        </label>
+                                        <input type="date" class="form-control" id="finish_date" name="finish_date" 
+                                               value="{{ book.finish_date or '' }}">
+                                    </div>
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-success">
+                                            <i class="bi bi-save me-1"></i>Update Dates
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -395,39 +589,71 @@
                     </h2>
                     <div id="collapseNotes" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
                         <div class="accordion-body">
-                            <form method="post" action="{{ url_for('main.update_book_notes', uid=book.uid) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                                
-                                <!-- Your Rating -->
-                                <div class="mb-3">
-                                    <label for="user_rating" class="form-label fw-medium">
-                                        <i class="bi bi-star me-1"></i>Your Rating
-                                    </label>
-                                    <select class="form-select" id="user_rating" name="user_rating">
-                                        <option value="">No rating</option>
-                                        <option value="1" {% if book.user_rating == 1 %}selected{% endif %}>⭐ Poor (1 star)</option>
-                                        <option value="2" {% if book.user_rating == 2 %}selected{% endif %}>⭐⭐ Fair (2 stars)</option>
-                                        <option value="3" {% if book.user_rating == 3 %}selected{% endif %}>⭐⭐⭐ Good (3 stars)</option>
-                                        <option value="4" {% if book.user_rating == 4 %}selected{% endif %}>⭐⭐⭐⭐ Very Good (4 stars)</option>
-                                        <option value="5" {% if book.user_rating == 5 %}selected{% endif %}>⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
-                                    </select>
+                            <div class="personal-notes-view-mode">
+                                <!-- Personal Rating -->
+                                {% if book.personal_rating %}
+                                <div class="mb-2">
+                                    <small class="text-muted">Personal Rating:</small>
+                                    <span class="ms-1">
+                                        {% for i in range(1, 6) %}
+                                            {% if i <= book.personal_rating %}⭐{% endif %}
+                                        {% endfor %}
+                                        ({{ book.personal_rating }}/5)
+                                    </span>
                                 </div>
+                                {% endif %}
                                 
                                 <!-- Notes -->
-                                <div class="mb-3">
-                                    <label for="personal_notes" class="form-label fw-medium">
-                                        <i class="bi bi-chat-square-text me-1"></i>Notes
-                                    </label>
-                                    <textarea class="form-control" id="personal_notes" name="personal_notes" 
-                                              rows="4" placeholder="Your thoughts, quotes, or notes about this book...">{{ book.personal_notes or '' }}</textarea>
+                                {% if book.personal_notes %}
+                                <div class="mb-2">
+                                    <small class="text-muted">Notes:</small>
+                                    <p class="small mt-1">{{ book.personal_notes }}</p>
                                 </div>
+                                {% endif %}
                                 
-                                <div class="d-grid">
-                                    <button type="submit" class="btn btn-info">
-                                        <i class="bi bi-save me-1"></i>Save Notes
-                                    </button>
+                                {% if not book.personal_notes and not book.personal_rating %}
+                                <div class="text-center text-muted py-3">
+                                    <i class="bi bi-journal-plus mb-2" style="font-size: 2rem;"></i>
+                                    <p class="mb-0">No personal notes or rating yet.</p>
                                 </div>
-                            </form>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="personal-notes-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('main.update_book_notes', uid=book.uid) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    
+                                    <!-- Personal Rating -->
+                                    <div class="mb-3">
+                                        <label for="personal_rating" class="form-label fw-medium">
+                                            <i class="bi bi-star me-1"></i>Personal Rating
+                                        </label>
+                                        <select class="form-select" id="personal_rating" name="personal_rating">
+                                            <option value="">No rating</option>
+                                            <option value="1" {% if book.personal_rating == 1 %}selected{% endif %}>⭐ Poor (1 star)</option>
+                                            <option value="2" {% if book.personal_rating == 2 %}selected{% endif %}>⭐⭐ Fair (2 stars)</option>
+                                            <option value="3" {% if book.personal_rating == 3 %}selected{% endif %}>⭐⭐⭐ Good (3 stars)</option>
+                                            <option value="4" {% if book.personal_rating == 4 %}selected{% endif %}>⭐⭐⭐⭐ Very Good (4 stars)</option>
+                                            <option value="5" {% if book.personal_rating == 5 %}selected{% endif %}>⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Notes -->
+                                    <div class="mb-3">
+                                        <label for="personal_notes" class="form-label fw-medium">
+                                            <i class="bi bi-chat-square-text me-1"></i>Notes
+                                        </label>
+                                        <textarea class="form-control" id="personal_notes" name="personal_notes" 
+                                                  rows="4" placeholder="Your thoughts, quotes, or notes about this book...">{{ book.personal_notes or '' }}</textarea>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-info">
+                                            <i class="bi bi-save me-1"></i>Save Notes & Rating
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -507,7 +733,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div class="row">
+                <div class="row mb-3">
                     <div class="col-md-6">
                         <!-- Current Cover Preview -->
                         <div class="text-center mb-3">
@@ -544,62 +770,89 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     <input type="hidden" name="action" value="update_cover"/>
                     
-                    <!-- Cover URL Input -->
-                    <div class="mb-3">
-                        <label for="cover_url" class="form-label fw-medium">
-                            <i class="bi bi-link me-1"></i>Cover Image URL
-                        </label>
-                        <div class="input-group">
-                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
-                                   value="{{ book.cover_url or '' }}" placeholder="https://example.com/cover.jpg">
-                            <button type="button" class="btn btn-outline-secondary" id="preview-url-btn">
-                                <i class="bi bi-eye me-1"></i>Preview
-                            </button>
+                    <!-- Cover Edit Options Accordion -->
+                    <div class="accordion" id="coverEditAccordion">
+                        <!-- Cover Image URL -->
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button bg-primary text-white" type="button" 
+                                        data-bs-toggle="collapse" data-bs-target="#collapseCoverUrl" 
+                                        aria-expanded="true" aria-controls="collapseCoverUrl">
+                                    <i class="bi bi-link me-2"></i>Cover Image URL
+                                </button>
+                            </h2>
+                            <div id="collapseCoverUrl" class="accordion-collapse collapse show" data-bs-parent="#coverEditAccordion">
+                                <div class="accordion-body">
+                                    <div class="mb-3">
+                                        <label for="cover_url" class="form-label">Enter a direct URL to an image</label>
+                                        <div class="input-group">
+                                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
+                                                   value="{{ book.cover_url or '' }}" placeholder="https://example.com/cover.jpg">
+                                            <button type="button" class="btn btn-outline-secondary" id="preview-url-btn">
+                                                <i class="bi bi-eye me-1"></i>Preview
+                                            </button>
+                                        </div>
+                                        <div class="form-text">Paste a direct link to an image file (JPG, PNG, GIF, WebP)</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                    
-                    <!-- OR Divider -->
-                    <div class="text-center my-3">
-                        <span class="badge bg-secondary">OR</span>
-                    </div>
-                    
-                    <!-- File Upload -->
-                    <div class="mb-3">
-                        <label for="cover_file" class="form-label fw-medium">
-                            <i class="bi bi-upload me-1"></i>Upload from Device
-                        </label>
-                        <input type="file" class="form-control" id="cover_file" name="cover_file" 
-                               accept="image/*">
-                        <div class="form-text">Supported formats: JPG, PNG, GIF, WebP (max 5MB)</div>
-                    </div>
-                    
-                    <!-- OR Divider -->
-                    <div class="text-center my-3">
-                        <span class="badge bg-secondary">OR</span>
-                    </div>
-                    
-                    <!-- API Fetch -->
-                    <div class="mb-3">
-                        <label class="form-label fw-medium">
-                            <i class="bi bi-cloud-download me-1"></i>Fetch from API
-                        </label>
-                        <div class="d-grid gap-2">
-                            <button type="button" class="btn btn-outline-info" id="fetch-cover-btn">
-                                <i class="bi bi-search me-1"></i>Search for Cover by ISBN
-                            </button>
-                            {% if book.title and book.authors %}
-                            <button type="button" class="btn btn-outline-info" id="fetch-cover-title-btn">
-                                <i class="bi bi-search me-1"></i>Search by Title & Author
-                            </button>
-                            {% endif %}
+                        
+                        <!-- Upload from Device -->
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed bg-success text-white" type="button" 
+                                        data-bs-toggle="collapse" data-bs-target="#collapseUpload" 
+                                        aria-expanded="false" aria-controls="collapseUpload">
+                                    <i class="bi bi-upload me-2"></i>Upload from Device
+                                </button>
+                            </h2>
+                            <div id="collapseUpload" class="accordion-collapse collapse" data-bs-parent="#coverEditAccordion">
+                                <div class="accordion-body">
+                                    <div class="mb-3">
+                                        <label for="cover_file" class="form-label">Choose an image file from your device</label>
+                                        <input type="file" class="form-control" id="cover_file" name="cover_file" 
+                                               accept="image/*">
+                                        <div class="form-text">Supported formats: JPG, PNG, GIF, WebP (max 5MB)</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="form-text">
-                            This will search for a cover image using the book's ISBN or title/author information
+                        
+                        <!-- Fetch from API -->
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed bg-info text-white" type="button" 
+                                        data-bs-toggle="collapse" data-bs-target="#collapseFetchApi" 
+                                        aria-expanded="false" aria-controls="collapseFetchApi">
+                                    <i class="bi bi-cloud-download me-2"></i>Fetch from API
+                                </button>
+                            </h2>
+                            <div id="collapseFetchApi" class="accordion-collapse collapse" data-bs-parent="#coverEditAccordion">
+                                <div class="accordion-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Search for cover image automatically</label>
+                                        <div class="d-grid gap-2">
+                                            <button type="button" class="btn btn-outline-info" id="fetch-cover-btn">
+                                                <i class="bi bi-search me-1"></i>Search for Cover by ISBN
+                                            </button>
+                                            {% if book.title and book.authors %}
+                                            <button type="button" class="btn btn-outline-info" id="fetch-cover-title-btn">
+                                                <i class="bi bi-search me-1"></i>Search by Title & Author
+                                            </button>
+                                            {% endif %}
+                                        </div>
+                                        <div class="form-text">
+                                            This will search for a cover image using the book's ISBN or title/author information
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
                     <!-- Remove Cover Option -->
-                    <div class="mb-3">
+                    <div class="mt-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="remove_cover" name="remove_cover">
                             <label class="form-check-label text-danger" for="remove_cover">
@@ -623,28 +876,108 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const ownershipSelect = document.getElementById('ownership_status');
-    const mediaTypeSelect = document.getElementById('media_type');
-    const locationSection = document.getElementById('location-section');
-    const borrowedSection = document.getElementById('borrowed-section');
-    const loanedSection = document.getElementById('loaned-section');
-    const locationSelect = document.getElementById('location_id');
+    // Edit mode toggle functionality for main card
+    const editToggle = document.getElementById('editToggle');
+    const viewMode = document.querySelector('.view-mode');
+    const editMode = document.querySelector('.edit-mode');
+    const cancelBtn = document.getElementById('cancelEdit');
     
-    // Load user locations
-    function loadLocations() {
-        console.log('🏠 [LOCATIONS] Loading user locations...');
+    // Edit mode toggle functionality for all sections
+    const basicInfoViewMode = document.querySelector('.basic-info-view-mode');
+    const basicInfoEditMode = document.querySelector('.basic-info-edit-mode');
+    const readingProgressViewMode = document.querySelector('.reading-progress-view-mode');
+    const readingProgressEditMode = document.querySelector('.reading-progress-edit-mode');
+    const personalNotesViewMode = document.querySelector('.personal-notes-view-mode');
+    const personalNotesEditMode = document.querySelector('.personal-notes-edit-mode');
+    
+    if (editToggle && viewMode && editMode) {
+        editToggle.addEventListener('click', function() {
+            // Toggle main card edit mode
+            const isEditMode = editMode.style.display !== 'none';
+            
+            if (isEditMode) {
+                // Switch back to view mode for all sections
+                editMode.style.display = 'none';
+                viewMode.style.display = 'block';
+                
+                if (basicInfoEditMode && basicInfoViewMode) {
+                    basicInfoEditMode.style.display = 'none';
+                    basicInfoViewMode.style.display = 'block';
+                }
+                
+                if (readingProgressEditMode && readingProgressViewMode) {
+                    readingProgressEditMode.style.display = 'none';
+                    readingProgressViewMode.style.display = 'block';
+                }
+                
+                if (personalNotesEditMode && personalNotesViewMode) {
+                    personalNotesEditMode.style.display = 'none';
+                    personalNotesViewMode.style.display = 'block';
+                }
+                
+                editToggle.innerHTML = '<i class="bi bi-pencil" id="edit-icon"></i>';
+                editToggle.title = 'Edit Book Details';
+            } else {
+                // Switch to edit mode for all sections
+                viewMode.style.display = 'none';
+                editMode.style.display = 'block';
+                
+                if (basicInfoEditMode && basicInfoViewMode) {
+                    basicInfoViewMode.style.display = 'none';
+                    basicInfoEditMode.style.display = 'block';
+                }
+                
+                if (readingProgressEditMode && readingProgressViewMode) {
+                    readingProgressViewMode.style.display = 'none';
+                    readingProgressEditMode.style.display = 'block';
+                }
+                
+                if (personalNotesEditMode && personalNotesViewMode) {
+                    personalNotesViewMode.style.display = 'none';
+                    personalNotesEditMode.style.display = 'block';
+                }
+                
+                editToggle.innerHTML = '<i class="bi bi-check" id="edit-icon"></i>';
+                editToggle.title = 'Exit Edit Mode';
+            }
+        });
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function() {
+                // Cancel edit mode for all sections
+                editMode.style.display = 'none';
+                viewMode.style.display = 'block';
+                
+                if (basicInfoEditMode && basicInfoViewMode) {
+                    basicInfoEditMode.style.display = 'none';
+                    basicInfoViewMode.style.display = 'block';
+                }
+                
+                if (readingProgressEditMode && readingProgressViewMode) {
+                    readingProgressEditMode.style.display = 'none';
+                    readingProgressViewMode.style.display = 'block';
+                }
+                
+                if (personalNotesEditMode && personalNotesViewMode) {
+                    personalNotesEditMode.style.display = 'none';
+                    personalNotesViewMode.style.display = 'block';
+                }
+                
+                editToggle.innerHTML = '<i class="bi bi-pencil" id="edit-icon"></i>';
+                editToggle.title = 'Edit Book Details';
+            });
+        }
+    }
+    
+    // Location loading for edit mode in main card
+    const editLocationSelect = document.getElementById('edit_location_id');
+    if (editLocationSelect) {
+        const currentEditLocationName = editLocationSelect.getAttribute('data-current-location');
+        
         fetch('/locations/api/user_locations')
             .then(response => response.json())
             .then(locations => {
-                console.log('🏠 [LOCATIONS] Received locations:', locations);
-                locationSelect.innerHTML = '<option value="">Select location...</option>';
-                
-                // Get book's current locations from the template
-                const bookLocations = {{ book.locations|tojson if book.locations else '[]' }};
-                const currentLocationId = bookLocations.length > 0 ? bookLocations[0] : null;
-                console.log('🏠 [LOCATIONS] Book current locations:', bookLocations);
-                console.log('🏠 [LOCATIONS] Using location ID:', currentLocationId);
-                
+                editLocationSelect.innerHTML = '<option value="">Select location...</option>';
                 locations.forEach(location => {
                     const option = document.createElement('option');
                     option.value = location.id;
@@ -652,60 +985,54 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (location.is_default) {
                         option.textContent += ' (Default)';
                     }
-                    // Select the location if it matches the book's current location
-                    if (location.id === currentLocationId) {
+                    if (location.name === currentEditLocationName) {
                         option.selected = true;
-                        console.log('🏠 [LOCATIONS] ✅ Selected current location:', location.name, 'ID:', location.id);
                     }
-                    locationSelect.appendChild(option);
+                    editLocationSelect.appendChild(option);
                 });
-                console.log('🏠 [LOCATIONS] Location dropdown populated');
             })
             .catch(error => {
-                console.error('❌ [LOCATIONS] Error loading locations:', error);
-                locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+                console.error('Error loading edit locations:', error);
+                editLocationSelect.innerHTML = '<option value="">Error loading locations</option>';
             });
     }
     
+    // Dynamic ownership/borrowing fields for Basic Information
+    const ownershipSelect = document.getElementById('ownership_status');
+    const borrowedSection = document.getElementById('borrowed-section');
+    const loanedSection = document.getElementById('loaned-section');
+    
     function updateVisibility() {
-        const ownership = ownershipSelect.value;
-        const mediaType = mediaTypeSelect.value;
-        
-        // Show/hide location section based on media type
-        locationSection.style.display = mediaType === 'physical' ? 'block' : 'none';
-        
-        // Show/hide borrowing/loaning sections with smooth transitions
-        borrowedSection.style.display = ownership === 'borrowed' ? 'block' : 'none';
-        loanedSection.style.display = ownership === 'loaned' ? 'block' : 'none';
+        if (ownershipSelect && borrowedSection && loanedSection) {
+            const ownership = ownershipSelect.value;
+            borrowedSection.style.display = ownership === 'borrowed' ? 'block' : 'none';
+            loanedSection.style.display = ownership === 'loaned' ? 'block' : 'none';
+        }
     }
     
-    // Event listeners
-    ownershipSelect.addEventListener('change', updateVisibility);
-    mediaTypeSelect.addEventListener('change', updateVisibility);
-    
-    // Initial setup
-    loadLocations();
-    updateVisibility();
-    
-    // Auto-save functionality (optional enhancement)
-    const form = document.getElementById('status-form');
-    let saveTimeout;
-    
-    function autoSave() {
-        clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(() => {
-            // Could implement auto-save here
-            console.log('Auto-save triggered');
-        }, 2000);
+    if (ownershipSelect) {
+        ownershipSelect.addEventListener('change', updateVisibility);
+        updateVisibility(); // Initial setup
     }
     
-    // Add auto-save to form inputs if desired
-    // form.querySelectorAll('select, input').forEach(input => {
-    //     input.addEventListener('change', autoSave);
-    // });
+    // Accordion behavior - ensure only one is open at a time
+    const accordionItems = document.querySelectorAll('#bookAccordion .accordion-collapse');
+    accordionItems.forEach(item => {
+        item.addEventListener('show.bs.collapse', function() {
+            accordionItems.forEach(otherItem => {
+                if (otherItem !== item && otherItem.classList.contains('show')) {
+                    const bsCollapse = new bootstrap.Collapse(otherItem, {toggle: false});
+                    bsCollapse.hide();
+                }
+            });
+        });
+    });
     
     // Cover editing functionality
     initializeCoverEditing();
+    
+    // Initialize autocomplete functionality
+    initializeAutocomplete();
 });
 
 function initializeCoverEditing() {
@@ -742,7 +1069,6 @@ function initializeCoverEditing() {
         coverFileInput.addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file) {
-                // Clear URL input when file is selected
                 if (coverUrlInput) coverUrlInput.value = '';
                 
                 const reader = new FileReader();
@@ -783,7 +1109,6 @@ function initializeCoverEditing() {
     if (removeCoverCheck) {
         removeCoverCheck.addEventListener('change', function() {
             if (this.checked) {
-                // Clear other inputs and show placeholder
                 if (coverUrlInput) coverUrlInput.value = '';
                 if (coverFileInput) coverFileInput.value = '';
                 showPlaceholderPreview();
@@ -854,10 +1179,208 @@ function fetchCoverFromAPI(query, type) {
             fetchBtn.innerHTML = originalText;
             fetchBtn.disabled = false;
         });
-});
+}
+
+// Autocomplete functionality
+function initializeAutocomplete() {
+    const authorsInput = document.getElementById('edit-authors');
+    const categoriesInput = document.getElementById('edit-categories');
+    
+    if (authorsInput) {
+        setupAutocomplete(authorsInput, 'authors', searchAuthors, addAuthorToInput);
+    }
+    
+    if (categoriesInput) {
+        setupAutocomplete(categoriesInput, 'categories', searchCategories, addCategoryToInput);
+    }
+}
+
+function setupAutocomplete(input, type, searchFn, addFn) {
+    const dropdown = document.getElementById(`${type}-dropdown`);
+    let debounceTimer;
+    
+    input.addEventListener('input', function() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            const value = input.value;
+            const currentInput = value.split(',').pop().trim();
+            
+            if (currentInput.length >= 2) {
+                searchFn(currentInput, dropdown, addFn, input);
+            } else {
+                dropdown.style.display = 'none';
+            }
+        }, 300);
+    });
+    
+    input.addEventListener('focus', function() {
+        const value = input.value;
+        const currentInput = value.split(',').pop().trim();
+        if (currentInput.length >= 2) {
+            searchFn(currentInput, dropdown, addFn, input);
+        }
+    });
+    
+    input.addEventListener('blur', function() {
+        setTimeout(() => dropdown.style.display = 'none', 200);
+    });
+}
+
+function searchAuthors(query, dropdown, addFn, input) {
+    fetch(`/api/authors/search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(data => {
+            showDropdown(dropdown, data.authors || [], query, addFn, input, 'Author');
+        })
+        .catch(error => {
+            console.error('Error searching authors:', error);
+            dropdown.style.display = 'none';
+        });
+}
+
+function searchCategories(query, dropdown, addFn, input) {
+    fetch(`/api/categories/search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(data => {
+            showDropdown(dropdown, data.categories || [], query, addFn, input, 'Genre');
+        })
+        .catch(error => {
+            console.error('Error searching categories:', error);
+            dropdown.style.display = 'none';
+        });
+}
+
+function showDropdown(dropdown, items, query, addFn, input, type) {
+    if (items.length === 0 && !query) {
+        dropdown.style.display = 'none';
+        return;
+    }
+    
+    dropdown.innerHTML = '';
+    
+    // Add existing items
+    items.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'autocomplete-item';
+        div.textContent = item.name;
+        div.addEventListener('click', () => addFn(item.name, input));
+        dropdown.appendChild(div);
+    });
+    
+    // Add "Add New" option
+    if (query) {
+        const addNewDiv = document.createElement('div');
+        addNewDiv.className = 'autocomplete-item add-new';
+        addNewDiv.innerHTML = `<i class="bi bi-plus-circle me-1"></i>Add New ${type}: "${query}"`;
+        addNewDiv.addEventListener('click', () => addFn(query, input));
+        dropdown.appendChild(addNewDiv);
+    }
+    
+    dropdown.style.display = 'block';
+}
+
+function addAuthorToInput(authorName, input) {
+    const currentValue = input.value;
+    const values = currentValue.split(',').map(v => v.trim()).filter(v => v);
+    const lastValue = values.pop() || '';
+    
+    // Don't add if already exists
+    if (values.includes(authorName)) {
+        input.focus();
+        return;
+    }
+    
+    values.push(authorName);
+    input.value = values.join(', ');
+    input.focus();
+    
+    // Hide dropdown
+    const dropdown = document.getElementById('authors-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+}
+
+function addCategoryToInput(categoryName, input) {
+    const currentValue = input.value;
+    const values = currentValue.split(',').map(v => v.trim()).filter(v => v);
+    const lastValue = values.pop() || '';
+    
+    // Don't add if already exists
+    if (values.includes(categoryName)) {
+        input.focus();
+        return;
+    }
+    
+    values.push(categoryName);
+    input.value = values.join(', ');
+    input.focus();
+    
+    // Hide dropdown
+    const dropdown = document.getElementById('categories-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+}
 </script>
 
 <style>
+/* Autocomplete dropdown styles */
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ced4da;
+    border-top: none;
+    border-radius: 0 0 0.375rem 0.375rem;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+}
+
+.autocomplete-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #f8f9fa;
+}
+
+.autocomplete-item:hover {
+    background-color: #f8f9fa;
+}
+
+.autocomplete-item.add-new {
+    background-color: #e3f2fd;
+    color: #1976d2;
+    font-weight: 500;
+}
+
+.autocomplete-item.add-new:hover {
+    background-color: #bbdefb;
+}
+
+/* Dark mode support for autocomplete */
+[data-theme="dark"] .autocomplete-dropdown {
+    background: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .autocomplete-item {
+    border-bottom-color: #404040;
+}
+
+[data-theme="dark"] .autocomplete-item:hover {
+    background-color: #404040;
+}
+
+[data-theme="dark"] .autocomplete-item.add-new {
+    background-color: #1a237e;
+    color: #82b1ff;
+}
+
+[data-theme="dark"] .autocomplete-item.add-new:hover {
+    background-color: #283593;
+}
+
 /* Dark mode enhancements for View Book */
 [data-theme="dark"] .text-muted {
     color: #b0b0b0 !important;
@@ -1028,7 +1551,7 @@ function fetchCoverFromAPI(query, type) {
 /* Cover Edit Button Styling */
 .cover-edit-btn {
     position: absolute;
-    bottom: 8px;
+    top: 8px;
     right: 8px;
     width: 28px;
     height: 28px;
@@ -1196,6 +1719,11 @@ function fetchCoverFromAPI(query, type) {
 [data-theme="dark"] .badge.bg-light:hover {
     background-color: #495057 !important;
     color: white !important;
+}
+
+/* Position relative for autocomplete containers */
+.position-relative {
+    position: relative;
 }
 </style>
 
