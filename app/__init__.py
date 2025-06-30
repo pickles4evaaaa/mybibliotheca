@@ -621,7 +621,7 @@ def create_app():
     from pathlib import Path
     
     def shutdown_handler():
-        """Log database state at application shutdown."""
+        """Log database state and properly close KuzuDB connection at application shutdown."""
         try:
             print(f"🛑 [APP_SHUTDOWN] Application shutting down - Container: {os.getenv('HOSTNAME', 'unknown')}")
             print(f"🛑 [APP_SHUTDOWN] Process ID: {os.getpid()}")
@@ -647,8 +647,21 @@ def create_app():
                 total_size = sum(f.stat().st_size for f in files if f.is_file())
                 print(f"🛑 [APP_SHUTDOWN] Database files: {len(files)} files, {total_size} bytes total")
             
+            # 🔥 CRITICAL FIX: Properly close the KuzuDB connection
+            print(f"🛑 [APP_SHUTDOWN] Closing KuzuDB connection to ensure data persistence...")
+            storage.disconnect()
+            print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connection closed successfully")
+            
         except Exception as e:
             print(f"🛑 [APP_SHUTDOWN] Error during shutdown logging: {e}")
+            # Even if logging fails, try to close the connection
+            try:
+                from .infrastructure.kuzu_graph import get_graph_storage
+                storage = get_graph_storage()
+                storage.disconnect()
+                print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connection closed after error")
+            except Exception as close_error:
+                print(f"🛑 [APP_SHUTDOWN] ❌ Failed to close KuzuDB connection: {close_error}")
     
     atexit.register(shutdown_handler)
 
