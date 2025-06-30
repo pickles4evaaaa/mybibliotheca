@@ -810,6 +810,9 @@ def edit_book(uid):
             'cover_url': request.form.get('cover_url', '').strip() or None,
             'isbn13': new_isbn13,
             'isbn10': new_isbn10,
+            'series': request.form.get('series', '').strip() or None,
+            'series_volume': request.form.get('series_volume', '').strip() or None,
+            'series_order': int(request.form.get('series_order')) if request.form.get('series_order', '').strip() else None,
             'contributors': contributors,
             'raw_categories': ','.join(categories) if categories else None  # Add categories to update
         }
@@ -817,7 +820,7 @@ def edit_book(uid):
         # Remove None values except for specific fields
         filtered_data = {}
         for k, v in update_data.items():
-            if k in ['contributors', 'raw_categories'] or v is not None:
+            if k in ['contributors', 'raw_categories', 'series', 'series_volume', 'series_order'] or v is not None:
                 filtered_data[k] = v
         
         success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)

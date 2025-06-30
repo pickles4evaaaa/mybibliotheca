@@ -572,15 +572,87 @@ class KuzuBookService:
         try:
             print(f"🔍 [UPDATE_BOOK_SYNC] Called with uid={uid}, user_id={user_id}, kwargs={kwargs}")
             
-            # Check if we have OWNS relationship fields to update
+            # Separate Book node fields from OWNS relationship fields
+            book_fields = ['title', 'subtitle', 'description', 'published_date', 'page_count', 
+                          'language', 'cover_url', 'isbn13', 'isbn10', 'asin', 'google_books_id', 
+                          'openlibrary_id', 'average_rating', 'rating_count', 'series', 'series_volume', 'series_order']
             owns_fields = ['reading_status', 'ownership_status', 'media_type', 'location_id', 
-                          'notes', 'personal_notes', 'start_date', 'finish_date']
+                          'notes', 'personal_notes', 'start_date', 'finish_date', 'current_page', 'total_pages',
+                          'date_acquired', 'purchase_price', 'condition', 'tags', 'review', 'user_rating',
+                          'pace', 'character_driven', 'source']
             
+            # Split updates into Book node and OWNS relationship updates
+            book_updates = {}
             owns_updates = {}
-            for field in owns_fields:
-                if field in kwargs:
-                    owns_updates[field] = kwargs[field]
             
+            for field, value in kwargs.items():
+                if field in book_fields:
+                    book_updates[field] = value
+                elif field in owns_fields:
+                    owns_updates[field] = value
+            
+            print(f"🔍 [UPDATE_BOOK_SYNC] Book updates: {book_updates}")
+            print(f"🔍 [UPDATE_BOOK_SYNC] OWNS updates: {owns_updates}")
+            
+            # First, get the book to find its internal ID
+            user_book = self.get_book_by_uid_sync(uid, user_id)
+            if not user_book:
+                print(f"❌ [UPDATE_BOOK_SYNC] Book not found: {uid}")
+                return False
+            
+            book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+            if not book_id:
+                print(f"❌ [UPDATE_BOOK_SYNC] No book ID found for uid: {uid}")
+                return False
+            
+            updated = False
+            
+            # Update Book node fields if any
+            if book_updates:
+                print(f"🔍 [UPDATE_BOOK_SYNC] Updating Book node with: {book_updates}")
+                try:
+                    from .infrastructure.kuzu_graph import get_graph_storage
+                    graph_storage = get_graph_storage()
+                    
+                    # Update the Book node directly
+                    query = """
+                    MATCH (b:Book {id: $book_id})
+                    SET """
+                    
+                    set_clauses = []
+                    params = {'book_id': book_id}
+                    
+                    for field, value in book_updates.items():
+                        if field in ['published_date'] and value and hasattr(value, 'isoformat'):
+                            # Convert date to string for Kuzu
+                            params[f'new_{field}'] = value.isoformat()
+                        else:
+                            params[f'new_{field}'] = value
+                        
+                        set_clauses.append(f'b.{field} = $new_{field}')
+                    
+                    query += ', '.join(set_clauses)
+                    query += " RETURN b"
+                    
+                    print(f"🔍 [UPDATE_BOOK_SYNC] Executing Book update query: {query}")
+                    print(f"🔍 [UPDATE_BOOK_SYNC] With params: {params}")
+                    
+                    result = graph_storage.query(query, params)
+                    
+                    if result and len(result) > 0:
+                        print(f"✅ [UPDATE_BOOK_SYNC] Successfully updated Book node")
+                        updated = True
+                    else:
+                        print(f"❌ [UPDATE_BOOK_SYNC] No Book node found or update failed")
+                        
+                except Exception as e:
+                    print(f"❌ [UPDATE_BOOK_SYNC] Error updating Book node: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Update OWNS relationship fields if any
+            
+            # Update OWNS relationship fields if any
             if owns_updates:
                 print(f"🔍 [UPDATE_BOOK_SYNC] Updating OWNS relationship with: {owns_updates}")
                 
@@ -593,15 +665,30 @@ class KuzuBookService:
                 SET """
                 
                 set_clauses = []
-                params = {'user_id': user_id, 'book_id': uid}
+                params = {'user_id': user_id, 'book_id': book_id}
                 
                 for field, value in owns_updates.items():
-                    if field == 'start_date' and value and hasattr(value, 'isoformat'):
-                        # Convert date to string for Kuzu
-                        params[f'new_{field}'] = value.isoformat()
-                    elif field == 'finish_date' and value and hasattr(value, 'isoformat'):
-                        # Convert date to string for Kuzu
-                        params[f'new_{field}'] = value.isoformat()
+                    if field in ['start_date', 'finish_date', 'date_acquired'] and value:
+                        # For date fields, pass the date object directly to Kuzu
+                        if hasattr(value, 'isoformat'):
+                            # If it's already a date/datetime object, use it directly
+                            params[f'new_{field}'] = value
+                        else:
+                            # If it's a string, parse it to a datetime
+                            from datetime import datetime
+                            try:
+                                params[f'new_{field}'] = datetime.fromisoformat(str(value))
+                            except:
+                                params[f'new_{field}'] = value
+                    elif field in ['current_page', 'total_pages', 'user_rating'] and value is not None:
+                        # For numeric fields, ensure they're integers/floats, not strings
+                        try:
+                            if field == 'user_rating':
+                                params[f'new_{field}'] = float(value)
+                            else:
+                                params[f'new_{field}'] = int(value)
+                        except (ValueError, TypeError):
+                            params[f'new_{field}'] = value
                     else:
                         params[f'new_{field}'] = str(value) if value is not None else ''
                     
@@ -617,20 +704,32 @@ class KuzuBookService:
                 
                 if result and len(result) > 0:
                     print(f"✅ [UPDATE_BOOK_SYNC] Successfully updated OWNS relationship")
-                    return True
+                    updated = True
                 else:
                     print(f"❌ [UPDATE_BOOK_SYNC] No OWNS relationship found or update failed")
-                    return False
             
             # Legacy handling for simple finish_date updates
-            if 'finish_date' in kwargs:
+            if 'finish_date' in kwargs and not owns_updates:
                 if kwargs['finish_date']:
-                    return run_async(self.update_reading_status(user_id, uid, 'read'))
+                    result = run_async(self.update_reading_status(user_id, uid, 'read'))
+                    if result:
+                        updated = True
                 else:
-                    return run_async(self.update_reading_status(user_id, uid, 'reading'))
+                    result = run_async(self.update_reading_status(user_id, uid, 'reading'))
+                    if result:
+                        updated = True
             
-            print(f"🔍 [UPDATE_BOOK_SYNC] No updates to apply")
-            return True
+            if not book_updates and not owns_updates and 'finish_date' not in kwargs:
+                print(f"🔍 [UPDATE_BOOK_SYNC] No updates to apply")
+            
+            return updated
+            
+        except Exception as e:
+            print(f"❌ [UPDATE_BOOK_SYNC] Error updating book: {e}")
+            import traceback
+            traceback.print_exc()
+            current_app.logger.error(f"Error updating book: {e}")
+            return False
             
         except Exception as e:
             print(f"❌ [UPDATE_BOOK_SYNC] Error updating book: {e}")
