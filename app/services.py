@@ -5,7 +5,6 @@ This module provides service classes for comprehensive book management using the
 new clean Kuzu graph database implementation.
 """
 
-import os
 import csv
 import uuid
 import asyncio
@@ -413,12 +412,151 @@ class KuzuBookService:
 
     def get_user_books_sync(self, user_id: str, reading_status: str = None,
                            limit: int = 50) -> List[Dict[str, Any]]:
-        """Get user's library (sync version for Flask routes)."""
+        """Get user's library with global book visibility (default behavior).
+        
+        All users can see all books, with personal data overlaid where it exists.
+        This is the standard Goodreads-style behavior.
+        """
         try:
-            return run_async(self.get_user_library(user_id, reading_status=reading_status, limit=limit))
+            # Use global book visibility as default behavior
+            return self.get_all_books_with_user_overlay_sync(user_id, reading_status=reading_status, limit=limit)
         except Exception as e:
             current_app.logger.error(f"Error getting user books: {e}")
             return []
+
+    def get_all_books_with_user_overlay_sync(self, user_id: str, reading_status: str = None,
+                                           limit: int = 50) -> List[Dict[str, Any]]:
+        """Get ALL books in the system with optional user-specific overlay data.
+        
+        This implements global book visibility - all users can see all books,
+        with personal data (notes, ratings, reading status) overlaid where it exists.
+        """
+        try:
+            from .infrastructure.kuzu_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            # Get ALL books in the system (global catalog)
+            query = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (b)<-[authored:AUTHORED]-(p:Person)
+            OPTIONAL MATCH (b)-[cat_rel:CATEGORIZED_AS]->(c:Category)
+            OPTIONAL MATCH (b)-[pub_rel:PUBLISHED_BY]->(pub:Publisher)
+            RETURN b, 
+                   collect(DISTINCT p) as authors,
+                   collect(DISTINCT c) as categories,
+                   pub
+            LIMIT $limit
+            """
+            
+            result = storage.query(query, {'limit': limit})
+            books = []
+            
+            print(f"🌍 [GLOBAL_BOOKS] Found {len(result)} global books")
+            
+            for record in result:
+                if 'col_0' not in record:
+                    continue
+                    
+                book_data = dict(record['col_0'])
+                authors_data = record.get('col_1', []) or []
+                categories_data = record.get('col_2', []) or []
+                publisher_data = record.get('col_3')
+                
+                # Convert to dictionary format
+                book_dict = {
+                    'id': book_data.get('id'),
+                    'title': book_data.get('title'),
+                    'isbn': book_data.get('isbn'),
+                    'description': book_data.get('description'),
+                    'published_date': book_data.get('published_date'),
+                    'page_count': book_data.get('page_count'),
+                    'cover_image_url': book_data.get('cover_image_url'),
+                    'authors': [{'id': a.get('id'), 'name': a.get('name')} for a in authors_data if a and isinstance(a, dict)],
+                    'categories': [{'id': c.get('id'), 'name': c.get('name')} for c in categories_data if c and isinstance(c, dict)],
+                    'publisher': {'id': publisher_data.get('id'), 'name': publisher_data.get('name')} if publisher_data and isinstance(publisher_data, dict) else None
+                }
+                
+                # Now check if this user has personal data for this book
+                user_overlay = self._get_user_book_overlay(storage, user_id, book_data.get('id'))
+                
+                if user_overlay:
+                    # User has personal data - merge it
+                    book_dict.update(user_overlay)
+                    print(f"📖 [GLOBAL_BOOKS] Book '{book_dict['title']}' has user overlay data")
+                else:
+                    # No personal data - set defaults for global view
+                    book_dict.update({
+                        'reading_status': None,  # No personal reading status
+                        'ownership_status': None,  # Not owned by user
+                        'user_rating': None,
+                        'personal_notes': '',
+                        'locations': [],
+                        'custom_metadata': {},
+                        'start_date': None,
+                        'finish_date': None,
+                        'date_added': None
+                    })
+                    print(f"🌍 [GLOBAL_BOOKS] Book '{book_dict['title']}' visible globally (no user data)")
+                
+                # Filter by reading status if requested
+                if reading_status:
+                    if book_dict.get('reading_status') != reading_status:
+                        continue  # Skip if doesn't match filter
+                
+                books.append(book_dict)
+            
+            print(f"✅ [GLOBAL_BOOKS] Returning {len(books)} books (global visibility)")
+            return books
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting global books with user overlay: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def _get_user_book_overlay(self, storage, user_id: str, book_id: str) -> Dict[str, Any]:
+        """Get user-specific overlay data for a book, if it exists."""
+        try:
+            # Check if user has an OWNS relationship with this book
+            owns_query = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            RETURN r
+            """
+            
+            owns_result = storage.query(owns_query, {
+                'user_id': user_id,
+                'book_id': book_id
+            })
+            
+            if owns_result and len(owns_result) > 0:
+                owns_data = dict(owns_result[0].get('col_0', {}))
+                
+                # Convert to expected format
+                overlay = {
+                    'reading_status': owns_data.get('reading_status'),
+                    'ownership_status': owns_data.get('ownership_status', 'owned'),
+                    'user_rating': owns_data.get('user_rating'),
+                    'personal_notes': owns_data.get('notes', ''),
+                    'start_date': owns_data.get('start_date'),
+                    'finish_date': owns_data.get('finish_date'),
+                    'date_added': owns_data.get('date_added'),
+                    'location_id': owns_data.get('location_id', ''),
+                    'custom_metadata': owns_data.get('custom_metadata', {})
+                }
+                
+                # Handle locations
+                if overlay.get('location_id'):
+                    overlay['locations'] = [overlay['location_id']]
+                else:
+                    overlay['locations'] = []
+                
+                return overlay
+            
+            return None  # No user-specific data
+            
+        except Exception as e:
+            print(f"❌ Error getting user overlay for book {book_id}: {e}")
+            return None
     
     def add_book_to_user_library_sync(self, user_id: str, book_id: str, 
                                      reading_status: str = 'plan_to_read',
@@ -461,106 +599,46 @@ class KuzuBookService:
             return None
 
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get book by UID for a specific user (sync version)."""
+        """Get book by UID for a specific user using global book visibility (sync version)."""
         try:
-            # Get the book with all relationships (authors, categories, publisher)
+            # Use global book visibility approach
+            user_books = self.get_all_books_with_user_overlay_sync(user_id)
+            
+            # Find the specific book by UID
+            for book in user_books:
+                book_uid = book.get('uid') if isinstance(book, dict) else getattr(book, 'uid', None)
+                book_id = book.get('id') if isinstance(book, dict) else getattr(book, 'id', None)
+                
+                if book_uid == uid or book_id == uid:
+                    # Found the book, return it (already has overlay data)
+                    return book
+            
+            # If not found in user books with overlay, try to get the global book directly
             book_data = run_async(self.kuzu_service.get_book(uid))
             if not book_data:
                 return None
             
-            # Get the user's ownership information for this book
-            user_books = run_async(self.get_user_library(user_id))
-            ownership_data = None
-            for user_book in user_books:
-                if user_book.get('id') == uid or user_book.get('book', {}).get('id') == uid:
-                    ownership_data = user_book.get('ownership', {})
-                    break
+            # Set default values for books not in user's library
+            book_data.update({
+                'reading_status': None,
+                'ownership_status': None,
+                'media_type': None,
+                'notes': '',
+                'date_added': None,
+                'location_id': '',
+                'user_rating': None,
+                'personal_notes': '',
+                'start_date': None,
+                'finish_date': None,
+                'locations': [],
+                'uid': uid,
+                'custom_metadata': {}
+            })
             
-            # Combine book data with ownership data
-            result = book_data.copy()
-            if ownership_data:
-                result.update({
-                    'reading_status': ownership_data.get('reading_status', 'plan_to_read'),
-                    'ownership_status': ownership_data.get('ownership_status', 'owned'),
-                    'media_type': ownership_data.get('media_type', 'physical'),
-                    'notes': ownership_data.get('notes', ''),
-                    'date_added': ownership_data.get('date_added'),
-                    'location_id': ownership_data.get('location_id', ''),
-                    'user_rating': ownership_data.get('user_rating'),
-                    'personal_notes': ownership_data.get('personal_notes', ''),
-                    'start_date': ownership_data.get('start_date'),
-                    'finish_date': ownership_data.get('finish_date')
-                })
-            
-            # Add locations info (simplified)
-            if result.get('location_id'):
-                result['locations'] = [result.get('location_id')]
-            else:
-                result['locations'] = []
-            
-            # Set uid for template compatibility
-            result['uid'] = uid
-            
-            # Load custom metadata for this user-book combination
-            try:
-                from .infrastructure.kuzu_graph import get_graph_storage
-                graph_storage = get_graph_storage()
-                
-                custom_metadata = {}
-                
-                # First, try to get custom_metadata from OWNS relationship (primary source)
-                owns_query = """
-                MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-                RETURN r.custom_metadata as metadata
-                """
-                
-                owns_result = graph_storage.execute_cypher(owns_query, {
-                    "user_id": user_id,
-                    "book_id": uid
-                })
-                
-                if owns_result and owns_result[0]['col_0']:
-                    metadata_json = owns_result[0]['col_0']
-                    if isinstance(metadata_json, str):
-                        import json
-                        custom_metadata = json.loads(metadata_json)
-                    elif isinstance(metadata_json, dict):
-                        custom_metadata = metadata_json
-                    
-                    print(f"🔍 [LOAD_CUSTOM_META_SERVICES] Loaded custom metadata from OWNS for book {uid}, user {user_id}: {custom_metadata}")
-                else:
-                    # Fallback: Get from HAS_CUSTOM_FIELD relationships if OWNS doesn't have data
-                    rel_query = """
-                    MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField)
-                    WHERE r.book_id = $book_id
-                    RETURN cf.name as field_name, r.field_value as field_value
-                    """
-                    
-                    rel_result = graph_storage.execute_cypher(rel_query, {
-                        "user_id": user_id,
-                        "book_id": uid
-                    })
-                    
-                    for row in rel_result:
-                        if 'col_0' in row and 'col_1' in row:
-                            field_name = row['col_0']
-                            field_value = row['col_1']
-                            if field_name and field_value:
-                                custom_metadata[field_name] = field_value
-                    
-                    print(f"🔍 [LOAD_CUSTOM_META_SERVICES] Loaded custom metadata from HAS_CUSTOM_FIELD for book {uid}, user {user_id}: {custom_metadata}")
-                            
-                result['custom_metadata'] = custom_metadata
-                print(f"✅ [LOAD_CUSTOM_META_SERVICES] Final custom metadata for book {uid}: {custom_metadata}")
-            except Exception as e:
-                print(f"❌ [LOAD_CUSTOM_META_SERVICES] Error loading custom metadata for book {uid}, user {user_id}: {e}")
-                import traceback
-                traceback.print_exc()
-                result['custom_metadata'] = {}
-            
-            return result
+            return book_data
+        
         except Exception as e:
-            current_app.logger.error(f"Error getting book by UID: {e}")
+            print(f"Error in get_book_by_uid_sync: {e}")
             return None
 
     def get_user_book_sync(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
@@ -744,6 +822,22 @@ class KuzuBookService:
             return run_async(self.delete_book(uid, user_id))
         except Exception as e:
             current_app.logger.error(f"Error deleting book: {e}")
+            return False
+
+    async def delete_book_globally(self, uid: str) -> bool:
+        """Delete a book globally (for all users)."""
+        try:
+            return await self.kuzu_service.delete_book_globally(uid)
+        except Exception as e:
+            current_app.logger.error(f"Error globally deleting book: {e}")
+            return False
+    
+    def delete_book_globally_sync(self, uid: str) -> bool:
+        """Delete book globally (sync version)."""
+        try:
+            return run_async(self.delete_book_globally(uid))
+        except Exception as e:
+            current_app.logger.error(f"Error globally deleting book: {e}")
             return False
 
     def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:

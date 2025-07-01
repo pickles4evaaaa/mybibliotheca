@@ -649,7 +649,7 @@ def create_app():
             
             # 🔥 CRITICAL FIX: Properly close the KuzuDB connection
             print(f"🛑 [APP_SHUTDOWN] Closing KuzuDB connection to ensure data persistence...")
-            storage.disconnect()
+            storage.connection.disconnect()  # Call disconnect on the KuzuGraphDB connection, not storage
             print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connection closed successfully")
             
         except Exception as e:
@@ -658,7 +658,7 @@ def create_app():
             try:
                 from .infrastructure.kuzu_graph import get_graph_storage
                 storage = get_graph_storage()
-                storage.disconnect()
+                storage.connection.disconnect()  # Call disconnect on the KuzuGraphDB connection, not storage
                 print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connection closed after error")
             except Exception as close_error:
                 print(f"🛑 [APP_SHUTDOWN] ❌ Failed to close KuzuDB connection: {close_error}")

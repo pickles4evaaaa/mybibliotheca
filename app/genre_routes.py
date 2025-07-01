@@ -168,10 +168,10 @@ def index():
         except Exception as sort_error:
             debug_log(f"⚠️ [GENRES] Error sorting categories: {sort_error}", "GENRE_VIEW")
         
-        # Get total unique book count for this user
-        debug_service_call("book_service", "get_user_books_sync", {"user_id": str(current_user.id)}, None, "BEFORE")
-        user_books = safe_call_sync_method(book_service.get_user_books_sync, str(current_user.id))
-        debug_service_call("book_service", "get_user_books_sync", {"user_id": str(current_user.id)}, user_books, "AFTER")
+        # Get total unique book count for this user with global visibility
+        debug_service_call("book_service", "get_all_books_with_user_overlay_sync", {"user_id": str(current_user.id)}, None, "BEFORE")
+        user_books = safe_call_sync_method(book_service.get_all_books_with_user_overlay_sync, str(current_user.id))
+        debug_service_call("book_service", "get_all_books_with_user_overlay_sync", {"user_id": str(current_user.id)}, user_books, "AFTER")
         total_book_count = len(user_books) if user_books else 0
         
         debug_log(f"📊 [GENRES] Displaying {len(all_categories)} categories ({len(root_categories)} root)", "GENRE_VIEW")

@@ -506,7 +506,7 @@ def privacy_settings():
 def my_activity():
     try:
         # Get user's books from Redis
-        user_books = book_service.get_user_books_sync(current_user.id)
+        user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
         total_books = len(user_books)
         
         # Get books added this year

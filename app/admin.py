@@ -155,7 +155,7 @@ def user_detail(user_id):
             abort(404)
         
         # Get user statistics from services
-        user_books = book_service.get_user_books_sync(user_id)
+        user_books = book_service.get_all_books_with_user_overlay_sync(str(user_id))
         book_count = len(user_books)
         
         reading_count = reading_log_service.get_user_logs_count_sync(user_id) if hasattr(reading_log_service, 'get_user_logs_count_sync') else 0

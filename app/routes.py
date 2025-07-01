@@ -2,6 +2,7 @@ from flask import Blueprint, current_app, render_template, request, redirect, ur
 from flask_login import login_required, current_user
 from .domain.models import Book as DomainBook, Author, Person, BookContribution, ContributionType, Publisher, Series, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
 from .services import book_service, user_service, reading_log_service, custom_field_service, import_mapping_service, direct_import_service
+from .simplified_book_service import SimplifiedBookService, SimplifiedBook
 from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image
 from datetime import datetime, date, timedelta
 import secrets
@@ -108,8 +109,8 @@ def health_check():
 @bp.route('/reading_history', methods=['GET'])
 @login_required
 def reading_history():
-    # Use service layer instead of direct SQLite query
-    domain_books = book_service.get_user_books_sync(str(current_user.id))
+    # Use service layer with global book visibility
+    domain_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
     
     # Convert domain books to dict format for API response
     books_data = []
@@ -237,11 +238,11 @@ def log_reading(uid):
 @bp.route('/book/<uid>/delete', methods=['POST'])
 @login_required
 def delete_book(uid):
-    # Delete through service layer
-    success = book_service.delete_book_sync(uid, str(current_user.id))
+    # Delete globally through service layer
+    success = book_service.delete_book_globally_sync(uid)
     
     if success:
-        flash('Book deleted successfully.')
+        flash('Book deleted globally for all users.')
     else:
         flash('Failed to delete book.', 'error')
         
@@ -346,8 +347,8 @@ def library():
     search_query = request.args.get('search', '')
     sort_option = request.args.get('sort', 'title_asc')  # Default to title A-Z
 
-    # Use Redis service layer to get all user books (with relationship data)
-    user_books = book_service.get_user_books_sync(str(current_user.id))
+    # Use service layer with global book visibility
+    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
@@ -536,6 +537,13 @@ def library():
                         self.series = None
                     if not hasattr(self, 'locations'):
                         self.locations = []
+                    
+                    # Handle cover URL field mismatch - template expects cover_url but data has cover_image_url
+                    if hasattr(self, 'cover_image_url') and not hasattr(self, 'cover_url'):
+                        self.cover_url = getattr(self, 'cover_image_url')
+                    elif hasattr(self, 'cover_url') and not hasattr(self, 'cover_image_url'):
+                        self.cover_image_url = getattr(self, 'cover_url')
+                    
                     # Handle ownership data
                     ownership = data.get('ownership', {})
                     for key, value in ownership.items():
@@ -930,6 +938,41 @@ def view_book_enhanced(uid):
                     self.series = None
                 if not hasattr(self, 'custom_metadata'):
                     self.custom_metadata = {}
+                # Handle cover URL field mismatch - template expects cover_url but data has cover_image_url
+                if hasattr(self, 'cover_image_url') and not hasattr(self, 'cover_url'):
+                    self.cover_url = getattr(self, 'cover_image_url')
+                elif hasattr(self, 'cover_url') and not hasattr(self, 'cover_image_url'):
+                    self.cover_image_url = getattr(self, 'cover_url')
+                
+                # Handle location field - if location_id exists but locations is empty, get location name
+                if hasattr(self, 'location_id') and self.location_id and (not hasattr(self, 'locations') or not self.locations):
+                    try:
+                        from app.location_service import LocationService
+                        from app.infrastructure.kuzu_graph import get_kuzu_connection
+                        
+                        kuzu_connection = get_kuzu_connection()
+                        location_service = LocationService(kuzu_connection.connect())
+                        # Get the current user's ID from the data or the global current_user
+                        user_id = data.get('user_id') or (current_user.id if 'current_user' in globals() and current_user else None)
+                        if user_id:
+                            user_locations = location_service.get_user_locations(str(user_id))
+                            
+                            # Find the location object by ID
+                            for user_loc in user_locations:
+                                if hasattr(user_loc, 'id') and user_loc.id == self.location_id:
+                                    self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
+                                    break
+                            else:
+                                # If location not found in user's locations, use the ID as fallback
+                                self.locations = [{'id': self.location_id, 'name': f'Location {self.location_id}'}]
+                        else:
+                            # No user context available
+                            self.locations = [{'id': self.location_id, 'name': f'Location {self.location_id}'}]
+                    except Exception as e:
+                        # Fallback: treat location_id as the name with better formatting
+                        if self.location_id:
+                            self.locations = [{'id': self.location_id, 'name': f'Location {self.location_id}'}]
+                
                 # Handle ownership data
                 ownership = data.get('ownership', {})
                 for key, value in ownership.items():
@@ -1321,8 +1364,8 @@ def edit_book_custom_metadata(uid):
 @bp.route('/month_review/<int:year>/<int:month>.jpg')
 @login_required  
 def month_review(year, month):
-    # Query books finished in the given month/year by current user using Redis service
-    user_books = book_service.get_user_books_sync(str(current_user.id))
+    # Query books finished in the given month/year by current user using global book visibility
+    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
     
     # Filter books finished in the specified month/year
     start_date = datetime(year, month, 1).date()
@@ -1362,6 +1405,103 @@ def month_review(year, month):
 @bp.route('/add_book_from_search', methods=['POST'])
 @login_required
 def add_book_from_search():
+    # 🔥 SIMPLIFIED ARCHITECTURE INTERCEPT FOR SEARCH RESULTS
+    # Use simplified service to avoid complex transaction issues
+    try:
+        print(f"📚 [SEARCH_INTERCEPT] Using simplified architecture for search book addition")
+        
+        title = request.form.get('title', '').strip()
+        author = request.form.get('author', '').strip()
+        isbn = request.form.get('isbn', '').strip()
+        cover_url = request.form.get('cover_url', '').strip()
+        description = request.form.get('description', '').strip()
+        publisher = request.form.get('publisher', '').strip()
+        published_date = request.form.get('published_date', '').strip()
+        page_count_str = request.form.get('page_count', '').strip()
+        categories_str = request.form.get('categories', '').strip()
+        language = request.form.get('language', '').strip() or 'en'
+        
+        if not title:
+            flash('Error: Title is required to add a book.', 'danger')
+            return redirect(url_for('main.library'))
+        
+        # Parse page count
+        page_count = None
+        if page_count_str:
+            try:
+                page_count = int(page_count_str)
+            except ValueError:
+                pass
+        
+        # Parse categories
+        categories = []
+        if categories_str:
+            categories = [cat.strip() for cat in categories_str.split(',') if cat.strip()]
+        
+        # Normalize ISBN
+        isbn13 = None
+        isbn10 = None
+        if isbn:
+            clean_isbn = ''.join(filter(str.isdigit, isbn))
+            if len(clean_isbn) == 13:
+                isbn13 = clean_isbn
+            elif len(clean_isbn) == 10:
+                isbn10 = clean_isbn
+        
+        # Auto-fetch cover if not provided and ISBN is available
+        if not cover_url and (isbn13 or isbn10):
+            try:
+                from .utils import get_google_books_cover
+                isbn_for_cover = isbn13 or isbn10
+                auto_cover = get_google_books_cover(isbn_for_cover)
+                if auto_cover:
+                    cover_url = auto_cover
+                    print(f"📷 [SEARCH] Auto-fetched cover from Google Books: {cover_url}")
+                else:
+                    print(f"📷 [SEARCH] No cover found for ISBN: {isbn_for_cover}")
+            except Exception as e:
+                print(f"⚠️ [SEARCH] Failed to auto-fetch cover: {e}")
+        
+        # Create simplified book data
+        book_data = SimplifiedBook(
+            title=title,
+            author=author or "Unknown Author",
+            isbn13=isbn13,
+            isbn10=isbn10,
+            description=description,
+            publisher=publisher,
+            published_date=published_date,
+            page_count=page_count,
+            language=language,
+            cover_url=cover_url,
+            categories=categories
+        )
+        
+        # Use simplified service with default ownership settings
+        service = SimplifiedBookService()
+        success = service.add_book_to_user_library(
+            book_data=book_data,
+            user_id=current_user.id,
+            reading_status='plan_to_read',  # Default for search results
+            ownership_status='owned',       # Default 
+            media_type='physical'          # Default
+        )
+        
+        if success:
+            flash(f'Successfully added "{title}" to your library!', 'success')
+            print(f"✅ [SEARCH_INTERCEPT] Successfully added book using simplified architecture")
+        else:
+            flash('Failed to add book. Please try again.', 'danger')
+            print(f"❌ [SEARCH_INTERCEPT] Failed to add book using simplified architecture")
+            
+        return redirect(url_for('main.library'))
+        
+    except Exception as e:
+        print(f"❌ [SEARCH_INTERCEPT] Simplified architecture failed: {e}")
+        flash('Error adding book. Please try again.', 'danger')
+        return redirect(url_for('main.library'))
+    
+    # ORIGINAL FUNCTION BELOW (kept as fallback, but should never be reached)
     title = request.form.get('title')
     author = request.form.get('author')
     isbn = request.form.get('isbn')
@@ -1469,8 +1609,8 @@ def add_book_from_search():
 def download_db():
     """Export user data from Redis to CSV format."""
     try:
-        # Get all user books from Redis
-        user_books = book_service.get_user_books_sync(current_user.id)
+        # Get all user books with global visibility
+        user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
         
         # Create CSV export
         import io
@@ -1547,8 +1687,8 @@ def user_profile(user_id):
             flash('This user has not enabled profile sharing.', 'warning')
             return redirect(url_for('main.stats'))
         
-        # Get user's books from Redis
-        all_user_books = book_service.get_user_books_sync(user_id)
+        # Get user's books with global visibility
+        all_user_books = book_service.get_all_books_with_user_overlay_sync(str(user_id))
         
         # Calculate statistics from the book list
         current_year = datetime.now().year
@@ -1660,15 +1800,15 @@ def bulk_delete_books():
     
     for uid in selected_uids:
         try:
-            print(f"Attempting to delete book {uid}")
-            success = book_service.delete_book_sync(uid, str(current_user.id))
-            print(f"Delete result for {uid}: {success}")
+            print(f"Attempting to globally delete book {uid}")
+            success = book_service.delete_book_globally_sync(uid)
+            print(f"Global delete result for {uid}: {success}")
             if success:
                 deleted_count += 1
             else:
                 failed_count += 1
         except Exception as e:
-            print(f"Error deleting book {uid}: {e}")
+            print(f"Error globally deleting book {uid}: {e}")
             import traceback
             traceback.print_exc()
             failed_count += 1
@@ -1676,7 +1816,7 @@ def bulk_delete_books():
     print(f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed")
     
     if deleted_count > 0:
-        flash(f'Successfully deleted {deleted_count} book(s).', 'success')
+        flash(f'Successfully deleted {deleted_count} book(s) globally.', 'success')
     if failed_count > 0:
         flash(f'Failed to delete {failed_count} book(s).', 'error')
     
@@ -1701,8 +1841,8 @@ def stats():
     month_start = today.replace(day=1)
     year_start = today.replace(month=1, day=1)
     
-    # Get user books for stats calculations
-    user_books = book_service.get_user_books_sync(str(current_user.id))
+    # Get user books for stats calculations with global visibility
+    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
     
     # Calculate user stats - use getattr for safe attribute access
     # Helper function to safely get date from finish_date (handles both date and datetime objects)
@@ -1824,8 +1964,8 @@ def search_books_in_library():
     location_filter = request.args.get('location', '')
     search_query = request.args.get('search', '')
 
-    # Use Redis service layer to get all user books (with relationship data)
-    user_books = book_service.get_user_books_sync(str(current_user.id))
+    # Use service layer with global book visibility
+    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
     
     # Apply filters in Python (Redis doesn't have complex querying like SQL)
     filtered_books = user_books
@@ -1935,6 +2075,118 @@ def search_books_in_library():
 @login_required
 def add_book_manual():
     """Add a book manually from the library page"""
+    # 🔥 SIMPLIFIED ARCHITECTURE INTERCEPT
+    # Use simplified service to avoid complex transaction issues
+    try:
+        print(f"📚 [INTERCEPT] Using simplified architecture for manual book addition")
+        
+        # Get form data
+        title = request.form['title'].strip()
+        if not title:
+            flash('Error: Title is required to add a book.', 'danger')
+            return redirect(url_for('main.library'))
+        
+        author = request.form.get('author', '').strip()
+        isbn = request.form.get('isbn', '').strip()
+        subtitle = request.form.get('subtitle', '').strip()
+        publisher_name = request.form.get('publisher', '').strip()
+        description = request.form.get('description', '').strip()
+        page_count_str = request.form.get('page_count', '').strip()
+        language = request.form.get('language', '').strip() or 'en'
+        cover_url = request.form.get('cover_url', '').strip()
+        published_date_str = request.form.get('published_date', '').strip()
+        series = request.form.get('series', '').strip()
+        series_volume = request.form.get('series_volume', '').strip()
+        
+        # Parse page count
+        page_count = None
+        if page_count_str:
+            try:
+                page_count = int(page_count_str)
+            except ValueError:
+                pass
+        
+        # Parse categories from manual_categories field
+        categories = []
+        if request.form.get('manual_categories'):
+            categories = [cat.strip() for cat in request.form.get('manual_categories').split(',') if cat.strip()]
+        
+        # Get location
+        location_id = request.form.get('location_id')
+        
+        # Get ownership details
+        reading_status = request.form.get('reading_status', 'plan_to_read')
+        ownership_status = request.form.get('ownership_status', 'owned')
+        media_type = request.form.get('media_type', 'physical')
+        
+        # Normalize ISBN
+        isbn13 = None
+        isbn10 = None
+        if isbn:
+            clean_isbn = ''.join(filter(str.isdigit, isbn))
+            if len(clean_isbn) == 13:
+                isbn13 = clean_isbn
+            elif len(clean_isbn) == 10:
+                isbn10 = clean_isbn
+        
+        # Auto-fetch cover if not provided and ISBN is available
+        if not cover_url and (isbn13 or isbn10):
+            try:
+                from .utils import get_google_books_cover
+                isbn_for_cover = isbn13 or isbn10
+                auto_cover = get_google_books_cover(isbn_for_cover)
+                if auto_cover:
+                    cover_url = auto_cover
+                    print(f"📷 [MANUAL] Auto-fetched cover from Google Books: {cover_url}")
+                else:
+                    print(f"📷 [MANUAL] No cover found for ISBN: {isbn_for_cover}")
+            except Exception as e:
+                print(f"⚠️ [MANUAL] Failed to auto-fetch cover: {e}")
+        
+        # Create simplified book data
+        book_data = SimplifiedBook(
+            title=title,
+            author=author or "Unknown Author",
+            isbn13=isbn13,
+            isbn10=isbn10,
+            subtitle=subtitle,
+            description=description,
+            publisher=publisher_name,
+            published_date=published_date_str,
+            page_count=page_count,
+            language=language,
+            cover_url=cover_url,
+            series=series,
+            series_volume=series_volume,
+            categories=categories
+        )
+        
+        # Use simplified service
+        service = SimplifiedBookService()
+        success = service.add_book_to_user_library(
+            book_data=book_data,
+            user_id=current_user.id,
+            reading_status=reading_status,
+            ownership_status=ownership_status,
+            media_type=media_type,
+            location_id=location_id
+        )
+        
+        if success:
+            flash(f'Successfully added "{title}" to your library!', 'success')
+            print(f"✅ [INTERCEPT] Successfully added book using simplified architecture")
+        else:
+            flash('Failed to add book. Please try again.', 'danger')
+            print(f"❌ [INTERCEPT] Failed to add book using simplified architecture")
+            
+        return redirect(url_for('main.library'))
+        
+    except Exception as e:
+        print(f"❌ [INTERCEPT] Simplified architecture failed: {e}")
+        flash('Error adding book. Please try again.', 'danger')
+        return redirect(url_for('main.library'))
+    
+    # ORIGINAL FUNCTION BELOW (kept as fallback, but should never be reached)
     # Validate required fields
     title = request.form['title'].strip()
     if not title:
@@ -4214,7 +4466,7 @@ def delete_person(person_id):
         print(f"🧹 [DELETE_PERSON] Starting orphaned relationship cleanup for person {person_id}")
         
         # Get all user's books first to check which ones actually exist
-        user_books = safe_call_sync_method(book_service.get_user_books_sync, str(current_user.id))
+        user_books = safe_call_sync_method(book_service.get_all_books_with_user_overlay_sync, str(current_user.id))
         if user_books is None:
             user_books = []
         

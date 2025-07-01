@@ -92,8 +92,8 @@ def parse_book_data(data):
 def get_books():
     """Get all books for the current user."""
     try:
-        # Use service layer to get user books
-        domain_books = book_service.get_user_books_sync(current_user.id)
+        # Use service layer with global book visibility
+        domain_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
         
         # Convert to API response format
         books_data = [serialize_book(book) for book in domain_books]
@@ -277,9 +277,9 @@ def search_books():
         language = request.args.get('language', '').strip()
         author = request.args.get('author', '').strip()
         
-        # For now, use the existing get_user_books and filter in Python
+        # For now, use the existing get_all_books_with_user_overlay_sync and filter in Python
         # TODO: Implement proper search in service layer
-        domain_books = book_service.get_user_books_sync(current_user.id)
+        domain_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
         
         # Apply filters
         filtered_books = []

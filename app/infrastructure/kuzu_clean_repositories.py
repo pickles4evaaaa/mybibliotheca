@@ -1007,6 +1007,38 @@ class CleanKuzuBookRepository:
             logger.error(f"❌ Failed to get all categories: {e}")
             return []
 
+    async def delete(self, book_id: str) -> bool:
+        """Delete a book globally and all its relationships."""
+        try:
+            logger.info(f"🗑️ Starting global deletion of book: {book_id}")
+            
+            # Delete all relationships involving this book first
+            queries = [
+                "MATCH (p:Person)-[r:AUTHORED]->(b:Book {id: $book_id}) DELETE r",
+                "MATCH (u:User)-[r:OWNS]->(b:Book {id: $book_id}) DELETE r", 
+                "MATCH (b:Book {id: $book_id})-[r:CATEGORIZED_AS]->(c:Category) DELETE r",
+                "MATCH (b:Book {id: $book_id})-[r:PUBLISHED_BY]->(p:Publisher) DELETE r",
+                "MATCH (b:Book {id: $book_id})-[r:PART_OF]->(s:Series) DELETE r"
+            ]
+            
+            for query in queries:
+                try:
+                    self.db.query(query, {"book_id": book_id})
+                    logger.debug(f"✅ Executed relationship deletion query")
+                except Exception as e:
+                    logger.warning(f"⚠️ Non-critical error deleting relationships: {e}")
+            
+            # Finally delete the book node itself
+            delete_query = "MATCH (b:Book {id: $book_id}) DELETE b"
+            result = self.db.query(delete_query, {"book_id": book_id})
+            
+            logger.info(f"✅ Successfully deleted book globally: {book_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to delete book {book_id}: {e}")
+            return False
+
 
 class CleanKuzuUserBookRepository:
     """Repository for user-book relationships."""
@@ -1435,3 +1467,521 @@ class CleanKuzuCategoryRepository:
         except Exception as e:
             logger.error(f"❌ Failed to get all categories: {e}")
             return []
+    
+    async def delete(self, category_id: str) -> bool:
+        """Delete a category."""
+        try:
+            query = """
+            MATCH (c:Category {id: $category_id})
+            DETACH DELETE c
+            """
+            
+            results = self.db.query(query, {"category_id": category_id})
+            success = True  # KuzuDB doesn't return explicit success for DELETE
+            
+            if success:
+                logger.info(f"✅ Deleted category {category_id}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to delete category: {e}")
+            return False
+
+
+class CleanKuzuBookRepository:
+    """Clean book repository using simplified Kuzu schema."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    async def create(self, book: Any) -> Optional[Any]:
+        """Create a new book with relationships."""
+        try:
+            print(f"📚 [REPO] Starting book creation: {getattr(book, 'title', 'unknown')}")
+            print(f"📚 [REPO] Book ID: {getattr(book, 'id', 'none')}")
+            
+            # Debug contributors
+            contributors = getattr(book, 'contributors', [])
+            print(f"📚 [REPO] Contributors: {len(contributors)}")
+            for i, contrib in enumerate(contributors):
+                person = getattr(contrib, 'person', None)
+                person_name = getattr(person, 'name', 'unknown') if person else 'no person'
+                contrib_type = getattr(contrib, 'contribution_type', 'unknown')
+                print(f"📚 [REPO]   {i}: {person_name} ({contrib_type})")
+            
+            # Debug categories
+            categories = getattr(book, 'categories', [])
+            raw_categories = getattr(book, 'raw_categories', None)
+            print(f"📚 [REPO] Categories: {len(categories)} items: {categories}")
+            print(f"📚 [REPO] Raw categories: {raw_categories}")
+            
+            # Debug publisher
+            publisher = getattr(book, 'publisher', None)
+            if publisher:
+                publisher_name = getattr(publisher, 'name', 'unknown')
+                print(f"📚 [REPO] Publisher: {publisher_name} (type: {type(publisher)})")
+            else:
+                print(f"📚 [REPO] Publisher: none")
+            
+            if not getattr(book, 'id', None):
+                if hasattr(book, 'id'):
+                    book.id = str(uuid.uuid4())
+            
+            book_data = {
+                'id': getattr(book, 'id', str(uuid.uuid4())),
+                'title': getattr(book, 'title', ''),
+                'normalized_title': getattr(book, 'normalized_title', None) or getattr(book, 'title', '').lower(),
+                'isbn13': getattr(book, 'isbn13', ''),
+                'isbn10': getattr(book, 'isbn10', ''),
+                'description': getattr(book, 'description', ''),
+                'published_date': getattr(book, 'published_date', None),
+                'page_count': getattr(book, 'page_count', 0),
+                'language': getattr(book, 'language', 'en'),
+                'cover_url': getattr(book, 'cover_url', ''),
+                'average_rating': getattr(book, 'average_rating', 0.0),
+                'rating_count': getattr(book, 'rating_count', 0),
+                'created_at': getattr(book, 'created_at', datetime.utcnow())
+            }
+            
+            # Create the book node first
+            success = self.db.create_node('Book', book_data)
+            if not success:
+                logger.error(f"❌ Failed to create book node: {getattr(book, 'title', 'unknown')}")
+                return None
+            
+            logger.info(f"✅ Created book node: {getattr(book, 'title', 'unknown')}")
+            book_id = book_data['id']
+            
+            # Create author relationships
+            contributors = getattr(book, 'contributors', [])
+            if contributors:
+                logger.info(f"🔗 Creating {len(contributors)} contributor relationships")
+                for i, contribution in enumerate(contributors):
+                    await self._create_contributor_relationship(book_id, contribution, i)
+            
+            # Create category relationships
+            categories = getattr(book, 'categories', [])
+            raw_categories = getattr(book, 'raw_categories', None)
+            
+            # Process raw_categories if available (from API data)
+            if raw_categories:
+                await self._create_category_relationships_from_raw(book_id, raw_categories)
+            # Otherwise use existing categories
+            elif categories:
+                logger.info(f"🔗 Creating {len(categories)} category relationships")
+                for category in categories:
+                    await self._create_category_relationship(book_id, category)
+            
+            # Create publisher relationship if present
+            publisher = getattr(book, 'publisher', None)
+            if publisher:
+                await self._create_publisher_relationship(book_id, publisher)
+            
+            logger.info(f"✅ Created book with all relationships: {getattr(book, 'title', 'unknown')}")
+            return book
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create book: {e}")
+            return None
+    
+    async def _create_contributor_relationship(self, book_id: str, contribution: Any, order_index: int = 0):
+        """Create a contributor relationship (AUTHORED, EDITED, etc.)."""
+        try:
+            person = getattr(contribution, 'person', None)
+            if not person:
+                logger.warning(f"⚠️ Contribution has no person: {contribution}")
+                return
+            
+            # Create or find the person
+            person_id = await self._ensure_person_exists(person)
+            if not person_id:
+                logger.warning(f"⚠️ Could not create/find person: {getattr(person, 'name', 'unknown')}")
+                return
+            
+            # Determine relationship type and properties
+            contribution_type = getattr(contribution, 'contribution_type', None)
+            if hasattr(contribution_type, 'value'):
+                contribution_str = contribution_type.value.upper()
+            else:
+                contribution_str = str(contribution_type).upper() if contribution_type else 'AUTHORED'
+            
+            # Map contribution types to relationship types
+            rel_type_map = {
+                'AUTHORED': 'AUTHORED',
+                'EDITED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'NARRATED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'CONTRIBUTED': 'AUTHORED'  # Use AUTHORED relationship with role property
+            }
+            
+            rel_type = rel_type_map.get(contribution_str, 'AUTHORED')
+            
+            # Create the relationship with properties
+            role = contribution_str.lower()
+            rel_props = {
+                'role': role,
+                'order_index': getattr(contribution, 'order', order_index)
+            }
+            
+            success = self.db.create_relationship(
+                'Person', person_id, rel_type, 'Book', book_id, rel_props
+            )
+            
+            if success:
+                logger.info(f"✅ Created {rel_type} relationship: {getattr(person, 'name', 'unknown')} -> {book_id}")
+            else:
+                logger.error(f"❌ Failed to create {rel_type} relationship: {getattr(person, 'name', 'unknown')} -> {book_id}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create contributor relationship: {e}")
+    
+    async def _ensure_person_exists(self, person: Any) -> Optional[str]:
+        """Ensure a person exists in the database, create if necessary."""
+        try:
+            person_name = getattr(person, 'name', '')
+            if not person_name:
+                return None
+            
+            # Try to find existing person by name
+            normalized_name = person_name.strip().lower()
+            query = """
+            MATCH (p:Person) 
+            WHERE p.normalized_name = $normalized_name OR p.name = $name
+            RETURN p.id as id
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {
+                "normalized_name": normalized_name,
+                "name": person_name
+            })
+            
+            if results and (results[0].get('result') or results[0].get('col_0')):
+                person_id = results[0].get('result') or results[0]['col_0']
+                logger.debug(f"Found existing person: {person_name} (ID: {person_id})")
+                return person_id
+            
+            # Create new person
+            person_id = getattr(person, 'id', None) or str(uuid.uuid4())
+            # Only include properties that exist in the Person schema
+            person_data = {
+                'id': person_id,
+                'name': person_name,
+                'normalized_name': normalized_name,
+                'birth_year': getattr(person, 'birth_year', None),
+                'death_year': getattr(person, 'death_year', None),
+                'bio': getattr(person, 'bio', ''),
+                'created_at': getattr(person, 'created_at', datetime.utcnow())
+            }
+            # Note: Filtering out birth_place, website, updated_at as they don't exist in DB schema
+            
+            success = self.db.create_node('Person', person_data)
+            if success:
+                logger.info(f"✅ Created new person: {person_name} (ID: {person_id})")
+                return person_id
+            else:
+                logger.error(f"❌ Failed to create person: {person_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure person exists: {e}")
+            return None
+    
+    async def _create_category_relationships_from_raw(self, book_id: str, raw_categories: Any):
+        """Create category relationships from raw category data (strings or list)."""
+        try:
+            # Handle different raw_categories formats
+            if isinstance(raw_categories, str):
+                # Split comma-separated string
+                category_names = [cat.strip() for cat in raw_categories.split(',') if cat.strip()]
+            elif isinstance(raw_categories, list):
+                category_names = [str(cat).strip() for cat in raw_categories if str(cat).strip()]
+            else:
+                logger.warning(f"⚠️ Unknown raw_categories format: {type(raw_categories)}")
+                return
+            
+            logger.info(f"🔗 Processing {len(category_names)} categories from raw data: {category_names}")
+            
+            for category_name in category_names:
+                await self._create_category_relationship_by_name(book_id, category_name)
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create category relationships from raw data: {e}")
+    
+    async def _create_category_relationship_by_name(self, book_id: str, category_name: str):
+        """Create a category relationship by category name (create category if needed)."""
+        try:
+            category_id = await self._ensure_category_exists(category_name)
+            if not category_id:
+                logger.warning(f"⚠️ Could not create/find category: {category_name}")
+                return
+            
+            # Create the CATEGORIZED_AS relationship
+            success = self.db.create_relationship(
+                'Book', book_id, 'CATEGORIZED_AS', 'Category', category_id, {}
+            )
+            
+            if success:
+                logger.info(f"✅ Created CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+            else:
+                logger.error(f"❌ Failed to create CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create category relationship: {e}")
+    
+    async def _create_category_relationship(self, book_id: str, category: Any):
+        """Create a category relationship with an existing category object."""
+        try:
+            category_id = getattr(category, 'id', None)
+            category_name = getattr(category, 'name', '')
+            
+            if not category_id and category_name:
+                # Try to find/create by name
+                category_id = await self._ensure_category_exists(category_name)
+            
+            if not category_id:
+                logger.warning(f"⚠️ Could not determine category ID for: {category}")
+                return
+            
+            # Create the relationship
+            success = self.db.create_relationship(
+                'Book', book_id, 'CATEGORIZED_AS', 'Category', category_id, {}
+            )
+            
+            if success:
+                logger.info(f"✅ Created CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+            else:
+                logger.error(f"❌ Failed to create CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create category relationship: {e}")
+    
+    async def _ensure_category_exists(self, category_name: str) -> Optional[str]:
+        """Ensure a category exists in the database, create if necessary."""
+        try:
+            if not category_name:
+                return None
+            
+            # Normalize the category name
+            normalized_name = category_name.strip().lower()
+            
+            # Try to find existing category
+            query = """
+            MATCH (c:Category) 
+            WHERE c.normalized_name = $normalized_name OR c.name = $name
+            RETURN c.id as id
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {
+                "normalized_name": normalized_name,
+                "name": category_name
+            })
+            
+            if results and (results[0].get('result') or results[0].get('col_0')):
+                category_id = results[0].get('result') or results[0]['col_0']
+                logger.debug(f"Found existing category: {category_name} (ID: {category_id})")
+                return category_id
+            
+            # Create new category
+            category_id = str(uuid.uuid4())
+            # Include all properties that exist in the Category schema
+            category_data = {
+                'id': category_id,
+                'name': category_name,
+                'normalized_name': normalized_name,
+                'description': '',
+                'level': 0,  # Default to root level
+                'color': '',
+                'icon': '',
+                'book_count': 0,
+                'user_book_count': 0,
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow()
+            }
+            # Note: parent_id and aliases are not included as they need special handling
+            
+            success = self.db.create_node('Category', category_data)
+            if success:
+                logger.info(f"✅ Created new category: {category_name} (ID: {category_id})")
+                return category_id
+            else:
+                logger.error(f"❌ Failed to create category: {category_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure category exists: {e}")
+            return None
+    
+    async def _create_publisher_relationship(self, book_id: str, publisher: Any):
+        """Create a publisher relationship."""
+        try:
+            publisher_id = await self._ensure_publisher_exists(publisher)
+            if not publisher_id:
+                logger.warning(f"⚠️ Could not create/find publisher: {publisher}")
+                return
+            
+            # Create the PUBLISHED_BY relationship
+            success = self.db.create_relationship(
+                'Book', book_id, 'PUBLISHED_BY', 'Publisher', publisher_id, {}
+            )
+            
+            if success:
+                logger.info(f"✅ Created PUBLISHED_BY relationship: {book_id} -> {getattr(publisher, 'name', publisher)}")
+            else:
+                logger.error(f"❌ Failed to create PUBLISHED_BY relationship: {book_id} -> {getattr(publisher, 'name', publisher)}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create publisher relationship: {e}")
+    
+    async def _ensure_publisher_exists(self, publisher: Any) -> Optional[str]:
+        """Ensure a publisher exists in the database, create if necessary."""
+        try:
+            # Handle both string and object publishers
+            if isinstance(publisher, str):
+                publisher_name = publisher
+                publisher_country = None
+                publisher_founded = None
+            else:
+                publisher_name = getattr(publisher, 'name', '')
+                publisher_country = getattr(publisher, 'country', None)
+                publisher_founded = getattr(publisher, 'founded_year', None)
+            
+            if not publisher_name:
+                return None
+            
+            # Try to find existing publisher
+            query = """
+            MATCH (p:Publisher {name: $name})
+            RETURN p.id as id
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"name": publisher_name})
+            
+            if results and (results[0].get('result') or results[0].get('col_0')):
+                publisher_id = results[0].get('result') or results[0]['col_0']
+                logger.debug(f"Found existing publisher: {publisher_name} (ID: {publisher_id})")
+                return publisher_id
+            
+            # Create new publisher
+            publisher_id = str(uuid.uuid4())
+            # Only include properties that exist in the Publisher schema
+            publisher_data = {
+                'id': publisher_id,
+                'name': publisher_name,
+                'country': publisher_country or '',
+                'founded_year': publisher_founded,
+                'created_at': datetime.utcnow()
+            }
+            # Note: Filtering out updated_at as it doesn't exist in DB schema
+            
+            success = self.db.create_node('Publisher', publisher_data)
+            if success:
+                logger.info(f"✅ Created new publisher: {publisher_name} (ID: {publisher_id})")
+                return publisher_id
+            else:
+                logger.error(f"❌ Failed to create publisher: {publisher_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure publisher exists: {e}")
+            return None
+    
+    # ========================================
+    # Missing Methods Required by kuzu_integration
+    # ========================================
+    
+    async def get_by_id(self, book_id: str) -> Optional[Dict[str, Any]]:
+        """Get a book by ID."""
+        try:
+            query = """
+            MATCH (b:Book {id: $book_id})
+            RETURN b
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"book_id": book_id})
+            logger.info(f"🔍 Query results for book {book_id}: {results}")
+            
+            if results and len(results) > 0:
+                result = results[0]
+                logger.info(f"🔍 First result structure: {result}")
+                
+                # Try different ways to access the book data - try 'result' first (single column)
+                book_data = None
+                if 'result' in result:
+                    book_data = result['result']
+                    logger.info(f"✅ Found book via 'result' key: {type(book_data)}")
+                elif 'col_0' in result:
+                    book_data = result['col_0']
+                    logger.info(f"✅ Found book via 'col_0' key: {type(book_data)}")
+                else:
+                    # Fallback: return whatever we got
+                    logger.warning(f"⚠️ Unexpected result structure for book {book_id}: {result}")
+                    return result
+                
+                # Convert book data to dict
+                if book_data is not None:
+                    if hasattr(book_data, '__dict__'):
+                        book_dict = dict(book_data)
+                        logger.info(f"✅ Converted book object to dict with keys: {list(book_dict.keys())}")
+                        return book_dict
+                    elif isinstance(book_data, dict):
+                        logger.info(f"✅ Book data is already dict with keys: {list(book_data.keys())}")
+                        return book_data
+                    else:
+                        logger.warning(f"⚠️ Book data is unexpected type: {type(book_data)}")
+                        return {'id': book_id, 'data': str(book_data)}
+            
+            logger.warning(f"⚠️ No results found for book {book_id}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get book by ID {book_id}: {e}")
+            return None
+    
+    async def get_by_uid(self, book_uid: str) -> Optional[Dict[str, Any]]:
+        """Get a book by UID (alias for get_by_id for backward compatibility)."""
+        logger.info(f"🔍 get_by_uid called with: {book_uid}")
+        result = await self.get_by_id(book_uid)
+        logger.info(f"🔍 get_by_uid result: {result}")
+        return result
+    
+    async def get_by_isbn(self, isbn: str) -> Optional[Dict[str, Any]]:
+        """Get a book by ISBN (13 or 10)."""
+        try:
+            query = """
+            MATCH (b:Book)
+            WHERE b.isbn13 = $isbn OR b.isbn10 = $isbn
+            RETURN b
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"isbn": isbn})
+            
+            if results and len(results) > 0:
+                result = results[0]
+                
+                # Try different ways to access the book data - try 'result' first (single column)
+                book_data = None
+                if 'result' in result:
+                    book_data = result['result']
+                elif 'col_0' in result:
+                    book_data = result['col_0']
+                else:
+                    return result
+                
+                # Convert book data to dict
+                if book_data is not None:
+                    if hasattr(book_data, '__dict__'):
+                        return dict(book_data)
+                    elif isinstance(book_data, dict):
+                        return book_data
+                    else:
+                        return {'isbn': isbn, 'data': str(book_data)}
+            
+            return None
+            
+        except Exception as e:
+            logger.error

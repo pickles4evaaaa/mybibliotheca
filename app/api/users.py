@@ -151,7 +151,7 @@ def get_user_library(user_id):
         
         # Get user's books using service layer
         from ..services import book_service
-        domain_books = book_service.get_user_books_sync(user_id)
+        domain_books = book_service.get_all_books_with_user_overlay_sync(str(user_id))
         
         # Convert to API response format
         books_data = []

@@ -795,6 +795,29 @@ class KuzuIntegrationService:
             'is_active': location.is_active,
             'created_at': location.created_at
         }
+    
+    async def delete_book_globally(self, book_uid: str) -> bool:
+        """Delete a book globally from the database (for all users)."""
+        if not self._initialized and not self.initialize():
+            return False
+        
+        try:
+            # The UID is the same as the book ID in this system
+            book_id = book_uid
+            
+            # Delete the book globally (this will cascade delete all relationships)
+            success = await self.book_repo.delete(book_id)
+            
+            if success:
+                logger.info(f"✅ Globally deleted book {book_uid}")
+            else:
+                logger.warning(f"Failed to globally delete book {book_uid}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to globally delete book: {e}")
+            return False
 
 
 # Global instance for use throughout the application
