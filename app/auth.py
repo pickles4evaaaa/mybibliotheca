@@ -21,7 +21,7 @@ def setup():
     debug_auth(f"Setup route accessed - Method: {request.method}")
     debug_auth("Redirecting to new onboarding system")
     
-    # Check if any users already exist using Redis service
+    # Check if any users already exist using Kuzu service
     try:
         user_count = user_service.get_user_count_sync()
         debug_auth(f"Current user count in database: {user_count}")
@@ -118,14 +118,14 @@ def setup_status():
             'user_count': user_count,
             'csrf_enabled': current_app.config.get('WTF_CSRF_ENABLED', False),
             'debug_mode': current_app.config.get('DEBUG_MODE', False),
-            'redis_connected': True  # If we got here, Redis is working
+            'kuzu_connected': True  # If we got here, Kuzu is working
         }
     except Exception as e:
         return {
             'setup_completed': False,
             'user_count': 0,
             'error': str(e),
-            'redis_connected': False
+            'kuzu_connected': False
         }, 500
 
 @auth.route('/login', methods=['GET', 'POST'])
@@ -152,7 +152,7 @@ def login():
         debug_auth(f"Login form submitted for user: {form.username.data}")
         debug_csrf("Form validation passed, checking CSRF")
         
-        # Try to find user by username or email using Redis service
+        # Try to find user by username or email using Kuzu service
         user = user_service.get_user_by_username_or_email_sync(form.username.data)
         
         if user:
@@ -194,7 +194,7 @@ def login():
                 return redirect(next_page)
             else:
                 debug_auth("Password check failed")
-                # Failed password - increment failed attempts and save to Redis
+                # Failed password - increment failed attempts and save to Kuzu
                 user.increment_failed_login()
                 user_service.update_user_sync(user)
                 attempts_left = max(0, 5 - user.failed_login_attempts)
@@ -241,7 +241,7 @@ def register():
             existing_users = user_service.list_all()
             is_first_user = len(existing_users) == 0
             
-            # Create user through Redis service
+            # Create user through Kuzu service
             password_hash = generate_password_hash(form.password.data)
             domain_user = user_service.create_user_sync(
                 username=form.username.data,
@@ -269,7 +269,7 @@ def profile():
     
     if form.validate_on_submit():
         try:
-            # Update user profile through Redis service
+            # Update user profile through Kuzu service
             updated_user = user_service.update_user_profile_sync(
                 user_id=current_user.id,
                 username=form.username.data,
@@ -303,7 +303,7 @@ def change_password():
                 from werkzeug.security import generate_password_hash
                 new_password_hash = generate_password_hash(form.new_password.data)
                 
-                # Update password through Redis service
+                # Update password through Kuzu service
                 updated_user = user_service.update_user_password_sync(
                     user_id=current_user.id,
                     password_hash=new_password_hash,
@@ -347,7 +347,7 @@ def forced_password_change():
             from werkzeug.security import generate_password_hash
             new_password_hash = generate_password_hash(form.new_password.data)
             
-            # Update password through Redis service
+            # Update password through Kuzu service
             updated_user = user_service.update_user_password_sync(
                 user_id=current_user.id,
                 password_hash=new_password_hash,
@@ -455,16 +455,16 @@ def privacy_settings():
     
     if form.validate_on_submit():
         try:
-            # Get current user from Redis to ensure we have the latest data
-            user_from_redis = user_service.get_user_by_id_sync(current_user.id)
-            if user_from_redis:
+            # Get current user from Kuzu to ensure we have the latest data
+            user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_kuzu:
                 # Update privacy settings (excluding timezone)
-                user_from_redis.share_current_reading = form.share_current_reading.data
-                user_from_redis.share_reading_activity = form.share_reading_activity.data
-                user_from_redis.share_library = form.share_library.data
+                user_from_kuzu.share_current_reading = form.share_current_reading.data
+                user_from_kuzu.share_reading_activity = form.share_reading_activity.data
+                user_from_kuzu.share_library = form.share_library.data
                 
-                # Save through Redis service
-                updated_user = user_service.update_user_sync(user_from_redis)
+                # Save through Kuzu service
+                updated_user = user_service.update_user_sync(user_from_kuzu)
                 if updated_user:
                     # Update current_user object for immediate reflection
                     current_user.share_current_reading = updated_user.share_current_reading
@@ -505,7 +505,7 @@ def privacy_settings():
 @login_required
 def my_activity():
     try:
-        # Get user's books from Redis
+        # Get user's books from Kuzu
         user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
         total_books = len(user_books)
         
@@ -545,14 +545,14 @@ def update_streak_settings():
     
     if form.validate_on_submit():
         try:
-            # Get current user from Redis to ensure we have the latest data
-            user_from_redis = user_service.get_user_by_id_sync(current_user.id)
-            if user_from_redis:
+            # Get current user from Kuzu to ensure we have the latest data
+            user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_kuzu:
                 # Update reading streak offset
-                user_from_redis.reading_streak_offset = form.reading_streak_offset.data or 0
+                user_from_kuzu.reading_streak_offset = form.reading_streak_offset.data or 0
                 
-                # Save through Redis service
-                updated_user = user_service.update_user_sync(user_from_redis)
+                # Save through Kuzu service
+                updated_user = user_service.update_user_sync(user_from_kuzu)
                 if updated_user:
                     # Update current_user object for immediate reflection
                     current_user.reading_streak_offset = updated_user.reading_streak_offset
@@ -603,14 +603,14 @@ def update_timezone():
     
     if form.validate_on_submit():
         try:
-            # Get current user from Redis to ensure we have the latest data
-            user_from_redis = user_service.get_user_by_id_sync(current_user.id)
-            if user_from_redis:
+            # Get current user from Kuzu to ensure we have the latest data
+            user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_kuzu:
                 # Update timezone
-                user_from_redis.timezone = form.timezone.data
+                user_from_kuzu.timezone = form.timezone.data
                 
-                # Save through Redis service
-                updated_user = user_service.update_user_sync(user_from_redis)
+                # Save through Kuzu service
+                updated_user = user_service.update_user_sync(user_from_kuzu)
                 if updated_user:
                     # Update current_user object for immediate reflection
                     current_user.timezone = updated_user.timezone

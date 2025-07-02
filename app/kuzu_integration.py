@@ -255,6 +255,46 @@ class KuzuIntegrationService:
         except Exception as e:
             logger.error(f"Failed to get user count: {e}")
             return 0
+
+    async def update_user(self, user_id: str, user_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing user."""
+        if not self._initialized and not self.initialize():
+            return None
+        
+        try:
+            # Get the existing user first
+            existing_user = await self.user_repo.get_by_id(user_id)
+            if not existing_user:
+                logger.error(f"User {user_id} not found for update")
+                return None
+            
+            # Update the user fields
+            if 'username' in user_data:
+                existing_user.username = user_data['username']
+            if 'email' in user_data:
+                existing_user.email = user_data['email']
+            if 'password_hash' in user_data:
+                existing_user.password_hash = user_data['password_hash']
+            if 'display_name' in user_data:
+                existing_user.display_name = user_data['display_name']
+            if 'bio' in user_data:
+                existing_user.bio = user_data['bio']
+            if 'timezone' in user_data:
+                existing_user.timezone = user_data['timezone']
+            if 'is_admin' in user_data:
+                existing_user.is_admin = user_data['is_admin']
+            if 'is_active' in user_data:
+                existing_user.is_active = user_data['is_active']
+            
+            # Save the updated user
+            updated_user = await self.user_repo.update(existing_user)
+            if updated_user:
+                logger.info(f"Updated user: {updated_user.username}")
+                return self._user_to_dict(updated_user)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to update user {user_id}: {e}")
+            return None
     
     async def get_all_users(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """Get all users."""

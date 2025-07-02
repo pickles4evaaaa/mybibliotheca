@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
 """
-Book Ownership Transfer Utility
+🚨 OBSOLETE: Redis-based Book Transfer Tool
+
+This script is OBSOLETE and no longer works with the current Kuzu-based system.
+
+Use the new Kuzu-based transfer tool instead:
+    scripts/transfer_books_kuzu.py
+
+DEPRECATED: Book Ownership Transfer Utility
 ===============================
 
 This script transfers book ownership from one user to another in Redis.
 Useful for fixing migration user mapping issues.
 """
+
+print("🚨 OBSOLETE SCRIPT")
+print("=" * 50)
+print("This Redis-based transfer script is obsolete.")
+print("The system now uses Kuzu graph database.")
+print("")
+print("✅ Use the new script instead:")
+print("   python scripts/transfer_books_kuzu.py --help")
+print("")
+print("This old script has been preserved for reference but")
+print("will not work with the current system.")
+exit(1)
+
+# === OBSOLETE CODE BELOW (PRESERVED FOR REFERENCE) ===
 
 import sys
 import os

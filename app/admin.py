@@ -270,7 +270,7 @@ def delete_user(user_id):
         
         # Delete user (would need service implementation for cascading deletes)
         # For now, just mark as placeholder
-        flash(f'User deletion not fully implemented for Redis backend. User {username} would be deleted.', 'warning')
+        flash(f'User deletion not fully implemented for Kuzu backend. User {username} would be deleted.', 'warning')
         return redirect(url_for('admin.users'))
     except Exception as e:
         current_app.logger.error(f"Error deleting user {user_id}: {e}")
@@ -348,7 +348,7 @@ def reset_user_password(user_id):
                 user_service.update_user_sync(user)
                 
                 force_msg = " User will be required to change password on next login." if form.force_change.data else ""
-                flash(f'Password reset functionality not fully implemented for Redis backend. User {user.username} would be updated.{force_msg}', 'warning')
+                flash(f'Password reset functionality not fully implemented for Kuzu backend. User {user.username} would be updated.{force_msg}', 'warning')
                 return redirect(url_for('admin.user_detail', user_id=user.id))
             except ValueError as e:
                 flash(str(e), 'error')

@@ -28,7 +28,7 @@ from werkzeug.utils import secure_filename
 bp = Blueprint('main', __name__)
 
 # Import Progress Tracking
-import_jobs = {}  # In-memory storage for demo - use Redis/database in production
+import_jobs = {}  # In-memory storage for demo - use Kuzu database in production
 
 def _convert_published_date_to_date(published_date_str):
     """Convert published_date string to date object using enhanced date parser."""
@@ -611,7 +611,7 @@ def library():
                 else:
                     locations.add(str(loc))
 
-    # Get users through Redis service layer
+    # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync()
     
     # Convert domain users to simple objects for template compatibility
@@ -646,8 +646,8 @@ def library():
 def public_library():
     filter_status = request.args.get('filter', 'all')
     
-    # Use Redis service to get all books from all users
-    # TODO: Implement public library functionality in Redis service
+    # Use Kuzu service to get all books from all users
+    # TODO: Implement public library functionality in Kuzu service
     # For now, return empty list
     books = []
     
@@ -1692,7 +1692,7 @@ def add_book_from_search():
 @bp.route('/download_db', methods=['GET'])
 @login_required
 def download_db():
-    """Export user data from Redis to CSV format."""
+    """Export user data from Kuzu to CSV format."""
     try:
         # Get all user books with global visibility
         user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
@@ -1840,9 +1840,9 @@ def assign_book(uid):
             flash('Invalid user selected.', 'danger')
             return redirect(url_for('main.library'))
 
-        # For Redis, this would involve transferring the book to another user
+        # For Kuzu, this would involve transferring the book to another user
         # This is a complex operation that would need to be implemented in the service layer
-        flash('Book assignment feature needs to be implemented for Redis backend.', 'warning')
+        flash('Book assignment feature needs to be implemented for Kuzu backend.', 'warning')
         return redirect(url_for('main.library'))
     except Exception as e:
         current_app.logger.error(f"Error assigning book: {e}")
@@ -2052,7 +2052,7 @@ def search_books_in_library():
     # Use service layer with global book visibility
     user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
     
-    # Apply filters in Python (Redis doesn't have complex querying like SQL)
+    # Apply filters in Python (Kuzu doesn't have complex querying like SQL)
     filtered_books = user_books
     
     if search_query:
@@ -2113,7 +2113,7 @@ def search_books_in_library():
             # book.locations is a list of Location objects
             locations.update([loc.name for loc in book.locations if hasattr(loc, 'name')])
 
-    # Get users through Redis service layer
+    # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync()
     
     # Convert domain users to simple objects for template compatibility
@@ -3453,7 +3453,7 @@ def api_import_progress(task_id):
     """API endpoint for import progress."""
     print(f"Progress API called for task_id: {task_id} by user: {current_user.id}")
     
-    # Try Redis first, then fall back to memory
+    # Try Kuzu first, then fall back to memory
     job = get_job_from_kuzu(task_id) or import_jobs.get(task_id)
     print(f"Kuzu job found: {bool(get_job_from_kuzu(task_id))}")
     print(f"Memory job found: {bool(import_jobs.get(task_id))}")
@@ -5614,16 +5614,13 @@ def toggle_theme():
         # Toggle theme
         new_theme = 'dark' if current_theme == 'light' else 'light'
         
-        # Store theme preference in Redis for authenticated users
+        # Store theme preference in session for authenticated users
         if current_user.is_authenticated:
             from .infrastructure.kuzu_graph import get_graph_storage
-            # For themes, we'll use session storage instead of KuzuDB
+            # For themes, we use session storage instead of KuzuDB
             # since themes are UI preferences, not core data
-            # redis_client = get_graph_storage().redis
-            # theme_key = f'user_theme:{current_user.id}'
-            # redis_client.set(theme_key, new_theme)
         
-        # Also store in session as fallback
+        # Store in session
         session['theme'] = new_theme
         
         return jsonify({

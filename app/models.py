@@ -20,12 +20,12 @@ class _NoOpDatabase:
         return _NoOpSession()
     
     def create_all(self):
-        """No-op create_all - database creation disabled during Redis migration."""
-        print("⚠️  SQLite database creation disabled - using Redis only")
+        """No-op create_all - database creation disabled during Kuzu migration."""
+        print("⚠️  SQLite database creation disabled - using Kuzu only")
         pass
     
     def drop_all(self):
-        """No-op drop_all - database operations disabled during Redis migration."""
+        """No-op drop_all - database operations disabled during Kuzu migration."""
         pass
 
 
@@ -33,23 +33,23 @@ class _NoOpSession:
     """No-op session object that doesn't perform any operations."""
     
     def add(self, obj):
-        """No-op add - database operations disabled during Redis migration."""
-        print("⚠️  SQLite session.add() disabled - use Redis services instead")
+        """No-op add - database operations disabled during Kuzu migration."""
+        print("⚠️  SQLite session.add() disabled - use Kuzu services instead")
         pass
     
     def commit(self):
-        """No-op commit - database operations disabled during Redis migration."""
-        print("⚠️  SQLite session.commit() disabled - use Redis services instead")
+        """No-op commit - database operations disabled during Kuzu migration."""
+        print("⚠️  SQLite session.commit() disabled - use Kuzu services instead")
         pass
     
     def rollback(self):
-        """No-op rollback - database operations disabled during Redis migration."""
-        print("⚠️  SQLite session.rollback() disabled - use Redis services instead")
+        """No-op rollback - database operations disabled during Kuzu migration."""
+        print("⚠️  SQLite session.rollback() disabled - use Kuzu services instead")
         pass
     
     def delete(self, obj):
-        """No-op delete - database operations disabled during Redis migration."""
-        print("⚠️  SQLite session.delete() disabled - use Redis services instead")
+        """No-op delete - database operations disabled during Kuzu migration."""
+        print("⚠️  SQLite session.delete() disabled - use Kuzu services instead")
         pass
 
 
@@ -58,11 +58,11 @@ class _NoOpModel:
     
     @classmethod
     def query(cls):
-        print(f"⚠️  SQLite model {cls.__name__}.query disabled - use Redis services instead")
+        print(f"⚠️  SQLite model {cls.__name__}.query disabled - use Kuzu services instead")
         return _NoOpQuery()
     
     def __init__(self, **kwargs):
-        print(f"⚠️  SQLite model {self.__class__.__name__} instantiation disabled - use Redis services instead")
+        print(f"⚠️  SQLite model {self.__class__.__name__} instantiation disabled - use Kuzu services instead")
         # Set attributes to prevent errors, but don't save anywhere
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -152,5 +152,5 @@ class ReadingLog(_NoOpModel):
     pass
 
 
-# Note: Legacy SQLite models are disabled - use Redis services and domain models instead
+# Note: Legacy SQLite models are disabled - use Kuzu services and domain models instead
 # The migration is complete and app.services with app.domain.models should be used

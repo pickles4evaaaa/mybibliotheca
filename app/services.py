@@ -331,6 +331,44 @@ class KuzuUserService:
         """Get all users (sync version for form validation)."""
         return run_async(self.get_all_users(limit))
 
+    async def update_user(self, user: User) -> Optional[User]:
+        """Update an existing user (async version)."""
+        try:
+            user_data = {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'password_hash': user.password_hash,
+                'display_name': user.display_name,
+                'bio': user.bio,
+                'timezone': user.timezone,
+                'is_admin': user.is_admin,
+                'is_active': user.is_active
+            }
+            
+            updated_user_data = await self.kuzu_service.update_user(user.id, user_data)
+            if updated_user_data:
+                return User(
+                    id=updated_user_data['id'],
+                    username=updated_user_data['username'],
+                    email=updated_user_data['email'],
+                    password_hash=updated_user_data.get('password_hash', ''),
+                    display_name=updated_user_data.get('display_name'),
+                    bio=updated_user_data.get('bio'),
+                    timezone=updated_user_data.get('timezone', 'UTC'),
+                    is_admin=updated_user_data.get('is_admin', False),
+                    is_active=updated_user_data.get('is_active', True),
+                    created_at=updated_user_data.get('created_at')
+                )
+            return None
+        except Exception as e:
+            current_app.logger.error(f"Error updating user {user.id}: {e}")
+            return None
+
+    def update_user_sync(self, user: User) -> Optional[User]:
+        """Update an existing user (sync version for admin tools)."""
+        return run_async(self.update_user(user))
+
 
 class KuzuBookService:
     """Book service using clean Kuzu architecture."""
@@ -416,6 +454,48 @@ class KuzuBookService:
             return await self.kuzu_service.get_user_library(user_id, reading_status=reading_status, limit=limit)
         except Exception as e:
             current_app.logger.error(f"Error getting user library: {e}")
+            return []
+    
+    def get_all_books_sync(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get all books in the system without user overlay."""
+        try:
+            from .infrastructure.kuzu_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            # Get ALL books in the system
+            query = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (b)<-[authored:AUTHORED]-(p:Person)
+            OPTIONAL MATCH (b)-[categorized:CATEGORIZED_AS]->(c:Category)
+            RETURN b, collect(DISTINCT p), collect(DISTINCT c)
+            ORDER BY b.title
+            LIMIT $limit
+            """
+            
+            result = storage.query(query, {'limit': limit})
+            books = []
+            
+            for record in result:
+                if 'col_0' not in record:
+                    continue
+                    
+                book_data = record['col_0']
+                authors = record.get('col_1', []) or []
+                categories = record.get('col_2', []) or []
+                
+                # Create book dict with basic structure
+                # Handle both dict and node objects
+                if hasattr(book_data, '_properties'):
+                    book = dict(book_data._properties)
+                else:
+                    book = dict(book_data)
+                book['authors'] = [dict(author._properties) if hasattr(author, '_properties') else dict(author) for author in authors]
+                book['categories'] = [dict(category._properties) if hasattr(category, '_properties') else dict(category) for category in categories]
+                books.append(book)
+            
+            return books
+        except Exception as e:
+            current_app.logger.error(f"Error getting all books: {e}")
             return []
 
     def get_user_books_sync(self, user_id: str, reading_status: str = None,

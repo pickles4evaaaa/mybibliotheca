@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-SQLite to Redis Migration Script for Bibliotheca
+🚨 OBSOLETE: SQLite to Redis Migration Script
+
+This script is OBSOLETE and no longer relevant with the current Kuzu-based system.
+
+The system now uses Kuzu graph database exclusively. SQLite to Redis migration
+is no longer needed since we've moved from Redis to Kuzu.
+
+For current migration needs, see:
+- Migration admin panel in the web interface  
+- Manual data import tools in the application
+
+DEPRECATED: SQLite to Redis Migration Script for Bibliotheca
 ================================================
 
 This script migrates data from SQLite databases to the new Redis-based system.
@@ -12,6 +23,25 @@ Features:
 - Data validation and integrity checks
 - Rollback capability if migration fails
 - Detailed logging and progress reporting
+"""
+
+print("🚨 OBSOLETE SCRIPT")
+print("=" * 50)
+print("This SQLite-to-Redis migration script is obsolete.")
+print("The system now uses Kuzu graph database exclusively.")
+print("")
+print("❌ This migration path is no longer supported:")
+print("   SQLite → Redis → Kuzu")
+print("")
+print("✅ For current migration needs:")
+print("   - Use the web interface migration tools")
+print("   - Import data through the application")
+print("")
+print("This old script has been preserved for reference but")
+print("will not work with the current system.")
+exit(1)
+
+# === OBSOLETE CODE BELOW (PRESERVED FOR REFERENCE) ===
 
 Usage:
     python scripts/migrate_sqlite_to_redis.py --db-path path/to/database.db [--user-id user_id]

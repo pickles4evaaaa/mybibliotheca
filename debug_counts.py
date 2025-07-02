@@ -17,7 +17,7 @@ def debug_category_counts():
     try:
         # Import after adding to path
         from app.services import book_service
-        from app.infrastructure.redis_graph import get_graph_storage
+        from app.infrastructure.kuzu_graph import get_graph_storage
         
         # Get storage directly to inspect data
         storage = get_graph_storage()

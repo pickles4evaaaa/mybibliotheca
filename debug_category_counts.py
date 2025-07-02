@@ -16,7 +16,7 @@ def debug_category_counts():
     
     try:
         from app.services import book_service
-        from app.infrastructure.redis_graph import get_graph_storage
+        from app.infrastructure.kuzu_graph import get_graph_storage
         
         # Get all categories
         categories = book_service.list_all_categories_sync()

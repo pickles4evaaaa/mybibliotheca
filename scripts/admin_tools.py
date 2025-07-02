@@ -23,7 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     from app import create_app
     from app.domain.models import User
-    from app.services import RedisUserService
+    from app.services import user_service
     from config import Config
 except ImportError as e:
     print(f"❌ Error importing application modules: {e}")
@@ -66,10 +66,10 @@ def reset_admin_password(args):
     app = create_app()
     
     with app.app_context():
-        user_service = RedisUserService()
+        # Use the Kuzu-based user service
         
         # Find admin user
-        all_users = user_service.get_all_users()
+        all_users = user_service.get_all_users_sync()
         admin_users = [u for u in all_users if u.is_admin]
         
         if not admin_users:
@@ -120,12 +120,11 @@ def create_admin(args):
     app = create_app()
     
     with app.app_context():
-        # Import Redis services
-        from app.services import RedisUserService
+        # Import Kuzu services
         from werkzeug.security import generate_password_hash
         
         try:
-            user_service = RedisUserService()
+            # Use the Kuzu-based user service
             
             # Check if admin already exists
             user_count = user_service.get_user_count_sync()
@@ -209,11 +208,10 @@ def promote_user(args):
             print("💡 Usage: promote-user --username <username>")
             return False
         
-        # Import Redis services
-        from app.services import RedisUserService
+        # Import Kuzu services
         
         try:
-            user_service = RedisUserService()
+            # Use the Kuzu-based user service
             
             user = user_service.get_user_by_username_sync(args.username)
             if not user:
@@ -240,11 +238,10 @@ def list_users(args):
     app = create_app()
     
     with app.app_context():
-        # Import Redis services
-        from app.services import RedisUserService
+        # Import Kuzu services
         
         try:
-            user_service = RedisUserService()
+            # Use the Kuzu-based user service
             users = user_service.get_all_users_sync()
             
             if not users:
@@ -277,8 +274,8 @@ def system_stats(args):
     app = create_app()
     
     with app.app_context():
-        user_service = RedisUserService()
-        all_users = user_service.get_all_users()
+        # Use the Kuzu-based user service
+        all_users = user_service.get_all_users_sync()
         
         total_users = len(all_users)
         admin_users = len([u for u in all_users if u.is_admin])

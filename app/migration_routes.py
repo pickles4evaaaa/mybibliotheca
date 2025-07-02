@@ -198,10 +198,12 @@ def run_migration(migration_id):
         scripts_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts')
         sys.path.append(scripts_path)
         
-        from migrate_sqlite_to_redis import WebBasedSQLiteToRedisMigrator
-        
-        # Run the migration with current user ID
-        results = []
+        # Legacy migration script - users start fresh with Kuzu
+        return jsonify({
+            'success': False,
+            'error': 'Redis migration is no longer supported. Users start fresh with Kuzu database.',
+            'results': []
+        })
         total_migrated = 0
         
         # Use current user ID directly from session

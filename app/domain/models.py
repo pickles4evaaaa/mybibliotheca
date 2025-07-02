@@ -126,7 +126,7 @@ class ImportMappingTemplate:
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
     def to_dict(self):
-        """Convert template to a dictionary for Redis storage."""
+        """Convert template to a dictionary for database storage."""
         return {
             "id": self.id,
             "user_id": self.user_id,
@@ -143,8 +143,8 @@ class ImportMappingTemplate:
 
     @classmethod
     def from_dict(cls, data: dict):
-        """Create a template from a dictionary (e.g., from Redis)."""
-        # Decode byte strings from Redis
+        """Create a template from a dictionary (e.g., from database)."""
+        # Decode byte strings if needed
         decoded_data = {k.decode('utf-8') if isinstance(k, bytes) else k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
         
         return cls(
