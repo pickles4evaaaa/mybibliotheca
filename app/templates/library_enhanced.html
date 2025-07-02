@@ -553,7 +553,7 @@
                                         <img src="{{ book.cover_url }}" 
                                              class="card-img-top book-cover" 
                                              alt="{{ book.title }} cover"
-                                             onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}'">
+                                             onerror="this.onerror=null;this.src='{{ url_for(&quot;static&quot;, filename=&quot;bookshelf.png&quot;) }}';">
                                     {% else %}
                                         <div class="bg-light d-flex align-items-center justify-content-center book-cover">
                                             <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
