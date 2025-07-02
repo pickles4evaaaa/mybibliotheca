@@ -648,7 +648,7 @@ class KuzuBookRepository(BookRepository):
         
         # Copy non-empty fields from source to target if target field is empty
         for field in ['description', 'isbn13', 'isbn10', 'publisher', 'published_date', 
-                     'page_count', 'language', 'cover_image_url']:
+                     'page_count', 'language', 'cover_url']:
             source_val = getattr(source_book, field, None)
             target_val = getattr(target_book, field, None)
             if source_val and not target_val:

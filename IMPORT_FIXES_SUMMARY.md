@@ -103,7 +103,7 @@ Created comprehensive testing that verified:
 
 ## Files Modified
 
-- `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/routes.py`
+- `app/routes.py`
   - Modified `import_books()` function (lines ~2350-2450)
   - Enhanced `auto_create_custom_fields()` function (lines ~2900-3000)
   - Improved import job execution logging (lines ~3470-3520)

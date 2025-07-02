@@ -253,7 +253,7 @@
                                 {% for book in recent_books %}
                                 <tr>
                                     <td>
-                                        <a href="{{ url_for('main.view_book', uid=book.uid) }}" 
+                                        <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" 
                                            class="text-decoration-none">
                                             {{ book.title }}
                                         </a>

@@ -51,7 +51,8 @@
                             <div class="position-relative d-inline-block">
                                 {% if book.cover_url %}
                                     <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                         class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover">
+                                         class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover"
+                                         onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
                                 {% else %}
                                     <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
                                          style="height: 300px; width: 200px; margin: 0 auto;" id="book-cover">
@@ -227,13 +228,31 @@
                                     </div>
                                     
                                     <!-- Location -->
-                                    {% if book.locations %}
+                                    {% if book.locations and book.locations|length > 0 %}
                                     <div class="col-md-4 mb-2">
                                         <div class="d-flex align-items-center">
                                             <i class="bi bi-geo-alt me-2 text-secondary"></i>
                                             <div>
                                                 <small class="text-muted d-block">Location</small>
-                                                <span class="fw-medium">{{ book.locations[0].name if book.locations[0].name else book.locations[0] }}</span>
+                                                <span class="fw-medium">
+                                                    {% if book.locations[0].name %}
+                                                        {{ book.locations[0].name }}
+                                                    {% elif book.locations[0] is string %}
+                                                        {{ book.locations[0] }}
+                                                    {% else %}
+                                                        {{ book.locations[0] }}
+                                                    {% endif %}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% elif book.location_id %}
+                                    <div class="col-md-4 mb-2">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi bi-geo-alt me-2 text-secondary"></i>
+                                            <div>
+                                                <small class="text-muted d-block">Location</small>
+                                                <span class="fw-medium">{{ book.location_id }}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -311,7 +330,7 @@
                                     <div class="mb-3">
                                         <label for="edit_location_id" class="form-label fw-medium">Location</label>
                                         <select class="form-select" id="edit_location_id" name="location_id" 
-                                                data-current-location="{{ book.locations[0].name if book.locations and book.locations[0].name else (book.locations[0] if book.locations else '') }}">
+                                                data-current-location="{% if book.locations and book.locations|length > 0 %}{% if book.locations[0].name %}{{ book.locations[0].name }}{% else %}{{ book.locations[0] }}{% endif %}{% elif book.location_id %}{{ book.location_id }}{% endif %}">
                                             <option value="">Select location...</option>
                                         </select>
                                     </div>

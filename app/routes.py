@@ -139,9 +139,18 @@ def reading_history():
 @bp.route('/fetch_book/<isbn>', methods=['GET'])
 def fetch_book(isbn):
     book_data = fetch_book_data(isbn) or {}
-    google_cover = get_google_books_cover(isbn)
-    if google_cover:
-        book_data['cover'] = google_cover
+    
+    # Get comprehensive data from Google Books including description
+    google_data = get_google_books_cover(isbn, fetch_title_author=True)
+    if google_data:
+        # Merge Google Books data, prioritizing existing data
+        for key, value in google_data.items():
+            if key not in book_data or not book_data[key]:
+                book_data[key] = value
+        # Ensure cover field is set correctly
+        if google_data.get('cover'):
+            book_data['cover'] = google_data['cover']
+    
     # If neither source provides a cover, set a default
     if not book_data.get('cover'):
         book_data['cover'] = url_for('static', filename='bookshelf.png')
@@ -204,11 +213,7 @@ def bulk_import():
     flash('Book import has been upgraded! You can now map CSV fields and track progress in real-time.', 'info')
     return redirect(url_for('main.import_books'))
 
-@bp.route('/book/<uid>', methods=['GET', 'POST'])
-@login_required
-def view_book(uid):
-    """Redirect to enhanced book view."""
-    return redirect(url_for('main.view_book_enhanced', uid=uid))
+# Legacy route removed - all book views now use enhanced view directly
 
 @bp.route('/book/<uid>/log', methods=['POST'])
 @login_required
@@ -233,7 +238,7 @@ def log_reading(uid):
             flash('Reading day logged.')
     else:
         flash('Error: Book ID not found.', 'error')
-    return redirect(url_for('main.view_book', uid=uid))
+    return redirect(url_for('main.view_book_enhanced', uid=uid))
 
 @bp.route('/book/<uid>/delete', methods=['POST'])
 @login_required
@@ -266,7 +271,7 @@ def toggle_finished(uid):
         book_service.update_book_sync(uid, str(current_user.id), finish_date=date.today())
         flash('Book marked as finished.')
     
-    return redirect(url_for('main.view_book', uid=uid))
+    return redirect(url_for('main.view_book_enhanced', uid=uid))
 
 @bp.route('/book/<uid>/start_reading', methods=['POST'])
 @login_required
@@ -333,7 +338,7 @@ def update_status(uid):
 
     book_service.update_book_sync(uid, str(current_user.id), **update_data)
     flash('Book status updated.')
-    return redirect(url_for('main.view_book', uid=uid))
+    return redirect(url_for('main.view_book_enhanced', uid=uid))
 
 @bp.route('/library')
 @login_required
@@ -537,13 +542,6 @@ def library():
                         self.series = None
                     if not hasattr(self, 'locations'):
                         self.locations = []
-                    
-                    # Handle cover URL field mismatch - template expects cover_url but data has cover_image_url
-                    if hasattr(self, 'cover_image_url') and not hasattr(self, 'cover_url'):
-                        self.cover_url = getattr(self, 'cover_image_url')
-                    elif hasattr(self, 'cover_url') and not hasattr(self, 'cover_image_url'):
-                        self.cover_image_url = getattr(self, 'cover_url')
-                    
                     # Handle ownership data
                     ownership = data.get('ownership', {})
                     for key, value in ownership.items():
@@ -836,7 +834,7 @@ def edit_book(uid):
             flash('Book updated successfully.', 'success')
         else:
             flash('Failed to update book.', 'error')
-        return redirect(url_for('main.view_book', uid=uid))
+        return redirect(url_for('main.view_book_enhanced', uid=uid))
         
     # Get book categories for editing
     book_categories = []
@@ -938,11 +936,62 @@ def view_book_enhanced(uid):
                     self.series = None
                 if not hasattr(self, 'custom_metadata'):
                     self.custom_metadata = {}
-                # Handle cover URL field mismatch - template expects cover_url but data has cover_image_url
-                if hasattr(self, 'cover_image_url') and not hasattr(self, 'cover_url'):
-                    self.cover_url = getattr(self, 'cover_image_url')
-                elif hasattr(self, 'cover_url') and not hasattr(self, 'cover_image_url'):
-                    self.cover_image_url = getattr(self, 'cover_url')
+                # DEBUG: Log all cover-related fields
+                cover_url_value = getattr(self, 'cover_url', None)
+                debug_log(f"🖼️ [VIEW] Cover URL field - cover_url: {cover_url_value}", "BOOK_VIEW")
+                
+                # Cover URL field is already correct (cover_url is the database field)
+                # No field mapping needed since we're using the correct field name everywhere
+                
+                # DEBUG: Log all ISBN-related fields
+                isbn13_value = getattr(self, 'isbn13', None)
+                isbn10_value = getattr(self, 'isbn10', None)
+                isbn_value = getattr(self, 'isbn', None)
+                debug_log(f"📚 [VIEW] ISBN fields - isbn13: {isbn13_value}, isbn10: {isbn10_value}, isbn: {isbn_value}", "BOOK_VIEW")
+                
+                # Handle ISBN field consistency - Template expects isbn13/isbn10 specifically
+                if not hasattr(self, 'isbn') and (hasattr(self, 'isbn13') or hasattr(self, 'isbn10')):
+                    self.isbn = getattr(self, 'isbn13', None) or getattr(self, 'isbn10', None)
+                    debug_log(f"📚 [VIEW] Mapped primary ISBN: {self.isbn}", "BOOK_VIEW")
+                
+                # REVERSE NORMALIZATION: If we have 'isbn' but not isbn13/isbn10, normalize it
+                isbn_value = getattr(self, 'isbn', None)
+                if isbn_value and (not hasattr(self, 'isbn13') or not getattr(self, 'isbn13')):
+                    import re
+                    # Clean and normalize the ISBN
+                    clean_isbn = re.sub(r'[^0-9X]', '', str(isbn_value).upper())
+                    if len(clean_isbn) == 13:
+                        self.isbn13 = clean_isbn
+                        debug_log(f"📚 [VIEW] Normalized generic ISBN to isbn13: {clean_isbn}", "BOOK_VIEW")
+                    elif len(clean_isbn) == 10:
+                        self.isbn10 = clean_isbn
+                        debug_log(f"📚 [VIEW] Normalized generic ISBN to isbn10: {clean_isbn}", "BOOK_VIEW")
+                
+                # Ensure both fields exist for template (even if None)
+                if not hasattr(self, 'isbn13'):
+                    self.isbn13 = None
+                if not hasattr(self, 'isbn10'):
+                    self.isbn10 = None
+                
+                # DEBUG: Log all category-related fields
+                categories_value = getattr(self, 'categories', None)
+                genre_value = getattr(self, 'genre', None)
+                genres_value = getattr(self, 'genres', None)
+                debug_log(f"🏷️ [VIEW] Category fields - categories: {categories_value}, genre: {genre_value}, genres: {genres_value}", "BOOK_VIEW")
+                
+                # Handle category field consistency
+                if not hasattr(self, 'categories') or not self.categories:
+                    if hasattr(self, 'genres') and self.genres:
+                        self.categories = self.genres
+                        debug_log(f"🏷️ [VIEW] Mapped genres to categories: {self.categories}", "BOOK_VIEW")
+                    elif hasattr(self, 'genre') and self.genre:
+                        self.categories = [self.genre] if isinstance(self.genre, str) else self.genre
+                        debug_log(f"🏷️ [VIEW] Mapped genre to categories: {self.categories}", "BOOK_VIEW")
+                
+                # Final debug
+                final_cover_url = getattr(self, 'cover_url', None)
+                final_cover_url_alt = getattr(self, 'cover_url', None)
+                debug_log(f"🖼️ [VIEW] Final cover URLs - cover_url: {final_cover_url}, cover_url_alt: {final_cover_url_alt}", "BOOK_VIEW")
                 
                 # Handle location field - if location_id exists but locations is empty, get location name
                 if hasattr(self, 'location_id') and self.location_id and (not hasattr(self, 'locations') or not self.locations):
@@ -952,26 +1001,33 @@ def view_book_enhanced(uid):
                         
                         kuzu_connection = get_kuzu_connection()
                         location_service = LocationService(kuzu_connection.connect())
-                        # Get the current user's ID from the data or the global current_user
-                        user_id = data.get('user_id') or (current_user.id if 'current_user' in globals() and current_user else None)
-                        if user_id:
-                            user_locations = location_service.get_user_locations(str(user_id))
+                        
+                        # Get current user ID properly
+                        user_id_for_location = str(current_user.id) if 'current_user' in globals() and hasattr(current_user, 'id') else str(data.get('user_id', ''))
+                        if user_id_for_location:
+                            user_locations = location_service.get_user_locations(user_id_for_location)
                             
                             # Find the location object by ID
                             for user_loc in user_locations:
-                                if hasattr(user_loc, 'id') and user_loc.id == self.location_id:
+                                if hasattr(user_loc, 'id') and str(user_loc.id) == str(self.location_id):
                                     self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
                                     break
-                            else:
-                                # If location not found in user's locations, use the ID as fallback
-                                self.locations = [{'id': self.location_id, 'name': f'Location {self.location_id}'}]
-                        else:
-                            # No user context available
-                            self.locations = [{'id': self.location_id, 'name': f'Location {self.location_id}'}]
+                            
+                            # If location not found by ID, check if location_id is actually a name
+                            if not hasattr(self, 'locations') or not self.locations:
+                                for user_loc in user_locations:
+                                    if hasattr(user_loc, 'name') and str(user_loc.name) == str(self.location_id):
+                                        self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
+                                        break
+                                        
                     except Exception as e:
-                        # Fallback: treat location_id as the name with better formatting
+                        print(f"Error populating location data: {e}")
+                        # Fallback: treat location_id as the name
                         if self.location_id:
-                            self.locations = [{'id': self.location_id, 'name': f'Location {self.location_id}'}]
+                            self.locations = [{'id': self.location_id, 'name': self.location_id}]
+                        # Fallback: treat location_id as the name
+                        if self.location_id:
+                            self.locations = [{'id': self.location_id, 'name': self.location_id}]
                 
                 # Handle ownership data
                 ownership = data.get('ownership', {})
@@ -1002,6 +1058,35 @@ def view_book_enhanced(uid):
         
         user_book = BookObj(user_book)
         debug_log(f"✅ [VIEW] Converted dictionary to object for template compatibility", "BOOK_VIEW")
+        
+        # Debug ISBN fields specifically and ensure final normalization
+        isbn13 = getattr(user_book, 'isbn13', None)
+        isbn10 = getattr(user_book, 'isbn10', None) 
+        isbn_generic = getattr(user_book, 'isbn', None)
+        cover_url = getattr(user_book, 'cover_url', None)
+        
+        debug_log(f"🔍 [VIEW] ISBN Debug - ISBN13: {isbn13}, ISBN10: {isbn10}, Generic ISBN: {isbn_generic}", "BOOK_VIEW")
+        debug_log(f"🔍 [VIEW] Cover Debug - Cover URL: {cover_url}", "BOOK_VIEW")
+        debug_log(f"🔍 [VIEW] Available book attributes: {[attr for attr in dir(user_book) if not attr.startswith('_')]}", "BOOK_VIEW")
+        
+        # FINAL NORMALIZATION: Ensure ISBN fields are available for template
+        if not isbn13 and not isbn10 and isbn_generic:
+            import re
+            clean_isbn = re.sub(r'[^0-9X]', '', str(isbn_generic).upper())
+            if len(clean_isbn) == 13:
+                user_book.isbn13 = clean_isbn
+                debug_log(f"📚 [VIEW] Final: Normalized generic ISBN to isbn13: {clean_isbn}", "BOOK_VIEW")
+            elif len(clean_isbn) == 10:
+                user_book.isbn10 = clean_isbn
+                debug_log(f"📚 [VIEW] Final: Normalized generic ISBN to isbn10: {clean_isbn}", "BOOK_VIEW")
+        
+        # Ensure both fields exist (template expects them)
+        if not hasattr(user_book, 'isbn13'):
+            user_book.isbn13 = isbn13
+        if not hasattr(user_book, 'isbn10'):
+            user_book.isbn10 = isbn10
+        if not hasattr(user_book, 'isbn'):
+            user_book.isbn = isbn13 or isbn10  # Fallback for any other template expectations
 
     # Get book categories
     book_categories = []
@@ -1813,7 +1898,7 @@ def bulk_delete_books():
             traceback.print_exc()
             failed_count += 1
     
-    print(f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed")
+    print(f"Bulk global delete completed: {deleted_count} deleted, {failed_count} failed")
     
     if deleted_count > 0:
         flash(f'Successfully deleted {deleted_count} book(s) globally.', 'success')
@@ -2119,31 +2204,178 @@ def add_book_manual():
         ownership_status = request.form.get('ownership_status', 'owned')
         media_type = request.form.get('media_type', 'physical')
         
-        # Normalize ISBN
+        # Enhanced ISBN processing with comprehensive field mapping
         isbn13 = None
         isbn10 = None
+        api_data = None
+        cached_cover_url = None
+        
         if isbn:
-            clean_isbn = ''.join(filter(str.isdigit, isbn))
-            if len(clean_isbn) == 13:
-                isbn13 = clean_isbn
-            elif len(clean_isbn) == 10:
+            # Import required modules
+            import re
+            import requests
+            import uuid
+            from pathlib import Path
+            
+            # Normalize ISBN with proper conversion
+            clean_isbn = re.sub(r'[^0-9X]', '', str(isbn).upper())
+            
+            if len(clean_isbn) == 10:
+                # ISBN10 - validate and convert to ISBN13
                 isbn10 = clean_isbn
+                # Convert ISBN10 to ISBN13
+                isbn13_base = "978" + clean_isbn[:9]
+                check_sum = 0
+                for i, digit in enumerate(isbn13_base):
+                    check_sum += int(digit) * (1 if i % 2 == 0 else 3)
+                check_digit = (10 - (check_sum % 10)) % 10
+                isbn13 = isbn13_base + str(check_digit)
+                print(f"📚 [MANUAL] Converted ISBN10 {isbn10} to ISBN13 {isbn13}")
+            elif len(clean_isbn) == 13:
+                # ISBN13 - try to convert to ISBN10 if it starts with 978
+                isbn13 = clean_isbn
+                if clean_isbn.startswith('978'):
+                    isbn10_base = clean_isbn[3:12]
+                    check_sum = 0
+                    for i, digit in enumerate(isbn10_base):
+                        check_sum += int(digit) * (10 - i)
+                    check_digit = (11 - (check_sum % 11)) % 11
+                    if check_digit == 10:
+                        check_digit = 'X'
+                    elif check_digit == 11:
+                        check_digit = '0'
+                    isbn10 = isbn10_base + str(check_digit)
+                    print(f"📚 [MANUAL] Converted ISBN13 {isbn13} to ISBN10 {isbn10}")
+            
+            # Enhanced API lookup with both Google Books and OpenLibrary
+            normalized_isbn = isbn13 or isbn10
+            if normalized_isbn:
+                print(f"🔍 [MANUAL] Performing enhanced API lookup for ISBN: {normalized_isbn}")
+                
+                try:
+                    # Google Books lookup
+                    google_data = None
+                    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{normalized_isbn}"
+                    response = requests.get(url, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        items = data.get("items")
+                        if items:
+                            volume_info = items[0]["volumeInfo"]
+                            google_data = {
+                                'title': volume_info.get('title', ''),
+                                'subtitle': volume_info.get('subtitle', ''),
+                                'description': volume_info.get('description', ''),
+                                'authors_list': volume_info.get('authors', []),
+                                'publisher': volume_info.get('publisher', ''),
+                                'published_date': volume_info.get('publishedDate', ''),
+                                'page_count': volume_info.get('pageCount'),
+                                'language': volume_info.get('language', 'en'),
+                                'categories': volume_info.get('categories', []),
+                                'isbn10': isbn10,
+                                'isbn13': isbn13,
+                                'cover_url': None
+                            }
+                            
+                            # Get best quality cover image
+                            image_links = volume_info.get("imageLinks", {})
+                            for size in ['extraLarge', 'large', 'medium', 'thumbnail', 'smallThumbnail']:
+                                if size in image_links:
+                                    google_data['cover_url'] = image_links[size].replace('http://', 'https://')
+                                    break
+                            
+                            print(f"✅ [MANUAL] Google Books data retrieved")
+                    
+                    # OpenLibrary lookup
+                    openlibrary_data = None
+                    url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{normalized_isbn}&format=json&jscmd=data"
+                    response = requests.get(url, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        book_key = f"ISBN:{normalized_isbn}"
+                        if book_key in data:
+                            book = data[book_key]
+                            
+                            # Extract categories/subjects
+                            subjects = book.get('subjects', [])
+                            ol_categories = []
+                            for subject in subjects[:10]:  # Limit to 10
+                                if isinstance(subject, dict):
+                                    ol_categories.append(subject.get('name', ''))
+                                else:
+                                    ol_categories.append(str(subject))
+                            ol_categories = [cat for cat in ol_categories if cat]
+                            
+                            openlibrary_data = {
+                                'categories': ol_categories,
+                                'description': book.get('notes', {}).get('value', '') if isinstance(book.get('notes'), dict) else str(book.get('notes', '')),
+                                'cover_url': book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
+                            }
+                            print(f"✅ [MANUAL] OpenLibrary data retrieved")
+                    
+                    # Merge API data
+                    if google_data or openlibrary_data:
+                        api_data = google_data or {}
+                        if openlibrary_data:
+                            # Merge categories
+                            google_cats = set(api_data.get('categories', []))
+                            ol_cats = set(openlibrary_data.get('categories', []))
+                            api_data['categories'] = list(google_cats.union(ol_cats))
+                            
+                            # Use OpenLibrary description if Google doesn't have one
+                            if not api_data.get('description') and openlibrary_data.get('description'):
+                                api_data['description'] = openlibrary_data['description']
+                        
+                        print(f"🎯 [MANUAL] Merged API data: {len(api_data.get('categories', []))} categories, cover: {bool(api_data.get('cover_url'))}")
+                        
+                        # Use API data to fill in missing form fields
+                        if not cover_url and api_data.get('cover_url'):
+                            cover_url = api_data['cover_url']
+                        if not description and api_data.get('description'):
+                            description = api_data['description']
+                        if not publisher_name and api_data.get('publisher'):
+                            publisher_name = api_data['publisher']
+                        if not page_count and api_data.get('page_count'):
+                            page_count = api_data['page_count']
+                        if not published_date_str and api_data.get('published_date'):
+                            published_date_str = api_data['published_date']
+                        if not categories and api_data.get('categories'):
+                            categories = api_data['categories']
+                        
+                        # Download and cache cover image
+                        if cover_url:
+                            try:
+                                book_temp_id = str(uuid.uuid4())
+                                covers_dir = Path(__file__).parent.parent / 'static' / 'covers'
+                                covers_dir.mkdir(exist_ok=True)
+                                
+                                # Generate filename
+                                file_extension = '.jpg'
+                                if cover_url.lower().endswith('.png'):
+                                    file_extension = '.png'
+                                
+                                filename = f"{book_temp_id}{file_extension}"
+                                filepath = covers_dir / filename
+                                
+                                # Download the image
+                                response = requests.get(cover_url, timeout=10, stream=True)
+                                response.raise_for_status()
+                                
+                                with open(filepath, 'wb') as f:
+                                    for chunk in response.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                                
+                                cached_cover_url = f"/static/covers/{filename}"
+                                cover_url = cached_cover_url
+                                print(f"🖼️ [MANUAL] Cover cached: {cached_cover_url}")
+                                
+                            except Exception as e:
+                                print(f"⚠️ [MANUAL] Failed to cache cover: {e}")
+                
+                except Exception as e:
+                    print(f"⚠️ [MANUAL] API lookup failed: {e}")
         
-        # Auto-fetch cover if not provided and ISBN is available
-        if not cover_url and (isbn13 or isbn10):
-            try:
-                from .utils import get_google_books_cover
-                isbn_for_cover = isbn13 or isbn10
-                auto_cover = get_google_books_cover(isbn_for_cover)
-                if auto_cover:
-                    cover_url = auto_cover
-                    print(f"📷 [MANUAL] Auto-fetched cover from Google Books: {cover_url}")
-                else:
-                    print(f"📷 [MANUAL] No cover found for ISBN: {isbn_for_cover}")
-            except Exception as e:
-                print(f"⚠️ [MANUAL] Failed to auto-fetch cover: {e}")
-        
-        # Create simplified book data
+        # Create simplified book data with enhanced API fields
         book_data = SimplifiedBook(
             title=title,
             author=author or "Unknown Author",
@@ -2155,11 +2387,23 @@ def add_book_manual():
             published_date=published_date_str,
             page_count=page_count,
             language=language,
-            cover_url=cover_url,
+            cover_url=cover_url,  # This will be the cached URL if available
             series=series,
             series_volume=series_volume,
-            categories=categories
+            categories=categories  # Enhanced with API data
         )
+        
+        # Enhanced debugging for ISBN and cover
+        print(f"🔍 [MANUAL] Final book data:")
+        print(f"   Title: {book_data.title}")
+        print(f"   Author: {book_data.author}")
+        print(f"   ISBN13: {book_data.isbn13}")
+        print(f"   ISBN10: {book_data.isbn10}")
+        print(f"   Cover URL: {book_data.cover_url}")
+        print(f"   Categories: {book_data.categories}")
+        print(f"   Description: {book_data.description[:100] if book_data.description else 'None'}...")
+        print(f"   Publisher: {book_data.publisher}")
+        print(f"   Page count: {book_data.page_count}")
         
         # Use simplified service
         service = SimplifiedBookService()
@@ -2245,16 +2489,44 @@ def add_book_manual():
         except ValueError:
             pass
     
-    # Normalize ISBN by extracting digits only
+    # Enhanced ISBN processing with proper normalization
+    isbn10 = None
+    isbn13 = None
     normalized_isbn = None
-    if isbn:
-        from .services import normalize_isbn_upc
-        normalized_isbn = normalize_isbn_upc(isbn)
-        if normalized_isbn:
-            print(f"📚 [MANUAL] Normalized ISBN: {isbn} -> {normalized_isbn}")
-        else:
-            print(f"⚠️ [MANUAL] Could not normalize ISBN: {isbn}")
     
+    if isbn:
+        # Enhanced ISBN normalization
+        import re
+        clean_isbn = re.sub(r'[^0-9X]', '', str(isbn).upper())
+        
+        if len(clean_isbn) == 10:
+            # ISBN10 - validate and convert to ISBN13
+            isbn10 = clean_isbn
+            # Convert ISBN10 to ISBN13
+            isbn13_base = "978" + clean_isbn[:9]
+            check_sum = 0
+            for i, digit in enumerate(isbn13_base):
+                check_sum += int(digit) * (1 if i % 2 == 0 else 3)
+            check_digit = (10 - (check_sum % 10)) % 10
+            isbn13 = isbn13_base + str(check_digit)
+            normalized_isbn = isbn13  # Prefer ISBN13 for API lookups
+        elif len(clean_isbn) == 13:
+            # ISBN13 - try to convert to ISBN10 if it starts with 978
+            isbn13 = clean_isbn
+            normalized_isbn = isbn13
+            if clean_isbn.startswith('978'):
+                isbn10_base = clean_isbn[3:12]
+                check_sum = 0
+                for i, digit in enumerate(isbn10_base):
+                    check_sum += int(digit) * (10 - i)
+                check_digit = (11 - (check_sum % 11)) % 11
+                if check_digit == 10:
+                    check_digit = 'X'
+                elif check_digit == 11:
+                    check_digit = '0'
+                isbn10 = isbn10_base + str(check_digit)
+        
+        print(f"📚 [MANUAL] Enhanced ISBN processing: {isbn} -> ISBN10: {isbn10}, ISBN13: {isbn13}")
     
     # Process manual genre input
     manual_categories = []
@@ -2283,55 +2555,284 @@ def add_book_manual():
 
     print(f"📊 [MANUAL] Final custom metadata: {custom_metadata}")
 
-    # If no cover URL provided, try to fetch one
-    if not cover_url and normalized_isbn:
-        cover_url = get_google_books_cover(normalized_isbn)
-
-    # Get additional metadata if ISBN is provided
-    description = published_date = page_count = categories = publisher = language = average_rating = rating_count = None
-    google_data = None  # Initialize google_data
-    ol_data = None  # Initialize ol_data
+    # Enhanced API lookup with comprehensive field mapping
+    api_data = None
+    final_cover_url = cover_url
+    cached_cover_url = None
     
     if normalized_isbn:
-        google_data = get_google_books_cover(normalized_isbn, fetch_title_author=True)
-        if google_data:
-            description = google_data.get('description')
-            published_date = google_data.get('published_date')
-            page_count = google_data.get('page_count')
-            categories = google_data.get('categories')
-            publisher = google_data.get('publisher')
-            language = google_data.get('language')
-            average_rating = google_data.get('average_rating')
-            rating_count = google_data.get('rating_count')
+        print(f"🔍 [MANUAL] Performing enhanced API lookup for ISBN: {normalized_isbn}")
+        
+        # Enhanced Google Books API lookup
+        def enhanced_google_books_lookup(isbn):
+            url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
+            try:
+                import requests
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                
+                items = data.get("items")
+                if not items:
+                    return None
+                
+                volume_info = items[0]["volumeInfo"]
+                
+                # Extract ISBN information from industryIdentifiers
+                api_isbn10 = None
+                api_isbn13 = None
+                asin = None
+                
+                industry_identifiers = volume_info.get('industryIdentifiers', [])
+                for identifier in industry_identifiers:
+                    id_type = identifier.get('type', '')
+                    id_value = identifier.get('identifier', '')
+                    
+                    if id_type == 'ISBN_10':
+                        api_isbn10 = id_value
+                    elif id_type == 'ISBN_13':
+                        api_isbn13 = id_value
+                    elif id_type == 'OTHER' and 'ASIN' in id_value:
+                        asin = id_value
+                
+                # Get best quality cover image
+                image_links = volume_info.get("imageLinks", {})
+                cover_url = None
+                for size in ['extraLarge', 'large', 'medium', 'thumbnail', 'smallThumbnail']:
+                    if size in image_links:
+                        cover_url = image_links[size]
+                        break
+                
+                # Force HTTPS for cover URLs
+                if cover_url and cover_url.startswith('http://'):
+                    cover_url = cover_url.replace('http://', 'https://')
+                
+                return {
+                    'title': volume_info.get('title', ''),
+                    'subtitle': volume_info.get('subtitle', ''),
+                    'description': volume_info.get('description', ''),
+                    'authors_list': volume_info.get('authors', []),
+                    'publisher': volume_info.get('publisher', ''),
+                    'published_date': volume_info.get('publishedDate', ''),
+                    'page_count': volume_info.get('pageCount'),
+                    'language': volume_info.get('language', 'en'),
+                    'average_rating': volume_info.get('averageRating'),
+                    'rating_count': volume_info.get('ratingsCount'),
+                    'categories': volume_info.get('categories', []),
+                    'isbn10': api_isbn10,
+                    'isbn13': api_isbn13,
+                    'asin': asin,
+                    'cover_url': cover_url,
+                    'google_books_id': items[0].get('id', ''),
+                    'source': 'google_books'
+                }
+            except Exception as e:
+                print(f"❌ Google Books API error: {e}")
+                return None
+        
+        # Enhanced OpenLibrary API lookup
+        def enhanced_openlibrary_lookup(isbn):
+            url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
+            try:
+                import requests
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                
+                book_key = f"ISBN:{isbn}"
+                if book_key not in data:
+                    return None
+                
+                book = data[book_key]
+                
+                # Extract authors
+                authors_list = []
+                authors_data = book.get('authors', [])
+                for author in authors_data:
+                    if isinstance(author, dict) and 'name' in author:
+                        authors_list.append(author['name'])
+                    elif isinstance(author, str):
+                        authors_list.append(author)
+                
+                # Extract publisher
+                publishers = book.get('publishers', [])
+                publisher = ''
+                if publishers:
+                    if isinstance(publishers[0], dict):
+                        publisher = publishers[0].get('name', '')
+                    else:
+                        publisher = str(publishers[0])
+                
+                # Extract categories/subjects
+                subjects = book.get('subjects', [])
+                categories = []
+                for subject in subjects[:10]:  # Limit to 10 categories
+                    if isinstance(subject, dict):
+                        categories.append(subject.get('name', ''))
+                    else:
+                        categories.append(str(subject))
+                categories = [cat for cat in categories if cat]
+                
+                # Extract cover image
+                cover_data = book.get('cover', {})
+                cover_url = None
+                for size in ['large', 'medium', 'small']:
+                    if size in cover_data:
+                        cover_url = cover_data[size]
+                        break
+                
+                # Description handling
+                description = book.get('notes', {})
+                if isinstance(description, dict):
+                    description = description.get('value', '')
+                elif not isinstance(description, str):
+                    description = ''
+                
+                return {
+                    'title': book.get('title', ''),
+                    'subtitle': book.get('subtitle', ''),
+                    'description': description,
+                    'authors_list': authors_list,
+                    'publisher': publisher,
+                    'published_date': book.get('publish_date', ''),
+                    'page_count': book.get('number_of_pages'),
+                    'language': 'en',  # Default, could be enhanced
+                    'categories': categories,
+                    'cover_url': cover_url,
+                    'openlibrary_id': book.get('key', '').replace('/books/', '') if book.get('key') else '',
+                    'source': 'openlibrary'
+                }
+            except Exception as e:
+                print(f"❌ OpenLibrary API error: {e}")
+                return None
+        
+        # Perform API lookups
+        google_data = enhanced_google_books_lookup(normalized_isbn)
+        ol_data = enhanced_openlibrary_lookup(normalized_isbn)
+        
+        # Merge API data with priority to Google Books
+        if google_data or ol_data:
+            if google_data and ol_data:
+                # Merge strategy: Google Books for most fields, OpenLibrary for fallbacks
+                api_data = google_data.copy()
+                
+                # Use OpenLibrary data for missing fields
+                if not api_data.get('description') and ol_data.get('description'):
+                    api_data['description'] = ol_data['description']
+                if not api_data.get('publisher') and ol_data.get('publisher'):
+                    api_data['publisher'] = ol_data['publisher']
+                if not api_data.get('page_count') and ol_data.get('page_count'):
+                    api_data['page_count'] = ol_data['page_count']
+                
+                # Merge categories
+                google_cats = set(api_data.get('categories', []))
+                ol_cats = set(ol_data.get('categories', []))
+                api_data['categories'] = list(google_cats.union(ol_cats))
+                
+                # Add OpenLibrary ID
+                if ol_data.get('openlibrary_id'):
+                    api_data['openlibrary_id'] = ol_data['openlibrary_id']
+                
+                api_data['sources'] = ['google_books', 'openlibrary']
+                
+            elif google_data:
+                api_data = google_data
+            elif ol_data:
+                api_data = ol_data
+            
+            print(f"✅ [MANUAL] API data retrieved from {api_data.get('sources', api_data.get('source', 'unknown'))}")
+            
+            # Enhanced ISBN handling from API
+            if not isbn13 and api_data.get('isbn13'):
+                isbn13 = api_data['isbn13']
+            if not isbn10 and api_data.get('isbn10'):
+                isbn10 = api_data['isbn10']
+            
+            # Enhanced cover image handling with caching
+            if api_data.get('cover_url') and not cover_url:  # Only if no manual cover URL provided
+                final_cover_url = api_data['cover_url']
+                
+                # Download and cache cover image
+                try:
+                    import requests
+                    from pathlib import Path
+                    
+                    # Create covers directory
+                    covers_dir = Path('static/covers')
+                    covers_dir.mkdir(exist_ok=True)
+                    
+                    # Generate filename
+                    book_temp_id = str(uuid.uuid4())
+                    file_extension = '.jpg'
+                    if final_cover_url.lower().endswith('.png'):
+                        file_extension = '.png'
+                    elif final_cover_url.lower().endswith('.gif'):
+                        file_extension = '.gif'
+                    
+                    filename = f"{book_temp_id}{file_extension}"
+                    filepath = covers_dir / filename
+                    
+                    # Download image
+                    response = requests.get(final_cover_url, timeout=10, stream=True)
+                    response.raise_for_status()
+                    
+                    with open(filepath, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    cached_cover_url = f"/static/covers/{filename}"
+                    print(f"🖼️ [MANUAL] Cover cached: {final_cover_url} -> {cached_cover_url}")
+                    
+                except Exception as e:
+                    print(f"❌ [MANUAL] Failed to cache cover: {e}")
+                    cached_cover_url = final_cover_url  # Fallback to original URL
         else:
-            # Fallback to OpenLibrary data
-            ol_data = fetch_book_data(normalized_isbn)
-            if ol_data:
-                description = ol_data.get('description')
-                published_date = ol_data.get('published_date')
-                page_count = ol_data.get('page_count')
-                categories = ol_data.get('categories')
-                publisher = ol_data.get('publisher')
-                language = ol_data.get('language')
+            print(f"❌ [MANUAL] No API data found for ISBN: {normalized_isbn}")
+    
+    # Enhanced field mapping with API fallbacks
+    final_title = title or (api_data.get('title') if api_data else '')
+    final_subtitle = subtitle if subtitle else (api_data.get('subtitle') if api_data else None)
+    final_description = description or (api_data.get('description') if api_data else '')
+    final_publisher = publisher_name or (api_data.get('publisher') if api_data else '')
+    final_language = language or (api_data.get('language') if api_data else 'en')
+    final_page_count = page_count or (api_data.get('page_count') if api_data else None)
+    final_cover_url = cached_cover_url or final_cover_url or cover_url
+    
+    # Enhanced published date handling
+    final_published_date = published_date
+    if not final_published_date and api_data and api_data.get('published_date'):
+        try:
+            api_date_str = api_data['published_date']
+            final_published_date = datetime.strptime(api_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            try:
+                final_published_date = datetime.strptime(api_date_str, '%Y').date()
+            except ValueError:
+                pass
 
-    # Combine API categories with manual categories
+    # Enhanced category processing with API integration
     final_categories = []
-    if categories:
-        if isinstance(categories, list):
-            final_categories.extend(categories)
-        elif isinstance(categories, str):
-            final_categories.append(categories)
+    
+    # Add API categories first
+    if api_data and api_data.get('categories'):
+        api_categories = api_data['categories']
+        if isinstance(api_categories, list):
+            final_categories.extend(api_categories)
+        elif isinstance(api_categories, str):
+            # Handle comma-separated string categories
+            final_categories.extend([cat.strip() for cat in api_categories.split(',') if cat.strip()])
     
     # Add manual categories
     final_categories.extend(manual_categories)
     
-    # Remove duplicates while preserving order
+    # Remove duplicates while preserving order and normalize
     seen = set()
     unique_categories = []
     for cat in final_categories:
-        if cat not in seen:
-            unique_categories.append(cat)
-            seen.add(cat)
+        cat_normalized = cat.lower().strip()
+        if cat_normalized and cat_normalized not in seen:
+            unique_categories.append(cat.strip())
+            seen.add(cat_normalized)
     
     print(f"📚 [MANUAL] Final categories (API + manual): {unique_categories}")
     
@@ -2339,36 +2840,22 @@ def add_book_manual():
     final_publisher = publisher_name or publisher
 
     try:
-        # Create contributors from author data
+        # Enhanced contributors creation from API data
         contributors = []
         
-        # Prioritize individual authors from Google Books API
-        if google_data and google_data.get('authors_list'):
-            # Use individual authors from Google Books API for better Person separation
-            for i, author_name in enumerate(google_data['authors_list']):
+        # Prioritize individual authors from enhanced API data
+        if api_data and api_data.get('authors_list'):
+            for i, author_name in enumerate(api_data['authors_list']):
                 author_name = author_name.strip()
                 if author_name:
                     person = Person(id=str(uuid.uuid4()), name=author_name)
                     contribution = BookContribution(
                         person=person,
                         contribution_type=ContributionType.AUTHORED,
-                        order=i  # Maintain author order
+                        order=i
                     )
                     contributors.append(contribution)
-                    print(f"Added author from Google Books API: {author_name}")
-        elif ol_data and ol_data.get('authors_list'):
-            # Use individual authors from OpenLibrary API
-            for i, author_name in enumerate(ol_data['authors_list']):
-                author_name = author_name.strip()
-                if author_name:
-                    person = Person(id=str(uuid.uuid4()), name=author_name)
-                    contribution = BookContribution(
-                        person=person,
-                        contribution_type=ContributionType.AUTHORED,
-                        order=i  # Maintain author order
-                    )
-                    contributors.append(contribution)
-                    print(f"Added author from OpenLibrary API: {author_name}")
+                    print(f"👤 [MANUAL] Added author from API: {author_name}")
         elif author:
             # Fallback to manual form entry
             person = Person(id=str(uuid.uuid4()), name=author)
@@ -2378,29 +2865,32 @@ def add_book_manual():
                 order=0
             )
             contributors.append(contribution)
-            print(f"Added author from form: {author}")
+            print(f"👤 [MANUAL] Added author from form: {author}")
             
-        # Create domain book object
+        # Enhanced domain book object creation with comprehensive field mapping
         domain_book = DomainBook(
             id=str(uuid.uuid4()),
-            title=title,
-            subtitle=subtitle if subtitle else None,
-            description=description,
-            published_date=published_date,  # Already converted to date above
-            page_count=page_count,
-            language=language or "en",
-            cover_url=cover_url,
-            isbn13=normalized_isbn if normalized_isbn and len(normalized_isbn) == 13 else None,
-            isbn10=normalized_isbn if normalized_isbn and len(normalized_isbn) == 10 else None,
-            average_rating=average_rating,
-            rating_count=rating_count,
+            title=final_title,
+            subtitle=final_subtitle,
+            description=final_description if final_description else None,
+            published_date=final_published_date,
+            page_count=final_page_count,
+            language=final_language,
+            cover_url=final_cover_url,
+            isbn13=isbn13,
+            isbn10=isbn10,
+            asin=api_data.get('asin') if api_data else None,
+            google_books_id=api_data.get('google_books_id') if api_data else None,
+            openlibrary_id=api_data.get('openlibrary_id') if api_data else None,
+            average_rating=api_data.get('average_rating') if api_data else None,
+            rating_count=api_data.get('rating_count') if api_data else None,
             contributors=contributors,
             publisher=Publisher(id=str(uuid.uuid4()), name=final_publisher) if final_publisher else None,
             series=Series(id=str(uuid.uuid4()), name=series) if series else None,
             series_volume=series_volume if series_volume else None,
             series_order=series_order,
-            categories=unique_categories or [],  # Use final combined categories
-            raw_categories=unique_categories,  # Store raw categories for processing
+            categories=unique_categories or [],
+            raw_categories=unique_categories,
             created_at=datetime.now(),
             updated_at=datetime.now()
         )
@@ -4191,21 +4681,69 @@ def person_details(person_id):
         debug_log(f"📊 [PERSON] Got books_by_type: {type(books_by_type)}", "PERSON_DETAILS")
         debug_log(f"📊 [PERSON] Books by type keys: {list(books_by_type.keys()) if books_by_type else 'None'}", "PERSON_DETAILS")
         
+        # Convert service objects to template-compatible format
+        converted_books_by_type = {}
         if books_by_type:
             for contribution_type, books in books_by_type.items():
                 debug_log(f"📋 [PERSON] {contribution_type}: {len(books)} books", "PERSON_DETAILS")
+                
+                # Convert each book service object to a template-compatible object
+                converted_books = []
+                for book in books:
+                    if hasattr(book, '__dict__'):
+                        # Service object - ensure it has all required attributes
+                        if not hasattr(book, 'uid') and hasattr(book, 'id'):
+                            book.uid = book.id
+                        if not hasattr(book, 'reading_status') or book.reading_status is None:
+                            book.reading_status = 'unread'
+                        if not hasattr(book, 'cover_url'):
+                            book.cover_url = None
+                        if not hasattr(book, 'published_date'):
+                            book.published_date = None
+                        converted_books.append(book)
+                    elif isinstance(book, dict):
+                        # Convert dict to object-like structure
+                        class BookObj:
+                            def __init__(self, data):
+                                for key, value in data.items():
+                                    setattr(self, key, value)
+                                # Ensure required attributes are available
+                                if not hasattr(self, 'uid') and hasattr(self, 'id'):
+                                    self.uid = self.id
+                                if not hasattr(self, 'reading_status') or self.reading_status is None:
+                                    self.reading_status = 'unread'
+                                if not hasattr(self, 'cover_url'):
+                                    self.cover_url = None
+                                if not hasattr(self, 'published_date'):
+                                    self.published_date = None
+                        
+                        converted_books.append(BookObj(book))
+                    else:
+                        # Unknown book format - create a minimal object
+                        class BookObj:
+                            def __init__(self, source_book):
+                                self.id = getattr(source_book, 'id', None)
+                                self.uid = getattr(source_book, 'uid', None) or self.id
+                                self.title = getattr(source_book, 'title', 'Unknown Title')
+                                self.reading_status = getattr(source_book, 'reading_status', None) or 'unread'
+                                self.cover_url = getattr(source_book, 'cover_url', None)
+                                self.published_date = getattr(source_book, 'published_date', None)
+                        
+                        converted_books.append(BookObj(book))
+                
+                converted_books_by_type[contribution_type] = converted_books
         
         # Prepare template data
         template_data = {
             'person': person,
-            'contributions_by_type': books_by_type
+            'contributions_by_type': converted_books_by_type
         }
         debug_template_data('person_details.html', template_data, "PERSON_DETAILS")
         
         debug_log(f"✅ [PERSON] Rendering template", "PERSON_DETAILS")
         return render_template('person_details.html', 
                              person=person, 
-                             contributions_by_type=books_by_type)
+                             contributions_by_type=converted_books_by_type)
     
     except Exception as e:
         debug_log(f"❌ [PERSON] Error loading person details for {person_id}: {e}", "PERSON_DETAILS")

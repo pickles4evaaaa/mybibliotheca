@@ -297,13 +297,13 @@
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb mb-0">
                     <li class="breadcrumb-item"><a href="{{ url_for('main.library') }}">Library</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('main.view_book', uid=book.uid) }}">{{ book.title }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}">{{ book.title }}</a></li>
                     <li class="breadcrumb-item active" aria-current="page">Edit</li>
                 </ol>
             </nav>
         </div>
         <div class="col-auto">
-            <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-outline-secondary">
+            <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left me-1"></i>Back to Book
             </a>
         </div>
@@ -804,7 +804,7 @@
                             <button type="submit" class="btn btn-primary btn-lg">
                                 <i class="bi bi-check-lg me-1"></i> Save Changes
                             </button>
-                            <a href="{{ url_for('main.view_book', uid=book.uid) }}" class="btn btn-secondary btn-lg">
+                            <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" class="btn btn-secondary btn-lg">
                                 <i class="bi bi-x-circle me-1"></i>Cancel
                             </a>
                         </div>

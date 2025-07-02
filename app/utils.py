@@ -9,7 +9,7 @@ import os
 from flask import current_app
 
 def fetch_book_data(isbn):
-    """Fetch book data with timeout and error handling"""
+    """Enhanced OpenLibrary API lookup with comprehensive field mapping and timeout handling."""
     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
     try:
         response = requests.get(url, timeout=10)  # 10 second timeout
@@ -20,6 +20,7 @@ def fetch_book_data(isbn):
         if book_key in data:
             book = data[book_key]
             title = book.get('title', '')
+            subtitle = book.get('subtitle', '')
             
             # Extract individual authors for better Person entity creation
             authors_list = []
@@ -33,74 +34,145 @@ def fetch_book_data(isbn):
             # Keep backward compatibility with joined authors string
             authors = ', '.join(authors_list) if authors_list else ''
             
-            cover_url = book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
+            # Enhanced cover image handling - get best quality available
+            cover_data = book.get('cover', {})
+            cover_url = None
+            for size in ['large', 'medium', 'small']:
+                if size in cover_data:
+                    cover_url = cover_data[size]
+                    break
             
-            # Extract additional metadata
-            description = book.get('notes', {}).get('value') if isinstance(book.get('notes'), dict) else book.get('notes')
+            # Enhanced description handling
+            description = book.get('notes', {})
+            if isinstance(description, dict):
+                description = description.get('value', '')
+            elif not isinstance(description, str):
+                description = ''
+            
+            # Publication info
             published_date = book.get('publish_date', '')
             page_count = book.get('number_of_pages')
+            
+            # Enhanced subjects/categories processing
             subjects = book.get('subjects', [])
-            categories = ', '.join([s['name'] if isinstance(s, dict) else str(s) for s in subjects[:5]])  # Limit to 5 categories
+            categories = []
+            for subject in subjects[:10]:  # Limit to 10 most relevant categories
+                if isinstance(subject, dict):
+                    categories.append(subject.get('name', ''))
+                else:
+                    categories.append(str(subject))
+            # Remove empty categories and join
+            categories = [cat for cat in categories if cat.strip()]
+            
+            # Publisher info
             publishers = book.get('publishers', [])
-            publisher = publishers[0]['name'] if publishers and isinstance(publishers[0], dict) else (publishers[0] if publishers else '')
+            publisher = ''
+            if publishers:
+                if isinstance(publishers[0], dict):
+                    publisher = publishers[0].get('name', '')
+                else:
+                    publisher = str(publishers[0])
+            
+            # Language info
             languages = book.get('languages', [])
-            language = languages[0]['key'].split('/')[-1] if languages and isinstance(languages[0], dict) else (languages[0] if languages else '')
+            language = 'en'  # Default
+            if languages:
+                if isinstance(languages[0], dict):
+                    lang_key = languages[0].get('key', '')
+                    if lang_key:
+                        language = lang_key.split('/')[-1]
+                else:
+                    language = str(languages[0])
+            
+            # Enhanced metadata
+            openlibrary_id = book.get('key', '').replace('/books/', '') if book.get('key') else ''
             
             return {
                 'title': title,
+                'subtitle': subtitle,
                 'author': authors,  # Keep for backward compatibility
-                'authors_list': authors_list,  # New: Individual authors for better Person creation
+                'authors_list': authors_list,  # Enhanced: Individual authors for better Person creation
                 'cover': cover_url,
                 'description': description,
                 'published_date': published_date,
                 'page_count': page_count,
-                'categories': categories,
+                'categories': categories,  # Enhanced: List of categories instead of comma-separated string
                 'publisher': publisher,
-                'language': language
+                'language': language,
+                'openlibrary_id': openlibrary_id
             }
         return None
     
     except (requests.exceptions.RequestException, requests.exceptions.Timeout, ValueError) as e:
         # Log the error for debugging but don't crash the bulk import
-        current_app.logger.warning(f"Failed to fetch book data for ISBN {isbn}: {e}")
+        current_app.logger.warning(f"Failed to fetch OpenLibrary book data for ISBN {isbn}: {e}")
         return None
 
 def get_google_books_cover(isbn, fetch_title_author=False):
-    """Get book cover from Google Books API with HTTPS enforcement."""
+    """Enhanced Google Books API lookup with comprehensive field mapping."""
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=10)  # Increased timeout
+        resp.raise_for_status()  # Raise exception for bad status codes
         data = resp.json()
         items = data.get("items")
         if items:
             volume_info = items[0]["volumeInfo"]
             image_links = volume_info.get("imageLinks", {})
-            cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+            
+            # Get best quality cover image available
+            cover_url = None
+            for size in ['extraLarge', 'large', 'medium', 'thumbnail', 'smallThumbnail']:
+                if size in image_links:
+                    cover_url = image_links[size]
+                    break
             
             # Force HTTPS for cover URLs
             if cover_url and cover_url.startswith('http://'):
                 cover_url = cover_url.replace('http://', 'https://')
             
             if fetch_title_author:
-                title = volume_info.get('title')
-                # Get individual authors instead of joining them
+                title = volume_info.get('title', '')
+                subtitle = volume_info.get('subtitle', '')
                 authors_list = volume_info.get('authors', [])
-                # Keep for backward compatibility
                 authors = ", ".join(authors_list) if authors_list else ""
                 description = volume_info.get('description', '')
                 published_date = volume_info.get('publishedDate', '')
                 page_count = volume_info.get('pageCount')
-                categories = ', '.join(volume_info.get('categories', []))
-                publisher = volume_info.get('publisher', '')
-                language = volume_info.get('language', '')
+                language = volume_info.get('language', 'en')
                 average_rating = volume_info.get('averageRating')
                 rating_count = volume_info.get('ratingsCount')
+                publisher = volume_info.get('publisher', '')
+                
+                # Enhanced category processing
+                categories = volume_info.get('categories', [])
+                
+                # Enhanced ISBN extraction from industryIdentifiers
+                isbn10 = None
+                isbn13 = None
+                asin = None
+                
+                industry_identifiers = volume_info.get('industryIdentifiers', [])
+                for identifier in industry_identifiers:
+                    id_type = identifier.get('type', '')
+                    id_value = identifier.get('identifier', '')
+                    
+                    if id_type == 'ISBN_10':
+                        isbn10 = id_value
+                    elif id_type == 'ISBN_13':
+                        isbn13 = id_value
+                    elif id_type == 'OTHER' and 'ASIN' in str(id_value):
+                        asin = id_value
+                
+                # Additional metadata
+                google_books_id = items[0].get('id', '')
                 
                 return {
                     'cover': cover_url,
                     'title': title,
+                    'subtitle': subtitle,
                     'author': authors,  # Keep for backward compatibility
-                    'authors_list': authors_list,  # New: Individual authors
+                    'authors_list': authors_list,  # Enhanced: Individual authors
                     'description': description,
                     'published_date': published_date,
                     'page_count': page_count,
@@ -108,7 +180,11 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     'publisher': publisher,
                     'language': language,
                     'average_rating': average_rating,
-                    'rating_count': rating_count
+                    'rating_count': rating_count,
+                    'isbn10': isbn10,
+                    'isbn13': isbn13,
+                    'asin': asin,
+                    'google_books_id': google_books_id
                 }
             return cover_url
     except Exception as e:

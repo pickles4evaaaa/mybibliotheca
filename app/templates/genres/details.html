@@ -190,7 +190,7 @@
                                     <div class="col-9">
                                         <div class="card-body p-2">
                                             <h6 class="card-title mb-1" style="font-size: 0.875rem; line-height: 1.2;">
-                                                <a href="{{ url_for('main.view_book', uid=book.id) }}" 
+                                                <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" 
                                                    class="text-decoration-none">
                                                     {{ book.title[:40] }}{% if book.title|length > 40 %}...{% endif %}
                                                 </a>

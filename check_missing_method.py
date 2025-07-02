@@ -7,13 +7,13 @@ import sys
 import os
 
 # Add the project root to the Python path
-sys.path.insert(0, '/Users/jeremiah/Documents/Python Projects/bibliotheca')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def check_method_exists():
     """Check if get_user_book_sync method exists in KuzuBookService"""
     
     # Read the kuzu_services.py file directly
-    kuzu_services_path = '/Users/jeremiah/Documents/Python Projects/bibliotheca/app/kuzu_services.py'
+    kuzu_services_path = os.path.join(os.path.dirname(__file__), 'app', 'kuzu_services.py')
     
     if not os.path.exists(kuzu_services_path):
         print(f"❌ File not found: {kuzu_services_path}")
@@ -66,7 +66,7 @@ def check_method_exists():
 def check_services_py():
     """Check if get_user_book_sync method exists in services.py as well"""
     
-    services_path = '/Users/jeremiah/Documents/Python Projects/bibliotheca/app/services.py'
+    services_path = os.path.join(os.path.dirname(__file__), 'app', 'services.py')
     
     if not os.path.exists(services_path):
         print(f"❌ File not found: {services_path}")
@@ -91,10 +91,10 @@ def check_import_errors():
     
     # Files to check
     files_to_check = [
-        '/Users/jeremiah/Documents/Python Projects/bibliotheca/app/routes.py',
-        '/Users/jeremiah/Documents/Python Projects/bibliotheca/app/advanced_migration_system.py',
-        '/Users/jeremiah/Documents/Python Projects/bibliotheca/app/services.py',
-        '/Users/jeremiah/Documents/Python Projects/bibliotheca/app/kuzu_services.py'
+        os.path.join(os.path.dirname(__file__), 'app', 'routes.py'),
+        os.path.join(os.path.dirname(__file__), 'app', 'advanced_migration_system.py'),
+        os.path.join(os.path.dirname(__file__), 'app', 'services.py'),
+        os.path.join(os.path.dirname(__file__), 'app', 'kuzu_services.py')
     ]
     
     found_usage = False

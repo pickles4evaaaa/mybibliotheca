@@ -163,7 +163,8 @@
                                 <img src="{{ book.cover_url }}" 
                                      class="card-img-top" 
                                      alt="{{ book.title }}"
-                                     style="height: 200px; object-fit: cover;">
+                                     style="height: 200px; object-fit: cover;"
+                                     onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
                             {% else %}
                                 <div class="card-img-top d-flex align-items-center justify-content-center bg-light" 
                                      style="height: 200px;">
@@ -196,7 +197,7 @@
                                 {% endif %}
                                 
                                 <div class="d-grid">
-                                    <a href="{{ url_for('main.view_book', uid=book.id) }}" 
+                                    <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" 
                                        class="btn btn-outline-primary btn-sm">
                                         View Details
                                     </a>

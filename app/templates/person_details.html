@@ -115,7 +115,7 @@
                                         <div class="col-8">
                                             <div class="card-body p-3">
                                                 <h6 class="card-title mb-2">
-                                                    <a href="{{ url_for('main.view_book', uid=book.id) }}" 
+                                                    <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" 
                                                        class="text-decoration-none">
                                                         {{ book.title }}
                                                     </a>
@@ -136,7 +136,7 @@
                                                 {% endif %}
                                                 
                                                 <!-- User-specific info if available -->
-                                                {% if book.reading_status is defined %}
+                                                {% if book.reading_status is defined and book.reading_status is not none and book.reading_status %}
                                                 <div class="mt-2">
                                                     <span class="badge bg-{{ 'success' if book.reading_status == 'read' else 'warning' if book.reading_status == 'reading' else 'secondary' }}">
                                                         {{ book.reading_status.replace('_', ' ').title() }}

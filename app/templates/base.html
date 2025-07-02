@@ -674,7 +674,7 @@
         {% endif %}
       {% endwith %}
       {% block content %}
-        <a href="{{ url_for('main.view_book', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
+        <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}"><strong>{{ book.title }}</strong></a>
       {% endblock %}
       <div class="text-center mt-4">
         <div class="social-icons">

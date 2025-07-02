@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+
 {% block title %}My Books - Bibliotheca{% endblock %}
 {% block content %}
 <h1>Books</h1>
@@ -10,7 +11,7 @@
 </div>
 <h2 class="mt-4">Currently Reading</h2>
 <ul class="list-group mb-4">
-  {% for book in currently_reading %}
+  {% for book in current_reading %}
     <li class="list-group-item text-center d-flex flex-column align-items-center">
       <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}">
         {% if book.cover_url %}

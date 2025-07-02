@@ -400,6 +400,14 @@ class KuzuBookService:
         except Exception as e:
             current_app.logger.error(f"Error removing book from library: {e}")
             return False
+
+    async def delete_book_globally(self, uid: str) -> bool:
+        """Delete a book globally from the system."""
+        try:
+            return await self.kuzu_service.book_repo.delete(uid)
+        except Exception as e:
+            current_app.logger.error(f"Error deleting book globally: {e}")
+            return False
     
     async def get_user_library(self, user_id: str, reading_status: str = None, 
                               limit: int = 50) -> List[Dict[str, Any]]:
@@ -465,12 +473,13 @@ class KuzuBookService:
                 # Convert to dictionary format
                 book_dict = {
                     'id': book_data.get('id'),
+                    'uid': book_data.get('id'),  # Add uid as alias for id for template compatibility
                     'title': book_data.get('title'),
                     'isbn': book_data.get('isbn'),
                     'description': book_data.get('description'),
                     'published_date': book_data.get('published_date'),
                     'page_count': book_data.get('page_count'),
-                    'cover_image_url': book_data.get('cover_image_url'),
+                    'cover_url': book_data.get('cover_url'),
                     'authors': [{'id': a.get('id'), 'name': a.get('name')} for a in authors_data if a and isinstance(a, dict)],
                     'categories': [{'id': c.get('id'), 'name': c.get('name')} for c in categories_data if c and isinstance(c, dict)],
                     'publisher': {'id': publisher_data.get('id'), 'name': publisher_data.get('name')} if publisher_data and isinstance(publisher_data, dict) else None
@@ -824,20 +833,12 @@ class KuzuBookService:
             current_app.logger.error(f"Error deleting book: {e}")
             return False
 
-    async def delete_book_globally(self, uid: str) -> bool:
-        """Delete a book globally (for all users)."""
-        try:
-            return await self.kuzu_service.delete_book_globally(uid)
-        except Exception as e:
-            current_app.logger.error(f"Error globally deleting book: {e}")
-            return False
-    
     def delete_book_globally_sync(self, uid: str) -> bool:
-        """Delete book globally (sync version)."""
+        """Delete book globally from system (sync version)."""
         try:
             return run_async(self.delete_book_globally(uid))
         except Exception as e:
-            current_app.logger.error(f"Error globally deleting book: {e}")
+            current_app.logger.error(f"Error deleting book globally: {e}")
             return False
 
     def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:
@@ -895,13 +896,49 @@ class KuzuBookService:
                 if 'col_0' in result and 'col_1' in result:
                     book_data = dict(result['col_0'])
                     role = result['col_1'] or 'authored'
+                    book_id = book_data.get('id')
                     
-                    # Create book object
-                    book = type('Book', (), {
-                        'id': book_data.get('id'),
-                        'title': book_data.get('title', ''),
-                        'cover_url': book_data.get('cover_url', '')
-                    })()
+                    if book_id and user_id:
+                        # Get full book data with user overlay for template compatibility
+                        full_book = self.get_book_by_uid_sync(book_id, user_id)
+                        if full_book:
+                            # Ensure uid and reading_status are available
+                            if 'uid' not in full_book:
+                                full_book['uid'] = book_id
+                            if 'reading_status' not in full_book or full_book['reading_status'] is None:
+                                full_book['reading_status'] = 'unread'
+                            # Convert to object-like structure
+                            book = type('Book', (), full_book)()
+                        else:
+                            # Fallback to basic book object
+                            book = type('Book', (), {
+                                'id': book_id,
+                                'uid': book_id,  # Ensure uid is available for templates
+                                'title': book_data.get('title', ''),
+                                'cover_url': book_data.get('cover_url', ''),
+                                'published_date': book_data.get('published_date'),
+                                'reading_status': 'unread',  # Default reading status
+                                'ownership_status': None,
+                                'user_rating': None,
+                                'personal_notes': '',
+                                'locations': [],
+                                'custom_metadata': {}
+                            })()
+                    else:
+                        # Create basic book object when no user_id provided
+                        book = type('Book', (), {
+                            'id': book_id,
+                            'uid': book_id,  # Ensure uid is available for templates
+                            'title': book_data.get('title', ''),
+                            'cover_url': book_data.get('cover_url', ''),
+                            'published_date': book_data.get('published_date'),
+                            'reading_status': 'unread',  # Default reading status
+                            'ownership_status': None,
+                            'user_rating': None,
+                            'personal_notes': '',
+                            'locations': [],
+                            'custom_metadata': {}
+                        })()
                     
                     # Add to appropriate contribution type
                     if role in contributions:

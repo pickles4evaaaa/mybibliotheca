@@ -81,7 +81,9 @@ class SimplifiedBookService:
                 'published_date': book_data.published_date,
                 'page_count': book_data.page_count,
                 'language': book_data.language,
+                # Only store cover_url (the schema field that exists)
                 'cover_url': book_data.cover_url,
+                # Store both ISBN formats 
                 'isbn13': book_data.isbn13,
                 'isbn10': book_data.isbn10,
                 'google_books_id': book_data.google_books_id,
@@ -97,6 +99,14 @@ class SimplifiedBookService:
             
             # Remove None values
             book_node_data = {k: v for k, v in book_node_data.items() if v is not None}
+            
+            # Enhanced debugging for ISBN fields
+            print(f"🔍 [SIMPLIFIED] Book node data being stored:")
+            print(f"   ISBN13: {book_node_data.get('isbn13')}")
+            print(f"   ISBN10: {book_node_data.get('isbn10')}")
+            print(f"   Cover URL: {book_node_data.get('cover_url')}")
+            print(f"   Title: {book_node_data.get('title')}")
+            print(f"   Description: {book_node_data.get('description')[:50] if book_node_data.get('description') else 'None'}...")
             
             # 1. Create book node (SINGLE TRANSACTION)
             book_success = self.storage.store_node('Book', book_id, book_node_data)
@@ -174,16 +184,13 @@ class SimplifiedBookService:
                                     except ValueError:
                                         print(f"⚠️ [SIMPLIFIED] Could not parse publication date: {book_data.published_date}")
                                         pub_date = None
-                            elif hasattr(book_data.published_date, 'date'):
-                                # It's already a date/datetime object
-                                pub_date = book_data.published_date.date() if hasattr(book_data.published_date, 'date') else book_data.published_date
                             else:
                                 pub_date = book_data.published_date
                         
                         published_success = self.storage.create_relationship(
                             'Book', book_id, 'PUBLISHED_BY', 'Publisher', publisher_id,
                             {
-                                'publication_date': pub_date if pub_date else None,
+                                'publication_date': pub_date,
                                 'created_at': datetime.utcnow()
                             }
                         )

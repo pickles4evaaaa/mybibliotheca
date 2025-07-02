@@ -6,14 +6,14 @@
 **Problem**: `'KuzuGraphStorage' object has no attribute 'query'` error
 **Fix**: Added compatibility `query()` method to `KuzuGraphStorage` class that converts Kuzu results to expected format
 
-**File**: `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/infrastructure/kuzu_graph.py`
+**File**: `app/infrastructure/kuzu_graph.py`
 **Changes**: Added method that wraps `execute()` and formats results correctly
 
 ### ✅ 2. Missing CustomField Schema Fields  
 **Problem**: `Cannot find property created_by_user_id` and other CustomField property errors
 **Fix**: Enhanced CustomField schema with missing required fields
 
-**File**: `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/infrastructure/kuzu_graph.py`
+**File**: `app/infrastructure/kuzu_graph.py`
 **Changes**: Added fields:
 - `created_by_user_id STRING`
 - `is_shareable BOOLEAN` 
@@ -24,7 +24,7 @@
 **Problem**: Template comparison errors with None values for category levels
 **Fix**: Updated category creation to include missing fields instead of filtering them out
 
-**File**: `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/infrastructure/kuzu_clean_repositories.py`
+**File**: `app/infrastructure/kuzu_clean_repositories.py`
 **Changes**: 
 - `CleanKuzuBookRepository._ensure_category_exists()`: Include `level: 0`, `book_count: 0`, `user_book_count: 0`, `updated_at: datetime.utcnow()`
 - `CleanKuzuCategoryRepository.create()`: Same field additions
@@ -34,14 +34,14 @@
 **Fix**: Updated routes and templates to use consistent `location_id` field name
 
 **Files Changed**:
-- `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/routes.py`: Changed form field from `primary_location_id` to `location_id`
-- `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/templates/view_book_enhanced.html`: Updated HTML form field names and JavaScript references
+- `app/routes.py`: Changed form field from `primary_location_id` to `location_id`
+- `app/templates/view_book_enhanced.html`: Updated HTML form field names and JavaScript references
 
 ### ✅ 5. Service Layer Location Handling
 **Problem**: `update_book_sync` method didn't handle location updates or other OWNS relationship fields
 **Fix**: Enhanced service method to properly update OWNS relationship properties
 
-**File**: `/Users/jeremiah/Documents/Python Projects/bibliotheca/app/services.py`
+**File**: `app/services.py`
 **Changes**: Completely rewrote `update_book_sync()` method to:
 - Handle OWNS relationship fields (`location_id`, `reading_status`, `ownership_status`, etc.)
 - Execute proper Cypher UPDATE queries

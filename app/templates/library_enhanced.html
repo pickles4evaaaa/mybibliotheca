@@ -544,11 +544,11 @@
                             <div class="card h-100 book-card shadow-sm" data-book-id="{{ book.uid }}">
                                 <!-- Selection checkbox -->
                                 <div class="position-absolute top-0 end-0 p-2" style="z-index: 10;">
-                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book.id }}">
+                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book.uid }}">
                                 </div>
 
                                 <!-- Book Cover -->
-                                <div class="book-cover-wrapper" onclick="openBook('{{ book.id }}')" style="cursor: pointer;">
+                                <div class="book-cover-wrapper" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
                                     {% if book.cover_url %}
                                         <img src="{{ book.cover_url }}" 
                                              class="card-img-top book-cover" 
@@ -562,7 +562,7 @@
                                 </div>
 
                                 <!-- Book Info -->
-                                <div class="card-body p-2" onclick="openBook('{{ book.id }}')" style="cursor: pointer;">
+                                <div class="card-body p-2" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
                                     <h6 class="card-title mb-1 book-title">{{ book.title }}</h6>
                                     
                                     <!-- Contributors (compact display) -->
@@ -758,7 +758,11 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     window.openBook = function(uid) {
-        window.location.href = "{{ url_for('main.view_book', uid='PLACEHOLDER') }}".replace('PLACEHOLDER', uid);
+        if (!uid) {
+            console.error('No UID provided for book');
+            return;
+        }
+        window.location.href = `{{ url_for('main.view_book_enhanced', uid='PLACEHOLDER') }}`.replace('PLACEHOLDER', uid);
     };
 
     window.clearStatusFilter = function() {
