@@ -352,6 +352,10 @@ class Person:
     birth_place: Optional[str] = None
     bio: Optional[str] = None
     website: Optional[str] = None
+    # OpenLibrary or other API author ID for metadata refresh
+    openlibrary_id: Optional[str] = None
+    # Optional author/narrator image URL fetched from OpenLibrary or other APIs
+    image_url: Optional[str] = None
     
     # Timestamps
     created_at: datetime = field(default_factory=datetime.utcnow)

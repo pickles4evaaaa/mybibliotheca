@@ -12,6 +12,18 @@
                     <i class="bi bi-pencil me-2"></i>Edit Person
                 </h1>
                 <div>
+                    <!-- Add photo edit button -->
+                    <button type="button" class="btn btn-outline-secondary action-icon-btn me-2" data-bs-toggle="modal" data-bs-target="#photoEditModal" title="Edit Photo">
+                        <i class="bi bi-image"></i>
+                    </button>
+                    <!-- Refresh Metadata Button -->
+                    <form method="post" action="{{ url_for('main.refresh_person_metadata', person_id=person.id) }}" class="d-inline me-2">
+                        <button type="submit" class="btn btn-outline-info" 
+                                title="{% if person.openlibrary_id %}Refresh metadata from OpenLibrary{% else %}Search for this person on OpenLibrary{% endif %}">
+                            <i class="bi bi-arrow-clockwise"></i> 
+                            {% if person.openlibrary_id %}Refresh Metadata{% else %}Find Metadata{% endif %}
+                        </button>
+                    </form>
                     <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-outline-primary me-2">
                         <i class="bi bi-eye"></i> View Details
                     </a>
@@ -24,7 +36,7 @@
             <!-- Form -->
             <div class="card">
                 <div class="card-body">
-                    <form method="POST">
+                    <form method="POST" enctype="multipart/form-data">
                         <!-- Name -->
                         <div class="mb-3">
                             <label for="name" class="form-label">
@@ -103,6 +115,31 @@
                             </div>
                         </div>
 
+                        <!-- OpenLibrary ID -->
+                        <div class="mb-3">
+                            <label for="openlibrary_id" class="form-label">
+                                <i class="bi bi-book"></i> OpenLibrary ID
+                            </label>
+                            <input type="text" class="form-control" id="openlibrary_id" name="openlibrary_id" 
+                                   value="{{ person.openlibrary_id or '' }}" placeholder="e.g., OL23919A">
+                            <div class="form-text">
+                                OpenLibrary author identifier (optional) - used for metadata enrichment
+                            </div>
+                        </div>
+
+                        <!-- Image URL -->
+                        <div class="mb-3">
+                            <label for="image_url" class="form-label">
+                                <i class="bi bi-image"></i> Image URL
+                            </label>
+                            <input type="url" class="form-control" id="image_url" name="image_url" 
+                                   value="{{ person.image_url or '' }}" placeholder="https://example.com/photo.jpg">
+                            <div class="form-text">
+                                URL to a profile image (optional)
+                            </div>
+                        </div>
+
+                        <input type="hidden" name="action" value="update_photo"/>
                         <!-- Actions -->
                         <div class="d-flex justify-content-between">
                             <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-outline-secondary">
@@ -161,6 +198,91 @@
     </div>
 </div>
 
+<!-- Photo Edit Modal -->
+<div class="modal fade" id="photoEditModal" tabindex="-1" aria-labelledby="photoEditModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="photoEditModalLabel">
+          <i class="bi bi-image me-2"></i>Edit Photo
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row mb-3">
+          <div class="col-md-6 text-center">
+            <h6 class="text-muted mb-2">Current Photo</h6>
+            <div class="photo-preview-container">
+              {% if person.image_url %}
+              <img src="{{ person.image_url }}" alt="{{ person.name }}" class="img-fluid rounded shadow-sm" style="max-height: 200px;" id="current-photo-preview">
+              {% else %}
+              <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" style="height: 200px; width: 200px; margin: 0 auto;" id="current-photo-preview">
+                <i class="bi bi-person-circle text-muted" style="font-size: 4rem;"></i>
+              </div>
+              {% endif %}
+          </div>
+          <div class="col-md-6 text-center">
+            <h6 class="text-muted mb-2">New Photo Preview</h6>
+            <div class="photo-preview-container">
+              <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" style="height: 200px; width: 200px; margin: 0 auto;" id="new-photo-preview">
+                <i class="bi bi-eye text-muted" style="font-size: 3rem;"></i>
+                <span class="text-muted ms-2">Preview</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <form id="photo-edit-form" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="action" value="update_photo" />
+          <div class="accordion" id="photoEditAccordion">
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button bg-primary text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapsePhotoUrl" aria-expanded="true">
+                  <i class="bi bi-link me-2"></i>Photo URL
+                </button>
+              </h2>
+              <div id="collapsePhotoUrl" class="accordion-collapse collapse show" data-bs-parent="#photoEditAccordion">
+                <div class="accordion-body">
+                  <div class="mb-3">
+                    <label for="photo_url" class="form-label">Enter a direct URL to an image</label>
+                    <div class="input-group">
+                      <input type="url" class="form-control" id="photo_url" name="photo_url" value="{{ person.image_url or '' }}" placeholder="https://example.com/photo.jpg">
+                      <button type="button" class="btn btn-outline-secondary" id="photo-preview-url-btn">
+                        <i class="bi bi-eye me-1"></i>Preview
+                      </button>
+                    </div>
+                    <div class="form-text">Paste a direct link to an image file (JPG, PNG, GIF, WebP)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed bg-success text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapsePhotoUpload" aria-expanded="false">
+                  <i class="bi bi-upload me-2"></i>Upload from Device
+                </button>
+              </h2>
+              <div id="collapsePhotoUpload" class="accordion-collapse collapse" data-bs-parent="#photoEditAccordion">
+                <div class="accordion-body">
+                  <div class="mb-3">
+                    <label for="photo_file" class="form-label">Choose an image file from your device</label>
+                    <input type="file" class="form-control" id="photo_file" name="photo_file" accept="image/*">
+                    <div class="form-text">Supported formats: JPG, PNG, GIF, WebP (max 5MB)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" form="photo-edit-form" class="btn btn-primary">Save Photo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const birthYearInput = document.getElementById('birth_year');
@@ -186,5 +308,32 @@ document.addEventListener('DOMContentLoaded', function() {
     birthYearInput.max = currentYear;
     deathYearInput.max = currentYear;
 });
+
+// Photo preview scripts
+document.addEventListener('DOMContentLoaded', function() {
+  const urlInput = document.getElementById('photo_url');
+  const urlBtn = document.getElementById('photo-preview-url-btn');
+  const fileInput = document.getElementById('photo_file');
+  const newPreview = document.getElementById('new-photo-preview');
+
+  urlBtn.addEventListener('click', function() {
+    const url = urlInput.value;
+    if (url) {
+      newPreview.innerHTML = `<img src="${url}" class="img-fluid rounded shadow-sm" style="max-height: 200px;">`;
+    }
+  });
+
+  fileInput.addEventListener('change', function() {
+    const file = this.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        newPreview.innerHTML = `<img src="${e.target.result}" class="img-fluid rounded shadow-sm" style="max-height: 200px;">`;
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+});
 </script>
+
 {% endblock %}

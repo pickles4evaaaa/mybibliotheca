@@ -151,9 +151,13 @@ class CleanKuzuPersonRepository:
                 person_name = person.get('name', '')
                 person_id = person.get('id', None) or str(uuid.uuid4())
                 birth_year = person.get('birth_year', None)
-                death_year = person.get('death_year', None) 
+                death_year = person.get('death_year', None)
                 bio = person.get('bio', '')
                 created_at = person.get('created_at', datetime.utcnow())
+                openlibrary_id = person.get('openlibrary_id', None)
+                birth_place = person.get('birth_place', None)
+                website = person.get('website', None)
+                image_url = person.get('image_url', None)
             else:
                 person_name = getattr(person, 'name', '')
                 person_id = getattr(person, 'id', None) or str(uuid.uuid4())
@@ -161,10 +165,57 @@ class CleanKuzuPersonRepository:
                 death_year = getattr(person, 'death_year', None)
                 bio = getattr(person, 'bio', '')
                 created_at = getattr(person, 'created_at', datetime.utcnow())
+                openlibrary_id = getattr(person, 'openlibrary_id', None)
+                birth_place = getattr(person, 'birth_place', None)
+                website = getattr(person, 'website', None)
+                image_url = getattr(person, 'image_url', None)
             
             if not person_name:
                 logger.error("❌ Person name is required")
                 return None
+            
+            # Auto-fetch OpenLibrary metadata if not already provided
+            logger.info(f"🔍 [DEBUG] CREATE: Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
+            if not openlibrary_id and not bio and not birth_year and not image_url:
+                try:
+                    from ..utils import search_author_by_name
+                    logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")
+                    author_data = search_author_by_name(person_name)
+                    
+                    if author_data and author_data.get('openlibrary_id'):
+                        openlibrary_id = author_data.get('openlibrary_id')
+                        
+                        if author_data.get('bio') and not bio:
+                            bio = author_data['bio']
+                        
+                        if author_data.get('birth_date') and not birth_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['birth_date']))
+                                if year_match:
+                                    birth_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('death_date') and not death_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['death_date']))
+                                if year_match:
+                                    death_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('photo_url') and not image_url:
+                            image_url = author_data['photo_url']
+                        
+                        logger.info(f"✅ Auto-fetched metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                    else:
+                        logger.info(f"📝 No OpenLibrary data found for: {person_name}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to auto-fetch metadata for {person_name}: {e}")
+                    # Continue with person creation even if metadata fetch fails
             
             # Only include properties that exist in the Person schema
             person_data = {
@@ -173,10 +224,14 @@ class CleanKuzuPersonRepository:
                 'normalized_name': person_name.strip().lower(),
                 'birth_year': birth_year,
                 'death_year': death_year,
+                'birth_place': birth_place,
                 'bio': bio,
-                'created_at': created_at
+                'website': website,
+                'openlibrary_id': openlibrary_id,
+                'image_url': image_url,
+                'created_at': created_at,
+                'updated_at': datetime.utcnow()
             }
-            # Note: Filtering out birth_place, website, updated_at as they don't exist in DB schema
             
             success = self.db.create_node('Person', person_data)
             if success:
@@ -271,7 +326,7 @@ class CleanKuzuPersonRepository:
             
             for key, value in updates.items():
                 # Only allow valid schema properties
-                if key in ['name', 'normalized_name', 'birth_year', 'death_year', 'bio']:
+                if key in ['name', 'normalized_name', 'birth_year', 'death_year', 'bio', 'openlibrary_id', 'birth_place', 'website', 'image_url']:
                     set_clauses.append(f"p.{key} = ${key}")
                     params[key] = value
             
@@ -494,19 +549,89 @@ class CleanKuzuBookRepository:
             
             # Create new person
             person_id = getattr(person, 'id', None) or str(uuid.uuid4())
+            
+            # Auto-fetch OpenLibrary metadata if available
+            birth_year = getattr(person, 'birth_year', None)
+            death_year = getattr(person, 'death_year', None)
+            bio = getattr(person, 'bio', '')
+            openlibrary_id = getattr(person, 'openlibrary_id', None)
+            image_url = getattr(person, 'image_url', None)
+            birth_place = getattr(person, 'birth_place', None)
+            website = getattr(person, 'website', None)
+            
+            # Auto-fetch OpenLibrary metadata if not already provided
+            logger.info(f"🔍 [DEBUG] Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
+            if not openlibrary_id and not bio and not birth_year and not image_url:
+                try:
+                    from ..utils import search_author_by_name
+                    logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")
+                    author_data = search_author_by_name(person_name)
+                    
+                    if author_data and author_data.get('openlibrary_id'):
+                        openlibrary_id = author_data.get('openlibrary_id')
+                        
+                        if author_data.get('bio') and not bio:
+                            bio = author_data['bio']
+                        
+                        if author_data.get('birth_date') and not birth_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['birth_date']))
+                                if year_match:
+                                    birth_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('death_date') and not death_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['death_date']))
+                                if year_match:
+                                    death_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('photo_url') and not image_url:
+                            image_url = author_data['photo_url']
+                        
+                        logger.info(f"✅ Auto-fetched metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                    else:
+                        logger.info(f"📝 No OpenLibrary data found for: {person_name}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to auto-fetch metadata for {person_name}: {e}")
+                    # Continue with person creation even if metadata fetch fails
+            
             # Only include properties that exist in the Person schema
             person_data = {
                 'id': person_id,
                 'name': person_name,
                 'normalized_name': normalized_name,
-                'birth_year': getattr(person, 'birth_year', None),
-                'death_year': getattr(person, 'death_year', None),
-                'bio': getattr(person, 'bio', ''),
-                'created_at': getattr(person, 'created_at', datetime.utcnow())
+                'birth_year': birth_year,
+                'death_year': death_year,
+                'birth_place': birth_place,
+                'bio': bio,
+                'website': website,
+                'openlibrary_id': openlibrary_id,
+                'image_url': image_url,
+                'created_at': getattr(person, 'created_at', datetime.utcnow()),
+                'updated_at': datetime.utcnow()
             }
-            # Note: Filtering out birth_place, website, updated_at as they don't exist in DB schema
+            # Filter out fields that don't exist in the current schema
+            # birth_place and website are not in the current schema, but openlibrary_id and image_url are
+            filtered_person_data = {
+                'id': person_data['id'],
+                'name': person_data['name'],
+                'normalized_name': person_data['normalized_name'],
+                'birth_year': person_data['birth_year'],
+                'death_year': person_data['death_year'],
+                'bio': person_data['bio'],
+                'openlibrary_id': person_data['openlibrary_id'],
+                'image_url': person_data['image_url'],
+                'created_at': person_data['created_at']
+            }
             
-            success = self.db.create_node('Person', person_data)
+            success = self.db.create_node('Person', filtered_person_data)
             if success:
                 logger.info(f"✅ Created new person: {person_name} (ID: {person_id})")
                 return person_id

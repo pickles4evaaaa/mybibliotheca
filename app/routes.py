@@ -3,7 +3,8 @@ from flask_login import login_required, current_user
 from .domain.models import Book as DomainBook, Author, Person, BookContribution, ContributionType, Publisher, Series, User, ReadingStatus, OwnershipStatus, CustomFieldDefinition, ImportMappingTemplate
 from .services import book_service, user_service, reading_log_service, custom_field_service, import_mapping_service, direct_import_service
 from .simplified_book_service import SimplifiedBookService, SimplifiedBook
-from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image
+from .utils import fetch_book_data, get_reading_streak, get_google_books_cover, generate_month_review_image, fetch_author_data
+from .infrastructure.kuzu_clean_repositories import CleanKuzuPersonRepository
 from datetime import datetime, date, timedelta
 import secrets
 import requests
@@ -748,36 +749,50 @@ def edit_book(uid):
                             )
                             break
                     
-                    # If not found, create new person
+                    # If not found, create new person using clean repository (with auto-fetch)
                     if not person:
-                        debug_log(f"Creating new person: {person_name}", "PERSON_CREATION")
-                        person = Person(
-                            id=str(uuid.uuid4()),
-                            name=person_name,
-                            normalized_name=normalized_name,
-                            created_at=datetime.now(),
-                            updated_at=datetime.now()
-                        )
+                        debug_log(f"Creating new person via clean repository: {person_name}", "PERSON_CREATION")
+                        from .infrastructure.kuzu_clean_repositories import CleanKuzuPersonRepository
+                        from .infrastructure.kuzu_graph import get_kuzu_connection
                         
-                        # Store the new person (same as repository method)
-                        person_data = {
-                            'name': person.name,
-                            'normalized_name': person.normalized_name,
-                            'birth_year': person.birth_year,
-                            'death_year': person.death_year,
-                            'birth_place': person.birth_place,
-                            'bio': person.bio,
-                            'website': person.website,
-                            'created_at': person.created_at.isoformat(),
-                            'updated_at': person.updated_at.isoformat()
-                        }
-                        
-                        success = storage.store_node('Person', person.id, person_data)
-                        if not success:
-                            debug_log(f"Failed to create person: {person_name}", "PERSON_CREATION_ERROR")
-                            continue
+                        try:
+                            # Use clean repository with auto-fetch capability
+                            kuzu_connection = get_kuzu_connection()
+                            person_repo = CleanKuzuPersonRepository(kuzu_connection.connect())
                             
-                        debug_log(f"Created new person: {person.name} (ID: {person.id})", "PERSON_CREATION")
+                            # Create person using repository (will auto-fetch OpenLibrary metadata)
+                            person_dict = {
+                                'id': str(uuid.uuid4()),
+                                'name': person_name,
+                                'normalized_name': normalized_name,
+                                'created_at': datetime.now(),
+                                'updated_at': datetime.now()
+                            }
+                            
+                            created_person = person_repo.create(person_dict)
+                            if created_person:
+                                # Convert back to Person object for the rest of the workflow
+                                person = Person(
+                                    id=created_person.get('id'),
+                                    name=created_person.get('name', ''),
+                                    normalized_name=created_person.get('normalized_name', ''),
+                                    birth_year=created_person.get('birth_year'),
+                                    death_year=created_person.get('death_year'),
+                                    birth_place=created_person.get('birth_place'),
+                                    bio=created_person.get('bio'),
+                                    website=created_person.get('website'),
+                                    openlibrary_id=created_person.get('openlibrary_id'),
+                                    image_url=created_person.get('image_url'),
+                                    created_at=datetime.now(),
+                                    updated_at=datetime.now()
+                                )
+                                debug_log(f"Created new person with auto-fetch: {person.name} (ID: {person.id})", "PERSON_CREATION")
+                            else:
+                                debug_log(f"Failed to create person via repository: {person_name}", "PERSON_CREATION_ERROR")
+                                continue
+                        except Exception as repo_error:
+                            debug_log(f"Repository creation failed for {person_name}: {repo_error}", "PERSON_CREATION_ERROR")
+                            continue
                     
                     # Validate person has valid ID
                     if not person or not person.id:
@@ -4098,21 +4113,49 @@ def start_import_job(task_id):
                                 elif author_name and author_name.lower() in added_author_names:
                                     print(f"Skipping duplicate author from Google Books: {author_name}")
                         elif ol_data and ol_data.get('authors_list'):
-                            # Use individual authors from OpenLibrary API
+                            # Use individual authors from OpenLibrary API with metadata
                             for i, author_name in enumerate(ol_data['authors_list']):
                                 author_name = author_name.strip()
-                                if author_name and author_name.lower() not in added_author_names:
-                                    person = Person(name=author_name)
-                                    contribution = BookContribution(
-                                        person=person,
-                                        contribution_type=ContributionType.AUTHORED,
-                                        order=i  # First author is primary
-                                    )
-                                    contributors.append(contribution)
-                                    added_author_names.add(author_name.lower())
-                                    print(f"Added author from OpenLibrary: {author_name}")
-                                elif author_name and author_name.lower() in added_author_names:
-                                    print(f"Skipping duplicate author from OpenLibrary: {author_name}")
+                                if not author_name or author_name.lower() in added_author_names:
+                                    if author_name:
+                                        print(f"Skipping duplicate author from OpenLibrary: {author_name}")
+                                    continue
+                                # Fetch author metadata if available
+                                author_id = None
+                                ids = ol_data.get('author_ids', [])
+                                if i < len(ids):
+                                    author_id = ids[i]
+                                meta = fetch_author_data(author_id) or {}
+                                # Parse birth and death years
+                                birth_year = None
+                                death_year = None
+                                bd = meta.get('birth_date')
+                                dd = meta.get('death_date')
+                                try:
+                                    if bd and bd[:4].isdigit():
+                                        birth_year = int(bd[:4])
+                                except Exception:
+                                    pass
+                                try:
+                                    if dd and dd[:4].isdigit():
+                                        death_year = int(dd[:4])
+                                except Exception:
+                                    pass
+                                person = Person(
+                                    name=author_name,
+                                    bio=meta.get('bio'),
+                                    birth_year=birth_year,
+                                    death_year=death_year,
+                                    image_url=meta.get('photo_url')
+                                )
+                                contribution = BookContribution(
+                                    person=person,
+                                    contribution_type=ContributionType.AUTHORED,
+                                    order=i  # First author is primary
+                                )
+                                contributors.append(contribution)
+                                added_author_names.add(author_name.lower())
+                                print(f"Added author from OpenLibrary: {author_name}")
                         else:
                             # Fallback to CSV author or joined API author string (only if no API authors)
                             if csv_author.lower() not in added_author_names:
@@ -4893,6 +4936,8 @@ def edit_person(person_id):
             death_year = request.form.get('death_year')
             birth_place = request.form.get('birth_place', '').strip()
             website = request.form.get('website', '').strip()
+            openlibrary_id = request.form.get('openlibrary_id', '').strip()
+            image_url = request.form.get('image_url', '').strip()
             
             if not name:
                 flash('Name is required.', 'error')
@@ -4936,6 +4981,8 @@ def edit_person(person_id):
             person.death_year = death_year_int
             person.birth_place = birth_place if birth_place else None
             person.website = website if website else None
+            person.openlibrary_id = openlibrary_id if openlibrary_id else None
+            person.image_url = image_url if image_url else None
             person.updated_at = datetime.now()
             
             # Update normalized name
@@ -4953,6 +5000,8 @@ def edit_person(person_id):
                 'death_year': person.death_year,
                 'birth_place': person.birth_place,
                 'website': person.website,
+                'openlibrary_id': person.openlibrary_id,
+                'image_url': person.image_url,
                 'created_at': person.created_at.isoformat() if person.created_at else datetime.now().isoformat(),
                 'updated_at': person.updated_at.isoformat()
             }
@@ -5202,6 +5251,144 @@ def delete_person(person_id):
         current_app.logger.error(f"Error deleting person {person_id}: {e}")
         flash('Error deleting person. Please try again.', 'error')
         return redirect(url_for('main.people'))
+
+
+@bp.route('/person/<person_id>/refresh_metadata', methods=['POST'])
+@login_required
+def refresh_person_metadata(person_id):
+    """Refresh person metadata from OpenLibrary."""
+    try:
+        from .utils import search_author_by_name, fetch_author_data
+        
+        # Get the current person
+        person = book_service.get_person_by_id_sync(person_id)
+        if not person:
+            flash('Person not found.', 'error')
+            return redirect(url_for('main.people'))
+        
+        person_name = getattr(person, 'name', '')
+        current_openlibrary_id = getattr(person, 'openlibrary_id', None)
+        
+        metadata_updated = False
+        
+        # If person already has an OpenLibrary ID, fetch fresh data
+        if current_openlibrary_id:
+            current_app.logger.info(f"Refreshing metadata for person {person_name} using existing OpenLibrary ID: {current_openlibrary_id}")
+            author_data = fetch_author_data(current_openlibrary_id)
+            
+            if author_data:
+                # Update person with new metadata
+                update_data = {}
+                
+                if author_data.get('bio') and author_data['bio'] != getattr(person, 'bio', ''):
+                    update_data['bio'] = author_data['bio']
+                
+                if author_data.get('birth_date'):
+                    # Parse birth year from date string
+                    try:
+                        if isinstance(author_data['birth_date'], str):
+                            # Try to extract year from various date formats
+                            import re
+                            year_match = re.search(r'\b(19|20)\d{2}\b', author_data['birth_date'])
+                            if year_match:
+                                birth_year = int(year_match.group())
+                                if birth_year != getattr(person, 'birth_year', None):
+                                    update_data['birth_year'] = birth_year
+                    except (ValueError, TypeError):
+                        pass
+                
+                if author_data.get('death_date'):
+                    # Parse death year from date string
+                    try:
+                        if isinstance(author_data['death_date'], str):
+                            import re
+                            year_match = re.search(r'\b(19|20)\d{2}\b', author_data['death_date'])
+                            if year_match:
+                                death_year = int(year_match.group())
+                                if death_year != getattr(person, 'death_year', None):
+                                    update_data['death_year'] = death_year
+                    except (ValueError, TypeError):
+                        pass
+                
+                if author_data.get('photo_url') and author_data['photo_url'] != getattr(person, 'image_url', ''):
+                    update_data['image_url'] = author_data['photo_url']
+                
+                if update_data:
+                    # Update the person in the database
+                    success = book_service.update_person_sync(person_id, update_data)
+                    if success:
+                        metadata_updated = True
+                        updated_fields = list(update_data.keys())
+                        flash(f'Metadata refreshed for {person_name}. Updated: {", ".join(updated_fields)}.', 'success')
+                    else:
+                        flash(f'Failed to update metadata for {person_name}.', 'error')
+                else:
+                    flash(f'No new metadata found for {person_name}.', 'info')
+            else:
+                flash(f'Could not fetch metadata for {person_name} from OpenLibrary.', 'warning')
+        
+        # If no OpenLibrary ID, try to search for one
+        else:
+            current_app.logger.info(f"Searching for OpenLibrary data for person: {person_name}")
+            author_data = search_author_by_name(person_name)
+            
+            if author_data and author_data.get('openlibrary_id'):
+                # Update person with found metadata
+                update_data = {
+                    'openlibrary_id': author_data['openlibrary_id']
+                }
+                
+                if author_data.get('bio'):
+                    update_data['bio'] = author_data['bio']
+                
+                if author_data.get('birth_date'):
+                    try:
+                        if isinstance(author_data['birth_date'], str):
+                            import re
+                            year_match = re.search(r'\b(19|20)\d{2}\b', author_data['birth_date'])
+                            if year_match:
+                                update_data['birth_year'] = int(year_match.group())
+                    except (ValueError, TypeError):
+                        pass
+                
+                if author_data.get('death_date'):
+                    try:
+                        if isinstance(author_data['death_date'], str):
+                            import re
+                            year_match = re.search(r'\b(19|20)\d{2}\b', author_data['death_date'])
+                            if year_match:
+                                update_data['death_year'] = int(year_match.group())
+                    except (ValueError, TypeError):
+                        pass
+                
+                if author_data.get('photo_url'):
+                    update_data['image_url'] = author_data['photo_url']
+                
+                # Update the person in the database
+                success = book_service.update_person_sync(person_id, update_data)
+                if success:
+                    metadata_updated = True
+                    updated_fields = [field for field in update_data.keys() if field != 'openlibrary_id']
+                    if updated_fields:
+                        flash(f'Found and linked OpenLibrary data for {person_name}. Updated: {", ".join(updated_fields)}.', 'success')
+                    else:
+                        flash(f'Found and linked OpenLibrary profile for {person_name}.', 'success')
+                else:
+                    flash(f'Failed to update metadata for {person_name}.', 'error')
+            else:
+                flash(f'No OpenLibrary data found for {person_name}.', 'info')
+        
+        # Log the refresh attempt
+        if metadata_updated:
+            current_app.logger.info(f"Successfully refreshed metadata for person {person_name} (ID: {person_id})")
+        else:
+            current_app.logger.info(f"No metadata updates found for person {person_name} (ID: {person_id})")
+    
+    except Exception as e:
+        current_app.logger.error(f"Error refreshing metadata for person {person_id}: {e}")
+        flash('Error refreshing person metadata. Please try again.', 'error')
+    
+    return redirect(url_for('main.person_details', person_id=person_id))
 
 
 @bp.route('/persons/bulk_delete', methods=['POST'])

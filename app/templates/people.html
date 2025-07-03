@@ -168,11 +168,23 @@
                                     <input type="checkbox" class="person-checkbox" value="{{ person.id }}" data-book-count="{{ person.book_count }}">
                                 </div>
                                 <div class="card-body" onclick="openPerson('{{ person.id }}')">
-                                    <h5 class="card-title">
-                                        <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
-                                            {{ person.name }}
-                                        </a>
-                                    </h5>
+                                    <div class="d-flex align-items-center mb-3">
+                                        {% if person.image_url %}
+                                            <img src="{{ person.image_url }}" alt="{{ person.name }}" 
+                                                 class="rounded-circle me-3" 
+                                                 style="width: 50px; height: 50px; object-fit: cover;">
+                                        {% else %}
+                                            <div class="bg-light rounded-circle d-flex align-items-center justify-content-center me-3" 
+                                                 style="width: 50px; height: 50px;">
+                                                <i class="bi bi-person text-muted" style="font-size: 1.5rem;"></i>
+                                            </div>
+                                        {% endif %}
+                                        <h5 class="card-title mb-0">
+                                            <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
+                                                {{ person.name }}
+                                            </a>
+                                        </h5>
+                                    </div>
                                     
                                     {% if person.bio %}
                                     <p class="card-text text-muted small">
@@ -256,19 +268,31 @@
                                             <input type="checkbox" class="person-checkbox" value="{{ person.id }}" data-book-count="{{ person.book_count }}">
                                         </td>
                                         <td>
-                                            <div>
-                                                <strong>
-                                                    <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
-                                                        {{ person.name }}
-                                                    </a>
-                                                </strong>
-                                                {% if person.bio %}
-                                                <br>
-                                                <small class="text-muted">
-                                                    {{ person.bio[:80] }}
+                                            <div class="d-flex align-items-center">
+                                                {% if person.image_url %}
+                                                    <img src="{{ person.image_url }}" alt="{{ person.name }}" 
+                                                         class="rounded-circle me-2" 
+                                                         style="width: 40px; height: 40px; object-fit: cover;">
+                                                {% else %}
+                                                    <div class="bg-light rounded-circle d-flex align-items-center justify-content-center me-2" 
+                                                         style="width: 40px; height: 40px;">
+                                                        <i class="bi bi-person text-muted"></i>
+                                                    </div>
+                                                {% endif %}
+                                                <div>
+                                                    <strong>
+                                                        <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
+                                                            {{ person.name }}
+                                                        </a>
+                                                    </strong>
+                                                    {% if person.bio %}
+                                                    <br>
+                                                    <small class="text-muted">
+                                                        {{ person.bio[:80] }}
                                                     {% if person.bio | length > 80 %}...{% endif %}
                                                 </small>
                                                 {% endif %}
+                                                </div>
                                             </div>
                                         </td>
                                         <td>

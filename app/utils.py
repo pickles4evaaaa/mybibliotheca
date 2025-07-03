@@ -22,14 +22,22 @@ def fetch_book_data(isbn):
             title = book.get('title', '')
             subtitle = book.get('subtitle', '')
             
-            # Extract individual authors for better Person entity creation
+            # Extract individual authors with IDs for better Person entity creation
             authors_list = []
-            authors_data = book.get('authors', [])
-            for author in authors_data:
-                if isinstance(author, dict) and 'name' in author:
-                    authors_list.append(author['name'])
+            author_ids = []
+            for author in book.get('authors', []):
+                name = ''
+                ol_id = ''
+                if isinstance(author, dict):
+                    name = author.get('name', '')
+                    key = author.get('key', '')
+                    if key:
+                        ol_id = key.split('/')[-1]
                 elif isinstance(author, str):
-                    authors_list.append(author)
+                    name = author
+                if name:
+                    authors_list.append(name)
+                    author_ids.append(ol_id)
             
             # Keep backward compatibility with joined authors string
             authors = ', '.join(authors_list) if authors_list else ''
@@ -99,13 +107,113 @@ def fetch_book_data(isbn):
                 'categories': categories,  # Enhanced: List of categories instead of comma-separated string
                 'publisher': publisher,
                 'language': language,
-                'openlibrary_id': openlibrary_id
+                'openlibrary_id': openlibrary_id,
+                'author_ids': author_ids
             }
         return None
     
     except (requests.exceptions.RequestException, requests.exceptions.Timeout, ValueError) as e:
         # Log the error for debugging but don't crash the bulk import
         current_app.logger.warning(f"Failed to fetch OpenLibrary book data for ISBN {isbn}: {e}")
+        return None
+
+def fetch_author_data(author_id):
+    """Fetch author metadata from OpenLibrary author endpoint."""
+    if not author_id:
+        return None
+    url = f"https://openlibrary.org/authors/{author_id}.json"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        # Parse bio
+        bio = data.get('bio', '')
+        if isinstance(bio, dict):
+            bio = bio.get('value', '')
+        # Parse birth and death dates
+        birth_date = data.get('birth_date')
+        death_date = data.get('death_date')
+        # Extract photo URL
+        photo_url = None
+        photos = data.get('photos', [])
+        if photos:
+            photo_id = photos[0]
+            photo_url = f"https://covers.openlibrary.org/a/id/{photo_id}-L.jpg"
+        return {
+            'birth_date': birth_date,
+            'death_date': death_date,
+            'bio': bio,
+            'photo_url': photo_url
+        }
+    except Exception as e:
+        current_app.logger.warning(f"Failed to fetch author data for {author_id}: {e}")
+        return None
+
+def search_author_by_name(author_name):
+    """Search for authors on OpenLibrary by name and return the best match."""
+    if not author_name:
+        return None
+    
+    # OpenLibrary search API endpoint for authors
+    url = f"https://openlibrary.org/search/authors.json?q={author_name}"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        docs = data.get('docs', [])
+        if not docs:
+            return None
+            
+        # Find the best match (usually the first result)
+        for doc in docs:
+            name = doc.get('name', '')
+            key = doc.get('key', '')
+            
+            # Basic name matching - could be enhanced with fuzzy matching
+            if name.lower().strip() == author_name.lower().strip():
+                author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
+                
+                # Fetch detailed data for this author
+                detailed_data = fetch_author_data(author_id)
+                if detailed_data:
+                    detailed_data['openlibrary_id'] = author_id
+                    detailed_data['name'] = name
+                    return detailed_data
+                else:
+                    # Return basic info if detailed fetch fails
+                    return {
+                        'openlibrary_id': author_id,
+                        'name': name,
+                        'birth_date': doc.get('birth_date'),
+                        'death_date': doc.get('death_date'),
+                        'bio': None,
+                        'photo_url': None
+                    }
+        
+        # If no exact match, return the first result as best match
+        first_match = docs[0]
+        name = first_match.get('name', '')
+        key = first_match.get('key', '')
+        author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
+        
+        detailed_data = fetch_author_data(author_id)
+        if detailed_data:
+            detailed_data['openlibrary_id'] = author_id
+            detailed_data['name'] = name
+            return detailed_data
+        else:
+            return {
+                'openlibrary_id': author_id,
+                'name': name,
+                'birth_date': first_match.get('birth_date'),
+                'death_date': first_match.get('death_date'),
+                'bio': None,
+                'photo_url': None
+            }
+            
+    except Exception as e:
+        current_app.logger.warning(f"Failed to search for author '{author_name}': {e}")
         return None
 
 def get_google_books_cover(isbn, fetch_title_author=False):

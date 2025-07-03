@@ -77,7 +77,7 @@
                                 <div class="mb-3">
                                     <strong class="text-muted me-2">By:</strong>
                                     {% for author in book.authors %}
-                                        <a href="#" class="text-decoration-none">{{ author.name }}</a>
+                                        <a href="{{ url_for('main.person_details', person_id=author.id) }}" class="text-decoration-none">{{ author.name }}</a>
                                         {%- if not loop.last %}, {% endif %}
                                     {% endfor %}
                                 </div>

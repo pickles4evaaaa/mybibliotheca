@@ -163,6 +163,29 @@ class KuzuGraphDB:
             elif has_existing_users:
                 logger.info("🔧 Ensuring all tables exist (preserving existing data)...")
                 print("🔧 Ensuring all tables exist (preserving existing data)...")
+                
+                # Check for and add missing columns to Person table
+                try:
+                    # Test if openlibrary_id column exists
+                    self._connection.execute("MATCH (p:Person) RETURN p.openlibrary_id LIMIT 1")
+                    print("🔍 [MIGRATION] Person.openlibrary_id column already exists")
+                except Exception as e:
+                    if "Cannot find property openlibrary_id" in str(e):
+                        print("🔧 [MIGRATION] Adding openlibrary_id and image_url columns to Person table...")
+                        try:
+                            self._connection.execute("ALTER TABLE Person ADD openlibrary_id STRING")
+                            print("✅ [MIGRATION] Added openlibrary_id column to Person table")
+                        except Exception as alter_e:
+                            print(f"⚠️ [MIGRATION] Could not add openlibrary_id column: {alter_e}")
+                        
+                        try:
+                            self._connection.execute("ALTER TABLE Person ADD image_url STRING")
+                            print("✅ [MIGRATION] Added image_url column to Person table")
+                        except Exception as alter_e:
+                            print(f"⚠️ [MIGRATION] Could not add image_url column: {alter_e}")
+                    else:
+                        print(f"🔍 [MIGRATION] Unexpected error checking Person table: {e}")
+                        
             else:
                 logger.info("🔧 Creating new database schema...")
                 print("🔧 Creating new database schema...")
@@ -247,6 +270,8 @@ class KuzuGraphDB:
                     birth_place STRING,
                     bio STRING,
                     website STRING,
+                    openlibrary_id STRING,
+                    image_url STRING,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP,
                     PRIMARY KEY(id)

@@ -984,7 +984,10 @@ class KuzuBookService:
                 'birth_place': person_data.get('birth_place'),
                 'bio': person_data.get('bio'),
                 'website': person_data.get('website'),
-                'created_at': person_data.get('created_at')
+                'openlibrary_id': person_data.get('openlibrary_id'),
+                'image_url': person_data.get('image_url'),
+                'created_at': person_data.get('created_at'),
+                'updated_at': person_data.get('updated_at')
             })()
             
             current_app.logger.info(f"Found person: {person.name}")
@@ -992,6 +995,59 @@ class KuzuBookService:
         except Exception as e:
             current_app.logger.error(f"Error getting person {person_id}: {e}")
             return None
+    
+    def update_person_sync(self, person_id: str, update_data: Dict[str, Any]) -> bool:
+        """Update a person with new metadata (sync version)."""
+        try:
+            from .infrastructure.kuzu_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            # Filter out None/empty values and validate fields
+            valid_fields = ['name', 'normalized_name', 'birth_year', 'death_year', 'birth_place', 'bio', 'website', 'openlibrary_id', 'image_url']
+            filtered_data = {}
+            
+            for key, value in update_data.items():
+                if key in valid_fields and value is not None and value != '':
+                    filtered_data[key] = value
+            
+            if not filtered_data:
+                current_app.logger.warning(f"No valid update data provided for person {person_id}")
+                return False
+            
+            # Add updated_at timestamp
+            from datetime import datetime
+            filtered_data['updated_at'] = datetime.utcnow()
+            
+            # Build the SET clause for the Cypher query
+            set_clauses = []
+            params = {'person_id': person_id}
+            
+            for key, value in filtered_data.items():
+                param_name = f"new_{key}"
+                set_clauses.append(f"p.{key} = ${param_name}")
+                params[param_name] = value
+            
+            set_clause = ', '.join(set_clauses)
+            
+            # Execute the update query
+            query = f"""
+            MATCH (p:Person {{id: $person_id}})
+            SET {set_clause}
+            RETURN p
+            """
+            
+            results = storage.query(query, params)
+            
+            if results:
+                current_app.logger.info(f"Successfully updated person {person_id} with fields: {list(filtered_data.keys())}")
+                return True
+            else:
+                current_app.logger.warning(f"Person {person_id} not found for update")
+                return False
+                
+        except Exception as e:
+            current_app.logger.error(f"Error updating person {person_id}: {e}")
+            return False
     
     def get_category_by_id_sync(self, category_id: str, user_id: str = None) -> object:
         """Get a category by ID (sync version)."""

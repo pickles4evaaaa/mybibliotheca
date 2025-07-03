@@ -127,18 +127,28 @@ class SimplifiedBookService:
             
             print(f"✅ [SIMPLIFIED] Book node created: {book_id}")
             
-            # 2. Create author relationship (SEPARATE TRANSACTION)
+            # 2. Create author relationship using clean repository (with auto-fetch)
+            from .utils import fetch_author_data
             if book_data.author:
                 try:
-                    author_id = str(uuid.uuid4())
-                    author_data = {
-                        'id': author_id,
+                    # Use clean repository for person creation with auto-fetch capability
+                    from .infrastructure.kuzu_clean_repositories import CleanKuzuPersonRepository
+                    
+                    person_repo = CleanKuzuPersonRepository()
+                    
+                    # Create person using repository (will auto-fetch OpenLibrary metadata)
+                    person_dict = {
+                        'id': str(uuid.uuid4()),
                         'name': book_data.author,
+                        'normalized_name': book_data.author.strip().lower(),
                         'created_at': datetime.utcnow()
                     }
                     
-                    author_success = self.storage.store_node('Person', author_id, author_data)
-                    if author_success:
+                    # Use create method which includes auto-fetch logic
+                    person_data = person_repo.create(person_dict)
+                    if person_data:
+                        author_id = person_data.get('id')
+                        
                         # Create AUTHORED relationship
                         authored_success = self.storage.create_relationship(
                             'Person', author_id, 'AUTHORED', 'Book', book_id,
@@ -149,11 +159,11 @@ class SimplifiedBookService:
                             }
                         )
                         if authored_success:
-                            print(f"✅ [SIMPLIFIED] Author relationship created: {book_data.author}")
+                            print(f"✅ [SIMPLIFIED] Author relationship created with auto-fetch: {book_data.author}")
                         else:
                             print(f"⚠️ [SIMPLIFIED] Book created but author relationship failed")
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Book created but author node failed")
+                        print(f"⚠️ [SIMPLIFIED] Book created but author creation failed")
                 except Exception as e:
                     print(f"⚠️ [SIMPLIFIED] Book created but author processing failed: {e}")
             

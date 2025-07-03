@@ -11,7 +11,21 @@
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-8">
-                            <h1 class="h2 mb-2">{{ person.name }}</h1>
+                            <div class="d-flex align-items-center mb-3">
+                                {% if person.image_url %}
+                                    <img src="{{ person.image_url }}" alt="{{ person.name }}" 
+                                         class="rounded-circle me-3" 
+                                         style="width: 80px; height: 80px; object-fit: cover;">
+                                {% else %}
+                                    <div class="bg-light rounded-circle d-flex align-items-center justify-content-center me-3" 
+                                         style="width: 80px; height: 80px;">
+                                        <i class="bi bi-person text-muted" style="font-size: 2.5rem;"></i>
+                                    </div>
+                                {% endif %}
+                                <div>
+                                    <h1 class="h2 mb-2">{{ person.name }}</h1>
+                                </div>
+                            </div>
                             {% if person.bio %}
                                 <p class="text-muted mb-3">{{ person.bio }}</p>
                             {% endif %}
@@ -69,6 +83,16 @@
                                     <a href="{{ url_for('main.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary me-2">
                                         <i class="bi bi-pencil"></i> Edit
                                     </a>
+                                    
+                                    <!-- Refresh Metadata Button -->
+                                    <form method="post" action="{{ url_for('main.refresh_person_metadata', person_id=person.id) }}" class="d-inline">
+                                        <button type="submit" class="btn btn-sm btn-outline-info me-2" 
+                                                title="{% if person.openlibrary_id %}Refresh metadata from OpenLibrary{% else %}Search for this person on OpenLibrary{% endif %}">
+                                            <i class="bi bi-arrow-clockwise"></i> 
+                                            {% if person.openlibrary_id %}Refresh Metadata{% else %}Find Metadata{% endif %}
+                                        </button>
+                                    </form>
+                                    
                                     <a href="{{ url_for('main.people') }}" class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-arrow-left"></i> Back to People
                                     </a>
