@@ -119,12 +119,75 @@
                                     {% endif %}
                                 </div>
                                 
-                                <!-- Series Information -->
-                                {% if book.series %}
+                                <!-- Publisher Information -->
+                                {% if book.publisher %}
                                 <div class="mb-3">
+                                    <small class="text-muted d-block">Publisher</small>
+                                    <span class="fw-medium">{{ book.publisher.name if book.publisher.name else book.publisher }}</span>
+                                </div>
+                                {% endif %}
+                                
+                                <!-- ISBN and Identifiers Row -->
+                                {% if book.isbn13 or book.isbn10 or book.asin %}
+                                <div class="mb-3">
+                                    <small class="text-muted d-block mb-2">Identifiers</small>
+                                    <div class="row">
+                                        {% if book.isbn13 %}
+                                        <div class="col-sm-6 col-lg-4 mb-1">
+                                            <small class="text-muted">ISBN-13:</small>
+                                            <span class="ms-1 fw-medium font-monospace">{{ book.isbn13 }}</span>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        {% if book.isbn10 and book.isbn10 != book.isbn13 %}
+                                        <div class="col-sm-6 col-lg-4 mb-1">
+                                            <small class="text-muted">ISBN-10:</small>
+                                            <span class="ms-1 fw-medium font-monospace">{{ book.isbn10 }}</span>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        {% if book.asin %}
+                                        <div class="col-sm-6 col-lg-4 mb-1">
+                                            <small class="text-muted">ASIN:</small>
+                                            <span class="ms-1 fw-medium font-monospace">{{ book.asin }}</span>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endif %}
+                                
+                                <!-- External Links -->
+                                {% if book.google_books_id or book.openlibrary_id %}
+                                <div class="mb-3">
+                                    <small class="text-muted d-block mb-2">External Links</small>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% if book.google_books_id %}
+                                        <a href="https://books.google.com/books?id={{ book.google_books_id }}" 
+                                           target="_blank" class="btn btn-sm btn-outline-success">
+                                            <i class="bi bi-google me-1"></i>Google Books
+                                        </a>
+                                        {% endif %}
+                                        {% if book.openlibrary_id %}
+                                        <a href="https://openlibrary.org{{ book.openlibrary_id }}" 
+                                           target="_blank" class="btn btn-sm btn-outline-info">
+                                            <i class="bi bi-book me-1"></i>OpenLibrary
+                                        </a>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endif %}
+                                
+                                <!-- Series Information -->
+                                {% if book.series or book.series_volume or book.series_order %}
+                                <div class="mb-3">
+                                    <small class="text-muted d-block">Series</small>
                                     <span class="badge bg-primary me-2">
                                         <i class="bi bi-collection me-1"></i>
-                                        {{ book.series.name if book.series.name else book.series }}
+                                        {% if book.series %}
+                                            {{ book.series.name if book.series.name else book.series }}
+                                        {% else %}
+                                            Unknown Series
+                                        {% endif %}
                                         {% if book.series_volume %} - Vol. {{ book.series_volume }}{% endif %}
                                         {% if book.series_order %} (#{{ book.series_order }}){% endif %}
                                     </span>
@@ -138,11 +201,15 @@
                                     <div class="d-flex flex-wrap gap-1">
                                         {% if book_categories %}
                                             {% for category in book_categories %}
-                                                <span class="badge bg-secondary">{{ category.name }}</span>
+                                                <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+                                                    <span class="badge bg-secondary">{{ category.name }}</span>
+                                                </a>
                                             {% endfor %}
                                         {% elif book.categories %}
                                             {% for category in book.categories %}
-                                                <span class="badge bg-secondary">{{ category.name }}</span>
+                                                <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+                                                    <span class="badge bg-secondary">{{ category.name }}</span>
+                                                </a>
                                             {% endfor %}
                                         {% endif %}
                                     </div>
@@ -204,7 +271,8 @@
                                                     {% elif book.ownership_status == 'borrowed' %}📚 Borrowed
                                                     {% elif book.ownership_status == 'loaned' %}📤 Loaned Out
                                                     {% elif book.ownership_status == 'wishlist' %}⭐ Wishlist
-                                                    {% else %}🏠 Owned{% endif %}
+                                                    {% elif book.ownership_status %}{{ book.ownership_status|title }}
+                                                    {% else %}<span class="text-muted">📖 Global Book</span>{% endif %}
                                                 </span>
                                             </div>
                                         </div>
@@ -253,6 +321,17 @@
                                             <div>
                                                 <small class="text-muted d-block">Location</small>
                                                 <span class="fw-medium">{{ book.location_id }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% elif book.ownership_status and book.ownership_status != 'wishlist' %}
+                                    <!-- Show location placeholder for owned books without location data -->
+                                    <div class="col-md-4 mb-2">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi bi-geo-alt me-2 text-muted"></i>
+                                            <div>
+                                                <small class="text-muted d-block">Location</small>
+                                                <span class="fw-medium text-muted">Not set</span>
                                             </div>
                                         </div>
                                     </div>
@@ -361,6 +440,59 @@
                                         </select>
                                     </div>
                                     
+                                    <!-- Ownership and Media Type -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="edit-ownership-status" class="form-label fw-medium">Ownership</label>
+                                                <select class="form-select" id="edit-ownership-status" name="ownership_status">
+                                                    <option value="owned" {% if book.ownership_status == 'owned' %}selected{% endif %}>🏠 Owned</option>
+                                                    <option value="borrowed" {% if book.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
+                                                    <option value="loaned" {% if book.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
+                                                    <option value="wishlist" {% if book.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="edit-media-type" class="form-label fw-medium">Format</label>
+                                                <select class="form-select" id="edit-media-type" name="media_type">
+                                                    <option value="physical" {% if book.media_type == 'physical' %}selected{% endif %}>📖 Physical Book</option>
+                                                    <option value="ebook" {% if book.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
+                                                    <option value="audiobook" {% if book.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
+                                                    <option value="kindle" {% if book.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Personal Information Section -->
+                                    <hr class="my-4">
+                                    <h6 class="text-muted mb-3">
+                                        <i class="bi bi-person-heart me-2"></i>Personal Information
+                                    </h6>
+                                    
+                                    <!-- Personal Notes & Review -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="edit-personal-notes" class="form-label fw-medium">Personal Notes</label>
+                                                <textarea class="form-control" id="edit-personal-notes" name="personal_notes" rows="3" 
+                                                          placeholder="Your personal thoughts and notes about this book...">{{ book.personal_notes or '' }}</textarea>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="edit-review" class="form-label fw-medium">Personal Review</label>
+                                                <textarea class="form-control" id="edit-review" name="review" rows="3" 
+                                                          placeholder="Your detailed review of this book...">{{ book.review or '' }}</textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+
+
+                                    
                                     <!-- Save/Cancel Buttons -->
                                     <div class="d-flex gap-2">
                                         <button type="submit" class="btn btn-primary">
@@ -381,7 +513,6 @@
             <div class="accordion" id="bookAccordion">
                 
                 <!-- 📖 DESCRIPTION SECTION - Full book description/summary -->
-                {% if book.description %}
                 <div class="accordion-item shadow-sm mb-2">
                     <h2 class="accordion-header">
                         <button class="accordion-button collapsed bg-primary text-white" type="button" 
@@ -392,28 +523,65 @@
                     </h2>
                     <div id="collapseDescription" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
                         <div class="accordion-body">
-                            <div class="description-content">
-                                {% if book.description|length > 500 %}
-                                    <div id="description-short">
-                                        <p class="mb-3">{{ book.description[:500]|safe }}...</p>
-                                        <button class="btn btn-sm btn-outline-primary expand-description">
-                                            <i class="bi bi-chevron-down me-1"></i>Read More
-                                        </button>
-                                    </div>
-                                    <div id="description-full" class="expanded" style="display: none;">
-                                        <p class="mb-3">{{ book.description|safe }}</p>
-                                        <button class="btn btn-sm btn-outline-primary expand-description">
-                                            <i class="bi bi-chevron-up me-1"></i>Show Less
-                                        </button>
-                                    </div>
+                            <!-- Edit Button for Description -->
+                            <div class="d-flex justify-content-end mb-3">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="editDescriptionToggle">
+                                    <i class="bi bi-pencil me-1"></i>Edit Description
+                                </button>
+                            </div>
+                            
+                            <!-- View Mode -->
+                            <div class="description-view-mode">
+                                {% if book.description %}
+                                <div class="description-content">
+                                    {% if book.description|length > 500 %}
+                                        <div id="description-short">
+                                            <p class="mb-3">{{ book.description[:500]|safe }}...</p>
+                                            <button class="btn btn-sm btn-outline-primary expand-description">
+                                                <i class="bi bi-chevron-down me-1"></i>Read More
+                                            </button>
+                                        </div>
+                                        <div id="description-full" class="expanded" style="display: none;">
+                                            <p class="mb-3">{{ book.description|safe }}</p>
+                                            <button class="btn btn-sm btn-outline-primary expand-description">
+                                                <i class="bi bi-chevron-up me-1"></i>Show Less
+                                            </button>
+                                        </div>
+                                    {% else %}
+                                        <p class="mb-0">{{ book.description|safe }}</p>
+                                    {% endif %}
+                                </div>
                                 {% else %}
-                                    <p class="mb-0">{{ book.description|safe }}</p>
+                                <div class="text-center text-muted py-4">
+                                    <i class="bi bi-file-text mb-2" style="font-size: 2rem;"></i>
+                                    <p class="mb-0">No description available.</p>
+                                    <small>Click the edit button (pencil icon) at the top right to add a description.</small>
+                                </div>
                                 {% endif %}
+                            </div>
+                            
+                            <!-- Edit Mode (Hidden by default) -->
+                            <div class="description-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('main.edit_book', uid=book.uid) }}" id="description-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    
+                                    <div class="mb-3">
+                                        <label for="edit-description" class="form-label fw-medium">Book Description</label>
+                                        <textarea class="form-control" id="edit-description" name="description" rows="8" 
+                                                  placeholder="Enter the book's description, summary, or synopsis...">{{ book.description or '' }}</textarea>
+                                        <div class="form-text">Provide a comprehensive description of the book's content, themes, and plot.</div>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="bi bi-save me-1"></i>Save Description
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
                         </div>
                     </div>
                 </div>
-                {% endif %}
                 
                 <!-- 🔍 ADDITIONAL DETAILS SECTION - Technical and publication metadata -->
                 <div class="accordion-item shadow-sm mb-2">
@@ -426,8 +594,15 @@
                     </h2>
                     <div id="collapseAdditionalDetails" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
                         <div class="accordion-body">
+                            <!-- Edit Button for Additional Details -->
+                            <div class="d-flex justify-content-end mb-3">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="editAdditionalDetailsToggle">
+                                    <i class="bi bi-pencil me-1"></i>Edit Additional Details
+                                </button>
+                            </div>
+                            
                             <!-- View Mode -->
-                            <div class="additional-details-view-mode">
+                            <div class="basic-info-view-mode">
                                 <div class="row">
                                     <!-- Publication Information Column -->
                                     <div class="col-md-6">
@@ -451,13 +626,32 @@
                                         
                                         {% if book.average_rating %}
                                         <div class="mb-2">
-                                            <small class="text-muted">Average Rating:</small>
+                                            <small class="text-muted">Global Average Rating:</small>
                                             <span class="ms-1 fw-medium">
                                                 {% for i in range(1, 6) %}
                                                     {% if i <= book.average_rating %}⭐{% else %}☆{% endif %}
                                                 {% endfor %}
                                                 {{ "%.1f"|format(book.average_rating) }}
                                                 {% if book.rating_count %}({{ book.rating_count }} ratings){% endif %}
+                                            </span>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        {% if book.language %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Language:</small>
+                                            <span class="ms-1 fw-medium">
+                                                {% if book.language == 'en' %}English
+                                                {% elif book.language == 'es' %}Spanish
+                                                {% elif book.language == 'fr' %}French
+                                                {% elif book.language == 'de' %}German
+                                                {% elif book.language == 'it' %}Italian
+                                                {% elif book.language == 'pt' %}Portuguese
+                                                {% elif book.language == 'ru' %}Russian
+                                                {% elif book.language == 'ja' %}Japanese
+                                                {% elif book.language == 'ko' %}Korean
+                                                {% elif book.language == 'zh' %}Chinese
+                                                {% else %}{{ book.language }}{% endif %}
                                             </span>
                                         </div>
                                         {% endif %}
@@ -509,6 +703,17 @@
                                         </div>
                                         {% endif %}
                                         
+                                        <!-- Series Information (If not shown in main card) -->
+                                        {% if book.series and book.series_volume %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Series Volume:</small>
+                                            <span class="ms-1 fw-medium">{{ book.series_volume }}</span>
+                                            {% if book.series_order %}
+                                                <small class="text-muted">(#{{ book.series_order }})</small>
+                                            {% endif %}
+                                        </div>
+                                        {% endif %}
+                                        
                                         <!-- Record Dates -->
                                         {% if book.created_at or book.updated_at %}
                                         <div class="border-top pt-2 mt-3">
@@ -527,6 +732,16 @@
                                         {% endif %}
                                     </div>
                                 </div>
+                                
+                                <!-- Show "No additional details" message only if ALL fields are empty -->
+                                {% set has_additional_details = book.publisher or book.published_date or book.average_rating or book.isbn13 or book.isbn10 or book.asin or book.google_books_id or book.openlibrary_id or book.created_at or book.updated_at %}
+                                {% if not has_additional_details %}
+                                <div class="text-center text-muted py-4">
+                                    <i class="bi bi-info-circle mb-2" style="font-size: 2rem;"></i>
+                                    <p class="mb-0">No additional technical details available.</p>
+                                    <small>Click the edit button (pencil icon) at the top right to add publisher, ISBN, and other metadata.</small>
+                                </div>
+                                {% endif %}
                             </div>
                             
                             <!-- Edit Mode (Hidden by default) -->
@@ -547,48 +762,46 @@
                                             <div class="mb-3">
                                                 <label for="isbn13" class="form-label fw-medium">ISBN-13</label>
                                                 <input type="text" class="form-control" id="isbn13" name="isbn13" 
-                                                       value="{{ book.isbn13 or '' }}">
+                                                       value="{{ book.isbn13 or '' }}" placeholder="978-0-00-000000-0">
+                                                <div class="form-text">13-digit ISBN with or without hyphens</div>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="mb-3">
                                                 <label for="isbn10" class="form-label fw-medium">ISBN-10</label>
                                                 <input type="text" class="form-control" id="isbn10" name="isbn10" 
-                                                       value="{{ book.isbn10 or '' }}">
+                                                       value="{{ book.isbn10 or '' }}" placeholder="0-00-000000-0">
+                                                <div class="form-text">10-digit ISBN with or without hyphens</div>
                                             </div>
                                         </div>
                                     </div>
                                     
                                     <!-- Publication Info -->
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="published_date" class="form-label fw-medium">Published Date</label>
-                                                <input type="text" class="form-control" id="published_date" name="published_date" 
-                                                       value="{{ book.published_date or '' }}">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="page_count" class="form-label fw-medium">Pages</label>
-                                                <input type="number" class="form-control" id="page_count" name="page_count" 
-                                                       value="{{ book.page_count or '' }}">
-                                            </div>
-                                        </div>
+                                    <div class="mb-3">
+                                        <label for="published_date" class="form-label fw-medium">Published Date</label>
+                                        <input type="text" class="form-control" id="published_date" name="published_date" 
+                                               value="{{ book.published_date or '' }}" placeholder="YYYY or YYYY-MM-DD">
+                                        <div class="form-text">Year only (2023) or full date (2023-05-15)</div>
                                     </div>
                                     
                                     <!-- Language -->
                                     <div class="mb-3">
                                         <label for="language" class="form-label fw-medium">Language</label>
-                                        <input type="text" class="form-control" id="language" name="language" 
-                                               value="{{ book.language or '' }}">
-                                    </div>
-                                    
-                                    <!-- Description -->
-                                    <div class="mb-3">
-                                        <label for="description" class="form-label fw-medium">Description</label>
-                                        <textarea class="form-control" id="description" name="description" rows="4" 
-                                                  placeholder="Book description or summary...">{{ book.description or '' }}</textarea>
+                                        <select class="form-select" id="language" name="language">
+                                            <option value="en" {% if book.language == 'en' or not book.language %}selected{% endif %}>English</option>
+                                            <option value="es" {% if book.language == 'es' %}selected{% endif %}>Spanish</option>
+                                            <option value="fr" {% if book.language == 'fr' %}selected{% endif %}>French</option>
+                                            <option value="de" {% if book.language == 'de' %}selected{% endif %}>German</option>
+                                            <option value="it" {% if book.language == 'it' %}selected{% endif %}>Italian</option>
+                                            <option value="pt" {% if book.language == 'pt' %}selected{% endif %}>Portuguese</option>
+                                            <option value="ru" {% if book.language == 'ru' %}selected{% endif %}>Russian</option>
+                                            <option value="ja" {% if book.language == 'ja' %}selected{% endif %}>Japanese</option>
+                                            <option value="ko" {% if book.language == 'ko' %}selected{% endif %}>Korean</option>
+                                            <option value="zh" {% if book.language == 'zh' %}selected{% endif %}>Chinese</option>
+                                            <option value="ar" {% if book.language == 'ar' %}selected{% endif %}>Arabic</option>
+                                            <option value="hi" {% if book.language == 'hi' %}selected{% endif %}>Hindi</option>
+                                            <option value="other" {% if book.language not in ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh', 'ar', 'hi'] and book.language %}selected{% endif %}>Other</option>
+                                        </select>
                                     </div>
                                     
                                     <!-- API Identifiers -->
@@ -617,15 +830,15 @@
                                         </div>
                                     </div>
                                     
-                                    <!-- Global Ratings (Read-only display with option to update) -->
+                                    <!-- Global Ratings (Non-Personal) -->
                                     <div class="row">
                                         <div class="col-md-6">
                                             <div class="mb-3">
-                                                <label for="average_rating" class="form-label fw-medium">Average Rating</label>
+                                                <label for="average_rating" class="form-label fw-medium">Global Average Rating</label>
                                                 <input type="number" class="form-control" id="average_rating" name="average_rating" 
                                                        value="{{ book.average_rating or '' }}" step="0.1" min="0" max="5" 
                                                        placeholder="Global average rating">
-                                                <div class="form-text">Average rating from APIs (0-5)</div>
+                                                <div class="form-text">Average rating from external sources (0-5)</div>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
@@ -634,70 +847,14 @@
                                                 <input type="number" class="form-control" id="rating_count" name="rating_count" 
                                                        value="{{ book.rating_count or '' }}" min="0" 
                                                        placeholder="Number of ratings">
-                                                <div class="form-text">Total number of ratings</div>
+                                                <div class="form-text">Total number of external ratings</div>
                                             </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Ownership and Format -->
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="ownership_status" class="form-label fw-medium">Ownership</label>
-                                                <select class="form-select" id="ownership_status" name="ownership_status">
-                                                    <option value="owned" {% if book.ownership_status == 'owned' %}selected{% endif %}>🏠 Owned</option>
-                                                    <option value="borrowed" {% if book.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
-                                                    <option value="loaned" {% if book.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
-                                                    <option value="wishlist" {% if book.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="media_type" class="form-label fw-medium">Format</label>
-                                                <select class="form-select" id="media_type" name="media_type">
-                                                    <option value="physical" {% if book.media_type == 'physical' %}selected{% endif %}>📖 Physical Book</option>
-                                                    <option value="ebook" {% if book.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
-                                                    <option value="audiobook" {% if book.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
-                                                    <option value="kindle" {% if book.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Borrowing Details -->
-                                    <div id="borrowed-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
-                                        <h6 class="text-primary mb-2"><i class="bi bi-arrow-down-circle me-1"></i>Borrowing Details</h6>
-                                        <div class="mb-2">
-                                            <label for="borrowed_from" class="form-label">Borrowed From</label>
-                                            <input type="text" class="form-control form-control-sm" id="borrowed_from" name="borrowed_from" 
-                                                   value="{{ book.borrowed_from or '' }}" placeholder="Name or contact">
-                                        </div>
-                                        <div class="mb-2">
-                                            <label for="borrowed_due_date" class="form-label">Due Date</label>
-                                            <input type="date" class="form-control form-control-sm" id="borrowed_due_date" name="borrowed_due_date" 
-                                                   value="{{ book.borrowed_due_date or '' }}">
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Loaning Details -->
-                                    <div id="loaned-section" class="border rounded p-3 mb-3 bg-light" style="display: none;">
-                                        <h6 class="text-warning mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Loaning Details</h6>
-                                        <div class="mb-2">
-                                            <label for="loaned_to" class="form-label">Loaned To</label>
-                                            <input type="text" class="form-control form-control-sm" id="loaned_to" name="loaned_to" 
-                                                   value="{{ book.loaned_to or '' }}" placeholder="Name or contact">
-                                        </div>
-                                        <div class="mb-2">
-                                            <label for="loaned_due_date" class="form-label">Expected Return</label>
-                                            <input type="date" class="form-control form-control-sm" id="loaned_due_date" name="loaned_due_date" 
-                                                   value="{{ book.loaned_due_date or '' }}">
                                         </div>
                                     </div>
                                     
                                     <div class="d-grid">
                                         <button type="submit" class="btn btn-secondary">
-                                            <i class="bi bi-save me-1"></i>Save Basic Information
+                                            <i class="bi bi-save me-1"></i>Save Additional Details
                                         </button>
                                     </div>
                                 </form>
@@ -717,6 +874,13 @@
                     </h2>
                     <div id="collapsePersonalNotes" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
                         <div class="accordion-body">
+                            <!-- Edit Button for Personal Notes -->
+                            <div class="d-flex justify-content-end mb-3">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="editPersonalNotesToggle">
+                                    <i class="bi bi-pencil me-1"></i>Edit Personal Notes
+                                </button>
+                            </div>
+                            
                             <div class="personal-notes-view-mode">
                                 <div class="row">
                                     <!-- Personal Content Column -->
@@ -758,14 +922,18 @@
                                             {% endif %}
                                             {% if book.borrowed_date %}
                                             <div class="mb-1">
-                                                <small class="text-muted">Borrowed on:</small>
+                                                <small class="text-muted">Date borrowed:</small>
                                                 <span class="ms-1 fw-medium">{{ book.borrowed_date }}</span>
                                             </div>
                                             {% endif %}
+                                            {% if book.due_date %}
+                                            <div class="mb-1">
+                                                <small class="text-muted">Due date:</small>
+                                                <span class="ms-1 fw-medium">{{ book.due_date }}</span>
+                                            </div>
                                             {% endif %}
-                                            
-                                            {% if book.ownership_status == 'loaned' %}
-                                            <h6 class="text-warning mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Loaning Details</h6>
+                                            {% elif book.ownership_status == 'loaned' %}
+                                            <h6 class="text-warning mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Lending Details</h6>
                                             {% if book.loaned_to %}
                                             <div class="mb-1">
                                                 <small class="text-muted">Loaned to:</small>
@@ -774,14 +942,14 @@
                                             {% endif %}
                                             {% if book.loaned_date %}
                                             <div class="mb-1">
-                                                <small class="text-muted">Loaned on:</small>
+                                                <small class="text-muted">Date loaned:</small>
                                                 <span class="ms-1 fw-medium">{{ book.loaned_date }}</span>
                                             </div>
                                             {% endif %}
-                                            {% if book.loaned_due_date %}
+                                            {% if book.expected_return_date %}
                                             <div class="mb-1">
                                                 <small class="text-muted">Expected return:</small>
-                                                <span class="ms-1 fw-medium">{{ book.loaned_due_date }}</span>
+                                                <span class="ms-1 fw-medium">{{ book.expected_return_date }}</span>
                                             </div>
                                             {% endif %}
                                             {% endif %}
@@ -789,208 +957,106 @@
                                         {% endif %}
                                     </div>
                                     
-                                    <!-- Reading Experience Column -->
+                                    <!-- Reading Progress Column -->
                                     <div class="col-md-6">
                                         <h6 class="text-muted mb-3">
-                                            <i class="bi bi-calendar-check me-1"></i>Reading Experience
+                                            <i class="bi bi-book-half me-1"></i>Reading Progress
                                         </h6>
                                         
                                         <!-- Reading Dates -->
-                                        {% if book.start_date or book.finish_date %}
-                                        <div class="mb-3">
-                                            {% if book.start_date %}
-                                            <div class="mb-1">
-                                                <small class="text-muted">Started:</small>
-                                                <span class="ms-1 fw-medium">{{ book.start_date }}</span>
-                                            </div>
-                                            {% endif %}
-                                            {% if book.finish_date %}
-                                            <div class="mb-1">
-                                                <small class="text-muted">Finished:</small>
-                                                <span class="ms-1 fw-medium">{{ book.finish_date }}</span>
-                                            </div>
-                                            {% endif %}
+                                        {% if book.start_date %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Started reading:</small>
+                                            <span class="ms-1 fw-medium">{{ book.start_date }}</span>
                                         </div>
                                         {% endif %}
                                         
-                                        <!-- Date Added -->
+                                        {% if book.finish_date %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Finished reading:</small>
+                                            <span class="ms-1 fw-medium">{{ book.finish_date }}</span>
+                                        </div>
+                                        {% endif %}
+                                        
                                         {% if book.date_added %}
                                         <div class="mb-2">
-                                            <small class="text-muted">Date added to library:</small>
+                                            <small class="text-muted">Added to library:</small>
                                             <span class="ms-1 fw-medium">{{ book.date_added }}</span>
                                         </div>
                                         {% endif %}
                                         
-                                        <!-- Purchase Information -->
-                                        {% if book.purchase_date or book.purchase_price %}
-                                        <div class="mb-3">
-                                            <small class="text-muted d-block mb-1">Purchase Information:</small>
-                                            {% if book.purchase_date %}
-                                            <div class="mb-1">
-                                                <small class="text-muted">Date:</small>
-                                                <span class="ms-1 fw-medium">{{ book.purchase_date }}</span>
-                                            </div>
-                                            {% endif %}
-                                            {% if book.purchase_price %}
-                                            <div class="mb-1">
-                                                <small class="text-muted">Price:</small>
-                                                <span class="ms-1 fw-medium">${{ book.purchase_price }}</span>
-                                            </div>
-                                            {% endif %}
+                                        <!-- Reading Status Info -->
+                                        {% if book.reading_status %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Current status:</small>
+                                            <span class="ms-1 fw-medium">
+                                                {% if book.reading_status == 'plan_to_read' %}📚 Plan to Read
+                                                {% elif book.reading_status == 'reading' %}📖 Currently Reading
+                                                {% elif book.reading_status == 'read' %}✅ Read
+                                                {% elif book.reading_status == 'on_hold' %}⏸️ On Hold
+                                                {% elif book.reading_status == 'did_not_finish' %}❌ Did Not Finish
+                                                {% elif book.reading_status == 'library_only' %}📚 Library Only
+                                                {% else %}{{ book.reading_status|title }}{% endif %}
+                                            </span>
                                         </div>
                                         {% endif %}
                                         
-                                        <!-- Reading Progress -->
-                                        {% if book.current_page %}
+                                        <!-- Your Rating -->
+                                        {% if book.user_rating %}
                                         <div class="mb-2">
-                                            <small class="text-muted">Current page:</small>
-                                            <span class="ms-1 fw-medium">{{ book.current_page }}{% if book.page_count %} of {{ book.page_count }}{% endif %}</span>
-                                            {% if book.page_count and book.current_page %}
-                                            <div class="progress mt-1" style="height: 6px;">
-                                                <div class="progress-bar" role="progressbar" 
-                                                     style="width: {{ (book.current_page / book.page_count * 100)|round(1) }}%"
-                                                     aria-valuenow="{{ book.current_page }}" aria-valuemin="0" aria-valuemax="{{ book.page_count }}">
-                                                </div>
-                                            </div>
-                                            <small class="text-muted">{{ (book.current_page / book.page_count * 100)|round(1) }}% complete</small>
-                                            {% endif %}
-                                        </div>
-                                        {% endif %}
-                                        
-                                        <!-- Condition -->
-                                        {% if book.condition %}
-                                        <div class="mb-2">
-                                            <small class="text-muted">Condition:</small>
-                                            <span class="ms-1 fw-medium">{{ book.condition|title }}</span>
-                                        </div>
-                                        {% endif %}
-                                        
-                                        <!-- Tags -->
-                                        {% if book.tags %}
-                                        <div class="mb-2">
-                                            <small class="text-muted d-block mb-1">Personal Tags:</small>
-                                            <div>
-                                                {% if book.tags is string %}
-                                                    {% for tag in book.tags.split(',') %}
-                                                        <span class="badge bg-secondary me-1 mb-1">{{ tag.strip() }}</span>
-                                                    {% endfor %}
-                                                {% elif book.tags is iterable %}
-                                                    {% for tag in book.tags %}
-                                                        <span class="badge bg-secondary me-1 mb-1">{{ tag }}</span>
-                                                    {% endfor %}
-                                                {% endif %}
-                                            </div>
+                                            <small class="text-muted">Your rating:</small>
+                                            <span class="ms-1 fw-medium">
+                                                {% for i in range(1, 6) %}
+                                                    {% if i <= book.user_rating %}⭐{% endif %}
+                                                {% endfor %}
+                                                ({{ book.user_rating }}/5)
+                                            </span>
                                         </div>
                                         {% endif %}
                                     </div>
                                 </div>
                                 
-                                {% if not book.personal_notes and not book.review and not book.start_date and not book.finish_date and not book.current_page and not book.date_added and not book.purchase_price and not book.condition and not book.tags %}
+                                <!-- Show "No personal content" message only if nothing is present -->
+                                {% if not book.personal_notes and not book.review and not book.start_date and not book.finish_date and not book.user_rating and book.ownership_status not in ['borrowed', 'loaned'] %}
                                 <div class="text-center text-muted py-4">
-                                    <i class="bi bi-journal-plus mb-2" style="font-size: 2rem;"></i>
+                                    <i class="bi bi-journal-text mb-2" style="font-size: 2rem;"></i>
                                     <p class="mb-0">No personal notes or reading experience recorded yet.</p>
-                                    <small>Click edit to add your thoughts, reading dates, and other personal information.</small>
+                                    <small>Click the edit button above to add your thoughts, rating, and reading progress.</small>
                                 </div>
                                 {% endif %}
                             </div>
                             
-                            <div class="reading-progress-edit-mode" style="display: none;">
-                                <form method="post" action="{{ url_for('main.update_reading_dates', uid=book.uid) }}">
+                            <!-- Personal Notes Edit Mode (Hidden by default) -->
+                            <div class="personal-notes-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('main.edit_book', uid=book.uid) }}" id="personal-notes-form">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                     
-                                    <!-- Reading Dates -->
+                                    <!-- Personal Notes and Review -->
                                     <div class="row">
                                         <div class="col-md-6">
                                             <div class="mb-3">
-                                                <label for="start_date" class="form-label fw-medium">
-                                                    <i class="bi bi-play-circle me-1"></i>Start Date
+                                                <label for="personal_notes" class="form-label fw-medium">
+                                                    <i class="bi bi-journal-text me-1"></i>Personal Notes
                                                 </label>
-                                                <input type="date" class="form-control" id="start_date" name="start_date" 
-                                                       value="{{ book.start_date or '' }}">
+                                                <textarea class="form-control" id="personal_notes" name="personal_notes" rows="4" 
+                                                          placeholder="Your personal thoughts about this book...">{{ book.personal_notes or '' }}</textarea>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="mb-3">
-                                                <label for="finish_date" class="form-label fw-medium">
-                                                    <i class="bi bi-check-circle me-1"></i>Finish Date
+                                                <label for="review" class="form-label fw-medium">
+                                                    <i class="bi bi-star me-1"></i>Review
                                                 </label>
-                                                <input type="date" class="form-control" id="finish_date" name="finish_date" 
-                                                       value="{{ book.finish_date or '' }}">
+                                                <textarea class="form-control" id="review" name="review" rows="4" 
+                                                          placeholder="Your detailed review of this book...">{{ book.review or '' }}</textarea>
                                             </div>
                                         </div>
                                     </div>
-                                    
-                                    <!-- Reading Progress -->
-                                    <div class="mb-3">
-                                        <label for="current_page" class="form-label fw-medium">
-                                            <i class="bi bi-bookmark me-1"></i>Current Page
-                                        </label>
-                                        <input type="number" class="form-control" id="current_page" name="current_page" 
-                                               value="{{ book.current_page or '' }}" min="0" 
-                                               {% if book.page_count %}max="{{ book.page_count }}"{% endif %}
-                                               placeholder="Page number">
-                                        {% if book.page_count %}
-                                        <div class="form-text">Out of {{ book.page_count }} pages</div>
-                                        {% endif %}
-                                    </div>
-                                    
-                                    <!-- Acquisition Details -->
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="date_acquired" class="form-label fw-medium">
-                                                    <i class="bi bi-calendar-plus me-1"></i>Date Acquired
-                                                </label>
-                                                <input type="date" class="form-control" id="date_acquired" name="date_acquired" 
-                                                       value="{{ book.date_acquired or '' }}">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="purchase_price" class="form-label fw-medium">
-                                                    <i class="bi bi-currency-dollar me-1"></i>Purchase Price
-                                                </label>
-                                                <input type="number" class="form-control" id="purchase_price" name="purchase_price" 
-                                                       value="{{ book.purchase_price or '' }}" step="0.01" min="0" 
-                                                       placeholder="0.00">
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Condition and Tags -->
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="condition" class="form-label fw-medium">
-                                                    <i class="bi bi-star-half me-1"></i>Condition
-                                                </label>
-                                                <select class="form-select" id="condition" name="condition">
-                                                    <option value="">Select condition...</option>
-                                                    <option value="new" {% if book.condition == 'new' %}selected{% endif %}>New</option>
-                                                    <option value="like_new" {% if book.condition == 'like_new' %}selected{% endif %}>Like New</option>
-                                                    <option value="very_good" {% if book.condition == 'very_good' %}selected{% endif %}>Very Good</option>
-                                                    <option value="good" {% if book.condition == 'good' %}selected{% endif %}>Good</option>
-                                                    <option value="acceptable" {% if book.condition == 'acceptable' %}selected{% endif %}>Acceptable</option>
-                                                    <option value="poor" {% if book.condition == 'poor' %}selected{% endif %}>Poor</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="tags" class="form-label fw-medium">
-                                                    <i class="bi bi-tags me-1"></i>Personal Tags
-                                                </label>
-                                                <input type="text" class="form-control" id="tags" name="tags" 
-                                                       value="{% if book.tags %}{% if book.tags is string %}{{ book.tags }}{% elif book.tags is iterable %}{{ book.tags|join(', ') }}{% endif %}{% endif %}"
-                                                       placeholder="tag1, tag2, tag3">
-                                                <div class="form-text">Separate tags with commas</div>
-                                            </div>
-                                        </div>
-                                    </div>
+
                                     
                                     <div class="d-grid">
-                                        <button type="submit" class="btn btn-success">
-                                            <i class="bi bi-save me-1"></i>Update Reading Progress
+                                        <button type="submit" class="btn btn-info">
+                                            <i class="bi bi-save me-1"></i>Save Personal Notes
                                         </button>
                                     </div>
                                 </form>
@@ -1000,7 +1066,6 @@
                 </div>
                 
                 <!-- Custom Fields -->
-                                <!-- Core Personal Content -->
                 <div class="accordion-item shadow-sm mb-2">
                     <h2 class="accordion-header">
                         <button class="accordion-button collapsed bg-warning text-dark" type="button" 
@@ -1011,6 +1076,13 @@
                     </h2>
                     <div id="collapseCustomFields" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
                         <div class="accordion-body">
+                            <!-- Edit Button for Custom Fields -->
+                            <div class="d-flex justify-content-end mb-3">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="editCustomFieldsToggle">
+                                    <i class="bi bi-pencil me-1"></i>Edit Custom Fields
+                                </button>
+                            </div>
+                            
                             <!-- View Mode -->
                             <div class="custom-fields-view-mode">
                                 <!-- Global Custom Fields -->
@@ -1041,9 +1113,6 @@
                                                         {{ meta.display_value | safe }}
                                                     {% endif %}
                                                 </div>
-                                                {% if meta.description %}
-                                                <div class="text-muted small mt-1">{{ meta.description }}</div>
-                                                {% endif %}
                                             </div>
                                         </div>
                                         {% endfor %}
@@ -1056,7 +1125,7 @@
                                 <div class="mb-4">
                                     <h6 class="text-success fw-bold border-bottom pb-2">
                                         <i class="bi bi-person me-1"></i>Personal Custom Fields
-                                        <small class="text-muted fw-normal">(private to you)</small>
+                                        <small class="text-muted fw-normal">(your personal fields)</small>
                                     </h6>
                                     <div class="row">
                                         {% for meta in personal_metadata_display %}
@@ -1067,7 +1136,7 @@
                                                     {% if meta.field_type == 'TAGS' %}
                                                         {% if meta.display_value %}
                                                             {% for tag in meta.display_value.split(',') %}
-                                                                <span class="badge bg-info me-1 mb-1">{{ tag.strip() }}</span>
+                                                                <span class="badge bg-secondary me-1 mb-1">{{ tag.strip() }}</span>
                                                             {% endfor %}
                                                         {% endif %}
                                                     {% elif meta.field_type == 'BOOLEAN' %}
@@ -1079,9 +1148,6 @@
                                                         {{ meta.display_value | safe }}
                                                     {% endif %}
                                                 </div>
-                                                {% if meta.description %}
-                                                <div class="text-muted small mt-1">{{ meta.description }}</div>
-                                                {% endif %}
                                             </div>
                                         </div>
                                         {% endfor %}
@@ -1089,42 +1155,35 @@
                                 </div>
                                 {% endif %}
                                 
-                                <!-- Management Actions -->
-                                <div class="d-flex gap-2 flex-wrap">
-                                    <a href="{{ url_for('main.edit_book_custom_metadata', uid=book.uid) }}" class="btn btn-warning">
-                                        <i class="bi bi-pencil me-1"></i>Edit Custom Fields
-                                    </a>
-                                    <a href="{{ url_for('metadata.index') }}" class="btn btn-outline-secondary">
-                                        <i class="bi bi-gear me-1"></i>Manage Field Definitions
-                                    </a>
-                                </div>
-                                
                                 {% if not global_metadata_display and not personal_metadata_display %}
                                 <div class="text-center text-muted py-4">
-                                    <i class="bi bi-plus-circle mb-2" style="font-size: 2rem;"></i>
-                                    <p class="mb-0">No custom fields populated yet.</p>
-                                    <p class="small mb-3">Custom fields let you track additional book information like reading moods, content warnings, or personal tags.</p>
-                                    <div class="d-flex gap-2 justify-content-center flex-wrap">
-                                        <a href="{{ url_for('main.edit_book_custom_metadata', uid=book.uid) }}" class="btn btn-warning btn-sm">
-                                            <i class="bi bi-pencil me-1"></i>Add Custom Data
-                                        </a>
-                                        <a href="{{ url_for('metadata.index') }}" class="btn btn-outline-secondary btn-sm">
-                                            <i class="bi bi-gear me-1"></i>Create Fields
-                                        </a>
-                                    </div>
+                                    <i class="bi bi-gear mb-2" style="font-size: 2rem;"></i>
+                                    <p class="mb-0">No custom fields have been created yet.</p>
+                                    <small>Custom fields allow you to add additional information specific to your needs.</small>
                                 </div>
                                 {% endif %}
                             </div>
                             
-                            <!-- Search and Filter (for many fields) -->
-                            {% if (global_metadata_display|length + personal_metadata_display|length) > 6 %}
-                            <div class="custom-fields-search mt-3 pt-3 border-top">
-                                <div class="input-group input-group-sm">
-                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                    <input type="text" class="form-control" id="customFieldSearch" placeholder="Search custom fields...">
-                                </div>
+                            <!-- Edit Mode (Hidden by default) -->
+                            <div class="custom-fields-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('main.edit_book', uid=book.uid) }}" id="custom-fields-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    
+                                    <div class="mb-3">
+                                        <p class="text-muted">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Custom field editing is available through the main edit mode. 
+                                            Click the pencil icon at the top of the page to edit all book details.
+                                        </p>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <a href="{{ url_for('main.user_profile', user_id=current_user.id) }}" class="btn btn-outline-primary">
+                                            <i class="bi bi-gear me-1"></i>Manage Custom Field Definitions
+                                        </a>
+                                    </div>
+                                </form>
                             </div>
-                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -1132,6 +1191,8 @@
         </div>
     </div>
 </div>
+
+
 
 <!-- Cover Edit Modal -->
 <div class="modal fade" id="coverEditModal" tabindex="-1" aria-labelledby="coverEditModalLabel" aria-hidden="true">
@@ -1296,12 +1357,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Edit mode toggle functionality for all sections
     const basicInfoViewMode = document.querySelector('.basic-info-view-mode');
     const basicInfoEditMode = document.querySelector('.basic-info-edit-mode');
+    const descriptionViewMode = document.querySelector('.description-view-mode');
+    const descriptionEditMode = document.querySelector('.description-edit-mode');
     const readingProgressViewMode = document.querySelector('.reading-progress-view-mode');
     const readingProgressEditMode = document.querySelector('.reading-progress-edit-mode');
     const personalNotesViewMode = document.querySelector('.personal-notes-view-mode');
     const personalNotesEditMode = document.querySelector('.personal-notes-edit-mode');
     const customMetadataViewMode = document.querySelector('.custom-metadata-view-mode');
     const customMetadataEditMode = document.querySelector('.custom-metadata-edit-mode');
+    const editPersonalNotesToggle = document.getElementById('editPersonalNotesToggle');
+    
+    // New accordion edit mode elements
+    const editDescriptionToggle = document.getElementById('editDescriptionToggle');
+    const editAdditionalDetailsToggle = document.getElementById('editAdditionalDetailsToggle');
+    const customFieldsViewMode = document.querySelector('.custom-fields-view-mode');
+    const customFieldsEditMode = document.querySelector('.custom-fields-edit-mode');
+    const editCustomFieldsToggle = document.getElementById('editCustomFieldsToggle');
     
     if (editToggle && viewMode && editMode) {
         editToggle.addEventListener('click', function() {
@@ -1316,6 +1387,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (basicInfoEditMode && basicInfoViewMode) {
                     basicInfoEditMode.style.display = 'none';
                     basicInfoViewMode.style.display = 'block';
+                }
+                
+                if (descriptionEditMode && descriptionViewMode) {
+                    descriptionEditMode.style.display = 'none';
+                    descriptionViewMode.style.display = 'block';
                 }
                 
                 if (readingProgressEditMode && readingProgressViewMode) {
@@ -1343,6 +1419,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (basicInfoEditMode && basicInfoViewMode) {
                     basicInfoViewMode.style.display = 'none';
                     basicInfoEditMode.style.display = 'block';
+                }
+                
+                if (descriptionEditMode && descriptionViewMode) {
+                    descriptionViewMode.style.display = 'none';
+                    descriptionEditMode.style.display = 'block';
                 }
                 
                 if (readingProgressEditMode && readingProgressViewMode) {
@@ -1397,15 +1478,103 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // Personal Notes Edit Toggle
+    // Use existing variables from above
+    
+    if (editPersonalNotesToggle && personalNotesViewMode && personalNotesEditMode) {
+        editPersonalNotesToggle.addEventListener('click', function() {
+            const isEditMode = personalNotesEditMode.style.display !== 'none';
+            
+            if (isEditMode) {
+                // Switch to view mode
+                personalNotesEditMode.style.display = 'none';
+                personalNotesViewMode.style.display = 'block';
+                editPersonalNotesToggle.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit Personal Notes';
+                editPersonalNotesToggle.className = 'btn btn-sm btn-outline-primary';
+            } else {
+                // Switch to edit mode
+                personalNotesViewMode.style.display = 'none';
+                personalNotesEditMode.style.display = 'block';
+                editPersonalNotesToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
+                editPersonalNotesToggle.className = 'btn btn-sm btn-outline-secondary';
+            }
+        });
+    }
+    
+    // Description section edit toggle
+    if (editDescriptionToggle && descriptionViewMode && descriptionEditMode) {
+        editDescriptionToggle.addEventListener('click', function() {
+            const isEditMode = descriptionEditMode.style.display !== 'none';
+            
+            if (isEditMode) {
+                // Switch to view mode
+                descriptionEditMode.style.display = 'none';
+                descriptionViewMode.style.display = 'block';
+                editDescriptionToggle.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit Description';
+                editDescriptionToggle.className = 'btn btn-sm btn-outline-primary';
+            } else {
+                // Switch to edit mode
+                descriptionViewMode.style.display = 'none';
+                descriptionEditMode.style.display = 'block';
+                editDescriptionToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
+                editDescriptionToggle.className = 'btn btn-sm btn-outline-secondary';
+            }
+        });
+    }
+    
+    // Additional Details section edit toggle
+    if (editAdditionalDetailsToggle && basicInfoViewMode && basicInfoEditMode) {
+        editAdditionalDetailsToggle.addEventListener('click', function() {
+            const isEditMode = basicInfoEditMode.style.display !== 'none';
+            
+            if (isEditMode) {
+                // Switch to view mode
+                basicInfoEditMode.style.display = 'none';
+                basicInfoViewMode.style.display = 'block';
+                editAdditionalDetailsToggle.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit Additional Details';
+                editAdditionalDetailsToggle.className = 'btn btn-sm btn-outline-primary';
+            } else {
+                // Switch to edit mode
+                basicInfoViewMode.style.display = 'none';
+                basicInfoEditMode.style.display = 'block';
+                editAdditionalDetailsToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
+                editAdditionalDetailsToggle.className = 'btn btn-sm btn-outline-secondary';
+            }
+        });
+    }
+    
+    // Custom Fields section edit toggle
+    if (editCustomFieldsToggle && customFieldsViewMode && customFieldsEditMode) {
+        editCustomFieldsToggle.addEventListener('click', function() {
+            const isEditMode = customFieldsEditMode.style.display !== 'none';
+            
+            if (isEditMode) {
+                // Switch to view mode
+                customFieldsEditMode.style.display = 'none';
+                customFieldsViewMode.style.display = 'block';
+                editCustomFieldsToggle.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit Custom Fields';
+                editCustomFieldsToggle.className = 'btn btn-sm btn-outline-primary';
+            } else {
+                // Switch to edit mode
+                customFieldsViewMode.style.display = 'none';
+                customFieldsEditMode.style.display = 'block';
+                editCustomFieldsToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
+                editCustomFieldsToggle.className = 'btn btn-sm btn-outline-secondary';
+            }
+        });
+    }
+    
     // Location loading for edit mode in main card
     const editLocationSelect = document.getElementById('edit_location_id');
-    if (editLocationSelect) {
-        const currentEditLocationName = editLocationSelect.getAttribute('data-current-location');
+    const editLocationSelectDetailed = document.getElementById('edit_location_id_detailed');
+    
+    function loadLocations(selectElement, currentLocationName) {
+        if (!selectElement) return;
         
         fetch('/locations/api/user_locations')
             .then(response => response.json())
             .then(locations => {
-                editLocationSelect.innerHTML = '<option value="">Select location...</option>';
+                selectElement.innerHTML = '<option value="">Select location...</option>';
                 locations.forEach(location => {
                     const option = document.createElement('option');
                     option.value = location.id;
@@ -1413,22 +1582,37 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (location.is_default) {
                         option.textContent += ' (Default)';
                     }
-                    if (location.name === currentEditLocationName) {
+                    if (location.name === currentLocationName) {
                         option.selected = true;
                     }
-                    editLocationSelect.appendChild(option);
+                    selectElement.appendChild(option);
                 });
             })
             .catch(error => {
-                console.error('Error loading edit locations:', error);
-                editLocationSelect.innerHTML = '<option value="">Error loading locations</option>';
+                console.error('Error loading locations:', error);
+                selectElement.innerHTML = '<option value="">Error loading locations</option>';
             });
+    }
+    
+    if (editLocationSelect) {
+        const currentEditLocationName = editLocationSelect.getAttribute('data-current-location');
+        loadLocations(editLocationSelect, currentEditLocationName);
+    }
+    
+    if (editLocationSelectDetailed) {
+        const currentDetailedLocationName = editLocationSelectDetailed.getAttribute('data-current-location');
+        loadLocations(editLocationSelectDetailed, currentDetailedLocationName);
     }
     
     // Dynamic ownership/borrowing fields for Basic Information
     const ownershipSelect = document.getElementById('ownership_status');
     const borrowedSection = document.getElementById('borrowed-section');
     const loanedSection = document.getElementById('loaned-section');
+    
+    // Personal Notes edit mode ownership fields
+    const mainOwnershipSelect = document.getElementById('edit-ownership-status');
+    const editBorrowedSection = document.getElementById('edit-borrowed-section');
+    const editLoanedSection = document.getElementById('edit-loaned-section');
     
     function updateVisibility() {
         if (ownershipSelect && borrowedSection && loanedSection) {
@@ -1438,9 +1622,23 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    function updatePersonalNotesVisibility() {
+        // Use main card ownership status to control Personal Notes borrowing/loaning sections
+        const ownership = mainOwnershipSelect ? mainOwnershipSelect.value : '';
+        if (editBorrowedSection && editLoanedSection) {
+            editBorrowedSection.style.display = ownership === 'borrowed' ? 'block' : 'none';
+            editLoanedSection.style.display = ownership === 'loaned' ? 'block' : 'none';
+        }
+    }
+    
     if (ownershipSelect) {
         ownershipSelect.addEventListener('change', updateVisibility);
         updateVisibility(); // Initial setup
+    }
+    
+    if (mainOwnershipSelect) {
+        mainOwnershipSelect.addEventListener('change', updatePersonalNotesVisibility);
+        updatePersonalNotesVisibility(); // Initial setup
     }
     
     // Accordion behavior - ensure only one is open at a time
@@ -2201,6 +2399,100 @@ document.addEventListener('DOMContentLoaded', function() {
 /* Position relative for autocomplete containers */
 .position-relative {
     position: relative;
+}
+
+/* Empty field styling for view mode */
+.empty-field-placeholder {
+    color: #6c757d;
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+/* Enhanced field visibility */
+.field-group {
+    background-color: rgba(248, 249, 250, 0.5);
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.field-group h6 {
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+}
+
+/* Core field highlighting */
+.core-field {
+    border-left: 3px solid #0d6efd;
+    padding-left: 0.75rem;
+}
+
+.core-field .form-label::after {
+    content: ' *';
+    color: #dc3545;
+}
+
+/* External link buttons */
+.external-link-btn {
+    transition: all 0.2s ease;
+}
+
+.external-link-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="dark"] .field-group {
+    background-color: rgba(50, 50, 50, 0.5) !important;
+}
+
+[data-theme="dark"] .empty-field-placeholder {
+    color: #888 !important;
+}
+
+/* Improved spacing and typography for identifiers */
+.identifier-group {
+    background-color: rgba(248, 249, 250, 0.8);
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+[data-theme="dark"] .identifier-group {
+    background-color: rgba(60, 60, 60, 0.5);
+}
+
+/* Enhanced external links */
+.external-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.external-link {
+    text-decoration: none;
+    border-radius: 0.375rem;
+    transition: all 0.2s ease;
+}
+
+.external-link:hover {
+    transform: translateY(-1px);
+    text-decoration: none;
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+    .identifier-group {
+        text-align: center;
+    }
+    
+    .external-links {
+        justify-content: center;
+    }
+    
+    .field-group {
+        padding: 0.5rem;
+    }
 }
 </style>
 

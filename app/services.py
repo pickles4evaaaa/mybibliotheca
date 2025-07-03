@@ -514,10 +514,10 @@ class KuzuBookService:
 
     def get_all_books_with_user_overlay_sync(self, user_id: str, reading_status: str = None,
                                            limit: int = 50) -> List[Dict[str, Any]]:
-        """Get ALL books in the system with optional user-specific overlay data.
+        """Get ALL books in the system - global book visibility model.
         
-        This implements global book visibility - all users can see all books,
-        with personal data (notes, ratings, reading status) overlaid where it exists.
+        All users can see all books. Personal data like reading status, ratings, 
+        and locations are stored directly on Book nodes or in separate user preference tables.
         """
         try:
             from .infrastructure.kuzu_graph import get_graph_storage
@@ -550,47 +550,41 @@ class KuzuBookService:
                 categories_data = record.get('col_2', []) or []
                 publisher_data = record.get('col_3')
                 
-                # Convert to dictionary format
-                book_dict = {
-                    'id': book_data.get('id'),
-                    'uid': book_data.get('id'),  # Add uid as alias for id for template compatibility
-                    'title': book_data.get('title'),
-                    'isbn': book_data.get('isbn'),
-                    'description': book_data.get('description'),
-                    'published_date': book_data.get('published_date'),
-                    'page_count': book_data.get('page_count'),
-                    'cover_url': book_data.get('cover_url'),
+                # Start with ALL Book node properties dynamically
+                book_dict = dict(book_data)
+                
+                # Ensure uid exists as alias for id (for template compatibility)
+                if 'uid' not in book_dict and 'id' in book_dict:
+                    book_dict['uid'] = book_dict['id']
+                
+                # Override/add specific relationship data
+                book_dict.update({
                     'authors': [{'id': a.get('id'), 'name': a.get('name')} for a in authors_data if a and isinstance(a, dict)],
                     'categories': [{'id': c.get('id'), 'name': c.get('name')} for c in categories_data if c and isinstance(c, dict)],
                     'publisher': {'id': publisher_data.get('id'), 'name': publisher_data.get('name')} if publisher_data and isinstance(publisher_data, dict) else None
-                }
+                })
                 
-                # Now check if this user has personal data for this book
-                user_overlay = self._get_user_book_overlay(storage, user_id, book_data.get('id'))
+                # For now, set default user-specific fields to None/empty
+                # TODO: Implement user preferences table for personal data
+                book_dict.update({
+                    'reading_status': None,
+                    'ownership_status': None,
+                    'user_rating': None,
+                    'personal_notes': '',
+                    'locations': self._get_book_locations(storage, book_data.get('id')),
+                    'location_id': book_data.get('location_id', ''),
+                    'custom_metadata': {},
+                    'start_date': None,
+                    'finish_date': None,
+                    'date_added': None,
+                    'media_type': book_data.get('media_type', 'physical')
+                })
                 
-                if user_overlay:
-                    # User has personal data - merge it
-                    book_dict.update(user_overlay)
-                    print(f"📖 [GLOBAL_BOOKS] Book '{book_dict['title']}' has user overlay data")
-                else:
-                    # No personal data - set defaults for global view
-                    book_dict.update({
-                        'reading_status': None,  # No personal reading status
-                        'ownership_status': None,  # Not owned by user
-                        'user_rating': None,
-                        'personal_notes': '',
-                        'locations': [],
-                        'custom_metadata': {},
-                        'start_date': None,
-                        'finish_date': None,
-                        'date_added': None
-                    })
-                    print(f"🌍 [GLOBAL_BOOKS] Book '{book_dict['title']}' visible globally (no user data)")
+                print(f"🌍 [GLOBAL_BOOKS] Book '{book_dict['title']}' visible globally")
                 
-                # Filter by reading status if requested
-                if reading_status:
-                    if book_dict.get('reading_status') != reading_status:
-                        continue  # Skip if doesn't match filter
+                # Filter by reading status if requested (will be empty for now)
+                if reading_status and book_dict.get('reading_status') != reading_status:
+                    continue
                 
                 books.append(book_dict)
             
@@ -598,54 +592,42 @@ class KuzuBookService:
             return books
             
         except Exception as e:
-            current_app.logger.error(f"Error getting global books with user overlay: {e}")
+            current_app.logger.error(f"Error getting global books: {e}")
             import traceback
             traceback.print_exc()
             return []
     
-    def _get_user_book_overlay(self, storage, user_id: str, book_id: str) -> Dict[str, Any]:
-        """Get user-specific overlay data for a book, if it exists."""
+    def _get_book_locations(self, storage, book_id: str) -> List[Dict[str, Any]]:
+        """Get location data for a book from current storage (OWNS relationship for now)."""
         try:
-            # Check if user has an OWNS relationship with this book
-            owns_query = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-            RETURN r
+            # For now, get location data from OWNS relationship until we migrate
+            # TODO: Implement proper user preferences or move to Book node
+            location_query = """
+            MATCH (u:User)-[r:OWNS]->(b:Book {id: $book_id})
+            WHERE r.location_id IS NOT NULL AND r.location_id <> ''
+            OPTIONAL MATCH (l:Location {id: r.location_id})
+            RETURN r.location_id as location_id, l
             """
             
-            owns_result = storage.query(owns_query, {
-                'user_id': user_id,
-                'book_id': book_id
-            })
+            result = storage.query(location_query, {'book_id': book_id})
             
-            if owns_result and len(owns_result) > 0:
-                owns_data = dict(owns_result[0].get('col_0', {}))
-                
-                # Convert to expected format
-                overlay = {
-                    'reading_status': owns_data.get('reading_status'),
-                    'ownership_status': owns_data.get('ownership_status', 'owned'),
-                    'user_rating': owns_data.get('user_rating'),
-                    'personal_notes': owns_data.get('notes', ''),
-                    'start_date': owns_data.get('start_date'),
-                    'finish_date': owns_data.get('finish_date'),
-                    'date_added': owns_data.get('date_added'),
-                    'location_id': owns_data.get('location_id', ''),
-                    'custom_metadata': owns_data.get('custom_metadata', {})
-                }
-                
-                # Handle locations
-                if overlay.get('location_id'):
-                    overlay['locations'] = [overlay['location_id']]
-                else:
-                    overlay['locations'] = []
-                
-                return overlay
+            if result and len(result) > 0:
+                for record in result:
+                    location_id = record.get('col_0')
+                    location_node = record.get('col_1')
+                    
+                    if location_node:
+                        location_data = dict(location_node)
+                        return [location_data]
+                    elif location_id:
+                        # Location ID exists but no location node found
+                        return [{'id': location_id, 'name': f'Location {location_id}'}]
             
-            return None  # No user-specific data
+            return []
             
         except Exception as e:
-            print(f"❌ Error getting user overlay for book {book_id}: {e}")
-            return None
+            print(f"❌ Error getting book locations for {book_id}: {e}")
+            return []
     
     def add_book_to_user_library_sync(self, user_id: str, book_id: str, 
                                      reading_status: str = 'plan_to_read',
@@ -688,43 +670,70 @@ class KuzuBookService:
             return None
 
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get book by UID for a specific user using global book visibility (sync version)."""
+        """Get book by UID using global book visibility (sync version)."""
         try:
-            # Use global book visibility approach
-            user_books = self.get_all_books_with_user_overlay_sync(user_id)
+            from .infrastructure.kuzu_graph import get_graph_storage
+            storage = get_graph_storage()
             
-            # Find the specific book by UID
-            for book in user_books:
-                book_uid = book.get('uid') if isinstance(book, dict) else getattr(book, 'uid', None)
-                book_id = book.get('id') if isinstance(book, dict) else getattr(book, 'id', None)
-                
-                if book_uid == uid or book_id == uid:
-                    # Found the book, return it (already has overlay data)
-                    return book
+            # Get the book directly from the global catalog
+            query = """
+            MATCH (b:Book {id: $uid})
+            OPTIONAL MATCH (b)<-[authored:AUTHORED]-(p:Person)
+            OPTIONAL MATCH (b)-[cat_rel:CATEGORIZED_AS]->(c:Category)
+            OPTIONAL MATCH (b)-[pub_rel:PUBLISHED_BY]->(pub:Publisher)
+            RETURN b, 
+                   collect(DISTINCT p) as authors,
+                   collect(DISTINCT c) as categories,
+                   pub
+            """
             
-            # If not found in user books with overlay, try to get the global book directly
-            book_data = run_async(self.kuzu_service.get_book(uid))
-            if not book_data:
+            result = storage.query(query, {'uid': uid})
+            
+            if not result or len(result) == 0:
                 return None
             
-            # Set default values for books not in user's library
-            book_data.update({
-                'reading_status': None,
-                'ownership_status': None,
-                'media_type': None,
-                'notes': '',
-                'date_added': None,
-                'location_id': '',
-                'user_rating': None,
-                'personal_notes': '',
-                'start_date': None,
-                'finish_date': None,
-                'locations': [],
-                'uid': uid,
-                'custom_metadata': {}
+            record = result[0]
+            book_data = dict(record['col_0'])
+            authors_data = record.get('col_1', []) or []
+            categories_data = record.get('col_2', []) or []
+            publisher_data = record.get('col_3')
+            
+            # Build the complete book dict
+            book_dict = dict(book_data)
+            
+            # Ensure uid exists as alias for id (for template compatibility)
+            if 'uid' not in book_dict and 'id' in book_dict:
+                book_dict['uid'] = book_dict['id']
+            
+            # Add relationship data
+            book_dict.update({
+                'authors': [{'id': a.get('id'), 'name': a.get('name')} for a in authors_data if a and isinstance(a, dict)],
+                'categories': [{'id': c.get('id'), 'name': c.get('name')} for c in categories_data if c and isinstance(c, dict)],
+                'publisher': {'id': publisher_data.get('id'), 'name': publisher_data.get('name')} if publisher_data and isinstance(publisher_data, dict) else None
             })
             
-            return book_data
+            # Add location data
+            book_dict['locations'] = self._get_book_locations(storage, book_data.get('id'))
+            # Get location_id from the locations if available
+            if book_dict['locations'] and len(book_dict['locations']) > 0:
+                book_dict['location_id'] = book_dict['locations'][0].get('id', '')
+            else:
+                book_dict['location_id'] = ''
+            
+            # Set default user-specific fields (TODO: implement user preferences)
+            book_dict.update({
+                'reading_status': None,
+                'ownership_status': None,
+                'user_rating': None,
+                'personal_notes': '',
+                'custom_metadata': {},
+                'start_date': None,
+                'finish_date': None,
+                'date_added': None,
+                'media_type': book_data.get('media_type', 'physical')
+            })
+            
+            return book_dict
         
         except Exception as e:
             print(f"Error in get_book_by_uid_sync: {e}")
@@ -735,168 +744,74 @@ class KuzuBookService:
         return self.get_book_by_uid_sync(book_id, user_id)
 
     def update_book_sync(self, uid: str, user_id: str, **kwargs) -> bool:
-        """Update book in user's library (sync version)."""
+        """Update book data directly on Book node (sync version)."""
         try:
             print(f"🔍 [UPDATE_BOOK_SYNC] Called with uid={uid}, user_id={user_id}, kwargs={kwargs}")
             
-            # Separate Book node fields from OWNS relationship fields
+            # All fields can now be stored directly on the Book node
             book_fields = ['title', 'subtitle', 'description', 'published_date', 'page_count', 
                           'language', 'cover_url', 'isbn13', 'isbn10', 'asin', 'google_books_id', 
-                          'openlibrary_id', 'average_rating', 'rating_count', 'series', 'series_volume', 'series_order']
-            owns_fields = ['reading_status', 'ownership_status', 'media_type', 'location_id', 
+                          'openlibrary_id', 'average_rating', 'rating_count', 'series', 'series_volume', 
+                          'series_order', 'reading_status', 'ownership_status', 'media_type', 'location_id', 
                           'notes', 'personal_notes', 'start_date', 'finish_date', 'current_page', 'total_pages',
                           'date_acquired', 'purchase_price', 'condition', 'tags', 'review', 'user_rating',
                           'pace', 'character_driven', 'source']
             
-            # Split updates into Book node and OWNS relationship updates
+            # Filter updates to valid book fields
             book_updates = {}
-            owns_updates = {}
-            
             for field, value in kwargs.items():
                 if field in book_fields:
                     book_updates[field] = value
-                elif field in owns_fields:
-                    owns_updates[field] = value
             
             print(f"🔍 [UPDATE_BOOK_SYNC] Book updates: {book_updates}")
-            print(f"🔍 [UPDATE_BOOK_SYNC] OWNS updates: {owns_updates}")
             
-            # First, get the book to find its internal ID
-            user_book = self.get_book_by_uid_sync(uid, user_id)
-            if not user_book:
-                print(f"❌ [UPDATE_BOOK_SYNC] Book not found: {uid}")
-                return False
+            if not book_updates:
+                print(f"🔍 [UPDATE_BOOK_SYNC] No valid updates to apply")
+                return True
             
-            book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
-            if not book_id:
-                print(f"❌ [UPDATE_BOOK_SYNC] No book ID found for uid: {uid}")
-                return False
+            from .infrastructure.kuzu_graph import get_graph_storage
+            graph_storage = get_graph_storage()
             
-            updated = False
+            # Update the Book node directly
+            query = """
+            MATCH (b:Book {id: $book_id})
+            SET """
             
-            # Update Book node fields if any
-            if book_updates:
-                print(f"🔍 [UPDATE_BOOK_SYNC] Updating Book node with: {book_updates}")
-                try:
-                    from .infrastructure.kuzu_graph import get_graph_storage
-                    graph_storage = get_graph_storage()
-                    
-                    # Update the Book node directly
-                    query = """
-                    MATCH (b:Book {id: $book_id})
-                    SET """
-                    
-                    set_clauses = []
-                    params = {'book_id': book_id}
-                    
-                    for field, value in book_updates.items():
-                        if field in ['published_date'] and value and hasattr(value, 'isoformat'):
-                            # Convert date to string for Kuzu
-                            params[f'new_{field}'] = value.isoformat()
+            set_clauses = []
+            params = {'book_id': uid}
+            
+            for field, value in book_updates.items():
+                if field in ['published_date', 'start_date', 'finish_date', 'date_acquired'] and value and hasattr(value, 'isoformat'):
+                    # Convert date to string for Kuzu
+                    params[f'new_{field}'] = value.isoformat()
+                elif field in ['current_page', 'total_pages', 'user_rating'] and value is not None:
+                    # For numeric fields, ensure they're integers/floats, not strings
+                    try:
+                        if field == 'user_rating':
+                            params[f'new_{field}'] = float(value)
                         else:
-                            params[f'new_{field}'] = value
-                        
-                        set_clauses.append(f'b.{field} = $new_{field}')
-                    
-                    query += ', '.join(set_clauses)
-                    query += " RETURN b"
-                    
-                    print(f"🔍 [UPDATE_BOOK_SYNC] Executing Book update query: {query}")
-                    print(f"🔍 [UPDATE_BOOK_SYNC] With params: {params}")
-                    
-                    result = graph_storage.query(query, params)
-                    
-                    if result and len(result) > 0:
-                        print(f"✅ [UPDATE_BOOK_SYNC] Successfully updated Book node")
-                        updated = True
-                    else:
-                        print(f"❌ [UPDATE_BOOK_SYNC] No Book node found or update failed")
-                        
-                except Exception as e:
-                    print(f"❌ [UPDATE_BOOK_SYNC] Error updating Book node: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Update OWNS relationship fields if any
-            
-            # Update OWNS relationship fields if any
-            if owns_updates:
-                print(f"🔍 [UPDATE_BOOK_SYNC] Updating OWNS relationship with: {owns_updates}")
-                
-                from .infrastructure.kuzu_graph import get_graph_storage
-                graph_storage = get_graph_storage()
-                
-                # Update the OWNS relationship properties
-                query = """
-                MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-                SET """
-                
-                set_clauses = []
-                params = {'user_id': user_id, 'book_id': book_id}
-                
-                for field, value in owns_updates.items():
-                    if field in ['start_date', 'finish_date', 'date_acquired'] and value:
-                        # For date fields, pass the date object directly to Kuzu
-                        if hasattr(value, 'isoformat'):
-                            # If it's already a date/datetime object, use it directly
-                            params[f'new_{field}'] = value
-                        else:
-                            # If it's a string, parse it to a datetime
-                            from datetime import datetime
-                            try:
-                                params[f'new_{field}'] = datetime.fromisoformat(str(value))
-                            except:
-                                params[f'new_{field}'] = value
-                    elif field in ['current_page', 'total_pages', 'user_rating'] and value is not None:
-                        # For numeric fields, ensure they're integers/floats, not strings
-                        try:
-                            if field == 'user_rating':
-                                params[f'new_{field}'] = float(value)
-                            else:
-                                params[f'new_{field}'] = int(value)
-                        except (ValueError, TypeError):
-                            params[f'new_{field}'] = value
-                    else:
-                        params[f'new_{field}'] = str(value) if value is not None else ''
-                    
-                    set_clauses.append(f'r.{field} = $new_{field}')
-                
-                query += ', '.join(set_clauses)
-                query += " RETURN r"
-                
-                print(f"🔍 [UPDATE_BOOK_SYNC] Executing query: {query}")
-                print(f"🔍 [UPDATE_BOOK_SYNC] With params: {params}")
-                
-                result = graph_storage.query(query, params)
-                
-                if result and len(result) > 0:
-                    print(f"✅ [UPDATE_BOOK_SYNC] Successfully updated OWNS relationship")
-                    updated = True
+                            params[f'new_{field}'] = int(value)
+                    except (ValueError, TypeError):
+                        params[f'new_{field}'] = value
                 else:
-                    print(f"❌ [UPDATE_BOOK_SYNC] No OWNS relationship found or update failed")
+                    params[f'new_{field}'] = str(value) if value is not None else ''
+                
+                set_clauses.append(f'b.{field} = $new_{field}')
             
-            # Legacy handling for simple finish_date updates
-            if 'finish_date' in kwargs and not owns_updates:
-                if kwargs['finish_date']:
-                    result = run_async(self.update_reading_status(user_id, uid, 'read'))
-                    if result:
-                        updated = True
-                else:
-                    result = run_async(self.update_reading_status(user_id, uid, 'reading'))
-                    if result:
-                        updated = True
+            query += ', '.join(set_clauses)
+            query += " RETURN b"
             
-            if not book_updates and not owns_updates and 'finish_date' not in kwargs:
-                print(f"🔍 [UPDATE_BOOK_SYNC] No updates to apply")
+            print(f"🔍 [UPDATE_BOOK_SYNC] Executing query: {query}")
+            print(f"🔍 [UPDATE_BOOK_SYNC] With params: {params}")
             
-            return updated
+            result = graph_storage.query(query, params)
             
-        except Exception as e:
-            print(f"❌ [UPDATE_BOOK_SYNC] Error updating book: {e}")
-            import traceback
-            traceback.print_exc()
-            current_app.logger.error(f"Error updating book: {e}")
-            return False
+            if result and len(result) > 0:
+                print(f"✅ [UPDATE_BOOK_SYNC] Successfully updated Book node")
+                return True
+            else:
+                print(f"❌ [UPDATE_BOOK_SYNC] No Book node found or update failed")
+                return False
             
         except Exception as e:
             print(f"❌ [UPDATE_BOOK_SYNC] Error updating book: {e}")
@@ -1380,6 +1295,26 @@ class KuzuLocationService:
         except Exception as e:
             current_app.logger.error(f"Error getting user locations: {e}")
             return []
+    
+    def get_user_locations_sync(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all locations for a user (sync version)."""
+        try:
+            return run_async(self.get_user_locations(user_id))
+        except Exception as e:
+            current_app.logger.error(f"Error getting user locations sync: {e}")
+            return []
+    
+    def get_location_by_id_sync(self, location_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific location by ID (sync version)."""
+        try:
+            locations = self.get_user_locations_sync(user_id)
+            for location in locations:
+                if location.get('id') == location_id:
+                    return location
+            return None
+        except Exception as e:
+            current_app.logger.error(f"Error getting location by ID: {e}")
+            return None
 
 
 # Custom field service using Kuzu repository pattern

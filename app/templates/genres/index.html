@@ -93,7 +93,15 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
-                            <h3 class="text-warning">{{ categories|selectattr('level', 'greaterthan', 0)|list|length }}</h3>
+                            <h3 class="text-warning">
+                                {% set subcategory_count = 0 %}
+                                {% for category in categories %}
+                                    {% if category.level and category.level > 0 %}
+                                        {% set subcategory_count = subcategory_count + 1 %}
+                                    {% endif %}
+                                {% endfor %}
+                                {{ subcategory_count }}
+                            </h3>
                             <p class="mb-0">Subcategories</p>
                         </div>
                     </div>
@@ -136,7 +144,7 @@
                                  data-name="{{ category.name | lower }}" 
                                  data-description="{{ category.description | lower if category.description else '' }}" 
                                  data-category-id="{{ category.id }}">
-                                <div class="card h-100 {% if category.level > 0 %}border-start border-3{% endif %}" 
+                                <div class="card h-100 {% if category.level and category.level > 0 %}border-start border-3{% endif %}" 
                                      {% if category.color %}style="border-left-color: {{ category.color }} !important;"{% endif %}>
                                     <!-- Selection checkbox -->
                                     <div class="position-absolute top-0 end-0 p-2" style="z-index: 10;">
@@ -156,7 +164,7 @@
                                         </h5>
                                         
                                         <!-- Level indicator -->
-                                        {% if category.level > 0 %}
+                                        {% if category.level and category.level > 0 %}
                                         <div class="mb-2">
                                             <small class="text-muted">
                                                 {% for i in range(category.level) %}
@@ -260,7 +268,7 @@
                                             </td>
                                             <td>
                                                 <div class="d-flex align-items-center">
-                                                    {% if category.level > 0 %}
+                                                    {% if category.level and category.level > 0 %}
                                                         <span class="me-2 text-muted">
                                                             {% for i in range(category.level) %}
                                                                 <i class="bi bi-chevron-right"></i>

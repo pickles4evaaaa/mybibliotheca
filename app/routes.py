@@ -369,7 +369,9 @@ def library():
         
         if book_locations:
             books_with_locations += 1
-            for loc_id in book_locations:
+            for location in book_locations:
+                # Extract location ID from location object/dict
+                loc_id = location.get('id') if isinstance(location, dict) else getattr(location, 'id', location)
                 location_counts[loc_id] = location_counts.get(loc_id, 0) + 1
             debug_log(f"Book '{book_title}' has locations: {book_locations}", "LIBRARY")
         else:
@@ -820,13 +822,20 @@ def edit_book(uid):
             'series_volume': request.form.get('series_volume', '').strip() or None,
             'series_order': int(request.form.get('series_order')) if request.form.get('series_order', '').strip() else None,
             'contributors': contributors,
-            'raw_categories': ','.join(categories) if categories else None  # Add categories to update
+            'raw_categories': ','.join(categories) if categories else None,
+            # Additional metadata fields - these are Book properties, not user-specific
+            'publisher': request.form.get('publisher', '').strip() or None,
+            'asin': request.form.get('asin', '').strip() or None,
+            'google_books_id': request.form.get('google_books_id', '').strip() or None,
+            'openlibrary_id': request.form.get('openlibrary_id', '').strip() or None,
+            'average_rating': float(request.form.get('average_rating')) if request.form.get('average_rating', '').strip() else None,
+            'rating_count': int(request.form.get('rating_count')) if request.form.get('rating_count', '').strip() else None,
         }
         
-        # Remove None values except for specific fields
+        # Remove None values except for specific fields that can be null
         filtered_data = {}
         for k, v in update_data.items():
-            if k in ['contributors', 'raw_categories', 'series', 'series_volume', 'series_order'] or v is not None:
+            if k in ['contributors', 'raw_categories', 'series', 'series_volume', 'series_order', 'publisher', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count'] or v is not None:
                 filtered_data[k] = v
         
         success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
