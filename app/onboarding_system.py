@@ -871,22 +871,25 @@ def get_storygraph_field_mappings():
     return {
         'Title': 'title',
         'Authors': 'author',
-        'ISBN': 'isbn',
-        'Star Rating': 'rating',
+        'Contributors': 'contributors',  # New: Handle Contributors column
+        'ISBN/UID': 'isbn',  # Fixed: Use actual StoryGraph column name
+        'Star Rating': 'rating',  # Fixed: StoryGraph uses "Star Rating" not "My Rating"
         'Read Status': 'reading_status',
         'Date Started': 'start_date',
-        'Date Finished': 'date_read',
-        'Date Added': 'date_added',
-        'Tags': 'custom_global_tags',
-        'Moods': 'custom_global_moods',
+        'Last Date Read': 'date_read',  # Fixed: StoryGraph uses "Last Date Read"
+        'Tags': 'categories',
+        'Review': 'notes',  # Fixed: StoryGraph uses "Review" not "My Review"
+        'Format': 'custom_global_format',
+        'Moods': 'custom_global_moods',  # Fixed: Map Moods to custom field instead of categories
         'Pace': 'custom_global_pace',
-        'Character- or Plot-Driven?': 'custom_global_character_or_plot_driven',
+        'Character- or Plot-Driven?': 'custom_global_character_plot_driven',
         'Strong Character Development?': 'custom_global_strong_character_development',
         'Loveable Characters?': 'custom_global_loveable_characters',
         'Diverse Characters?': 'custom_global_diverse_characters',
         'Flawed Characters?': 'custom_global_flawed_characters',
         'Content Warnings': 'custom_global_content_warnings',
-        'Review': 'notes'
+        'Content Warning Description': 'custom_global_content_warning_description',
+        'Owned?': 'custom_personal_owned'
     }
 
 

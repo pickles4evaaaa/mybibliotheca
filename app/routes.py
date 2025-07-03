@@ -3832,7 +3832,7 @@ def auto_create_custom_fields(mappings, user_id):
 
 
 def start_import_job(task_id):
-    """Start the actual import process (simplified version)."""
+    """Start the actual import process with improved entity-first architecture."""
     from app.domain.models import Book as DomainBook, Author, Publisher
     from app.services import book_service
     
@@ -3862,8 +3862,15 @@ def start_import_job(task_id):
         user_id = job['user_id']
         
         print(f"Processing CSV file: {csv_file_path}")
-        print(f"Field mappings: {mappings}")
+        print(f"🔍 [MAPPING_DEBUG] Field mappings received: {mappings}")
+        print(f"🔍 [MAPPING_DEBUG] Looking for ISBN/UID mapping: {mappings.get('ISBN/UID', 'NOT_FOUND')}")
+        print(f"🔍 [MAPPING_DEBUG] All ISBN-related mappings: {[(k, v) for k, v in mappings.items() if 'isbn' in k.lower() or 'uid' in k.lower()]}")
         print(f"User ID: {user_id} (type: {type(user_id)})")
+        
+        # PHASE 1: Parse CSV and collect all data (entities + relationships)
+        print(f"📋 [PHASE1] Starting CSV parsing and data collection...")
+        books_to_create = []
+        user_book_relationships = []
         
         # Read and process CSV
         with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
@@ -3878,6 +3885,15 @@ def start_import_job(task_id):
             
             if has_headers:
                 reader = csv.DictReader(csvfile)
+                # Debug: Check the first few rows to see actual data
+                rows_list = list(reader)
+                print(f"🔍 [CSV_DEBUG] Total rows in CSV: {len(rows_list)}")
+                if rows_list:
+                    print(f"🔍 [CSV_DEBUG] First row keys: {list(rows_list[0].keys())}")
+                    print(f"🔍 [CSV_DEBUG] First row sample data: {dict(list(rows_list[0].items())[:5])}")  # First 5 fields
+                    isbn_uid_value = rows_list[0].get('ISBN/UID', 'KEY_NOT_FOUND')
+                    print(f"🔍 [CSV_DEBUG] First row ISBN/UID value: '{isbn_uid_value}' (type: {type(isbn_uid_value)})")
+                reader = iter(rows_list)  # Convert back to iterator
             else:
                 # For headerless CSV (like ISBN-only files), create a simple reader
                 reader = csv.reader(csvfile)
@@ -3905,14 +3921,22 @@ def start_import_job(task_id):
                     
                     if has_headers:
                         # Use field mappings for CSV with headers
+                        print(f"🔍 [FIELD_MAPPING_DEBUG] Processing {len(mappings)} field mappings")
                         for csv_field, book_field in mappings.items():
                             raw_value = row.get(csv_field, '')
+                            print(f"🔍 [FIELD_MAPPING_DEBUG] Checking field '{csv_field}' -> '{book_field}', raw_value: '{raw_value}' (type: {type(raw_value)})")
                             
                             # Apply Goodreads normalization to all values
                             if book_field == 'isbn':
                                 value = normalize_goodreads_value(raw_value, 'isbn')
+                                print(f"🔍 [ISBN_DEBUG] Field mapping: '{csv_field}' -> '{book_field}'")
+                                print(f"🔍 [ISBN_DEBUG] Raw value from CSV: '{raw_value}' (type: {type(raw_value)})")
+                                print(f"🔍 [ISBN_DEBUG] Normalized value: '{value}' (type: {type(value)}, bool: {bool(value)})")
+                                if not value:
+                                    print(f"❌ [ISBN_DEBUG] ISBN normalization returned empty/falsy value!")
                             else:
                                 value = normalize_goodreads_value(raw_value, 'text')
+                                print(f"🔍 [FIELD_MAPPING_DEBUG] Normalized value: '{value}' (bool: {bool(value)})")
                             
                             if value:  # Only process non-empty values
                                 if book_field == 'isbn':
@@ -3922,14 +3946,17 @@ def start_import_job(task_id):
                                     # Extract custom global field name
                                     field_name = book_field[14:]  # Remove 'custom_global_' prefix
                                     global_custom_metadata[field_name] = value
-                                    print(f"Added global custom metadata: {field_name} = {value}")
+                                    print(f"🌍 [CUSTOM_FIELD_DEBUG] Added global custom metadata: {field_name} = '{value}' (from CSV field: '{csv_field}')")
                                 elif book_field.startswith('custom_personal_'):
                                     # Extract custom personal field name  
                                     field_name = book_field[16:]  # Remove 'custom_personal_' prefix
                                     personal_custom_metadata[field_name] = value
-                                    print(f"Added personal custom metadata: {field_name} = {value}")
+                                    print(f"👤 [CUSTOM_FIELD_DEBUG] Added personal custom metadata: {field_name} = '{value}' (from CSV field: '{csv_field}')")
                                 else:
                                     book_data[book_field] = value
+                                    print(f"🔍 [FIELD_MAPPING_DEBUG] Added to book_data: {book_field} = '{value}'")
+                            else:
+                                print(f"🔍 [FIELD_MAPPING_DEBUG] Skipping empty/falsy value for field '{csv_field}' -> '{book_field}'")
                     else:
                         # For headerless CSV, assume it's ISBN-only
                         isbn_value = row.get('isbn', '').strip()
@@ -3938,6 +3965,8 @@ def start_import_job(task_id):
                             print(f"ISBN from headerless CSV: '{isbn_value}' (length: {len(isbn_value)})")
                     
                     print(f"Extracted book data: {book_data}")
+                    print(f"🌍 [CUSTOM_FIELD_DEBUG] Global custom metadata summary: {len(global_custom_metadata)} fields - {list(global_custom_metadata.keys())}")
+                    print(f"👤 [CUSTOM_FIELD_DEBUG] Personal custom metadata summary: {len(personal_custom_metadata)} fields - {list(personal_custom_metadata.keys())}")
                     
                     # Skip if no title or ISBN
                     if not book_data.get('title') and not book_data.get('isbn'):
@@ -3972,6 +4001,85 @@ def start_import_job(task_id):
                         print(f"Converted reading status: '{reading_status}'")
                     else:
                         print("No reading status found")
+                    
+                    # 📝 [PERSONAL_DEBUG] Extract personal information from CSV
+                    personal_info = {}
+                    user_rating = None
+                    personal_notes = None
+                    date_read = None
+                    date_added = None
+                    review_text = None
+                    
+                    # Extract user rating (My Rating)
+                    rating_raw = book_data.get('user_rating', book_data.get('my_rating', ''))
+                    if rating_raw:
+                        try:
+                            user_rating = float(rating_raw)
+                            personal_info['user_rating'] = user_rating
+                            print(f"📝 [PERSONAL_DEBUG] User rating: '{rating_raw}' -> {user_rating}")
+                        except (ValueError, TypeError) as e:
+                            print(f"📝 [PERSONAL_DEBUG] Failed to parse user rating '{rating_raw}': {e}")
+                    else:
+                        print(f"📝 [PERSONAL_DEBUG] No user rating found in CSV")
+                    
+                    # Extract personal notes
+                    personal_notes = book_data.get('personal_notes', book_data.get('private_notes', ''))
+                    if personal_notes:
+                        personal_info['personal_notes'] = personal_notes
+                        print(f"📝 [PERSONAL_DEBUG] Personal notes: '{personal_notes[:100]}{'...' if len(personal_notes) > 100 else ''}'")
+                    else:
+                        print(f"📝 [PERSONAL_DEBUG] No personal notes found in CSV")
+                    
+                    # Extract review text
+                    review_text = book_data.get('my_review', book_data.get('review', ''))
+                    if review_text:
+                        personal_info['review_text'] = review_text
+                        print(f"📝 [PERSONAL_DEBUG] Review text: '{review_text[:100]}{'...' if len(review_text) > 100 else ''}'")
+                    else:
+                        print(f"📝 [PERSONAL_DEBUG] No review text found in CSV")
+                    
+                    # Extract date read
+                    date_read_raw = book_data.get('date_read', '')
+                    if date_read_raw:
+                        try:
+                            # Try parsing the date (common formats)
+                            from datetime import datetime
+                            for date_format in ['%Y-%m-%d', '%Y/%m/%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S']:
+                                try:
+                                    date_read = datetime.strptime(date_read_raw, date_format).date()
+                                    personal_info['date_read'] = date_read
+                                    print(f"📝 [PERSONAL_DEBUG] Date read: '{date_read_raw}' -> {date_read}")
+                                    break
+                                except ValueError:
+                                    continue
+                            if not date_read:
+                                print(f"📝 [PERSONAL_DEBUG] Failed to parse date read '{date_read_raw}' - unsupported format")
+                        except Exception as e:
+                            print(f"📝 [PERSONAL_DEBUG] Error parsing date read '{date_read_raw}': {e}")
+                    else:
+                        print(f"📝 [PERSONAL_DEBUG] No date read found in CSV")
+                    
+                    # Extract date added
+                    date_added_raw = book_data.get('date_added', '')
+                    if date_added_raw:
+                        try:
+                            # Try parsing the date (common formats)
+                            for date_format in ['%Y-%m-%d', '%Y/%m/%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S']:
+                                try:
+                                    date_added = datetime.strptime(date_added_raw, date_format).date()
+                                    personal_info['date_added'] = date_added
+                                    print(f"📝 [PERSONAL_DEBUG] Date added: '{date_added_raw}' -> {date_added}")
+                                    break
+                                except ValueError:
+                                    continue
+                            if not date_added:
+                                print(f"📝 [PERSONAL_DEBUG] Failed to parse date added '{date_added_raw}' - unsupported format")
+                        except Exception as e:
+                            print(f"📝 [PERSONAL_DEBUG] Error parsing date added '{date_added_raw}': {e}")
+                    else:
+                        print(f"📝 [PERSONAL_DEBUG] No date added found in CSV")
+                    
+                    print(f"📝 [PERSONAL_DEBUG] Personal info summary: {len(personal_info)} fields - {list(personal_info.keys())}")
                     
                     # Prepare ISBN fields
                     isbn_value = book_data.get('isbn', '')
@@ -4338,6 +4446,64 @@ def start_import_job(task_id):
                             )
                             print(f"📚 [IMPORT] Add to library result: {success}")
                             
+                            # Update personal information (rating, notes, dates) if available
+                            if success and personal_info:
+                                try:
+                                    print(f"📝 [PERSONAL_UPDATE] Processing personal information: {personal_info}")
+                                    
+                                    # Prepare update data for user-book relationship
+                                    update_data = {}
+                                    if 'user_rating' in personal_info:
+                                        update_data['user_rating'] = personal_info['user_rating']
+                                        print(f"📝 [PERSONAL_UPDATE] Setting user rating: {personal_info['user_rating']}")
+                                    
+                                    if 'personal_notes' in personal_info:
+                                        update_data['personal_notes'] = personal_info['personal_notes']
+                                        print(f"📝 [PERSONAL_UPDATE] Setting personal notes: {len(personal_info['personal_notes'])} characters")
+                                    
+                                    if 'review_text' in personal_info:
+                                        # Combine with personal notes or use as personal notes if no separate notes field
+                                        if 'personal_notes' not in update_data:
+                                            update_data['personal_notes'] = personal_info['review_text']
+                                            print(f"📝 [PERSONAL_UPDATE] Using review as personal notes: {len(personal_info['review_text'])} characters")
+                                        else:
+                                            # Combine review with existing notes
+                                            combined_notes = f"{update_data['personal_notes']}\n\nReview: {personal_info['review_text']}"
+                                            update_data['personal_notes'] = combined_notes
+                                            print(f"📝 [PERSONAL_UPDATE] Combined notes and review: {len(combined_notes)} characters")
+                                    
+                                    if 'date_read' in personal_info:
+                                        update_data['date_read'] = personal_info['date_read']
+                                        print(f"📝 [PERSONAL_UPDATE] Setting date read: {personal_info['date_read']}")
+                                    
+                                    if 'date_added' in personal_info:
+                                        update_data['date_added'] = personal_info['date_added']
+                                        print(f"📝 [PERSONAL_UPDATE] Setting date added: {personal_info['date_added']}")
+                                    
+                                    # Update the user-book relationship with personal information
+                                    if update_data:
+                                        print(f"📝 [PERSONAL_UPDATE] Updating user-book with: {list(update_data.keys())}")
+                                        personal_update_success = book_service.update_user_book_sync(user_id, created_book.id, **update_data)
+                                        print(f"📝 [PERSONAL_UPDATE] Update result: {personal_update_success}")
+                                        
+                                        if personal_update_success:
+                                            print(f"✅ [PERSONAL_UPDATE] Successfully updated personal information")
+                                            # Verify the update by reading back the data
+                                            updated_user_book = book_service.get_user_book_sync(user_id, created_book.id)
+                                            if updated_user_book:
+                                                print(f"📝 [PERSONAL_UPDATE] Verification - updated fields: {[k for k in update_data.keys() if hasattr(updated_user_book, k)]}")
+                                        else:
+                                            print(f"❌ [PERSONAL_UPDATE] Failed to update personal information")
+                                            job['recent_activity'].append(f"Row {row_num}: Failed to save personal info (rating, notes, dates)")
+                                    else:
+                                        print(f"📝 [PERSONAL_UPDATE] No personal information to update")
+                                        
+                                except Exception as personal_error:
+                                    print(f"❌ [PERSONAL_UPDATE] Error processing personal information: {personal_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    job['recent_activity'].append(f"Row {row_num}: Personal info error - {str(personal_error)}")
+                            
                             # Add personal custom metadata if available
                             if success and personal_custom_metadata:
                                 try:
@@ -4415,8 +4581,32 @@ def start_import_job(task_id):
                     if created_book:
                         job['success'] += 1
                         status_msg = f" (status: {reading_status})" if reading_status else ""
-                        job['recent_activity'].append(f"Row {row_num}: Successfully imported '{created_book.title}'{status_msg}")
-                        print(f"SUCCESS: Row {row_num} imported successfully")
+                        
+                        # Build comprehensive success message with what was imported
+                        success_details = []
+                        if personal_info:
+                            personal_items = []
+                            if 'user_rating' in personal_info:
+                                personal_items.append(f"rating: {personal_info['user_rating']}")
+                            if 'personal_notes' in personal_info or 'review_text' in personal_info:
+                                personal_items.append("notes")
+                            if 'date_read' in personal_info:
+                                personal_items.append("date_read")
+                            if 'date_added' in personal_info:
+                                personal_items.append("date_added")
+                            if personal_items:
+                                success_details.append(f"personal: {', '.join(personal_items)}")
+                        
+                        if personal_custom_metadata:
+                            success_details.append(f"personal_fields: {len(personal_custom_metadata)}")
+                        
+                        if global_custom_metadata:
+                            success_details.append(f"global_fields: {len(global_custom_metadata)}")
+                        
+                        details_msg = f" ({', '.join(success_details)})" if success_details else ""
+                        
+                        job['recent_activity'].append(f"Row {row_num}: Successfully imported '{created_book.title}'{status_msg}{details_msg}")
+                        print(f"✅ [SUCCESS] Row {row_num} imported successfully{details_msg}")
                     else:
                         job['errors'] += 1
                         job['error_messages'].append({
