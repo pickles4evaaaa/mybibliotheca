@@ -782,6 +782,13 @@ class KuzuGraphStorage:
             
             # Handle special field conversions for Kuzu
             serialized_data = data.copy()
+            # Convert ISO datetime strings for created_at and updated_at to datetime objects for Kuzu TIMESTAMP fields
+            for ts_field in ['created_at', 'updated_at']:
+                if ts_field in serialized_data and isinstance(serialized_data[ts_field], str):
+                    try:
+                        serialized_data[ts_field] = datetime.fromisoformat(serialized_data[ts_field])
+                    except ValueError:
+                        logger.warning(f"Could not parse {ts_field}: {serialized_data[ts_field]}, leaving original value")
             
             # Filter out relationship fields that shouldn't be stored directly
             # These are populated by service layer but shouldn't be stored in the database
@@ -798,6 +805,12 @@ class KuzuGraphStorage:
                 else:
                     logger.debug(f"[KUZU_GRAPH][DEBUG] Filtering out NULL/empty field {k}={v} for {node_type}")
             serialized_data = clean_data
+            # Upsert logic: update if node exists, else create
+            existing = self.get_node(node_type, node_id)
+            if existing is not None:
+                print(f"[KUZU_STORAGE] 🔄 Node {node_type}:{node_id} exists, updating")
+                # Perform update with cleaned data
+                return self.update_node(node_type, node_id, serialized_data)
             
             # Debug: Print what fields we're actually storing
             logger.info(f"[KUZU_GRAPH][DEBUG] Storing {node_type} with fields: {list(serialized_data.keys())}")

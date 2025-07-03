@@ -732,10 +732,10 @@ def edit_book(uid):
                         existing_normalized = person_data.get('normalized_name', '').strip().lower()
                         
                         if existing_name == normalized_name or existing_normalized == normalized_name:
-                            debug_log(f"Found existing person: {person_data.get('name')} (ID: {person_data.get('_id')})", "PERSON_CREATION")
+                            debug_log(f"Found existing person: {person_data.get('name')} (ID: {person_data.get('id')})", "PERSON_CREATION")
                             # Convert back to Person object
                             person = Person(
-                                id=person_data.get('_id'),
+                                id=person_data.get('id'),
                                 name=person_data.get('name', ''),
                                 normalized_name=person_data.get('normalized_name', ''),
                                 birth_year=person_data.get('birth_year'),
@@ -761,7 +761,6 @@ def edit_book(uid):
                         
                         # Store the new person (same as repository method)
                         person_data = {
-                            '_id': person.id,
                             'name': person.name,
                             'normalized_name': person.normalized_name,
                             'birth_year': person.birth_year,
@@ -773,7 +772,7 @@ def edit_book(uid):
                             'updated_at': person.updated_at.isoformat()
                         }
                         
-                        success = storage.store_node('person', person.id, person_data)
+                        success = storage.store_node('Person', person.id, person_data)
                         if not success:
                             debug_log(f"Failed to create person: {person_name}", "PERSON_CREATION_ERROR")
                             continue
@@ -4947,7 +4946,6 @@ def edit_person(person_id):
             storage = get_graph_storage()
             
             person_data = {
-                '_id': person.id,
                 'name': person.name,
                 'normalized_name': person.normalized_name,
                 'bio': person.bio,
@@ -4959,7 +4957,7 @@ def edit_person(person_id):
                 'updated_at': person.updated_at.isoformat()
             }
             
-            storage.store_node('person', person.id, person_data)
+            storage.store_node('Person', person.id, person_data)
             
             flash(f'Person "{name}" updated successfully!', 'success')
             return redirect(url_for('main.person_details', person_id=person.id))
