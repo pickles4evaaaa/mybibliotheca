@@ -821,6 +821,13 @@ class KuzuGraphStorage:
             for field in relationship_fields:
                 if field in serialized_data:
                     del serialized_data[field]
+            # Convert custom_metadata dict to JSON string so it persists on node
+            if 'custom_metadata' in serialized_data and isinstance(serialized_data['custom_metadata'], dict):
+                try:
+                    serialized_data['custom_metadata'] = json.dumps(serialized_data['custom_metadata'])
+                except Exception:
+                    # Leave as-is if serialization fails
+                    pass
             
             # Filter out None values and empty strings that can cause ANY type errors in Kuzu
             clean_data = {}
@@ -953,6 +960,12 @@ class KuzuGraphStorage:
         """Update specific fields of a node."""
         try:
             # Serialize updates
+            # Convert custom_metadata dict to JSON string so it persists
+            if 'custom_metadata' in updates and isinstance(updates['custom_metadata'], dict):
+                try:
+                    updates['custom_metadata'] = json.dumps(updates['custom_metadata'])
+                except Exception:
+                    pass
             serialized_updates = self._serialize_datetime_values(updates)
             serialized_updates['updated_at'] = datetime.utcnow()
             

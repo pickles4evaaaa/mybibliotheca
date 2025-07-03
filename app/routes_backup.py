@@ -3831,22 +3831,8 @@ def auto_create_custom_fields(mappings, user_id):
                     print(f"Error auto-creating personal field {field_name}: {e}")
 
 
-def batch_fetch_book_metadata(isbns):
-    """Batch fetch book metadata for multiple ISBNs."""
-    # TODO: Implement actual batch API calls
-    # For now, return empty dict as placeholder
-    print(f"📚 [BATCH_META] Would fetch metadata for {len(isbns)} ISBNs")
-    return {}
-
-def batch_fetch_author_metadata(authors):
-    """Batch fetch author metadata for multiple author names.""" 
-    # TODO: Implement actual batch API calls
-    # For now, return empty dict as placeholder
-    print(f"👥 [BATCH_META] Would fetch metadata for {len(authors)} authors")
-    return {}
-
 def start_import_job(task_id):
-    """Start the actual import process with batch-oriented architecture."""
+    """Start the actual import process with improved entity-first architecture."""
     from app.domain.models import Book as DomainBook, Author, Publisher
     from app.services import book_service
     
@@ -3875,195 +3861,129 @@ def start_import_job(task_id):
         mappings = job['field_mappings']
         user_id = job['user_id']
         
-        print(f"🚀 [BATCH_IMPORT] Starting optimized batch import process")
-        print(f"� Processing CSV file: {csv_file_path}")
-        print(f"🔍 Field mappings: {len(mappings)} mappings")
-        print(f"👤 User ID: {user_id} (type: {type(user_id)})")
+        print(f"Processing CSV file: {csv_file_path}")
+        print(f"🔍 [MAPPING_DEBUG] Field mappings received: {mappings}")
+        print(f"🔍 [MAPPING_DEBUG] Looking for ISBN/UID mapping: {mappings.get('ISBN/UID', 'NOT_FOUND')}")
+        print(f"🔍 [MAPPING_DEBUG] All ISBN-related mappings: {[(k, v) for k, v in mappings.items() if 'isbn' in k.lower() or 'uid' in k.lower()]}")
+        print(f"User ID: {user_id} (type: {type(user_id)})")
         
-        # ===== PHASE 1: Parse CSV and collect all raw data =====
-        print(f"📋 [PHASE1] Parsing CSV and extracting all data...")
-        all_rows_data = []
-        all_isbns = set()
-        all_authors = set()
-        custom_field_definitions = {}  # Track field definitions needed
+        # BATCH IMPORT FLOW - Replace old per-row processing with batch approach
+        print("📋 [BATCH] Starting batch import flow")
+        import csv
         
-        # Read and process CSV using SimplifiedBookService
+        # PHASE 1: Parse CSV into rows
         with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
-            # Try to detect if CSV has headers
-            first_line = csvfile.readline().strip()
-            csvfile.seek(0)  # Reset to beginning
-            
-            # Check if first line looks like an ISBN or a header
-            has_headers = not (first_line.isdigit() or len(first_line) in [10, 13])
-            
-            print(f"📋 [PHASE1] First line: '{first_line}', Has headers: {has_headers}")
-            
-            if has_headers:
-                reader = csv.DictReader(csvfile)
-                rows_list = list(reader)
-                print(f"📋 [PHASE1] Total rows in CSV: {len(rows_list)}")
-                if rows_list:
-                    print(f"📋 [PHASE1] First row keys: {list(rows_list[0].keys())}")
-                    print(f"📋 [PHASE1] Sample data: {dict(list(rows_list[0].items())[:3])}")
-            else:
-                # For headerless CSV (like ISBN-only files), create a simple reader
-                reader = csv.reader(csvfile)
-                rows_list = []
-                for row_data in reader:
-                    if row_data and row_data[0].strip():  # Skip empty rows
-                        rows_list.append({'isbn': row_data[0].strip()})
-                print(f"📋 [PHASE1] Headerless CSV with {len(rows_list)} rows")
-            
-            # Process all rows and collect data
-            for row_num, row in enumerate(rows_list, 1):
-                try:
-                    # Use SimplifiedBookService to build consistent book data
-                    simplified_book = book_service.build_book_data_from_row(row, mappings, has_headers)
-                    
-                    if not simplified_book:
-                        print(f"📋 [PHASE1] Row {row_num}: Skipped - could not build book data")
-                        continue
-                    
-                    print(f"📋 [PHASE1] Row {row_num}: {simplified_book.title}")
-                    
-                    # Collect for batch processing
-                    all_rows_data.append({
-                        'row_num': row_num,
-                        'simplified_book': simplified_book,
-                        'raw_row': row
-                    })
-                    
-                    # Collect ISBNs for batch API calls
-                    if simplified_book.isbn13:
-                        all_isbns.add(simplified_book.isbn13)
-                    if simplified_book.isbn10:
-                        all_isbns.add(simplified_book.isbn10)
-                    
-                    # Collect author names for batch API calls  
-                    if simplified_book.author:
-                        all_authors.add(simplified_book.author)
-                    if simplified_book.additional_authors:
-                        for author in simplified_book.additional_authors.split(','):
-                            all_authors.add(author.strip())
-                    
-                    # Track custom field definitions needed
-                    for field_name in simplified_book.global_custom_metadata.keys():
-                        custom_field_definitions[f"custom_global_{field_name}"] = 'global'
-                    for field_name in simplified_book.personal_custom_metadata.keys():
-                        custom_field_definitions[f"custom_personal_{field_name}"] = 'personal'
-                    
-                except Exception as row_error:
-                    print(f"❌ [PHASE1] Row {row_num} error: {row_error}")
-                    job['recent_activity'].append(f"Row {row_num}: Error - {str(row_error)}")
-                    continue
+            reader = csv.DictReader(csvfile)
+            raw_rows = list(reader)
+        print(f"📋 Parsed {len(raw_rows)} rows from CSV")
         
-        print(f"✅ [PHASE1] Parsed {len(all_rows_data)} rows, found {len(all_isbns)} unique ISBNs, {len(all_authors)} unique authors")
-        print(f"📚 [PHASE1] Custom fields needed: {len(custom_field_definitions)} ({list(custom_field_definitions.keys())})")
+        # PHASE 2: Extract unique identifiers for enrichment
+        isbns = set()
+        authors = set()
+        for row in raw_rows:
+            # Normalize ISBN/UID
+            isbn_val = normalize_goodreads_value(
+                row.get('ISBN') or row.get('ISBN13') or row.get('ISBN/UID', ''), 'isbn'
+            )
+            if isbn_val:
+                isbns.add(isbn_val)
+            # Collect author names
+            author_name = row.get('Author') or row.get('Authors')
+            if author_name:
+                authors.add(author_name.strip())
+        print(f"🔍 Found {len(isbns)} unique ISBNs, {len(authors)} unique authors for enrichment")
         
-        # ===== PHASE 2: Batch API calls for book metadata =====
-        print(f"🔍 [PHASE2] Starting batch API calls for book metadata...")
-        book_api_data = batch_fetch_book_metadata(list(all_isbns))
+        # PHASE 3: Batch metadata enrichment (placeholders)
+        book_meta_map = batch_fetch_book_metadata(isbns)
+        author_meta_map = batch_fetch_author_metadata(authors)
         
-        # ===== PHASE 3: Batch API calls for author metadata =====
-        print(f"👥 [PHASE3] Starting batch API calls for author metadata...")  
-        author_api_data = batch_fetch_author_metadata(list(all_authors))
+        # PHASE 4: Create custom field definitions before entity creation
+        auto_create_custom_fields(mappings, user_id)
         
-        # ===== PHASE 4: Create custom field definitions =====
-        print(f"🏗️ [PHASE4] Creating custom field definitions...")
-        for field_key, field_type in custom_field_definitions.items():
-            print(f"🏗️ [PHASE4] Would create {field_type} custom field: {field_key}")
-            # TODO: Use auto_create_custom_fields function
-            
-            if has_headers:
-                reader = csv.DictReader(csvfile)
-                # Debug: Check the first few rows to see actual data
-                rows_list = list(reader)
-                print(f"🔍 [CSV_DEBUG] Total rows in CSV: {len(rows_list)}")
-                if rows_list:
-                    print(f"🔍 [CSV_DEBUG] First row keys: {list(rows_list[0].keys())}")
-                    print(f"🔍 [CSV_DEBUG] First row sample data: {dict(list(rows_list[0].items())[:5])}")  # First 5 fields
-                    isbn_uid_value = rows_list[0].get('ISBN/UID', 'KEY_NOT_FOUND')
-                    print(f"🔍 [CSV_DEBUG] First row ISBN/UID value: '{isbn_uid_value}' (type: {type(isbn_uid_value)})")
-                reader = iter(rows_list)  # Convert back to iterator
-            else:
-                # For headerless CSV (like ISBN-only files), create a simple reader
-                reader = csv.reader(csvfile)
-                # Convert to dict format for consistency
-                dict_reader = []
-                for row_data in reader:
-                    if row_data and row_data[0].strip():  # Skip empty rows
-                        dict_reader.append({'isbn': row_data[0].strip()})
-                reader = dict_reader
-            
-            for row_num, row in enumerate(reader, 1):
-                if not has_headers:
-                    # For headerless CSV, row is already a dict with 'isbn' key
-                    pass
+        # PHASE 5: Create entities and relationships
+        from app.simplified_book_service import create_simplified_book_service
+        service = create_simplified_book_service()
+        
+        for row_num, row in enumerate(raw_rows, 1):
+            try:
+                
+                # Build book data and add to user library
+                book_data = service.build_book_data_from_row(row, mappings, book_meta_map)
+                
+                # Extract user-specific data from row
+                user_rating = None
+                rating_val = row.get('My Rating') or row.get('Star Rating')
+                if rating_val:
+                    try:
+                        user_rating = float(rating_val)
+                    except (ValueError, TypeError):
+                        pass
+                
+                personal_notes = row.get('Private Notes') or row.get('Review', '')
+                reading_status = job.get('default_reading_status', 'plan_to_read')
+                
+                # Extract custom metadata
+                custom_metadata = {}
+                for csv_field, book_field in mappings.items():
+                    if book_field.startswith('custom_') and csv_field in row and row[csv_field]:
+                        field_name = book_field.replace('custom_global_', '').replace('custom_personal_', '')
+                        custom_metadata[field_name] = row[csv_field]
+                
+                success = service.add_book_to_user_library(
+                    book_data,
+                    user_id=user_id,
+                    reading_status=reading_status,
+                    ownership_status='owned',
+                    media_type='physical',
+                    user_rating=user_rating,
+                    personal_notes=personal_notes,
+                    custom_metadata=custom_metadata
+                )
+                
+                if success:
+                    job['success'] = job.get('success', 0) + 1
+                    print(f"✅ [BATCH] Successfully added book from row {row_num}")
                 else:
-                    # For CSV with headers, row is already a dict from DictReader
-                    pass
-                try:
-                    print(f"Processing row {row_num}: {row}")
-                    
-                    # Extract book data based on mappings
-                    book_data = {}
-                    global_custom_metadata = {}
-                    personal_custom_metadata = {}
-                    
-                    if has_headers:
+                    job['errors'] = job.get('errors', 0) + 1
+                    print(f"❌ [BATCH] Failed to add book from row {row_num}")
+                
+                job['processed'] = job.get('processed', 0) + 1
+                update_job_in_kuzu(task_id, {
+                    'processed': job['processed'], 
+                    'success': job.get('success', 0), 
+                    'errors': job.get('errors', 0),
+                    'current_book': book_data.title
+                })
+                
+            except Exception as row_error:
+                print(f"❌ [BATCH] Error processing row {row_num}: {row_error}")
+                job['errors'] = job.get('errors', 0) + 1
+                job['processed'] = job.get('processed', 0) + 1
+                
+        print(f"📊 Batch import completed. Success: {job.get('success', 0)}, Errors: {job.get('errors', 0)}")
+        
+        # Mark as completed
+        job['status'] = 'completed'
+        update_job_in_kuzu(task_id, {
+            'status': 'completed',
+            'processed': job.get('processed', 0),
+            'success': job.get('success', 0),
+            'errors': job.get('errors', 0)
+        })
+        if task_id in import_jobs:
+            import_jobs[task_id].update(job)
+        job['current_book'] = None
+        job['recent_activity'] = job.get('recent_activity', [])
+        job['recent_activity'].append(f"Import completed! {job.get('success', 0)} books imported, {job.get('errors', 0)} errors")
+        
+        # Clean up temp file
+        try:
+            import os
+            os.unlink(csv_file_path)
+        except:
+            pass
                         # Use field mappings for CSV with headers
-                        print(f"🔍 [FIELD_MAPPING_DEBUG] Processing {len(mappings)} field mappings")
-                        for csv_field, book_field in mappings.items():
-                            raw_value = row.get(csv_field, '')
-                            print(f"🔍 [FIELD_MAPPING_DEBUG] Checking field '{csv_field}' -> '{book_field}', raw_value: '{raw_value}' (type: {type(raw_value)})")
-                            
-                            # Apply Goodreads normalization to all values
-                            if book_field == 'isbn':
-                                value = normalize_goodreads_value(raw_value, 'isbn')
-                                print(f"🔍 [ISBN_DEBUG] Field mapping: '{csv_field}' -> '{book_field}'")
-                                print(f"🔍 [ISBN_DEBUG] Raw value from CSV: '{raw_value}' (type: {type(raw_value)})")
-                                print(f"🔍 [ISBN_DEBUG] Normalized value: '{value}' (type: {type(value)}, bool: {bool(value)})")
-                                if not value:
-                                    print(f"❌ [ISBN_DEBUG] ISBN normalization returned empty/falsy value!")
-                            else:
-                                value = normalize_goodreads_value(raw_value, 'text')
-                                print(f"🔍 [FIELD_MAPPING_DEBUG] Normalized value: '{value}' (bool: {bool(value)})")
-                            
-                            if value:  # Only process non-empty values
-                                if book_field == 'isbn':
-                                    print(f"Cleaned ISBN from '{raw_value}' to '{value}' (length: {len(value)})")
-                                    book_data[book_field] = value
-                                elif book_field.startswith('custom_global_'):
-                                    # Extract custom global field name
-                                    field_name = book_field[14:]  # Remove 'custom_global_' prefix
-                                    global_custom_metadata[field_name] = value
-                                    print(f"🌍 [CUSTOM_FIELD_DEBUG] Added global custom metadata: {field_name} = '{value}' (from CSV field: '{csv_field}')")
-                                elif book_field.startswith('custom_personal_'):
-                                    # Extract custom personal field name  
-                                    field_name = book_field[16:]  # Remove 'custom_personal_' prefix
-                                    personal_custom_metadata[field_name] = value
-                                    print(f"👤 [CUSTOM_FIELD_DEBUG] Added personal custom metadata: {field_name} = '{value}' (from CSV field: '{csv_field}')")
-                                else:
-                                    book_data[book_field] = value
-                                    print(f"🔍 [FIELD_MAPPING_DEBUG] Added to book_data: {book_field} = '{value}'")
-                            else:
-                                print(f"🔍 [FIELD_MAPPING_DEBUG] Skipping empty/falsy value for field '{csv_field}' -> '{book_field}'")
-                    else:
-                        # For headerless CSV, assume it's ISBN-only
-                        isbn_value = row.get('isbn', '').strip()
-                        if isbn_value:
-                            book_data['isbn'] = isbn_value
-                            print(f"ISBN from headerless CSV: '{isbn_value}' (length: {len(isbn_value)})")
-                    
-                    print(f"Extracted book data: {book_data}")
-                    print(f"🌍 [CUSTOM_FIELD_DEBUG] Global custom metadata summary: {len(global_custom_metadata)} fields - {list(global_custom_metadata.keys())}")
-                    print(f"👤 [CUSTOM_FIELD_DEBUG] Personal custom metadata summary: {len(personal_custom_metadata)} fields - {list(personal_custom_metadata.keys())}")
-                    
-                    # Skip if no title or ISBN
-                    if not book_data.get('title') and not book_data.get('isbn'):
-                        job['recent_activity'].append(f"Row {row_num}: Skipped - no title or ISBN")
-                        print(f"Row {row_num}: Skipped - no title or ISBN")
-                        continue
+
                     
                     # For ISBN-only imports, use ISBN as title temporarily
                     title = book_data.get('title', book_data.get('isbn', 'Unknown Title'))
@@ -4786,6 +4706,22 @@ def normalize_goodreads_value(value, field_type='text'):
             current_app.logger.warning(f"Potentially corrupted ISBN value: '{value}'")
     
     return value.strip()
+
+
+def batch_fetch_book_metadata(isbns):
+    """Batch fetch book metadata for multiple ISBNs."""
+    # TODO: Implement actual batch API calls
+    # For now, return empty dict as placeholder
+    print(f"📚 [BATCH_META] Would fetch metadata for {len(isbns)} ISBNs")
+    return {}
+
+
+def batch_fetch_author_metadata(authors):
+    """Batch fetch author metadata for multiple author names.""" 
+    # TODO: Implement actual batch API calls
+    # For now, return empty dict as placeholder
+    print(f"👥 [BATCH_META] Would fetch metadata for {len(authors)} authors")
+    return {}
 
 # Kuzu functions for job storage
 def store_job_in_kuzu(task_id, job_data):
@@ -6264,17 +6200,17 @@ def get_goodreads_field_mappings():
         'Number of Pages': 'page_count',
         'Year Published': 'publication_year',
         'Original Publication Year': 'custom_global_original_publication_year',
-        'Date Read': 'date_read',
-        'Date Added': 'date_added',
-        'Bookshelves': 'reading_status',  # Fixed: Goodreads bookshelves are reading statuses, not categories
-        'Bookshelves with positions': 'reading_status',  # Fixed: These are also reading statuses
+        'Date Read': 'finish_date',
+        'Date Added': 'created_at',
+        'Bookshelves': 'custom_global_bookshelves',
+        'Bookshelves with positions': 'custom_global_bookshelves_with_positions',
         'Exclusive Shelf': 'reading_status',
-        'My Review': 'notes',
-        'Spoiler': 'custom_global_spoiler_review',
-        'Private Notes': 'custom_personal_private_notes',
+        'My Review': 'custom_global_my_review',
+        'Spoiler': 'custom_global_spoiler',
+        'Private Notes': 'personal_notes',
         'Read Count': 'custom_global_read_count',
-        'Owned Copies': 'custom_personal_owned_copies',
-        'Book Id': 'custom_global_goodreads_book_id'
+        'Owned Copies': 'ignore',
+        'Book Id': 'custom_global_goodreads_id'
     }
 
 

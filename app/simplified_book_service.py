@@ -366,6 +366,94 @@ class SimplifiedBookService:
             print(f"❌ [SIMPLIFIED] Error in find_or_create_book: {e}")
             return None
     
+    def build_book_data_from_row(self, row, mappings, book_meta_map=None, author_meta_map=None):
+        """
+        Build SimplifiedBook data from a CSV row with field mappings.
+        
+        Args:
+            row: Dict of CSV row data
+            mappings: Field mapping dict (CSV field -> book field)
+            book_meta_map: Optional dict of ISBN -> book metadata from APIs
+            author_meta_map: Optional dict of author name -> author metadata from APIs
+            
+        Returns:
+            SimplifiedBook instance
+        """
+        print(f"🔧 [BUILD_BOOK] Building book from row: {list(row.keys())[:5]}...")
+        
+        # Initialize book data
+        book_data = {
+            'title': '',
+            'author': '',
+            'isbn13': None,
+            'isbn10': None,
+            'subtitle': None,
+            'description': None,
+            'publisher': None,
+            'published_date': None,
+            'page_count': None,
+            'language': 'en',
+            'cover_url': None,
+            'series': None,
+            'series_volume': None,
+            'series_order': None,
+            'categories': [],
+            'google_books_id': None,
+            'openlibrary_id': None,
+            'average_rating': None,
+            'rating_count': None
+        }
+        
+        # Map CSV fields to book fields
+        for csv_field, book_field in mappings.items():
+            if csv_field in row and row[csv_field]:
+                value = row[csv_field].strip() if isinstance(row[csv_field], str) else row[csv_field]
+                
+                if book_field == 'title':
+                    book_data['title'] = value
+                elif book_field == 'author':
+                    book_data['author'] = value
+                elif book_field == 'isbn':
+                    # Clean and assign ISBN
+                    clean_isbn = ''.join(c for c in str(value) if c.isdigit() or c.upper() == 'X')
+                    if len(clean_isbn) == 13:
+                        book_data['isbn13'] = clean_isbn
+                    elif len(clean_isbn) == 10:
+                        book_data['isbn10'] = clean_isbn
+                elif book_field == 'publisher':
+                    book_data['publisher'] = value
+                elif book_field == 'page_count':
+                    try:
+                        book_data['page_count'] = int(value) if value else None
+                    except (ValueError, TypeError):
+                        pass
+                elif book_field == 'publication_year':
+                    try:
+                        year = int(value) if value else None
+                        if year:
+                            book_data['published_date'] = f"{year}-01-01"
+                    except (ValueError, TypeError):
+                        pass
+                elif book_field.startswith('custom_'):
+                    # Skip custom fields for now - they'll be handled separately
+                    continue
+                elif book_field not in ['ignore', 'reading_status', 'rating', 'finish_date', 'personal_notes']:
+                    # Map other standard fields
+                    if book_field in book_data:
+                        book_data[book_field] = value
+        
+        # Enhance with API metadata if available
+        isbn_for_lookup = book_data['isbn13'] or book_data['isbn10']
+        if isbn_for_lookup and book_meta_map and isbn_for_lookup in book_meta_map:
+            api_data = book_meta_map[isbn_for_lookup]
+            # Merge API data, preferring API values for richer metadata
+            for field, api_value in api_data.items():
+                if api_value and field in book_data:
+                    book_data[field] = api_value
+        
+        # Create SimplifiedBook instance
+        return SimplifiedBook(**book_data)
+    
     def add_book_to_user_library(self, book_data: SimplifiedBook, user_id: str, 
                                 reading_status: str = "plan_to_read",
                                 ownership_status: str = "owned",
