@@ -3833,17 +3833,84 @@ def auto_create_custom_fields(mappings, user_id):
 
 def batch_fetch_book_metadata(isbns):
     """Batch fetch book metadata for multiple ISBNs."""
-    # TODO: Implement actual batch API calls
-    # For now, return empty dict as placeholder
-    print(f"📚 [BATCH_META] Would fetch metadata for {len(isbns)} ISBNs")
-    return {}
+    print(f"📚 [BATCH_META] Fetching metadata for {len(isbns)} ISBNs...")
+    
+    if not isbns:
+        return {}
+    
+    # Import the existing API functions
+    from .utils import get_google_books_cover, fetch_book_data
+    
+    book_metadata = {}
+    
+    # For now, still call APIs individually but collect results efficiently
+    # TODO: Implement true batch API calls when Google Books/OpenLibrary APIs support it
+    
+    for isbn in isbns:
+        try:
+            print(f"📚 [BATCH_META] Fetching metadata for ISBN: {isbn}")
+            
+            # Try Google Books first
+            google_data = get_google_books_cover(isbn, fetch_title_author=True)
+            if google_data:
+                book_metadata[isbn] = {
+                    'source': 'google_books',
+                    'data': google_data
+                }
+                print(f"📚 [BATCH_META] ✅ Google Books data found for: {isbn}")
+            else:
+                # Fallback to OpenLibrary  
+                ol_data = fetch_book_data(isbn)
+                if ol_data:
+                    book_metadata[isbn] = {
+                        'source': 'openlibrary',
+                        'data': ol_data
+                    }
+                    print(f"📚 [BATCH_META] ✅ OpenLibrary data found for: {isbn}")
+                else:
+                    print(f"📚 [BATCH_META] ❌ No metadata found for: {isbn}")
+                    
+        except Exception as e:
+            print(f"📚 [BATCH_META] ❌ Error fetching metadata for {isbn}: {e}")
+            continue
+    
+    print(f"📚 [BATCH_META] ✅ Collected metadata for {len(book_metadata)}/{len(isbns)} ISBNs")
+    return book_metadata
 
 def batch_fetch_author_metadata(authors):
-    """Batch fetch author metadata for multiple author names.""" 
-    # TODO: Implement actual batch API calls
-    # For now, return empty dict as placeholder
-    print(f"👥 [BATCH_META] Would fetch metadata for {len(authors)} authors")
-    return {}
+    """Batch fetch author metadata for multiple author names."""
+    print(f"👥 [BATCH_META] Fetching metadata for {len(authors)} authors...")
+    
+    if not authors:
+        return {}
+    
+    # Import the existing API function
+    from .utils import fetch_author_data
+    
+    author_metadata = {}
+    
+    # For now, still call APIs individually but collect results efficiently  
+    # TODO: Implement true batch API calls when OpenLibrary APIs support it
+    
+    for author_name in authors:
+        try:
+            print(f"👥 [BATCH_META] Fetching metadata for author: {author_name}")
+            
+            # Note: This requires an author ID, which we don't have from just the name
+            # In practice, author enrichment happens when we have OpenLibrary book data
+            # with author IDs. For now, just track that we would fetch this data.
+            
+            author_metadata[author_name] = {
+                'enriched': False,
+                'note': 'Author enrichment requires author ID from book metadata'
+            }
+            
+        except Exception as e:
+            print(f"👥 [BATCH_META] ❌ Error fetching metadata for {author_name}: {e}")
+            continue
+    
+    print(f"👥 [BATCH_META] ✅ Processed {len(author_metadata)}/{len(authors)} authors")
+    return author_metadata
 
 def start_import_job(task_id):
     """Start the actual import process with batch-oriented architecture."""
@@ -4720,23 +4787,28 @@ def start_import_job(task_id):
                     job['recent_activity'].append(f"Row {row_num}: Error - {str(e)}")
                 
                 job['processed'] += 1
-                # Update progress in Kuzu every 10 books to avoid too many updates
-                if job['processed'] % 10 == 0:
-                    update_job_in_kuzu(task_id, {'processed': job['processed']})
+                # Update progress in Kuzu every 5 books to provide more responsive updates
+                if job['processed'] % 5 == 0:
+                    update_data = {'processed': job['processed']}
+                    update_job_in_kuzu(task_id, update_data)
+                    # Also sync memory job
+                    if task_id in import_jobs:
+                        import_jobs[task_id].update(update_data)
                 print(f"Row {row_num} processed. Total processed: {job['processed']}")
         
         print(f"CSV processing completed. Success: {job['success']}, Errors: {job['errors']}")
         
         # Mark as completed
         job['status'] = 'completed'
-        update_job_in_kuzu(task_id, {
+        completion_data = {
             'status': 'completed',
             'processed': job['processed'],
             'success': job['success'],
             'errors': job['errors']
-        })
+        }
+        update_job_in_kuzu(task_id, completion_data)
         if task_id in import_jobs:
-            import_jobs[task_id].update(job)
+            import_jobs[task_id].update(completion_data)
         job['current_book'] = None
         job['recent_activity'].append(f"Import completed! {job['success']} books imported, {job['errors']} errors")
         
@@ -4752,9 +4824,11 @@ def start_import_job(task_id):
         if 'error_messages' not in job:
             job['error_messages'] = []
         job['error_messages'].append(str(e))
-        update_job_in_kuzu(task_id, {'status': 'failed', 'error_messages': job['error_messages']})
+        
+        error_data = {'status': 'failed', 'error_messages': job['error_messages']}
+        update_job_in_kuzu(task_id, error_data)
         if task_id in import_jobs:
-            import_jobs[task_id]['status'] = 'failed'
+            import_jobs[task_id].update(error_data)
             if 'error_messages' not in import_jobs[task_id]:
                 import_jobs[task_id]['error_messages'] = []
             import_jobs[task_id]['error_messages'].append(str(e))
@@ -6303,3 +6377,190 @@ def get_storygraph_field_mappings():
         'Content Warning Description': 'custom_global_content_warning_description',
         'Owned?': 'custom_personal_owned'
     }
+
+
+# ===== SQLite Database Migration Routes =====
+
+@bp.route('/migrate-sqlite', methods=['GET', 'POST'])
+@login_required
+def migrate_sqlite():
+    """Handle SQLite database migration from v1 and v1.5 legacy databases."""
+    
+    if request.method == 'GET':
+        return render_template('migrate_sqlite.html')
+    
+    try:
+        # Handle file upload
+        if 'sqlite_file' not in request.files:
+            flash('No file selected', 'error')
+            return redirect(request.url)
+        
+        file = request.files['sqlite_file']
+        if file.filename == '':
+            flash('No file selected', 'error')
+            return redirect(request.url)
+        
+        if not file or not file.filename.lower().endswith(('.db', '.sqlite', '.sqlite3')):
+            flash('Please upload a valid SQLite database file (.db, .sqlite, .sqlite3)', 'error')
+            return redirect(request.url)
+        
+        # Get migration options
+        use_admin_user = request.form.get('use_admin_user', 'false').lower() == 'true'
+        
+        # Save temporary file
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join(tempfile.gettempdir(), f"migration_{secrets.token_hex(8)}_{filename}")
+        file.save(temp_path)
+        
+        print(f"🔄 [SQLITE_ROUTE] Starting SQLite migration from {filename}")
+        
+        try:
+            # Initialize migration service
+            from app.sqlite_migration_service import SQLiteMigrationService
+            migration_service = SQLiteMigrationService()
+            
+            # Detect database version first
+            db_version = migration_service.detect_database_version(temp_path)
+            print(f"📋 [SQLITE_ROUTE] Detected database version: {db_version}")
+            
+            if db_version == 'unknown':
+                flash('Unrecognized SQLite database format. Please ensure it\'s a valid bibliotheca v1 or v1.5 database.', 'error')
+                return redirect(request.url)
+            
+            # Start migration using our batch infrastructure
+            result = migration_service.migrate_sqlite_database(
+                sqlite_file_path=temp_path,
+                target_user_id=str(current_user.id),
+                create_default_user=use_admin_user  # For v1.5, use admin user logic
+            )
+            
+            # Build success message
+            success_msg = f'SQLite {db_version} migration completed! {result["success_count"]} books imported'
+            if result["error_count"] > 0:
+                success_msg += f', {result["error_count"]} errors'
+            
+            # Add migration note if present
+            if 'migration_note' in result:
+                success_msg += f'. {result["migration_note"]}'
+            
+            flash(success_msg, 'success' if result["error_count"] == 0 else 'warning')
+            
+            # Store detailed results in session for display
+            session['migration_results'] = {
+                'db_version': db_version,
+                'total_books': result['total_books'],
+                'success_count': result['success_count'],
+                'error_count': result['error_count'],
+                'api_calls_made': result['api_calls_made'],
+                'migration_details': result['migration_details'][:20]  # First 20 details for display
+            }
+            
+            return redirect(url_for('main.migration_results'))
+            
+        except Exception as e:
+            print(f"❌ [SQLITE_ROUTE] Migration failed: {e}")
+            flash(f'Migration failed: {str(e)}', 'error')
+            return redirect(request.url)
+            
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+                
+    except Exception as e:
+        current_app.logger.error(f"Error in SQLite migration route: {e}")
+        flash('An error occurred during migration. Please try again.', 'error')
+        return redirect(request.url)
+
+
+@bp.route('/migration-results')
+@login_required
+def migration_results():
+    """Display detailed migration results."""
+    
+    results = session.get('migration_results')
+    if not results:
+        flash('No migration results found', 'error')
+        return redirect(url_for('main.library'))
+    
+    # Clear results from session after displaying
+    session.pop('migration_results', None)
+    
+    return render_template('migration_results.html', results=results)
+
+
+@bp.route('/detect-sqlite', methods=['POST'])
+@login_required
+def detect_sqlite():
+    """AJAX endpoint to detect SQLite database version before migration."""
+    
+    try:
+        if 'sqlite_file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['sqlite_file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not file.filename.lower().endswith(('.db', '.sqlite', '.sqlite3')):
+            return jsonify({'error': 'Invalid file type'}), 400
+        
+        # Save to temporary location for analysis
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join(tempfile.gettempdir(), f"detect_{secrets.token_hex(8)}_{filename}")
+        file.save(temp_path)
+        
+        try:
+            from app.sqlite_migration_service import SQLiteMigrationService
+            migration_service = SQLiteMigrationService()
+            
+            # Analyze the database
+            db_version = migration_service.detect_database_version(temp_path)
+            
+            # Get additional info
+            import sqlite3
+            conn = sqlite3.connect(temp_path)
+            cursor = conn.cursor()
+            
+            # Count books
+            try:
+                cursor.execute("SELECT COUNT(*) FROM book")
+                book_count = cursor.fetchone()[0]
+            except:
+                book_count = 0
+            
+            # For v1.5, get user info
+            user_info = None
+            if db_version == 'v1.5':
+                try:
+                    cursor.execute("SELECT username, email, is_admin FROM user WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1")
+                    admin_row = cursor.fetchone()
+                    if admin_row:
+                        user_info = {
+                            'username': admin_row[0],
+                            'email': admin_row[1],
+                            'is_admin': bool(admin_row[2])
+                        }
+                except:
+                    pass
+            
+            conn.close()
+            
+            return jsonify({
+                'version': db_version,
+                'book_count': book_count,
+                'user_info': user_info,
+                'supported': db_version in ['v1', 'v1.5']
+            })
+            
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+                
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

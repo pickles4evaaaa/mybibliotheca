@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>
+                        <i class="fas fa-check-circle text-success"></i> 
+                        SQLite Migration Results
+                    </h3>
+                    <p class="text-muted mb-0">Database migration completed</p>
+                </div>
+                <div class="card-body">
+                    
+                    <!-- Summary Stats -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body text-center">
+                                    <h4>{{ results.total_books }}</h4>
+                                    <small>Total Books</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-success text-white">
+                                <div class="card-body text-center">
+                                    <h4>{{ results.success_count }}</h4>
+                                    <small>Successfully Imported</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-{% if results.error_count > 0 %}warning{% else %}secondary{% endif %} text-white">
+                                <div class="card-body text-center">
+                                    <h4>{{ results.error_count }}</h4>
+                                    <small>Errors</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-info text-white">
+                                <div class="card-body text-center">
+                                    <h4>{{ results.api_calls_made }}</h4>
+                                    <small>API Calls Made</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Migration Details -->
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h5><i class="fas fa-list"></i> Migration Details</h5>
+                            
+                            {% if results.migration_details %}
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Book Title</th>
+                                            <th>Status</th>
+                                            <th>Reading Status</th>
+                                            <th>Notes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for detail in results.migration_details %}
+                                        <tr>
+                                            <td>
+                                                <strong>{{ detail.title }}</strong>
+                                            </td>
+                                            <td>
+                                                {% if detail.status == 'success' %}
+                                                    <span class="badge bg-success">Success</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">{{ detail.status }}</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if detail.reading_status %}
+                                                    <span class="badge bg-secondary">{{ detail.reading_status }}</span>
+                                                {% else %}
+                                                    -
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if detail.error %}
+                                                    <small class="text-danger">{{ detail.error }}</small>
+                                                {% else %}
+                                                    -
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {% if results.migration_details|length >= 20 %}
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle"></i>
+                                Showing first 20 results. Check your library for all imported books.
+                            </div>
+                            {% endif %}
+                            
+                            {% else %}
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                No detailed migration information available.
+                            </div>
+                            {% endif %}
+                            
+                        </div>
+                        
+                        <!-- Migration Info Sidebar -->
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-header">
+                                    <h6><i class="fas fa-info-circle"></i> Migration Information</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>Database Version:</strong> {{ results.db_version }}</p>
+                                    
+                                    {% if results.success_count > 0 %}
+                                    <div class="alert alert-success">
+                                        <h6><i class="fas fa-check"></i> What was migrated:</h6>
+                                        <ul class="list-unstyled mb-0">
+                                            <li>✓ Book titles and authors</li>
+                                            <li>✓ ISBN numbers</li>
+                                            <li>✓ Reading status and dates</li>
+                                            <li>✓ Cover images</li>
+                                            <li>✓ Reading logs (in notes)</li>
+                                            <li>✓ Enhanced with API data</li>
+                                        </ul>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    {% if results.error_count > 0 %}
+                                    <div class="alert alert-warning">
+                                        <h6><i class="fas fa-exclamation-triangle"></i> Some books had issues:</h6>
+                                        <p class="mb-0">Check the details table above for specific error information.</p>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <div class="alert alert-info">
+                                        <h6><i class="fas fa-tachometer-alt"></i> Performance:</h6>
+                                        <p class="mb-0">
+                                            Used batch processing to minimize API calls - 
+                                            only {{ results.api_calls_made }} total API calls instead of 
+                                            {{ results.total_books * 2 }} individual calls!
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Actions -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                                <a href="{{ url_for('main.library') }}" class="btn btn-primary">
+                                    <i class="fas fa-book"></i> View Library
+                                </a>
+                                <a href="{{ url_for('main.migrate_sqlite') }}" class="btn btn-outline-secondary">
+                                    <i class="fas fa-database"></i> Migrate Another Database
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

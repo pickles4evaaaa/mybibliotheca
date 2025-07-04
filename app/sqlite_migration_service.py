@@ -1,0 +1,524 @@
+"""
+SQLite Migration Service
+
+This module handles migration from legacy SQLite databases (v1 and v1.5) to the new KuzuDB system.
+Uses the existing batch import infrastructure for optimal performance.
+"""
+
+import sqlite3
+import tempfile
+import os
+from datetime import datetime, date
+from typing import Dict, List, Optional, Tuple, Any
+from app.simplified_book_service import SimplifiedBook
+
+
+class SQLiteMigrationService:
+    """Service for migrating legacy SQLite databases to the new system."""
+    
+    def __init__(self):
+        self.supported_versions = ['v1', 'v1.5']
+    
+    def detect_database_version(self, sqlite_file_path: str) -> str:
+        """
+        Detect the version of the SQLite database by examining table structure.
+        
+        Returns:
+            'v1' for single-user databases
+            'v1.5' for multi-user databases
+            'unknown' for unrecognized formats
+        """
+        try:
+            conn = sqlite3.connect(sqlite_file_path)
+            cursor = conn.cursor()
+            
+            # Get all tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {row[0] for row in cursor.fetchall()}
+            
+            conn.close()
+            
+            # Determine version based on table presence
+            if 'user' in tables and 'task' in tables:
+                return 'v1.5'
+            elif 'book' in tables and 'reading_log' in tables:
+                return 'v1'
+            else:
+                return 'unknown'
+                
+        except Exception as e:
+            print(f"Error detecting database version: {e}")
+            return 'unknown'
+    
+    def migrate_sqlite_database(self, sqlite_file_path: str, target_user_id: str, 
+                               create_default_user: bool = False) -> Dict[str, Any]:
+        """
+        Migrate books from an SQLite database using batch infrastructure.
+        
+        Args:
+            sqlite_file_path: Path to the SQLite database file
+            target_user_id: ID of the user to assign books to (for v1.5, ignored for v1)
+            create_default_user: Whether to use the first admin user for v1.5 databases
+            
+        Returns:
+            Migration results dictionary
+        """
+        print(f"🔄 [SQLITE_MIGRATION] Starting SQLite migration")
+        
+        # Detect database version
+        db_version = self.detect_database_version(sqlite_file_path)
+        print(f"📋 [SQLITE_MIGRATION] Detected database version: {db_version}")
+        
+        if db_version == 'unknown':
+            raise ValueError("Unrecognized SQLite database format")
+        
+        # Extract data based on version
+        if db_version == 'v1':
+            return self._migrate_v1_database(sqlite_file_path, target_user_id)
+        elif db_version == 'v1.5':
+            return self._migrate_v1_5_database(sqlite_file_path, target_user_id, create_default_user)
+        else:
+            raise ValueError(f"Unsupported database version: {db_version}")
+    
+    def _migrate_v1_database(self, sqlite_file_path: str, target_user_id: str) -> Dict[str, Any]:
+        """Migrate v1 (single-user) SQLite database."""
+        print(f"📋 [V1_MIGRATION] Starting v1 database migration for user {target_user_id}")
+        
+        # ===== PHASE 1: Extract all data from SQLite =====
+        conn = sqlite3.connect(sqlite_file_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        try:
+            # Extract books
+            cursor.execute("SELECT * FROM book")
+            book_rows = cursor.fetchall()
+            print(f"📋 [V1_MIGRATION] Found {len(book_rows)} books")
+            
+            # Extract reading logs
+            cursor.execute("SELECT * FROM reading_log")
+            reading_log_rows = cursor.fetchall()
+            print(f"📋 [V1_MIGRATION] Found {len(reading_log_rows)} reading log entries")
+            
+            # Build reading log lookup
+            reading_logs_by_book = {}
+            for log in reading_log_rows:
+                book_id = log['book_id']
+                if book_id not in reading_logs_by_book:
+                    reading_logs_by_book[book_id] = []
+                reading_logs_by_book[book_id].append(log['date'])
+            
+            # Convert to SimplifiedBook objects
+            all_books_data = []
+            all_isbns = set()
+            all_authors = set()
+            
+            for row in book_rows:
+                simplified_book = self._convert_v1_row_to_simplified_book(dict(row), reading_logs_by_book)
+                
+                if simplified_book:
+                    all_books_data.append(simplified_book)
+                    
+                    # Collect ISBNs and authors for batch processing
+                    if simplified_book.isbn13:
+                        all_isbns.add(simplified_book.isbn13)
+                    if simplified_book.isbn10:
+                        all_isbns.add(simplified_book.isbn10)
+                    if simplified_book.author:
+                        all_authors.add(simplified_book.author)
+            
+        finally:
+            conn.close()
+        
+        print(f"✅ [V1_MIGRATION] Extracted {len(all_books_data)} books, {len(all_isbns)} ISBNs, {len(all_authors)} authors")
+        
+        # Use batch processing pipeline
+        return self._process_books_with_batch_pipeline(all_books_data, all_isbns, all_authors, target_user_id)
+    
+    def _migrate_v1_5_database(self, sqlite_file_path: str, target_user_id: str, 
+                              create_default_user: bool = False) -> Dict[str, Any]:
+        """Migrate v1.5 (multi-user) SQLite database."""
+        print(f"📋 [V1.5_MIGRATION] Starting v1.5 database migration")
+        
+        # ===== PHASE 1: Extract all data from SQLite =====
+        conn = sqlite3.connect(sqlite_file_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        try:
+            # First, handle user logic for v1.5
+            cursor.execute("SELECT * FROM user WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1")
+            admin_user = cursor.fetchone()
+            
+            if admin_user and create_default_user:
+                print(f"📋 [V1.5_MIGRATION] Found admin user: {admin_user['username']} (ID: {admin_user['id']})")
+                sqlite_user_id = admin_user['id']
+                migration_note = f"Migrated from admin user '{admin_user['username']}'"
+            else:
+                # Use provided target_user_id and migrate all books regardless of original user_id
+                sqlite_user_id = None  # Will migrate all books
+                migration_note = f"Migrated all books to user {target_user_id}"
+            
+            # Extract books (filter by user if we found an admin)
+            if sqlite_user_id:
+                cursor.execute("SELECT * FROM book WHERE user_id = ?", (sqlite_user_id,))
+            else:
+                cursor.execute("SELECT * FROM book")
+            
+            book_rows = cursor.fetchall()
+            print(f"📋 [V1.5_MIGRATION] Found {len(book_rows)} books")
+            
+            # Extract reading logs (filter by user if applicable)
+            if sqlite_user_id:
+                cursor.execute("""
+                    SELECT rl.* FROM reading_log rl 
+                    JOIN book b ON rl.book_id = b.id 
+                    WHERE b.user_id = ?
+                """, (sqlite_user_id,))
+            else:
+                cursor.execute("SELECT * FROM reading_log")
+            
+            reading_log_rows = cursor.fetchall()
+            print(f"📋 [V1.5_MIGRATION] Found {len(reading_log_rows)} reading log entries")
+            
+            # Build reading log lookup
+            reading_logs_by_book = {}
+            for log in reading_log_rows:
+                book_id = log['book_id']
+                if book_id not in reading_logs_by_book:
+                    reading_logs_by_book[book_id] = []
+                reading_logs_by_book[book_id].append(log['date'])
+            
+            # Convert to SimplifiedBook objects
+            all_books_data = []
+            all_isbns = set()
+            all_authors = set()
+            
+            for row in book_rows:
+                simplified_book = self._convert_v1_5_row_to_simplified_book(dict(row), reading_logs_by_book)
+                
+                if simplified_book:
+                    all_books_data.append(simplified_book)
+                    
+                    # Collect ISBNs and authors for batch processing
+                    if simplified_book.isbn13:
+                        all_isbns.add(simplified_book.isbn13)
+                    if simplified_book.isbn10:
+                        all_isbns.add(simplified_book.isbn10)
+                    if simplified_book.author:
+                        all_authors.add(simplified_book.author)
+            
+        finally:
+            conn.close()
+        
+        print(f"✅ [V1.5_MIGRATION] Extracted {len(all_books_data)} books, {len(all_isbns)} ISBNs, {len(all_authors)} authors")
+        print(f"📝 [V1.5_MIGRATION] {migration_note}")
+        
+        # Use batch processing pipeline
+        result = self._process_books_with_batch_pipeline(all_books_data, all_isbns, all_authors, target_user_id)
+        result['migration_note'] = migration_note
+        return result
+    
+    def _process_books_with_batch_pipeline(self, all_books_data: List[SimplifiedBook], 
+                                         all_isbns: set, all_authors: set, 
+                                         target_user_id: str) -> Dict[str, Any]:
+        """Process books using the existing batch import infrastructure."""
+        
+        # ===== PHASE 2-3: Use existing batch API functions =====
+        from app.routes import batch_fetch_book_metadata, batch_fetch_author_metadata
+        
+        print(f"🔍 [BATCH_MIGRATION] Batch fetching book metadata for {len(all_isbns)} ISBNs...")
+        book_api_data = batch_fetch_book_metadata(list(all_isbns))
+        
+        print(f"👥 [BATCH_MIGRATION] Batch fetching author metadata for {len(all_authors)} authors...")  
+        author_api_data = batch_fetch_author_metadata(list(all_authors))
+        
+        # ===== PHASE 4-5: Use existing book creation pipeline =====
+        from app.services import book_service
+        from app.domain.models import ReadingStatus, OwnershipStatus
+        
+        print(f"📚 [BATCH_MIGRATION] Creating books and user relationships...")
+        
+        success_count = 0
+        error_count = 0
+        migration_details = []
+        
+        for book_data in all_books_data:
+            try:
+                # Convert to domain object using the enhanced API data
+                domain_book = self._convert_simplified_book_to_domain(book_data, book_api_data, author_api_data)
+                
+                # Use existing pipeline
+                created_book = book_service.find_or_create_book_sync(domain_book)
+                
+                if created_book:
+                    # Determine reading status from SQLite data
+                    reading_status = self._determine_reading_status(book_data)
+                    
+                    # Add to user's library
+                    library_success = book_service.add_book_to_user_library_sync(
+                        user_id=target_user_id,
+                        book_id=created_book.id,
+                        reading_status=reading_status,
+                        ownership_status=OwnershipStatus.OWNED
+                    )
+                    
+                    if library_success:
+                        # Update with personal information from SQLite
+                        self._update_personal_information(book_service, target_user_id, created_book.id, book_data)
+                        
+                        success_count += 1
+                        migration_details.append({
+                            'title': book_data.title,
+                            'status': 'success',
+                            'reading_status': reading_status.value
+                        })
+                    else:
+                        error_count += 1
+                        migration_details.append({
+                            'title': book_data.title,
+                            'status': 'failed_library_add',
+                            'error': 'Failed to add to user library'
+                        })
+                else:
+                    error_count += 1
+                    migration_details.append({
+                        'title': book_data.title,
+                        'status': 'failed_creation',
+                        'error': 'Failed to create book'
+                    })
+                    
+            except Exception as e:
+                print(f"❌ [BATCH_MIGRATION] Error migrating book {book_data.title}: {e}")
+                error_count += 1
+                migration_details.append({
+                    'title': book_data.title,
+                    'status': 'error',
+                    'error': str(e)
+                })
+        
+        print(f"✅ [BATCH_MIGRATION] Migration completed: {success_count} success, {error_count} errors")
+        
+        return {
+            'total_books': len(all_books_data),
+            'success_count': success_count,
+            'error_count': error_count,
+            'api_calls_made': len(all_isbns) + len(all_authors),
+            'migration_details': migration_details
+        }
+    
+    def _convert_v1_row_to_simplified_book(self, row: dict, reading_logs: dict) -> Optional[SimplifiedBook]:
+        """Convert a v1 SQLite row to SimplifiedBook format."""
+        if not row.get('title'):
+            return None
+        
+        # Determine reading status from dates and flags
+        reading_status = 'plan_to_read'  # default
+        if row.get('finish_date'):
+            reading_status = 'read'
+        elif row.get('start_date'):
+            reading_status = 'reading'
+        elif row.get('want_to_read'):
+            reading_status = 'plan_to_read'
+        
+        return SimplifiedBook(
+            title=row['title'],
+            author=row.get('author', 'Unknown Author'),
+            isbn13=self._extract_isbn13(row.get('isbn')),
+            isbn10=self._extract_isbn10(row.get('isbn')),
+            cover_url=row.get('cover_url'),
+            reading_status=reading_status,
+            date_read=self._parse_date(row.get('finish_date')),
+            date_started=self._parse_date(row.get('start_date')),
+            reading_logs=reading_logs.get(row['id'], [])
+        )
+    
+    def _convert_v1_5_row_to_simplified_book(self, row: dict, reading_logs: dict) -> Optional[SimplifiedBook]:
+        """Convert a v1.5 SQLite row to SimplifiedBook format."""
+        if not row.get('title'):
+            return None
+        
+        # Determine reading status from dates and flags
+        reading_status = 'plan_to_read'  # default
+        if row.get('finish_date'):
+            reading_status = 'read'
+        elif row.get('start_date'):
+            reading_status = 'reading'
+        elif row.get('want_to_read'):
+            reading_status = 'plan_to_read'
+        
+        return SimplifiedBook(
+            title=row['title'],
+            author=row.get('author', 'Unknown Author'),
+            isbn13=self._extract_isbn13(row.get('isbn')),
+            isbn10=self._extract_isbn10(row.get('isbn')),
+            description=row.get('description'),
+            publisher=row.get('publisher'),
+            published_date=row.get('published_date'),
+            page_count=self._safe_int(row.get('page_count')),
+            language=row.get('language', 'en'),
+            cover_url=row.get('cover_url'),
+            categories=row.get('categories'),
+            average_rating=self._safe_float(row.get('average_rating')),
+            rating_count=self._safe_int(row.get('rating_count')),
+            reading_status=reading_status,
+            date_read=self._parse_date(row.get('finish_date')),
+            date_started=self._parse_date(row.get('start_date')),
+            date_added=self._parse_date(row.get('created_at')),
+            reading_logs=reading_logs.get(row['id'], [])
+        )
+    
+    def _convert_simplified_book_to_domain(self, book_data: SimplifiedBook, 
+                                         book_api_data: dict, author_api_data: dict):
+        """Convert SimplifiedBook to domain object with API enhancements."""
+        from app.domain.models import Book as DomainBook, Person, BookContribution, ContributionType, Publisher
+        
+        # Start with SQLite data, enhance with API data if available
+        title = book_data.title
+        description = book_data.description
+        publisher_name = book_data.publisher
+        page_count = book_data.page_count
+        language = book_data.language or 'en'
+        cover_url = book_data.cover_url
+        categories = book_data.categories
+        
+        # Enhance with API data if available
+        isbn_for_lookup = book_data.isbn13 or book_data.isbn10
+        if isbn_for_lookup and isbn_for_lookup in book_api_data:
+            api_data = book_api_data[isbn_for_lookup]
+            title = api_data.get('title', title)
+            description = description or api_data.get('description')
+            publisher_name = publisher_name or api_data.get('publisher')
+            page_count = page_count or api_data.get('page_count')
+            language = language or api_data.get('language', 'en')
+            cover_url = cover_url or api_data.get('cover_url')
+            if not categories and api_data.get('categories'):
+                categories = api_data.get('categories')
+        
+        # Handle contributors
+        contributors = []
+        if book_data.author:
+            person = Person(name=book_data.author)
+            contribution = BookContribution(
+                person=person,
+                contribution_type=ContributionType.AUTHORED,
+                order=0
+            )
+            contributors.append(contribution)
+        
+        # Create domain book
+        return DomainBook(
+            title=title,
+            contributors=contributors,
+            isbn13=book_data.isbn13,
+            isbn10=book_data.isbn10,
+            description=description,
+            publisher=Publisher(name=publisher_name) if publisher_name else None,
+            page_count=page_count,
+            language=language,
+            cover_url=cover_url,
+            raw_categories=categories,
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+    
+    def _determine_reading_status(self, book_data: SimplifiedBook):
+        """Determine ReadingStatus enum from SimplifiedBook data."""
+        from app.domain.models import ReadingStatus
+        
+        status_str = book_data.reading_status
+        if status_str == 'read':
+            return ReadingStatus.READ
+        elif status_str == 'reading':
+            return ReadingStatus.READING
+        elif status_str == 'plan_to_read':
+            return ReadingStatus.PLAN_TO_READ
+        else:
+            return ReadingStatus.PLAN_TO_READ  # default
+    
+    def _update_personal_information(self, book_service, user_id: str, book_id: str, book_data: SimplifiedBook):
+        """Update personal information from migrated data."""
+        try:
+            update_data = {}
+            
+            # Add dates if available
+            if book_data.date_read:
+                update_data['date_read'] = book_data.date_read
+            if book_data.date_started:
+                update_data['date_started'] = book_data.date_started
+            if book_data.date_added:
+                update_data['date_added'] = book_data.date_added
+            
+            # Add migration note
+            migration_notes = []
+            if hasattr(book_data, 'reading_logs') and book_data.reading_logs:
+                log_dates = [str(log_date) for log_date in book_data.reading_logs[:5]]  # First 5 dates
+                if len(book_data.reading_logs) > 5:
+                    log_dates.append(f"... and {len(book_data.reading_logs) - 5} more")
+                migration_notes.append(f"Reading logs: {', '.join(log_dates)}")
+            
+            migration_notes.append("Migrated from SQLite database")
+            update_data['personal_notes'] = "; ".join(migration_notes)
+            
+            if update_data:
+                book_service.update_user_book_sync(user_id, book_id, **update_data)
+                
+        except Exception as e:
+            print(f"⚠️ [MIGRATION] Failed to update personal info for book {book_id}: {e}")
+    
+    # Helper methods
+    def _extract_isbn13(self, isbn_str):
+        """Extract ISBN13 from mixed ISBN string."""
+        if not isbn_str:
+            return None
+        clean = ''.join(filter(str.isdigit, str(isbn_str)))
+        return clean if len(clean) == 13 else None
+    
+    def _extract_isbn10(self, isbn_str):
+        """Extract ISBN10 from mixed ISBN string."""
+        if not isbn_str:
+            return None
+        clean = ''.join(c for c in str(isbn_str) if c.isdigit() or c.upper() == 'X')
+        return clean if len(clean) == 10 else None
+    
+    def _safe_int(self, value):
+        """Safely convert value to int."""
+        if not value:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+    
+    def _safe_float(self, value):
+        """Safely convert value to float."""
+        if not value:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    
+    def _parse_date(self, date_str):
+        """Parse date string to date object."""
+        if not date_str:
+            return None
+        
+        # Try common date formats
+        date_formats = [
+            '%Y-%m-%d',
+            '%Y/%m/%d', 
+            '%m/%d/%Y',
+            '%d/%m/%Y',
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M:%S.%f'
+        ]
+        
+        for fmt in date_formats:
+            try:
+                parsed_date = datetime.strptime(str(date_str), fmt)
+                return parsed_date.date()
+            except ValueError:
+                continue
+        
+        return None

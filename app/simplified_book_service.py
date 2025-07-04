@@ -34,6 +34,15 @@ class SimplifiedBook:
     openlibrary_id: Optional[str] = None
     average_rating: Optional[float] = None
     rating_count: Optional[int] = None
+    
+    # Migration-specific fields
+    reading_status: Optional[str] = None
+    date_read: Optional[str] = None  # Can be date object or string
+    date_started: Optional[str] = None
+    date_added: Optional[str] = None
+    user_rating: Optional[float] = None
+    personal_notes: Optional[str] = None
+    reading_logs: Optional[List] = None  # For tracking reading session dates
 
 
 @dataclass 

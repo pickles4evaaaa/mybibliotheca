@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3><i class="fas fa-database"></i> SQLite Database Migration</h3>
+                    <p class="text-muted mb-0">Import your books from a legacy bibliotheca SQLite database (v1 or v1.5)</p>
+                </div>
+                <div class="card-body">
+                    
+                    <!-- Migration Form -->
+                    <form method="post" enctype="multipart/form-data" id="migrationForm">
+                        <div class="row">
+                            <div class="col-md-8">
+                                
+                                <!-- File Upload -->
+                                <div class="mb-4">
+                                    <label for="sqlite_file" class="form-label">
+                                        <i class="fas fa-file-upload"></i> SQLite Database File
+                                    </label>
+                                    <input type="file" class="form-control" id="sqlite_file" name="sqlite_file" 
+                                           accept=".db,.sqlite,.sqlite3" required>
+                                    <div class="form-text">
+                                        Select your bibliotheca database file (.db, .sqlite, or .sqlite3)
+                                    </div>
+                                </div>
+                                
+                                <!-- Database Detection Results -->
+                                <div id="detectionResults" class="alert alert-info" style="display: none;">
+                                    <h6><i class="fas fa-search"></i> Database Analysis</h6>
+                                    <div id="detectionContent"></div>
+                                </div>
+                                
+                                <!-- Migration Options -->
+                                <div id="migrationOptions" style="display: none;">
+                                    <div class="mb-3">
+                                        <h6><i class="fas fa-cog"></i> Migration Options</h6>
+                                        
+                                        <!-- v1.5 specific option -->
+                                        <div id="adminUserOption" style="display: none;">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="use_admin_user" name="use_admin_user" value="true">
+                                                <label class="form-check-label" for="use_admin_user">
+                                                    Use original admin user's books only
+                                                </label>
+                                                <div class="form-text">
+                                                    If checked, only books from the original admin user will be migrated. 
+                                                    If unchecked, all books from all users will be imported to your account.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Submit Button -->
+                                <div class="d-grid gap-2">
+                                    <button type="submit" class="btn btn-primary btn-lg" id="submitBtn" disabled>
+                                        <i class="fas fa-rocket"></i> Start Migration
+                                    </button>
+                                </div>
+                                
+                            </div>
+                            
+                            <!-- Info Sidebar -->
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-header">
+                                        <h6><i class="fas fa-info-circle"></i> Migration Information</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <h6>Supported Databases:</h6>
+                                        <ul class="list-unstyled mb-3">
+                                            <li><i class="fas fa-check text-success"></i> bibliotheca v1 (single-user)</li>
+                                            <li><i class="fas fa-check text-success"></i> bibliotheca v1.5 (multi-user)</li>
+                                        </ul>
+                                        
+                                        <h6>What Gets Migrated:</h6>
+                                        <ul class="list-unstyled mb-3">
+                                            <li><i class="fas fa-book"></i> All book data</li>
+                                            <li><i class="fas fa-star"></i> Reading status</li>
+                                            <li><i class="fas fa-calendar"></i> Reading dates</li>
+                                            <li><i class="fas fa-list"></i> Reading logs</li>
+                                            <li><i class="fas fa-image"></i> Cover images</li>
+                                        </ul>
+                                        
+                                        <h6>Performance Benefits:</h6>
+                                        <ul class="list-unstyled mb-0">
+                                            <li><i class="fas fa-tachometer-alt"></i> Batch API processing</li>
+                                            <li><i class="fas fa-shield-alt"></i> Duplicate detection</li>
+                                            <li><i class="fas fa-sync-alt"></i> Metadata enhancement</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('sqlite_file');
+    const detectionResults = document.getElementById('detectionResults');
+    const detectionContent = document.getElementById('detectionContent');
+    const migrationOptions = document.getElementById('migrationOptions');
+    const adminUserOption = document.getElementById('adminUserOption');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    fileInput.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            analyzeDatabase(this.files[0]);
+        } else {
+            hideResults();
+        }
+    });
+    
+    function analyzeDatabase(file) {
+        const formData = new FormData();
+        formData.append('sqlite_file', file);
+        
+        detectionContent.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing database...';
+        detectionResults.style.display = 'block';
+        
+        fetch('{{ url_for("main.detect_sqlite") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showError(data.error);
+            } else {
+                showResults(data);
+            }
+        })
+        .catch(error => {
+            showError('Failed to analyze database: ' + error.message);
+        });
+    }
+    
+    function showResults(data) {
+        let html = '';
+        
+        if (data.supported) {
+            html += '<div class="row">';
+            html += '<div class="col-6"><strong>Version:</strong> ' + data.version + '</div>';
+            html += '<div class="col-6"><strong>Books:</strong> ' + data.book_count + '</div>';
+            html += '</div>';
+            
+            if (data.user_info) {
+                html += '<div class="mt-2">';
+                html += '<strong>Admin User:</strong> ' + data.user_info.username + ' (' + data.user_info.email + ')';
+                html += '</div>';
+                
+                // Show admin user option for v1.5
+                if (data.version === 'v1.5') {
+                    adminUserOption.style.display = 'block';
+                }
+            }
+            
+            detectionResults.className = 'alert alert-success';
+            migrationOptions.style.display = 'block';
+            submitBtn.disabled = false;
+        } else {
+            html = '<strong>Unsupported database format:</strong> ' + data.version;
+            detectionResults.className = 'alert alert-warning';
+            migrationOptions.style.display = 'none';
+            submitBtn.disabled = true;
+        }
+        
+        detectionContent.innerHTML = html;
+    }
+    
+    function showError(message) {
+        detectionContent.innerHTML = '<strong>Error:</strong> ' + message;
+        detectionResults.className = 'alert alert-danger';
+        migrationOptions.style.display = 'none';
+        submitBtn.disabled = true;
+    }
+    
+    function hideResults() {
+        detectionResults.style.display = 'none';
+        migrationOptions.style.display = 'none';
+        adminUserOption.style.display = 'none';
+        submitBtn.disabled = true;
+    }
+});
+</script>
+{% endblock %}

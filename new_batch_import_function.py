@@ -1,11 +1,6 @@
-def start_import_job_new_batch(task_id):
+def start_import_job(task_id):
     """Start the actual import process with batch-oriented architecture."""
     print(f"🚀 [START] Starting batch import job {task_id}")
-    
-    # Import required functions from routes
-    from app.routes import (get_job_from_kuzu, update_job_in_kuzu, import_jobs,
-                           normalize_goodreads_value, batch_fetch_book_metadata, 
-                           batch_fetch_author_metadata, auto_create_custom_fields)
     
     # Try to get job from both sources
     kuzu_job = get_job_from_kuzu(task_id)
@@ -116,20 +111,12 @@ def start_import_job_new_batch(task_id):
                     print(f"❌ [BATCH] Failed to add book from row {row_num}")
                 
                 job['processed'] = job.get('processed', 0) + 1
-                
-                # Update progress every 5 books for more responsive UI
-                if job['processed'] % 5 == 0:
-                    update_data = {
-                        'processed': job['processed'], 
-                        'success': job.get('success', 0), 
-                        'errors': job.get('errors', 0),
-                        'current_book': book_data.title if hasattr(book_data, 'title') else 'Unknown'
-                    }
-                    update_job_in_kuzu(task_id, update_data)
-                    
-                    # Also update memory job if it exists
-                    if task_id in import_jobs:
-                        import_jobs[task_id].update(update_data)
+                update_job_in_kuzu(task_id, {
+                    'processed': job['processed'], 
+                    'success': job.get('success', 0), 
+                    'errors': job.get('errors', 0),
+                    'current_book': book_data.title if hasattr(book_data, 'title') else 'Unknown'
+                })
                 
             except Exception as row_error:
                 print(f"❌ [BATCH] Error processing row {row_num}: {row_error}")
@@ -140,15 +127,14 @@ def start_import_job_new_batch(task_id):
         
         # Mark as completed
         job['status'] = 'completed'
-        completion_data = {
+        update_job_in_kuzu(task_id, {
             'status': 'completed',
             'processed': job.get('processed', 0),
             'success': job.get('success', 0),
             'errors': job.get('errors', 0)
-        }
-        update_job_in_kuzu(task_id, completion_data)
+        })
         if task_id in import_jobs:
-            import_jobs[task_id].update(completion_data)
+            import_jobs[task_id].update(job)
         job['current_book'] = None
         job['recent_activity'] = job.get('recent_activity', [])
         job['recent_activity'].append(f"Import completed! {job.get('success', 0)} books imported, {job.get('errors', 0)} errors")
@@ -165,11 +151,9 @@ def start_import_job_new_batch(task_id):
         if 'error_messages' not in job:
             job['error_messages'] = []
         job['error_messages'].append(str(e))
-        
-        error_data = {'status': 'failed', 'error_messages': job['error_messages']}
-        update_job_in_kuzu(task_id, error_data)
+        update_job_in_kuzu(task_id, {'status': 'failed', 'error_messages': job['error_messages']})
         if task_id in import_jobs:
-            import_jobs[task_id].update(error_data)
+            import_jobs[task_id]['status'] = 'failed'
             if 'error_messages' not in import_jobs[task_id]:
                 import_jobs[task_id]['error_messages'] = []
             import_jobs[task_id]['error_messages'].append(str(e))
