@@ -173,7 +173,7 @@ class MigrationDetector:
             'has_v2_databases': any(db['schema_version'] == 2 for db in db_info)
         }
     
-    def create_migration_command(self, db_info: Dict, user_id: str = None) -> List[str]:
+    def create_migration_command(self, db_info: Dict, user_id: Optional[str] = None) -> List[str]:
         """Create the migration command for a specific database."""
         db_path = db_info['path']
         

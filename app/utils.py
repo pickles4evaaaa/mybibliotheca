@@ -307,58 +307,15 @@ def format_date(date):
 
 def calculate_reading_streak(user_id, streak_offset=0):
     """
-    Calculate reading streak for a specific user with foolproof logic
+    Calculate reading streak for a specific user with foolproof logic.
+    Currently returns the streak_offset until the reading log system is fully implemented.
     """
     try:
-        # Get all reading logs for this user using the service
-        # This would need to be implemented in the reading log service
-        if hasattr(reading_log_service, 'get_user_log_dates_sync'):
-            log_dates = reading_log_service.get_user_log_dates_sync(user_id)
-        else:
-            # Fallback - return the offset
-            return streak_offset
-        
-        if not log_dates:
-            return streak_offset
-        
-        # Sort in descending order (most recent first)
-        log_dates.sort(reverse=True)
-        
-        today = date.today()
-        streak = 0
-        
-        # Check if there's a log for today or yesterday
-        # (allow for timezone differences and late logging)
-        most_recent = log_dates[0]
-        days_since_recent = (today - most_recent).days
-        
-        # If the most recent log is more than 1 day old, streak is broken
-        if days_since_recent > 1:
-            return streak_offset
-        
-        # Start counting the streak
-        current_date = most_recent
-        
-        for log_date in log_dates:
-            # If this date continues the streak (same day or previous day)
-            if log_date == current_date:
-                streak += 1
-                current_date = current_date - timedelta(days=1)
-            else:
-                # Check if there's a gap
-                days_gap = (current_date - log_date).days
-                if days_gap == 0:
-                    # Same date, skip (already counted)
-                    continue
-                elif days_gap == 1:
-                    # Previous day, continue streak
-                    streak += 1
-                    current_date = log_date - timedelta(days=1)
-                else:
-                    # Gap found, streak ends
-                    break
-        
-        return streak + streak_offset
+        # TODO: Implement proper reading log system
+        # For now, return the streak_offset as a fallback
+        current_app.logger.debug(f"Reading log system not fully implemented, returning streak offset: {streak_offset}")
+        return streak_offset
+            
     except Exception as e:
         current_app.logger.error(f"Error calculating reading streak for user {user_id}: {e}")
         return streak_offset
@@ -406,12 +363,17 @@ def generate_month_review_image(books, month, year):
     draw = ImageDraw.Draw(bg)
 
     # Draw month title in white
-    month_name = f"{calendar.month_name[month].upper()} {year}"
+    month_name = f"{str(calendar.month_name[month]).upper()} {year}"
     max_width = img_size - 80  # 40px margin on each side
     font_size = 220
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     if not os.path.exists(font_path):
         font_path = os.path.join(os.path.dirname(__file__), "static", "Arial.ttf")
+    
+    # Initialize font and width variables
+    font = ImageFont.load_default()  # Default fallback
+    w = 0
+    
     while font_size > 10:
         try:
             font = ImageFont.truetype(font_path, font_size)

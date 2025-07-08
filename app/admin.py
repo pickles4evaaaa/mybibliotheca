@@ -47,7 +47,7 @@ def admin_or_self_required(user_id_param='user_id'):
             
             # Get the user_id from the route parameters
             target_user_id = kwargs.get(user_id_param)
-            if target_user_id is None:
+            if target_user_id is None and request.view_args:
                 target_user_id = request.view_args.get(user_id_param)
             
             # Allow if admin or accessing own data
@@ -96,9 +96,10 @@ def dashboard():
 @admin_required
 def users():
     """User management interface"""
+    search = request.args.get('search', '', type=str)
+    
     try:
         page = request.args.get('page', 1, type=int)
-        search = request.args.get('search', '', type=str)
         
         # For now, return basic info - search functionality would need to be implemented
         # in the user service for full functionality
@@ -158,18 +159,22 @@ def user_detail(user_id):
         user_books = book_service.get_all_books_with_user_overlay_sync(str(user_id))
         book_count = len(user_books)
         
-        reading_count = reading_log_service.get_user_logs_count_sync(user_id) if hasattr(reading_log_service, 'get_user_logs_count_sync') else 0
+        reading_count = reading_log_service.get_user_logs_count_sync(user_id) if hasattr(reading_log_service, 'get_user_logs_count_sync') else 0  # type: ignore
         
         # Get more detailed stats
         current_year = datetime.now().year
         books_this_year = len([book for book in user_books 
-                              if book.created_at and book.created_at.year == current_year])
+                              if book.get('created_at') and 
+                              isinstance(book.get('created_at'), datetime) and 
+                              book['created_at'].year == current_year])
         
         # Reading logs this month would need service implementation
         logs_this_month = 0  # Placeholder
         
         # Get recent activity - limit to recent books
-        recent_books = sorted(user_books, key=lambda x: x.created_at or datetime.min, reverse=True)[:5]
+        recent_books = sorted(user_books, 
+                            key=lambda x: x.get('created_at') or datetime.min, 
+                            reverse=True)[:5]
         recent_logs = []  # Would need service implementation
         
         return render_template('admin/user_detail.html',
@@ -198,7 +203,7 @@ def toggle_admin(user_id):
         
         # Prevent removing admin from the last admin
         if user.is_admin:
-            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1  # type: ignore
             if admin_count <= 1:
                 flash('Cannot remove admin privileges from the last admin user.', 'error')
                 return redirect(url_for('admin.user_detail', user_id=user_id))
@@ -261,7 +266,7 @@ def delete_user(user_id):
         
         # Prevent deleting the last admin
         if user.is_admin:
-            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1  # type: ignore
             if admin_count <= 1:
                 flash('Cannot delete the last admin user.', 'error')
                 return redirect(url_for('admin.user_detail', user_id=user_id))
@@ -434,8 +439,8 @@ def get_system_stats():
     try:
         # Get basic stats from services
         total_users = user_service.get_user_count_sync() if hasattr(user_service, 'get_user_count_sync') else 0
-        active_users = user_service.get_active_user_count_sync() if hasattr(user_service, 'get_active_user_count_sync') else 0
-        admin_users = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 0
+        active_users = user_service.get_active_user_count_sync() if hasattr(user_service, 'get_active_user_count_sync') else 0  # type: ignore
+        admin_users = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 0  # type: ignore
         
         # Total books across all users - would need service implementation
         total_books = 0  # Placeholder
@@ -519,7 +524,7 @@ def demote_admin_user(user_id):
         user = user_service.get_user_by_id_sync(user_id)
         if user and user.is_admin:
             # Check if this is the last admin
-            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1  # type: ignore
             if admin_count > 1:
                 user.is_admin = False
                 user_service.update_user_sync(user)

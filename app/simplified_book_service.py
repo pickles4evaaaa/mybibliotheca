@@ -6,10 +6,38 @@ Separates book creation from user relationships for better persistence.
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType
 from .infrastructure.kuzu_graph import get_graph_storage
+
+
+def normalize_goodreads_value(value, field_type='text'):
+    """
+    Normalize values from Goodreads CSV exports that use Excel text formatting.
+    Goodreads exports often have values like ="123456789" or ="" to force text formatting.
+    """
+    if not value or not isinstance(value, str):
+        return value.strip() if value else ''
+    
+    # Remove Excel text formatting: ="value" -> value
+    if value.startswith('="') and value.endswith('"'):
+        value = value[2:-1]  # Remove =" prefix and " suffix
+    elif value.startswith('=') and value.endswith('"'):
+        value = value[1:-1]  # Remove = prefix and " suffix  
+    elif value == '=""':
+        value = ''  # Empty quoted value
+    
+    # Additional cleaning for ISBN fields
+    if field_type == 'isbn':
+        # Remove any remaining quotes, equals, or whitespace
+        value = value.replace('"', '').replace('=', '').strip()
+        # Validate that it looks like an ISBN (digits, X, hyphens only)
+        if value and not all(c.isdigit() or c in 'X-' for c in value):
+            # If it doesn't look like an ISBN, it might be corrupted
+            print(f"⚠️ [NORMALIZE] Potentially corrupted ISBN value: '{value}'")
+    
+    return value.strip()
 
 
 @dataclass
@@ -29,11 +57,22 @@ class SimplifiedBook:
     series: Optional[str] = None
     series_volume: Optional[str] = None
     series_order: Optional[int] = None
-    categories: List[str] = None
+    categories: List[str] = field(default_factory=list)
     google_books_id: Optional[str] = None
     openlibrary_id: Optional[str] = None
     average_rating: Optional[float] = None
     rating_count: Optional[int] = None
+    
+    # Additional person type fields (like additional authors)
+    additional_authors: Optional[str] = None  # Comma-separated string for simplicity
+    narrator: Optional[str] = None           # Comma-separated string
+    editor: Optional[str] = None             # Comma-separated string  
+    translator: Optional[str] = None         # Comma-separated string
+    illustrator: Optional[str] = None        # Comma-separated string
+    
+    # Custom metadata fields for batch import
+    global_custom_metadata: Dict[str, Any] = field(default_factory=dict)
+    personal_custom_metadata: Dict[str, Any] = field(default_factory=dict)
     
     # Migration-specific fields
     reading_status: Optional[str] = None
@@ -42,7 +81,7 @@ class SimplifiedBook:
     date_added: Optional[str] = None
     user_rating: Optional[float] = None
     personal_notes: Optional[str] = None
-    reading_logs: Optional[List] = None  # For tracking reading session dates
+    reading_logs: Optional[List] = field(default_factory=list)  # For tracking reading session dates
 
 
 @dataclass 
@@ -57,7 +96,7 @@ class UserBookOwnership:
     user_rating: Optional[float] = None
     personal_notes: Optional[str] = None
     location_id: Optional[str] = None
-    custom_metadata: Dict[str, Any] = None
+    custom_metadata: Optional[Dict[str, Any]] = None
 
 
 class SimplifiedBookService:
@@ -70,7 +109,7 @@ class SimplifiedBookService:
     def __init__(self):
         self.storage = get_graph_storage()
     
-    def create_standalone_book(self, book_data: SimplifiedBook) -> Optional[str]:
+    async def create_standalone_book(self, book_data: SimplifiedBook) -> Optional[str]:
         """
         Create a book as a standalone global entity.
         Returns book_id if successful, None if failed.
@@ -115,7 +154,8 @@ class SimplifiedBookService:
             print(f"   ISBN10: {book_node_data.get('isbn10')}")
             print(f"   Cover URL: {book_node_data.get('cover_url')}")
             print(f"   Title: {book_node_data.get('title')}")
-            print(f"   Description: {book_node_data.get('description')[:50] if book_node_data.get('description') else 'None'}...")
+            description = book_node_data.get('description')
+            print(f"   Description: {description[:50] + '...' if description else 'None'}")
             
             # 1. Create book node (SINGLE TRANSACTION)
             book_success = self.storage.store_node('Book', book_id, book_node_data)
@@ -123,40 +163,39 @@ class SimplifiedBookService:
                 print(f"❌ [SIMPLIFIED] Failed to create book node")
                 return None
             
-            # 🔥 CRITICAL FIX: Force database commit/flush
-            try:
-                # Try to commit the transaction explicitly
-                if hasattr(self.storage, 'commit'):
-                    self.storage.commit()
-                elif hasattr(self.storage, 'connection') and hasattr(self.storage.connection, 'commit'):
-                    self.storage.connection.commit()
-                print(f"💾 [SIMPLIFIED] Forced database commit after book creation")
-            except Exception as commit_error:
-                print(f"⚠️ [SIMPLIFIED] Could not force commit, relying on auto-commit: {commit_error}")
-            
             print(f"✅ [SIMPLIFIED] Book node created: {book_id}")
             
+            # Initialize book repository for relationship creation
+            from .infrastructure.kuzu_repositories import KuzuBookRepository
+            book_repo = KuzuBookRepository()
+            
+            # Helper function to create person data objects
+            def create_person_data(name):
+                class PersonData:
+                    def __init__(self, name):
+                        self.id = str(uuid.uuid4())
+                        self.name = name
+                        self.birth_year = None
+                        self.death_year = None
+                        self.bio = ""
+                        self.openlibrary_id = None
+                        self.image_url = None
+                        self.birth_place = None
+                        self.website = None
+                        self.created_at = datetime.utcnow()
+                return PersonData(name)
+            
             # 2. Create author relationship using clean repository (with auto-fetch)
-            from .utils import fetch_author_data
             if book_data.author:
                 try:
-                    # Use clean repository for person creation with auto-fetch capability
-                    from .infrastructure.kuzu_clean_repositories import CleanKuzuPersonRepository
+                    print(f"🔍 [SIMPLIFIED] Creating author relationship for: {book_data.author}")
                     
-                    person_repo = CleanKuzuPersonRepository()
+                    person_data = create_person_data(book_data.author)
                     
-                    # Create person using repository (will auto-fetch OpenLibrary metadata)
-                    person_dict = {
-                        'id': str(uuid.uuid4()),
-                        'name': book_data.author,
-                        'normalized_name': book_data.author.strip().lower(),
-                        'created_at': datetime.utcnow()
-                    }
-                    
-                    # Use create method which includes auto-fetch logic
-                    person_data = person_repo.create(person_dict)
-                    if person_data:
-                        author_id = person_data.get('id')
+                    # Use the book repository's _ensure_person_exists method
+                    author_id = await book_repo._ensure_person_exists(person_data)
+                    if author_id:
+                        print(f"✅ [SIMPLIFIED] Author created/found with ID: {author_id}")
                         
                         # Create AUTHORED relationship
                         authored_success = self.storage.create_relationship(
@@ -175,19 +214,62 @@ class SimplifiedBookService:
                         print(f"⚠️ [SIMPLIFIED] Book created but author creation failed")
                 except Exception as e:
                     print(f"⚠️ [SIMPLIFIED] Book created but author processing failed: {e}")
+                    import traceback
+                    traceback.print_exc()
             
-            # 3. Create publisher relationship (SEPARATE TRANSACTION)
+            # 2.5. Handle additional authors if present
+            if book_data.additional_authors:
+                try:
+                    additional_authors_list = [name.strip() for name in book_data.additional_authors.split(',') if name.strip()]
+                    for index, author_name in enumerate(additional_authors_list):
+                        print(f"🔍 [SIMPLIFIED] Creating additional author relationship for: {author_name}")
+                        
+                        person_data = create_person_data(author_name)
+                        author_id = await book_repo._ensure_person_exists(person_data)
+                        
+                        if author_id:
+                            authored_success = self.storage.create_relationship(
+                                'Person', author_id, 'AUTHORED', 'Book', book_id,
+                                {
+                                    'role': 'authored',
+                                    'order_index': index + 1,
+                                    'created_at': datetime.utcnow()
+                                }
+                            )
+                            if authored_success:
+                                print(f"✅ [SIMPLIFIED] Additional author relationship created: {author_name}")
+                except Exception as e:
+                    print(f"⚠️ [SIMPLIFIED] Error processing additional authors: {e}")
+            
+            # 2.6. Handle narrator if present
+            if book_data.narrator:
+                try:
+                    narrator_list = [name.strip() for name in book_data.narrator.split(',') if name.strip()]
+                    for index, narrator_name in enumerate(narrator_list):
+                        print(f"🔍 [SIMPLIFIED] Creating narrator relationship for: {narrator_name}")
+                        
+                        person_data = create_person_data(narrator_name)
+                        narrator_id = await book_repo._ensure_person_exists(person_data)
+                        
+                        if narrator_id:
+                            narrated_success = self.storage.create_relationship(
+                                'Person', narrator_id, 'NARRATED', 'Book', book_id,
+                                {
+                                    'role': 'narrated',
+                                    'order_index': index,
+                                    'created_at': datetime.utcnow()
+                                }
+                            )
+                            if narrated_success:
+                                print(f"✅ [SIMPLIFIED] Narrator relationship created: {narrator_name}")
+                except Exception as e:
+                    print(f"⚠️ [SIMPLIFIED] Error processing narrators: {e}")
+            
+            # 3. Create publisher relationship using clean repository
             if book_data.publisher:
                 try:
-                    publisher_id = str(uuid.uuid4())
-                    publisher_data = {
-                        'id': publisher_id,
-                        'name': book_data.publisher,
-                        'created_at': datetime.utcnow()
-                    }
-                    
-                    publisher_success = self.storage.store_node('Publisher', publisher_id, publisher_data)
-                    if publisher_success:
+                    publisher_id = await book_repo._ensure_publisher_exists(book_data.publisher)
+                    if publisher_id:
                         # Create PUBLISHED_BY relationship
                         # Convert publication_date to proper date format
                         pub_date = None
@@ -218,27 +300,19 @@ class SimplifiedBookService:
                         else:
                             print(f"⚠️ [SIMPLIFIED] Book created but publisher relationship failed")
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Book created but publisher node failed")
+                        print(f"⚠️ [SIMPLIFIED] Book created but publisher creation failed")
                 except Exception as e:
                     print(f"⚠️ [SIMPLIFIED] Book created but publisher processing failed: {e}")
             
-            # 4. Create category relationships (SEPARATE TRANSACTION)
+            # 4. Create category relationships using clean repository
             if book_data.categories:
                 try:
                     for category_name in book_data.categories:
                         if not category_name.strip():
                             continue
                             
-                        category_id = str(uuid.uuid4())
-                        category_data = {
-                            'id': category_id,
-                            'name': category_name.strip(),
-                            'book_count': 1,
-                            'created_at': datetime.utcnow()
-                        }
-                        
-                        category_success = self.storage.store_node('Category', category_id, category_data)
-                        if category_success:
+                        category_id = await book_repo._ensure_category_exists(category_name.strip())
+                        if category_id:
                             # Create CATEGORIZED_AS relationship
                             categorized_success = self.storage.create_relationship(
                                 'Book', book_id, 'CATEGORIZED_AS', 'Category', category_id,
@@ -251,7 +325,7 @@ class SimplifiedBookService:
                             else:
                                 print(f"⚠️ [SIMPLIFIED] Book created but category relationship failed: {category_name}")
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Book created but category node failed: {category_name}")
+                            print(f"⚠️ [SIMPLIFIED] Book created but category creation failed: {category_name}")
                 except Exception as e:
                     print(f"⚠️ [SIMPLIFIED] Book created but category processing failed: {e}")
             
@@ -302,16 +376,6 @@ class SimplifiedBookService:
             )
             
             if success:
-                # 🔥 CRITICAL FIX: Force database commit/flush after ownership
-                try:
-                    if hasattr(self.storage, 'commit'):
-                        self.storage.commit()
-                    elif hasattr(self.storage, 'connection') and hasattr(self.storage.connection, 'commit'):
-                        self.storage.connection.commit()
-                    print(f"💾 [SIMPLIFIED] Ownership commit forced")
-                except Exception as commit_error:
-                    print(f"⚠️ [SIMPLIFIED] Could not force ownership commit: {commit_error}")
-                
                 print(f"✅ [SIMPLIFIED] Ownership created successfully")
                 return True
             else:
@@ -348,7 +412,7 @@ class SimplifiedBookService:
             print(f"❌ [SIMPLIFIED] Error finding book by ISBN: {e}")
             return None
     
-    def find_or_create_book(self, book_data: SimplifiedBook) -> Optional[str]:
+    async def find_or_create_book(self, book_data: SimplifiedBook) -> Optional[str]:
         """
         Find existing book or create new one.
         Returns book_id if successful.
@@ -369,7 +433,7 @@ class SimplifiedBookService:
             
             # Book doesn't exist, create new one
             print(f"📚 [SIMPLIFIED] Book not found, creating new book")
-            return self.create_standalone_book(book_data)
+            return await self.create_standalone_book(book_data)
             
         except Exception as e:
             print(f"❌ [SIMPLIFIED] Error in find_or_create_book: {e}")
@@ -410,7 +474,16 @@ class SimplifiedBookService:
             'google_books_id': None,
             'openlibrary_id': None,
             'average_rating': None,
-            'rating_count': None
+            'rating_count': None,
+            # Additional person type fields
+            'additional_authors': None,
+            'narrator': None,
+            'editor': None,
+            'translator': None,
+            'illustrator': None,
+            # Custom metadata fields
+            'global_custom_metadata': {},
+            'personal_custom_metadata': {}
         }
         
         # Map CSV fields to book fields
@@ -429,6 +502,24 @@ class SimplifiedBookService:
                         book_data['isbn13'] = clean_isbn
                     elif len(clean_isbn) == 10:
                         book_data['isbn10'] = clean_isbn
+                elif book_field == 'isbn13':
+                    # Normalize Goodreads format and clean ISBN13
+                    normalized_isbn = normalize_goodreads_value(value, 'isbn')
+                    if normalized_isbn:
+                        clean_isbn = ''.join(c for c in str(normalized_isbn) if c.isdigit() or c.upper() == 'X')
+                        if len(clean_isbn) == 13:
+                            book_data['isbn13'] = clean_isbn
+                        elif len(clean_isbn) == 10:
+                            book_data['isbn10'] = clean_isbn
+                elif book_field == 'isbn10':
+                    # Normalize Goodreads format and clean ISBN10
+                    normalized_isbn = normalize_goodreads_value(value, 'isbn')
+                    if normalized_isbn:
+                        clean_isbn = ''.join(c for c in str(normalized_isbn) if c.isdigit() or c.upper() == 'X')
+                        if len(clean_isbn) == 10:
+                            book_data['isbn10'] = clean_isbn
+                        elif len(clean_isbn) == 13:
+                            book_data['isbn13'] = clean_isbn
                 elif book_field == 'publisher':
                     book_data['publisher'] = value
                 elif book_field == 'page_count':
@@ -443,9 +534,30 @@ class SimplifiedBookService:
                             book_data['published_date'] = f"{year}-01-01"
                     except (ValueError, TypeError):
                         pass
+                elif book_field == 'additional_authors':
+                    book_data['additional_authors'] = value
+                elif book_field == 'additional_author':  # Handle singular form too
+                    book_data['additional_authors'] = value
+                elif book_field == 'narrator':
+                    book_data['narrator'] = value
+                elif book_field == 'editor':
+                    book_data['editor'] = value
+                elif book_field == 'translator':
+                    book_data['translator'] = value
+                elif book_field == 'illustrator':
+                    book_data['illustrator'] = value
                 elif book_field.startswith('custom_'):
-                    # Skip custom fields for now - they'll be handled separately
-                    continue
+                    # Handle custom fields by parsing prefix and storing in metadata
+                    if book_field.startswith('custom_global_'):
+                        field_name = book_field[14:]  # Remove 'custom_global_' prefix
+                        book_data['global_custom_metadata'][field_name] = value
+                    elif book_field.startswith('custom_personal_'):
+                        field_name = book_field[16:]  # Remove 'custom_personal_' prefix
+                        book_data['personal_custom_metadata'][field_name] = value
+                    else:
+                        # Default to global if just 'custom_'
+                        field_name = book_field[7:]  # Remove 'custom_' prefix
+                        book_data['global_custom_metadata'][field_name] = value
                 elif book_field not in ['ignore', 'reading_status', 'rating', 'finish_date', 'personal_notes']:
                     # Map other standard fields
                     if book_field in book_data:
@@ -461,16 +573,27 @@ class SimplifiedBookService:
                     book_data[field] = api_value
         
         # Create SimplifiedBook instance
-        return SimplifiedBook(**book_data)
+        print(f"🔧 [BUILD_BOOK] Final book_data before SimplifiedBook creation: {book_data}")
+        print(f"🔧 [BUILD_BOOK] book_data keys: {list(book_data.keys())}")
+        print(f"🔧 [BUILD_BOOK] additional_authors in book_data: {'additional_authors' in book_data}")
+        if 'additional_authors' in book_data:
+            print(f"🔧 [BUILD_BOOK] additional_authors value: '{book_data['additional_authors']}'")
+        
+        simplified_book = SimplifiedBook(**book_data)
+        print(f"🔧 [BUILD_BOOK] Created SimplifiedBook, has additional_authors: {hasattr(simplified_book, 'additional_authors')}")
+        if hasattr(simplified_book, 'additional_authors'):
+            print(f"🔧 [BUILD_BOOK] SimplifiedBook.additional_authors value: '{simplified_book.additional_authors}'")
+        
+        return simplified_book
     
-    def add_book_to_user_library(self, book_data: SimplifiedBook, user_id: str, 
+    async def add_book_to_user_library(self, book_data: SimplifiedBook, user_id: str, 
                                 reading_status: str = "plan_to_read",
                                 ownership_status: str = "owned",
                                 media_type: str = "physical",
                                 user_rating: Optional[float] = None,
                                 personal_notes: Optional[str] = None,
                                 location_id: Optional[str] = None,
-                                custom_metadata: Dict[str, Any] = None) -> bool:
+                                custom_metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
         Complete workflow: Find/create book + create user ownership.
         This is the main entry point for the simplified architecture.
@@ -479,7 +602,7 @@ class SimplifiedBookService:
             print(f"🎯 [SIMPLIFIED] Starting add_book_to_user_library for: {book_data.title}")
             
             # Step 1: Find or create standalone book
-            book_id = self.find_or_create_book(book_data)
+            book_id = await self.find_or_create_book(book_data)
             if not book_id:
                 print(f"❌ [SIMPLIFIED] Failed to find/create book")
                 return False
@@ -503,22 +626,61 @@ class SimplifiedBookService:
                 print(f"❌ [SIMPLIFIED] Book created but ownership failed")
                 return False
             
-            # 🔥 CRITICAL FIX: Force final database commit/flush
-            try:
-                if hasattr(self.storage, 'commit'):
-                    self.storage.commit()
-                elif hasattr(self.storage, 'connection') and hasattr(self.storage.connection, 'commit'):
-                    self.storage.connection.commit()
-                print(f"💾 [SIMPLIFIED] Final database commit forced")
-            except Exception as commit_error:
-                print(f"⚠️ [SIMPLIFIED] Could not force final commit: {commit_error}")
-            
             print(f"🎉 [SIMPLIFIED] Successfully added book to user library")
             return True
             
         except Exception as e:
             print(f"❌ [SIMPLIFIED] Failed to add book to user library: {e}")
             return False
+    
+    def add_book_to_user_library_sync(self, book_data: SimplifiedBook, user_id: str, 
+                                     reading_status: str = "plan_to_read",
+                                     ownership_status: str = "owned",
+                                     media_type: str = "physical",
+                                     user_rating: Optional[float] = None,
+                                     personal_notes: Optional[str] = None,
+                                     location_id: Optional[str] = None,
+                                     custom_metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Synchronous wrapper for add_book_to_user_library.
+        Use this method from Flask routes and other sync contexts.
+        """
+        import asyncio
+        
+        # Create coroutine
+        coro = self.add_book_to_user_library(
+            book_data=book_data,
+            user_id=user_id,
+            reading_status=reading_status,
+            ownership_status=ownership_status,
+            media_type=media_type,
+            user_rating=user_rating,
+            personal_notes=personal_notes,
+            location_id=location_id,
+            custom_metadata=custom_metadata
+        )
+        
+        # Run the coroutine synchronously
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # If we're already in an async context, create a new thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                def run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    try:
+                        return new_loop.run_until_complete(coro)
+                    finally:
+                        new_loop.close()
+                future = executor.submit(run_in_new_loop)
+                return future.result()
+        else:
+            return loop.run_until_complete(coro)
 
 
 # Convenience function for current routes

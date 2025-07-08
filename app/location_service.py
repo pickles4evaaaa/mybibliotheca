@@ -204,7 +204,7 @@ class LocationService:
         
         if set_clauses:
             set_clauses.append("l.updated_at = $updated_at")
-            params["updated_at"] = datetime.utcnow()
+            params["updated_at"] = datetime.utcnow().isoformat()
             
             update_query = f"""
             MATCH (l:Location) 
@@ -318,7 +318,8 @@ class LocationService:
         counts = {}
         
         for location in locations:
-            counts[location.id] = self.get_location_book_count(location.id, user_id)
+            if location.id:  # Only process locations with valid IDs
+                counts[location.id] = self.get_location_book_count(location.id, user_id)
         
         debug_log(f"Location book counts: {counts}", "LOCATION", {"user_id": user_id, "counts": counts})
         return counts

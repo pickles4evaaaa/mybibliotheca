@@ -113,7 +113,7 @@ class DebugManager:
             self.logger.error(f"Failed to get debug status: {e}")
             return {'enabled': False}
     
-    def log_debug(self, message: str, category: str = "GENERAL", extra_data: Dict[str, Any] = None):
+    def log_debug(self, message: str, category: str = "GENERAL", extra_data: Optional[Dict[str, Any]] = None):
         """Log debug message with category and optional extra data."""
         if not self.is_debug_enabled():
             return
@@ -152,7 +152,7 @@ class DebugManager:
         # For Docker deployment, rely on container logging instead of Redis storage
         # Debug logs can be viewed through Docker logs or logging system
     
-    def get_debug_logs(self, date: str = None, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_debug_logs(self, date: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """Get debug logs for a specific date (admin only)."""
         if not self.should_show_debug():
             return []
@@ -191,7 +191,7 @@ def get_debug_manager() -> DebugManager:
     return debug_manager
 
 
-def debug_log(message: str, category: str = "GENERAL", extra_data: Dict[str, Any] = None):
+def debug_log(message: str, category: str = "GENERAL", extra_data: Optional[Dict[str, Any]] = None):
     """Convenience function for debug logging."""
     get_debug_manager().log_debug(message, category, extra_data)
 

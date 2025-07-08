@@ -42,7 +42,8 @@ from app.domain.models import (
 )
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
 from app.infrastructure.kuzu_graph import KuzuGraphStorage, get_graph_storage
-from app.services import book_service, user_service
+from app.services import book_service, user_service, run_async
+from app.kuzu_services import user_book_service
 from config import Config
 
 # Setup logging
@@ -75,7 +76,7 @@ class AdvancedMigrationSystem:
     Handles both V1 (single-user) and V2 (multi-user) databases with full backup support.
     """
     
-    def __init__(self, kuzu_db_path: str = None):
+    def __init__(self, kuzu_db_path: Optional[str] = None):
         """
         Initialize the advanced migration system.
         
@@ -87,16 +88,16 @@ class AdvancedMigrationSystem:
         
         # Setup Kuzu connection
         self.graph_store = get_graph_storage()
-        self.book_repo = KuzuBookRepository(self.graph_store)
-        self.user_repo = KuzuUserRepository(self.graph_store)
+        self.book_repo = KuzuBookRepository()
+        self.user_repo = KuzuUserRepository()
         
         # Initialize services for migration operations
         self.book_service = book_service
         self.user_service = user_service
         
         # Initialize location service
-        from .location_service import LocationService
-        self.location_service = LocationService(self.graph_store)
+        from app.location_service import LocationService
+        self.location_service = LocationService(self.graph_store.connection.connection)
         
         # Migration state
         self.current_status = MigrationStatus.NOT_STARTED
@@ -239,7 +240,7 @@ class AdvancedMigrationSystem:
             logger.error(f"Error analyzing database {db_path}: {e}")
             return DatabaseVersion.UNKNOWN, {'error': str(e)}
     
-    def create_backup(self, db_path: Path = None) -> bool:
+    def create_backup(self, db_path: Optional[Path] = None) -> bool:
         """
         Create comprehensive backups before migration.
         
@@ -256,11 +257,11 @@ class AdvancedMigrationSystem:
                 logger.info(f"✅ Created SQLite backup: {sqlite_backup}")
                 self._log_action(f"SQLite backup created: {sqlite_backup}")
             
-            # Backup Redis data (if any exists)
-            redis_backup = self.backup_dir / "redis_backup_pre_migration.json"
-            self._backup_redis_data(redis_backup)
-            logger.info(f"✅ Created Redis backup: {redis_backup}")
-            self._log_action(f"Redis backup created: {redis_backup}")
+            # Backup current Kuzu state (if any exists)
+            kuzu_backup = self.backup_dir / "kuzu_backup_pre_migration.json"
+            self._backup_kuzu_data(kuzu_backup)
+            logger.info(f"✅ Created Kuzu backup: {kuzu_backup}")
+            self._log_action(f"Kuzu backup created: {kuzu_backup}")
             
             self.current_status = MigrationStatus.BACKUP_CREATED
             return True
@@ -270,33 +271,77 @@ class AdvancedMigrationSystem:
             self._log_error(f"Backup creation failed: {e}")
             return False
     
-    def _backup_redis_data(self, backup_path: Path) -> None:
-        """Backup all Redis data to a JSON file."""
+    def _backup_kuzu_data(self, backup_path: Path) -> None:
+        """Backup current Kuzu database state to a JSON file."""
         backup_data = {
             'timestamp': datetime.now().isoformat(),
-            'keys': {}
+            'stats': {}
         }
         
-        # Get all keys and their data
-        for key in self.redis_client.scan_iter():
-            key_str = key.decode('utf-8')
-            key_type = self.redis_client.type(key).decode('utf-8')
+        try:
+            # Get basic database statistics
+            stats = {}
             
+            # Count users
             try:
-                if key_type == 'string':
-                    backup_data['keys'][key_str] = {
-                        'type': 'string',
-                        'value': self.redis_client.get(key).decode('utf-8')
-                    }
-                elif key_type == 'hash':
-                    backup_data['keys'][key_str] = {
-                        'type': 'hash',
-                        'value': {k.decode('utf-8'): v.decode('utf-8') 
-                                for k, v in self.redis_client.hgetall(key).items()}
-                    }
-                # Add other Redis data types as needed
+                user_result = self.graph_store.query("MATCH (u:User) RETURN COUNT(u) as count")
+                if user_result and len(user_result) > 0:
+                    # Handle different result formats
+                    result = user_result[0]
+                    if 'count' in result:
+                        stats['users'] = result['count']
+                    elif 'result' in result:
+                        stats['users'] = result['result']
+                    else:
+                        stats['users'] = 0
+                else:
+                    stats['users'] = 0
             except Exception as e:
-                logger.warning(f"Could not backup key {key_str}: {e}")
+                logger.warning(f"Could not count users: {e}")
+                stats['users'] = 0
+            
+            # Count books
+            try:
+                book_result = self.graph_store.query("MATCH (b:Book) RETURN COUNT(b) as count")
+                if book_result and len(book_result) > 0:
+                    # Handle different result formats
+                    result = book_result[0]
+                    if 'count' in result:
+                        stats['books'] = result['count']
+                    elif 'result' in result:
+                        stats['books'] = result['result']
+                    else:
+                        stats['books'] = 0
+                else:
+                    stats['books'] = 0
+            except Exception as e:
+                logger.warning(f"Could not count books: {e}")
+                stats['books'] = 0
+            
+            # Count user-book relationships (no longer OWNS, but HAS_READ or similar)
+            try:
+                reading_result = self.graph_store.query("MATCH ()-[r:HAS_READ]->() RETURN COUNT(r) as count")
+                if reading_result and len(reading_result) > 0:
+                    # Handle different result formats
+                    result = reading_result[0]
+                    if 'count' in result:
+                        stats['reading_relationships'] = result['count']
+                    elif 'result' in result:
+                        stats['reading_relationships'] = result['result']
+                    else:
+                        stats['reading_relationships'] = 0
+                else:
+                    stats['reading_relationships'] = 0
+            except Exception as e:
+                logger.warning(f"Could not count reading relationships: {e}")
+                stats['reading_relationships'] = 0
+            
+            backup_data['stats'] = stats
+            logger.info(f"✅ Kuzu database state recorded: {stats}")
+            
+        except Exception as e:
+            logger.warning(f"Could not backup Kuzu data: {e}")
+            backup_data['error'] = str(e)
         
         with open(backup_path, 'w') as f:
             json.dump(backup_data, f, indent=2)
@@ -329,11 +374,16 @@ class AdvancedMigrationSystem:
                 password_must_change=False
             )
             
-            self.current_status = MigrationStatus.ADMIN_CREATED
-            self._log_action(f"First admin user created successfully: {admin_user.id}")
-            logger.info(f"✅ First admin user created: {username}")
-            
-            return admin_user
+            admin_user_id = getattr(admin_user, 'id', None) if admin_user else None
+            if admin_user and admin_user_id:
+                self.current_status = MigrationStatus.ADMIN_CREATED
+                self._log_action(f"First admin user created successfully: {admin_user_id}")
+                logger.info(f"✅ First admin user created: {username}")
+                return admin_user
+            else:
+                logger.error(f"❌ Failed to create first admin user - no ID returned")
+                self._log_error(f"Admin user creation failed - no ID returned")
+                return None
             
         except Exception as e:
             logger.error(f"❌ Failed to create first admin user: {e}")
@@ -356,15 +406,24 @@ class AdvancedMigrationSystem:
             
             # Get the default location for the admin user
             default_location = self.location_service.get_default_location(admin_user_id)
+            default_location_id = None
             if not default_location:
                 self._log_error("No default location found for admin user. Books will be created without location assignment.")
                 # Debug: List all locations for this user
                 all_locations = self.location_service.get_user_locations(admin_user_id, active_only=False)
                 self._log_action(f"DEBUG: Found {len(all_locations)} locations for user {admin_user_id}")
                 for loc in all_locations:
-                    self._log_action(f"DEBUG: Location {loc.name} (ID: {loc.id}, default: {loc.is_default}, active: {loc.is_active})")
+                    # Safely extract location attributes
+                    loc_name = getattr(loc, 'name', 'Unknown')
+                    loc_id = getattr(loc, 'id', 'Unknown')
+                    loc_default = getattr(loc, 'is_default', False)
+                    loc_active = getattr(loc, 'is_active', False)
+                    self._log_action(f"DEBUG: Location {loc_name} (ID: {loc_id}, default: {loc_default}, active: {loc_active})")
             else:
-                self._log_action(f"Using default location: {default_location.name} (ID: {default_location.id})")
+                # Safely extract location attributes
+                loc_name = getattr(default_location, 'name', 'Unknown')
+                default_location_id = getattr(default_location, 'id', None)
+                self._log_action(f"Using default location: {loc_name} (ID: {default_location_id})")
             
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
@@ -379,49 +438,43 @@ class AdvancedMigrationSystem:
                     # Convert SQLite row to Book object
                     book = self._sqlite_row_to_book(book_row)
                     
-                    # Extract categories for processing AFTER book creation
-                    categories_to_process = []
-                    if hasattr(book, 'categories') and book.categories:
-                        categories_to_process = [category.name for category in book.categories]
-                    
-                    # Clear categories from book object to avoid issues during creation
-                    book.categories = []
-                    
-                    # Create book in Redis using service (without categories for now)
-                    created_book = self.book_service.create_book_sync(book)
-                    
-                    # Now process categories using the service's category processing method
-                    if categories_to_process:
-                        try:
-                            success = self.book_service.process_book_categories_sync(
-                                created_book.id, categories_to_process
-                            )
-                            if success:
-                                self._log_action(f"Successfully processed {len(categories_to_process)} categories for book: {book.title}")
-                            else:
-                                self._log_error(f"Failed to process categories for book: {book.title}")
-                        except Exception as cat_error:
-                            self._log_error(f"Error processing categories for book '{book.title}': {cat_error}")
+                    # Create book in Kuzu using service with a proper Book domain object
+                    created_book = run_async(self.book_service.create_book(
+                        domain_book=book,
+                        user_id=admin_user_id
+                    ))
                     
                     # Add book to admin user's library with appropriate status
-                    reading_status = ReadingStatus.READ if book_row['finish_date'] else ReadingStatus.WANT_TO_READ
-                    locations = [default_location.id] if default_location else []
-                    
-                    # Debug location assignment
-                    self._log_action(f"DEBUG: Assigning book '{book.title}' to locations: {locations}")
-                    
-                    self.book_service.add_book_to_user_library_sync(
-                        user_id=admin_user_id,
-                        book_id=created_book.id,
-                        reading_status=reading_status,
-                        locations=locations,
-                        start_date=self._parse_date(book_row['start_date']),
-                        finish_date=self._parse_date(book_row['finish_date']),
-                        date_added=datetime.now().date()
-                    )
-                    
-                    self.stats['books_migrated'] += 1
-                    self.stats['relationships_created'] += 1
+                    created_book_id = getattr(created_book, 'id', None) if created_book else None
+                    if created_book and created_book_id:
+                        reading_status = ReadingStatus.READ if book_row['finish_date'] else ReadingStatus.WANT_TO_READ
+                        locations = [default_location_id] if default_location_id else []
+                        
+                        # Debug location assignment
+                        self._log_action(f"DEBUG: Assigning book '{book.title}' to locations: {locations}")
+                        
+                        # Add book to admin user's library with appropriate status
+                        # Use the user-book repository to create the OWNS relationship
+                        from app.infrastructure.kuzu_repositories import KuzuUserBookRepository
+                        user_book_repo = KuzuUserBookRepository()
+                        
+                        success = run_async(user_book_repo.add_book_to_library(
+                            user_id=admin_user_id,
+                            book_id=created_book_id,
+                            reading_status=reading_status.value if hasattr(reading_status, 'value') else str(reading_status),
+                            ownership_status="owned",
+                            media_type="physical",
+                            notes="",
+                            location_id=locations[0] if locations else None
+                        ))
+                        
+                        if success:
+                            self.stats['books_migrated'] += 1
+                            self.stats['relationships_created'] += 1
+                        else:
+                            self._log_error(f"Failed to add book '{book.title}' to user library")
+                    else:
+                        self._log_error(f"Failed to create book '{book.title}'")
                     
                 except Exception as e:
                     title = book_row['title'] if 'title' in book_row.keys() else 'Unknown'
@@ -499,18 +552,23 @@ class AdvancedMigrationSystem:
                             is_active=bool(safe_get(user_row, 'is_active', True)),
                             password_must_change=bool(safe_get(user_row, 'password_must_change', False))
                         )
-                        user_mapping[old_user_id] = new_user.id
-                        self.stats['users_migrated'] += 1
+                        new_user_id = getattr(new_user, 'id', None) if new_user else None
+                        if new_user and new_user_id:
+                            user_mapping[old_user_id] = new_user_id
+                            self.stats['users_migrated'] += 1
+                        else:
+                            self._log_error(f"Failed to create user {user_row['username']} - no ID returned")
                         
                     except Exception as e:
                         self._log_error(f"Error migrating user {user_row['username']}: {e}")
                         continue
             
-            # Migrate books with user relationships
+            # Migrate books as global entities (no user ownership)
             cursor.execute("SELECT * FROM book;")
             books = cursor.fetchall()
             
             book_id_mapping = {}  # Map old book IDs to new ones
+            created_books = set()  # Track books we've already created (avoid duplicates)
             
             for book_row in books:
                 try:
@@ -521,61 +579,100 @@ class AdvancedMigrationSystem:
                         except (KeyError, IndexError):
                             return default
                     
-                    # Convert SQLite row to Book object
-                    book = self._sqlite_row_to_book(book_row)
+                    # Create a unique book identifier to avoid duplicates
+                    # Use ISBN or title+author combination
+                    book_identifier = safe_get(book_row, 'isbn') or f"{safe_get(book_row, 'title', '')}|{safe_get(book_row, 'author', '')}"
                     
-                    # Extract categories for processing AFTER book creation
-                    categories_to_process = []
-                    if hasattr(book, 'categories') and book.categories:
-                        categories_to_process = [category.name for category in book.categories]
-                    
-                    # Clear categories from book object to avoid issues during creation
-                    book.categories = []
-                    
-                    # Create book in Redis using service (without categories for now)
-                    created_book = self.book_service.create_book_sync(book)
-                    book_id_mapping[book_row['id']] = created_book.id
-                    
-                    # Now process categories using the service's category processing method
-                    if categories_to_process:
-                        try:
-                            success = self.book_service.process_book_categories_sync(
-                                created_book.id, categories_to_process
-                            )
-                            if success:
-                                self._log_action(f"Successfully processed {len(categories_to_process)} categories for book: {book.title}")
-                            else:
-                                self._log_error(f"Failed to process categories for book: {book.title}")
-                        except Exception as cat_error:
-                            self._log_error(f"Error processing categories for book '{book.title}': {cat_error}")
-                    
-                    # Create relationship with the appropriate user
-                    old_user_id = safe_get(book_row, 'user_id')
-                    if old_user_id and old_user_id in user_mapping:
-                        new_user_id = user_mapping[old_user_id]
+                    if book_identifier not in created_books:
+                        # Convert SQLite row to Book object
+                        book = self._sqlite_row_to_book(book_row)
                         
-                        # Get default location for this user
-                        default_location = self.location_service.get_default_location(new_user_id)
-                        locations = [default_location.id] if default_location else []
+                        # Create book as global entity (no user association)
+                        created_book = run_async(self.book_service.create_book(
+                            domain_book=book,
+                            user_id=""  # Empty user_id for global books
+                        ))
                         
-                        reading_status = ReadingStatus.READ if book_row['finish_date'] else ReadingStatus.WANT_TO_READ
-                        self.book_service.add_book_to_user_library_sync(
-                            user_id=new_user_id,
-                            book_id=created_book.id,
-                            reading_status=reading_status,
-                            locations=locations,
-                            start_date=self._parse_date(book_row['start_date']),
-                            finish_date=self._parse_date(book_row['finish_date']),
-                            date_added=self._parse_datetime(safe_get(book_row, 'created_at')).date() if self._parse_datetime(safe_get(book_row, 'created_at')) else datetime.now().date()
-                        )
-                        
-                        self.stats['relationships_created'] += 1
-                    
-                    self.stats['books_migrated'] += 1
+                        created_book_id = getattr(created_book, 'id', None) if created_book else None
+                        if created_book and created_book_id:
+                            created_books.add(book_identifier)
+                            book_id_mapping[book_row['id']] = created_book_id
+                            self.stats['books_migrated'] += 1
+                        else:
+                            self._log_error(f"Failed to create global book '{book.title}'")
+                    else:
+                        # Book already exists, just map the ID
+                        existing_book_id = None
+                        for old_id, new_id in book_id_mapping.items():
+                            if book_identifier in created_books:
+                                existing_book_id = new_id
+                                break
+                        if existing_book_id:
+                            book_id_mapping[book_row['id']] = existing_book_id
                     
                 except Exception as e:
                     title = book_row['title'] if 'title' in book_row.keys() else 'Unknown'
                     self._log_error(f"Error migrating book {title}: {e}")
+                    continue
+            
+            # Migrate user reading data separately (preserve reading history)
+            # This creates user-specific reading metadata without ownership relationships
+            cursor.execute("SELECT * FROM book;")
+            books_with_user_data = cursor.fetchall()
+            
+            for book_row in books_with_user_data:
+                try:
+                    # Helper function for safe row access
+                    def safe_get(row, key, default=None):
+                        try:
+                            return row[key] if key in row.keys() and row[key] is not None else default
+                        except (KeyError, IndexError):
+                            return default
+                    
+                    old_book_id = book_row['id']
+                    old_user_id = safe_get(book_row, 'user_id')
+                    
+                    # Only migrate reading data if user exists and book was created
+                    if (old_user_id and old_user_id in user_mapping and 
+                        old_book_id in book_id_mapping):
+                        
+                        new_user_id = user_mapping[old_user_id]
+                        new_book_id = book_id_mapping[old_book_id]
+                        
+                        # Only create reading data if the user actually interacted with the book
+                        has_reading_data = (
+                            safe_get(book_row, 'finish_date') or 
+                            safe_get(book_row, 'start_date') or
+                            safe_get(book_row, 'user_rating') or
+                            safe_get(book_row, 'notes')
+                        )
+                        
+                        if has_reading_data:
+                            # Determine reading status from the book data
+                            reading_status = ReadingStatus.READ if safe_get(book_row, 'finish_date') else ReadingStatus.PLAN_TO_READ
+                            
+                            # Create user ownership relationship
+                            from app.infrastructure.kuzu_repositories import KuzuUserBookRepository
+                            user_book_repo = KuzuUserBookRepository()
+                            
+                            success = run_async(user_book_repo.add_book_to_library(
+                                user_id=new_user_id,
+                                book_id=new_book_id,
+                                reading_status=reading_status.value if hasattr(reading_status, 'value') else str(reading_status),
+                                ownership_status="owned",
+                                media_type="physical",
+                                notes=safe_get(book_row, 'notes') or "",
+                                location_id=None
+                            ))
+                            
+                            if success:
+                                self.stats['relationships_created'] += 1
+                            else:
+                                self._log_error(f"Failed to create reading data for user {new_user_id} and book {new_book_id}")
+                    
+                except Exception as e:
+                    title = book_row['title'] if 'title' in book_row.keys() else 'Unknown'
+                    self._log_error(f"Error migrating reading data for book {title}: {e}")
                     continue
             
             # Migrate reading logs with proper user and book mapping
@@ -672,15 +769,16 @@ class AdvancedMigrationSystem:
                 updated_at=datetime.now()
             )
             
-            # Create BookContribution
-            contribution = BookContribution(
-                person_id=person.id,
-                book_id=book.id,
-                contribution_type=ContributionType.AUTHORED,
-                person=person,
-                created_at=datetime.now()
-            )
-            book.contributors = [contribution]
+            # Create BookContribution only if we have valid IDs
+            if person.id and book.id:
+                contribution = BookContribution(
+                    person_id=person.id,
+                    book_id=book.id,
+                    contribution_type=ContributionType.AUTHORED,
+                    person=person,
+                    created_at=datetime.now()
+                )
+                book.contributors = [contribution]
         
         # Handle categories - convert SQLite categories to Category objects
         categories_str = safe_get(row, 'categories')

@@ -82,9 +82,13 @@ def create_development_admin():
                         password_must_change=False
                     )
                     
-                    print(f"✅ Development admin user '{dev_username}' created successfully!")
-                    print(f"🔍 Admin user ID: {admin_user.id}, Password hash: {admin_user.password_hash[:20] if admin_user.password_hash else 'None'}...")
-                    return True
+                    if admin_user:
+                        print(f"✅ Development admin user '{dev_username}' created successfully!")
+                        print(f"🔍 Admin user ID: {admin_user.id}, Password hash: {admin_user.password_hash[:20] if admin_user.password_hash else 'None'}...")
+                        return True
+                    else:
+                        print(f"❌ Failed to create development admin user: user_service.create_user_sync returned None")
+                        return False
                 except Exception as e:
                     print(f"❌ Failed to create development admin user: {e}")
                     import traceback
@@ -104,7 +108,6 @@ def _check_for_sqlite_migration():
 def _initialize_default_templates():
     """Initialize default import templates for Goodreads and StoryGraph if they don't exist."""
     try:
-        import os
         from datetime import datetime
         from .domain.models import ImportMappingTemplate
         from .services import import_mapping_service
@@ -250,7 +253,7 @@ def create_app():
     csrf.init_app(app)
     sess.init_app(app)  # Initialize Flask-Session
     login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
+    login_manager.login_view = 'auth.login'  # type: ignore
     login_manager.login_message = 'Please log in to access this page.'
     login_manager.login_message_category = 'info'
 
@@ -264,38 +267,26 @@ def create_app():
     @app.context_processor
     def inject_site_name():
         """Make site name available in all templates."""
-        from .services import user_service  # Assuming settings are managed by user_service
-        try:
-            site_name = user_service.get_setting_sync('site_name')
-            if not site_name:
-                site_name = 'MyBibliotheca'
-        except Exception:
-            site_name = 'MyBibliotheca'
+        # For now, use a default site name since settings service methods don't exist yet
+        site_name = 'MyBibliotheca'
         return dict(site_name=site_name)
 
     @app.context_processor
     def inject_theme_preference():
         """Make theme preference available in all templates."""
         from flask_login import current_user
-        from .services import user_service
+        from flask import session
         theme = 'light'  # Default theme
         try:
             if current_user.is_authenticated:
-                # Try to get user's theme preference from Kuzu
-                user_theme = user_service.get_user_setting_sync(current_user.id, 'theme')
-                if user_theme:
-                    theme = user_theme
-                else:
-                    # Fallback to session
-                    from flask import session
-                    theme = session.get('theme', 'light')
+                # For now, just use session-based theme preference
+                # TODO: Implement user settings in KuzuUserService
+                theme = session.get('theme', 'light')
             else:
                 # For non-authenticated users, check session or default to light
-                from flask import session
                 theme = session.get('theme', 'light')
         except Exception:
             # In case of error, fallback to session or default
-            from flask import session
             theme = session.get('theme', 'light')
         return dict(current_theme=theme)
 
@@ -306,10 +297,11 @@ def create_app():
         if "CSRF" in str(e) or "csrf" in str(e.description):
             # Check if this is an AJAX request
             if request.is_json or 'application/json' in request.headers.get('Content-Type', ''):
+                from flask_wtf.csrf import generate_csrf
                 return jsonify({
                     'error': 'CSRF token missing or invalid',
                     'message': 'Please refresh the page and try again. Include X-CSRFToken header for API requests.',
-                    'csrf_token': csrf.generate_csrf()
+                    'csrf_token': generate_csrf()
                 }), 400
             else:
                 # For web requests, handle differently based on route
@@ -319,7 +311,7 @@ def create_app():
                 if request.endpoint and request.endpoint.startswith('onboarding.'):
                     flash('Security token expired. The page will be refreshed with a new token.', 'warning')
                     # Redirect to the same onboarding step to refresh the form
-                    if 'step' in request.view_args:
+                    if request.view_args and 'step' in request.view_args:
                         return redirect(url_for('onboarding.step', step_num=request.view_args['step']))
                     else:
                         return redirect(url_for('onboarding.start'))
@@ -372,12 +364,12 @@ def create_app():
             )
             
             try:
-                app.book_service = book_service
-                app.user_service = user_service
-                app.reading_log_service = reading_log_service
-                app.custom_field_service = custom_field_service
-                app.import_mapping_service = import_mapping_service
-                app.direct_import_service = direct_import_service
+                app.book_service = book_service  # type: ignore
+                app.user_service = user_service  # type: ignore
+                app.reading_log_service = reading_log_service  # type: ignore
+                app.custom_field_service = custom_field_service  # type: ignore
+                app.import_mapping_service = import_mapping_service  # type: ignore
+                app.direct_import_service = direct_import_service  # type: ignore
                 if verbose_init:
                     print("📦 Kuzu services initialized successfully")
             except Exception as e:
@@ -454,8 +446,10 @@ def create_app():
                 debug_auth(f"CSRF token in form: {'csrf_token' in request.form}")
                 debug_auth(f"CSRF token in session: {'csrf_token' in session}")
                 if 'csrf_token' in request.form and 'csrf_token' in session:
-                    debug_auth(f"Form CSRF: {request.form.get('csrf_token')[:10]}...")
-                    debug_auth(f"Session CSRF: {session.get('csrf_token')[:10] if session.get('csrf_token') else 'None'}...")
+                    form_csrf = request.form.get('csrf_token')
+                    session_csrf = session.get('csrf_token')
+                    debug_auth(f"Form CSRF: {form_csrf[:10] if form_csrf else 'None'}...")
+                    debug_auth(f"Session CSRF: {session_csrf[:10] if session_csrf else 'None'}...")
                     from flask_wtf.csrf import generate_csrf
                     generate_csrf()
                     # Explicitly mark the session as modified to ensure it's saved
@@ -541,8 +535,8 @@ def create_app():
             if request.endpoint != 'auth.forced_password_change':
                 return redirect(url_for('auth.forced_password_change'))
 
-    # Register blueprints
-    from .routes import bp
+    # Register application routes via modular blueprints
+    from .routes import register_blueprints
     from .auth import auth
     from .admin import admin
     try:
@@ -581,7 +575,8 @@ def create_app():
     except ImportError as e:
         print(f"⚠️  Could not import genre routes: {e}")
     
-    app.register_blueprint(bp)
+    # Register main and modular routes
+    register_blueprints(app)
     app.register_blueprint(auth, url_prefix='/auth')
     app.register_blueprint(admin, url_prefix='/admin')
     

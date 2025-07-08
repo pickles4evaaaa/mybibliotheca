@@ -54,8 +54,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create directory for KuzuDB and application data with proper permissions
-RUN mkdir -p /app/data /app/data/kuzu && \
-    chmod 755 /app/data /app/data/kuzu
+RUN mkdir -p /app/data /app/data/kuzu /app/static/covers && \
+    chmod 755 /app/data /app/data/kuzu /app/static/covers
 
 # Set environment variables for KuzuDB-based multi-user authentication
 ENV WTF_CSRF_ENABLED=True

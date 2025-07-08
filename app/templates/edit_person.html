@@ -24,7 +24,7 @@
                             {% if person.openlibrary_id %}Refresh Metadata{% else %}Find Metadata{% endif %}
                         </button>
                     </form>
-                    <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-outline-primary me-2">
+                    <a href="{{ url_for('people.person_details', person_id=person.id) }}" class="btn btn-outline-primary me-2">
                         <i class="bi bi-eye"></i> View Details
                     </a>
                     <a href="{{ url_for('main.people') }}" class="btn btn-outline-secondary">
@@ -142,7 +142,7 @@
                         <input type="hidden" name="action" value="update_photo"/>
                         <!-- Actions -->
                         <div class="d-flex justify-content-between">
-                            <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-outline-secondary">
+                            <a href="{{ url_for('people.person_details', person_id=person.id) }}" class="btn btn-outline-secondary">
                                 <i class="bi bi-x-circle"></i> Cancel
                             </a>
                             <button type="submit" class="btn btn-success">

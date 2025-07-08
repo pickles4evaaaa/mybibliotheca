@@ -22,18 +22,18 @@ except ImportError:
     from app.infrastructure.kuzu_graph import KuzuGraphDB
 
 try:
-    from app.infrastructure.kuzu_clean_repositories import (
-        CleanKuzuUserRepository,
-        CleanKuzuBookRepository, 
-        CleanKuzuUserBookRepository,
-        CleanKuzuLocationRepository
+    from app.infrastructure.kuzu_repositories import (
+        KuzuUserRepository,
+        KuzuBookRepository, 
+        KuzuUserBookRepository,
+        KuzuLocationRepository
     )
 except ImportError:
-    from .infrastructure.kuzu_clean_repositories import (
-        CleanKuzuUserRepository,
-        CleanKuzuBookRepository, 
-        CleanKuzuUserBookRepository,
-        CleanKuzuLocationRepository
+    from .infrastructure.kuzu_repositories import (
+        KuzuUserRepository,
+        KuzuBookRepository, 
+        KuzuUserBookRepository,
+        KuzuLocationRepository
     )
 
 # Try to import domain models, fall back to basic classes if not available
@@ -76,11 +76,11 @@ class KuzuIntegrationService:
     
     def __init__(self):
         """Initialize the integration service."""
-        self.db = None
-        self.user_repo = None
-        self.book_repo = None
-        self.user_book_repo = None
-        self.location_repo = None
+        self.db: Optional[KuzuGraphDB] = None
+        self.user_repo: Optional[KuzuUserRepository] = None
+        self.book_repo: Optional[KuzuBookRepository] = None
+        self.user_book_repo: Optional[KuzuUserBookRepository] = None
+        self.location_repo: Optional[KuzuLocationRepository] = None
         self._initialized = False
     
     def initialize(self):
@@ -94,10 +94,10 @@ class KuzuIntegrationService:
             self.db.connect()
             
             # Create repositories (they handle their own DB connections)
-            self.user_repo = CleanKuzuUserRepository()
-            self.book_repo = CleanKuzuBookRepository()
-            self.user_book_repo = CleanKuzuUserBookRepository()
-            self.location_repo = CleanKuzuLocationRepository()
+            self.user_repo = KuzuUserRepository()
+            self.book_repo = KuzuBookRepository()
+            self.user_book_repo = KuzuUserBookRepository()
+            self.location_repo = KuzuLocationRepository()
             
             self._initialized = True
             logger.info("✅ Kuzu integration service initialized successfully")
@@ -107,13 +107,44 @@ class KuzuIntegrationService:
             logger.error(f"❌ Failed to initialize Kuzu integration service: {e}")
             return False
     
+    def _ensure_initialized(self) -> bool:
+        """Ensure the service is initialized and all repositories are available."""
+        if not self._initialized and not self.initialize():
+            return False
+        
+        if not all([self.user_repo, self.book_repo, self.user_book_repo, self.location_repo]):
+            logger.error("One or more repositories are not initialized")
+            return False
+        
+        return True
+    
+    def _get_user_repo(self) -> KuzuUserRepository:
+        """Get user repository with type assertion."""
+        assert self.user_repo is not None, "User repository must be initialized"
+        return self.user_repo
+    
+    def _get_book_repo(self) -> KuzuBookRepository:
+        """Get book repository with type assertion."""
+        assert self.book_repo is not None, "Book repository must be initialized"
+        return self.book_repo
+    
+    def _get_user_book_repo(self) -> KuzuUserBookRepository:
+        """Get user book repository with type assertion."""
+        assert self.user_book_repo is not None, "User book repository must be initialized"
+        return self.user_book_repo
+    
+    def _get_location_repo(self) -> KuzuLocationRepository:
+        """Get location repository with type assertion."""
+        assert self.location_repo is not None, "Location repository must be initialized"
+        return self.location_repo
+    
     # ========================================
     # User Management
     # ========================================
     
     async def create_user(self, user_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new user."""
-        if not self._initialized and not self.initialize():
+        if not self._ensure_initialized():
             return None
         
         try:
@@ -131,7 +162,8 @@ class KuzuIntegrationService:
                 is_active=user_data.get('is_active', True)
             )
             
-            created_user = await self.user_repo.create(user)
+            user_repo = self._get_user_repo()
+            created_user = await user_repo.create(user)
             if created_user:
                 return self._user_to_dict(created_user)
             return None
@@ -142,11 +174,12 @@ class KuzuIntegrationService:
     
     async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user by ID."""
-        if not self._initialized and not self.initialize():
+        if not self._ensure_initialized():
             return None
         
         try:
-            user = await self.user_repo.get_by_id(user_id)
+            user_repo = self._get_user_repo()
+            user = await user_repo.get_by_id(user_id)
             if user:
                 return self._user_to_dict(user)
             return None
@@ -157,13 +190,14 @@ class KuzuIntegrationService:
     
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get user by username."""
-        if not self._initialized and not self.initialize():
+        if not self._ensure_initialized():
             print(f"🔍 [KUZU_INTEGRATION] Not initialized, cannot get user by username: {username}")
             return None
         
         try:
             print(f"🔍 [KUZU_INTEGRATION] Looking for user by username: '{username}'")
-            user = await self.user_repo.get_by_username(username)
+            user_repo = self._get_user_repo()
+            user = await user_repo.get_by_username(username)
             print(f"🔍 [KUZU_INTEGRATION] User repo returned: {user}")
             if user:
                 user_dict = self._user_to_dict(user)
@@ -753,11 +787,12 @@ class KuzuIntegrationService:
     
     async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
         """Get comprehensive user library statistics."""
-        if not self._initialized and not self.initialize():
+        if not self._ensure_initialized():
             return {}
         
         try:
-            stats = await self.user_book_repo.get_user_statistics(user_id)
+            user_book_repo = self._get_user_book_repo()
+            stats = await user_book_repo.get_user_statistics(user_id)
             return stats
             
         except Exception as e:
@@ -767,11 +802,12 @@ class KuzuIntegrationService:
     async def get_reading_timeline(self, user_id: str, 
                                   limit: int = 20) -> List[Dict[str, Any]]:
         """Get user's reading timeline."""
-        if not self._initialized and not self.initialize():
+        if not self._ensure_initialized():
             return []
         
         try:
-            timeline = await self.user_book_repo.get_reading_timeline(user_id, limit)
+            user_book_repo = self._get_user_book_repo()
+            timeline = await user_book_repo.get_reading_timeline(user_id, limit)
             return timeline
             
         except Exception as e:
@@ -846,3 +882,6 @@ def get_kuzu_service() -> KuzuIntegrationService:
     if not kuzu_service._initialized:
         kuzu_service.initialize()
     return kuzu_service
+
+# Add type: ignore to suppress Optional repository warnings
+# The repositories are guaranteed to be initialized when _ensure_initialized() returns True

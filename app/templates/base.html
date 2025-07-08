@@ -640,21 +640,6 @@
               <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
               <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>
               <a class="btn btn-outline-secondary me-2" href="{{ url_for('auth.settings') }}">Settings</a>
-              
-              <!-- Import dropdown -->
-              <div class="dropdown me-2">
-                <button class="btn btn-outline-primary dropdown-toggle" type="button" id="importDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                  <i class="fas fa-file-import"></i> Import
-                </button>
-                <ul class="dropdown-menu" aria-labelledby="importDropdown">
-                  <li><a class="dropdown-item" href="{{ url_for('main.import_books') }}">
-                    <i class="fas fa-file-csv"></i> Import CSV
-                  </a></li>
-                  <li><a class="dropdown-item" href="{{ url_for('main.migrate_sqlite') }}">
-                    <i class="fas fa-database"></i> Migrate SQLite Database
-                  </a></li>
-                </ul>
-              </div>
             {% endif %}
           </div>
           

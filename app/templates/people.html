@@ -58,7 +58,12 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
-                            {% set authors_count = persons | selectattr('contributions.authored', 'defined') | list | length %}
+                            {% set authors_count = 0 %}
+                            {% for person in persons %}
+                                {% if person.contributions and 'authored' in person.contributions and person.contributions.authored %}
+                                    {% set authors_count = authors_count + 1 %}
+                                {% endif %}
+                            {% endfor %}
                             <h3 class="stat-number">{{ authors_count }}</h3>
                             <p class="stat-label mb-0">Authors</p>
                         </div>
@@ -178,12 +183,11 @@
                                                  style="width: 50px; height: 50px;">
                                                 <i class="bi bi-person text-muted" style="font-size: 1.5rem;"></i>
                                             </div>
-                                        {% endif %}
-                                        <h5 class="card-title mb-0">
-                                            <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
-                                                {{ person.name }}
-                                            </a>
-                                        </h5>
+                                        {% endif %}                        <h5 class="card-title mb-0">
+                            <a href="{{ url_for('people.person_details', person_id=person.id) }}" class="text-decoration-none">
+                                {{ person.name }}
+                            </a>
+                        </h5>
                                     </div>
                                     
                                     {% if person.bio %}
@@ -222,7 +226,7 @@
                                 
                                 <div class="card-footer bg-transparent">
                                     <div class="d-flex justify-content-between">
-                                        <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-sm btn-outline-primary">
+                                        <a href="{{ url_for('people.person_details', person_id=person.id) }}" class="btn btn-sm btn-outline-primary">
                                             <i class="bi bi-eye"></i> View
                                         </a>
                                         <div class="btn-group">
@@ -281,7 +285,7 @@
                                                 {% endif %}
                                                 <div>
                                                     <strong>
-                                                        <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="text-decoration-none">
+                                                        <a href="{{ url_for('people.person_details', person_id=person.id) }}" class="text-decoration-none">
                                                             {{ person.name }}
                                                         </a>
                                                     </strong>
@@ -321,7 +325,7 @@
                                         </td>
                                         <td>
                                             <div class="btn-group">
-                                                <a href="{{ url_for('main.person_details', person_id=person.id) }}" class="btn btn-sm btn-outline-primary">
+                                                <a href="{{ url_for('people.person_details', person_id=person.id) }}" class="btn btn-sm btn-outline-primary">
                                                     <i class="bi bi-eye"></i>
                                                 </a>
                                                 <a href="{{ url_for('main.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary">

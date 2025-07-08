@@ -119,7 +119,7 @@ def create_reading_log():
         
         # Create reading log using service layer
         domain_log = reading_log_service.create_reading_log_sync(
-            book_id=int(data['book_id']),
+            book_id=str(data['book_id']),
             user_id=current_user.id,
             log_date=log_date
         )
@@ -129,12 +129,6 @@ def create_reading_log():
             'message': 'Reading log created successfully',
             'data': serialize_reading_log(domain_log)
         }), 201
-        
-    except ValueError as e:
-        return jsonify({
-            'status': 'error',
-            'message': 'Invalid book_id format'
-        }), 400
         
     except Exception as e:
         current_app.logger.error(f"Error creating reading log: {e}")
@@ -179,7 +173,7 @@ def check_existing_log():
         
         # Check for existing log
         existing_log = reading_log_service.get_existing_log_sync(
-            book_id=int(data['book_id']),
+            book_id=str(data['book_id']),
             user_id=current_user.id,
             log_date=log_date
         )
@@ -189,12 +183,6 @@ def check_existing_log():
             'exists': existing_log is not None,
             'data': serialize_reading_log(existing_log) if existing_log else None
         }), 200
-        
-    except ValueError as e:
-        return jsonify({
-            'status': 'error',
-            'message': 'Invalid book_id format'
-        }), 400
         
     except Exception as e:
         current_app.logger.error(f"Error checking reading log: {e}")

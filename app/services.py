@@ -12,10 +12,13 @@ import traceback
 import re
 import json
 import concurrent.futures
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union, cast
 from datetime import datetime, date, timedelta
 from dataclasses import asdict
 from functools import wraps
+import logging
+
+from .kuzu_services import run_async
 
 from flask import current_app
 from flask_login import current_user
@@ -25,65 +28,24 @@ from werkzeug.local import LocalProxy
 from .domain.models import (
     Book, User, Author, Publisher, Series, Category, UserBookRelationship, 
     ReadingLog, ReadingStatus, OwnershipStatus, CustomFieldDefinition, 
-    ImportMappingTemplate, CustomFieldType, Person, Location, MediaType
+    ImportMappingTemplate, CustomFieldType, Person, Location, MediaType,
+    BookContribution, ContributionType
 )
 
 # Import the clean Kuzu integration service
 from .kuzu_integration import get_kuzu_service
 
-# Import legacy repositories for compatibility
+# Import repositories
 from .infrastructure.kuzu_repositories import (
-    KuzuCustomFieldRepository, KuzuImportMappingRepository
+    KuzuUserRepository,
+    KuzuBookRepository, 
+    KuzuUserBookRepository,
+    KuzuLocationRepository,
+    KuzuCustomFieldRepository, 
+    KuzuImportMappingRepository
 )
 
-# Utility functions
-def extract_digits_only(value: str) -> Optional[str]:
-    """Extract only digits from a string (for ISBN, UPC, etc.)."""
-    if not value:
-        return None
-    
-    # Extract only digits
-    digits_only = re.sub(r'[^\d]', '', str(value))
-    
-    # Return None if no digits found
-    if not digits_only:
-        return None
-    
-    return digits_only
-
-
-def normalize_isbn_upc(isbn_or_upc: Optional[str]) -> Optional[str]:
-    """Normalize ISBN or UPC by extracting digits only."""
-    if not isbn_or_upc:
-        return None
-    
-    # Extract digits only
-    digits_only = extract_digits_only(isbn_or_upc)
-    
-    if not digits_only:
-        return None
-    
-    # Basic validation for common formats
-    if len(digits_only) == 10 or len(digits_only) == 13:
-        return digits_only
-    
-    return digits_only
-
-
-def run_async(coro):
-    """Helper to run async functions in sync context."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're already in an async context, create a new event loop in a thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-        else:
-            return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+logger = logging.getLogger(__name__)
 
 
 class KuzuUserService:
@@ -91,12 +53,16 @@ class KuzuUserService:
     
     def __init__(self):
         self.kuzu_service = get_kuzu_service()
+        self.user_repo = KuzuUserRepository()
+        self.location_repo = KuzuLocationRepository()
     
     def get_user_by_id_sync(self, user_id: str) -> Optional[User]:
         """Get user by ID (sync version for Flask-Login)."""
         try:
             user_data = run_async(self.kuzu_service.get_user(user_id))
             if user_data:
+                # Cast to Dict[str, Any] for type safety
+                user_data = cast(Dict[str, Any], user_data)
                 return User(
                     id=user_data['id'],
                     username=user_data['username'],
@@ -106,7 +72,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -128,7 +94,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -152,7 +118,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at') or datetime.utcnow()
                 )
                 print(f"🔍 [USER_SERVICE] Created User object: {user}")
                 return user
@@ -182,7 +148,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -208,7 +174,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -220,7 +186,7 @@ class KuzuUserService:
         return run_async(self.get_user_by_username_or_email(username_or_email))
     
     async def create_user(self, username: str, email: str, password_hash: str, 
-                         display_name: str = None, is_admin: bool = False) -> Optional[User]:
+                         display_name: Optional[str] = None, is_admin: bool = False) -> Optional[User]:
         """Create a new user."""
         try:
             user_data = {
@@ -243,7 +209,7 @@ class KuzuUserService:
                     timezone=created_user_data.get('timezone', 'UTC'),
                     is_admin=created_user_data.get('is_admin', False),
                     is_active=created_user_data.get('is_active', True),
-                    created_at=created_user_data.get('created_at')
+                    created_at=created_user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -251,7 +217,7 @@ class KuzuUserService:
             return None
 
     def create_user_sync(self, username: str, email: str, password_hash: str, 
-                        display_name: str = None, is_admin: bool = False, 
+                        display_name: Optional[str] = None, is_admin: bool = False, 
                         is_active: bool = True, password_must_change: bool = False,
                         timezone: str = 'UTC', location: str = '') -> Optional[User]:
         """Create a new user (sync version for form validation and onboarding)."""
@@ -279,7 +245,7 @@ class KuzuUserService:
                     timezone=created_user_data.get('timezone', 'UTC'),
                     is_admin=created_user_data.get('is_admin', False),
                     is_active=created_user_data.get('is_active', True),
-                    created_at=created_user_data.get('created_at')
+                    created_at=created_user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -319,7 +285,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at') or datetime.utcnow()
                 )
                 users.append(user)
             return users
@@ -346,7 +312,7 @@ class KuzuUserService:
                 'is_active': user.is_active
             }
             
-            updated_user_data = await self.kuzu_service.update_user(user.id, user_data)
+            updated_user_data = await self.kuzu_service.update_user(user.id or "", user_data)
             if updated_user_data:
                 return User(
                     id=updated_user_data['id'],
@@ -358,7 +324,7 @@ class KuzuUserService:
                     timezone=updated_user_data.get('timezone', 'UTC'),
                     is_admin=updated_user_data.get('is_admin', False),
                     is_active=updated_user_data.get('is_active', True),
-                    created_at=updated_user_data.get('created_at')
+                    created_at=updated_user_data.get('created_at') or datetime.utcnow()
                 )
             return None
         except Exception as e:
@@ -369,12 +335,47 @@ class KuzuUserService:
         """Update an existing user (sync version for admin tools)."""
         return run_async(self.update_user(user))
 
+    async def create_user_location(self, user_id: str, name: str, description: Optional[str] = None,
+                                  location_type: str = "home", is_default: bool = False) -> Optional[Location]:
+        """Create a location for a user."""
+        try:
+            location = Location(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                name=name,
+                description=description or f"Default location set during onboarding",
+                location_type=location_type,
+                is_default=is_default,
+                is_active=True,
+                created_at=datetime.utcnow()
+            )
+            
+            created_location = await self.location_repo.create(location, user_id)
+            if created_location:
+                logger.info(f"✅ Created location '{name}' for user {user_id}")
+            
+            return created_location
+            
+        except Exception as e:
+            logger.error(f"Failed to create location for user {user_id}: {e}")
+            return None
+    
+    async def get_user_locations(self, user_id: str) -> List[Location]:
+        """Get all locations for a user."""
+        return await self.location_repo.get_user_locations(user_id)
+    
+    async def get_default_location(self, user_id: str) -> Optional[Location]:
+        """Get the default location for a user."""
+        return await self.location_repo.get_default_location(user_id)
+
 
 class KuzuBookService:
     """Book service using clean Kuzu architecture."""
     
     def __init__(self):
         self.kuzu_service = get_kuzu_service()
+        self.book_repo = KuzuBookRepository()
+        self.user_book_repo = KuzuUserBookRepository()
     
     async def get_book_by_id(self, book_id: str) -> Optional[Book]:
         """Get book by ID with full details."""
@@ -396,129 +397,126 @@ class KuzuBookService:
             current_app.logger.error(f"Error searching books with query '{query}': {e}")
             return []
     
-    async def create_book(self, book_data: Dict[str, Any]) -> Optional[Book]:
-        """Create a new book with authors and categories."""
+    async def create_book(self, title: str, authors: Optional[List[str]] = None, 
+                         categories: Optional[List[str]] = None, **kwargs) -> Optional[Book]:
+        """Create a new book."""
         try:
-            created_book_data = await self.kuzu_service.create_book(book_data)
-            if created_book_data:
-                return self._convert_to_book_model(created_book_data)
-            return None
-        except Exception as e:
-            current_app.logger.error(f"Error creating book: {e}")
-            return None
-    
-    async def add_book_to_user_library(self, user_id: str, book_id: str, 
-                                      reading_status: str = 'plan_to_read',
-                                      ownership_status: str = 'owned',
-                                      media_type: str = 'physical',
-                                      location_id: str = None,
-                                      notes: str = None,
-                                      custom_metadata: Dict[str, Any] = None) -> bool:
-        """Add a book to user's library."""
-        try:
-            ownership_data = {
-                'reading_status': reading_status,
-                'ownership_status': ownership_status,
-                'media_type': media_type,
-                'location_id': location_id,
-                'notes': notes,
-                'source': 'manual',
-                'custom_metadata': custom_metadata
-            }
-            
-            return await self.kuzu_service.add_book_to_library(user_id, book_id, ownership_data)
-        except Exception as e:
-            current_app.logger.error(f"Error adding book to library: {e}")
-            return False
-    
-    async def delete_book(self, uid: str, user_id: str) -> bool:
-        """Remove a book from user's library."""
-        try:
-            return await self.kuzu_service.remove_book_from_library(user_id, uid)
-        except Exception as e:
-            current_app.logger.error(f"Error removing book from library: {e}")
-            return False
-
-    async def delete_book_globally(self, uid: str) -> bool:
-        """Delete a book globally from the system."""
-        try:
-            return await self.kuzu_service.book_repo.delete(uid)
-        except Exception as e:
-            current_app.logger.error(f"Error deleting book globally: {e}")
-            return False
-    
-    async def get_user_library(self, user_id: str, reading_status: str = None, 
-                              limit: int = 50) -> List[Dict[str, Any]]:
-        """Get user's library with optional status filtering."""
-        try:
-            return await self.kuzu_service.get_user_library(user_id, reading_status=reading_status, limit=limit)
-        except Exception as e:
-            current_app.logger.error(f"Error getting user library: {e}")
-            return []
-    
-    def get_all_books_sync(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Get all books in the system without user overlay."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Get ALL books in the system
-            query = """
-            MATCH (b:Book)
-            OPTIONAL MATCH (b)<-[authored:AUTHORED]-(p:Person)
-            OPTIONAL MATCH (b)-[categorized:CATEGORIZED_AS]->(c:Category)
-            RETURN b, collect(DISTINCT p), collect(DISTINCT c)
-            ORDER BY b.title
-            LIMIT $limit
-            """
-            
-            result = storage.query(query, {'limit': limit})
-            books = []
-            
-            for record in result:
-                if 'col_0' not in record:
-                    continue
+            # Create a simple book object using a basic class
+            class SimpleBook:
+                def __init__(self, **kwargs):
+                    self.id = str(uuid.uuid4())
+                    self.title = kwargs.get('title', '')
+                    self.normalized_title = kwargs.get('title', '').lower()
+                    self.created_at = datetime.utcnow()
+                    self.contributors = []
+                    self.categories = []
                     
-                book_data = record['col_0']
-                authors = record.get('col_1', []) or []
-                categories = record.get('col_2', []) or []
-                
-                # Create book dict with basic structure
-                # Handle both dict and node objects
-                if hasattr(book_data, '_properties'):
-                    book = dict(book_data._properties)
-                else:
-                    book = dict(book_data)
-                book['authors'] = [dict(author._properties) if hasattr(author, '_properties') else dict(author) for author in authors]
-                book['categories'] = [dict(category._properties) if hasattr(category, '_properties') else dict(category) for category in categories]
-                books.append(book)
+                    # Set additional attributes from kwargs
+                    for key, value in kwargs.items():
+                        if not hasattr(self, key):
+                            setattr(self, key, value)
             
-            return books
+            book = SimpleBook(title=title, **kwargs)
+            
+            # Add contributors (authors)
+            if authors:
+                for i, author_name in enumerate(authors):
+                    # Create simple contributor objects
+                    class SimplePerson:
+                        def __init__(self, name):
+                            self.id = str(uuid.uuid4())
+                            self.name = name
+                            self.normalized_name = name.lower()
+                            self.created_at = datetime.utcnow()
+                    
+                    class SimpleContribution:
+                        def __init__(self, person, contribution_type, order):
+                            self.person = person
+                            self.contribution_type = contribution_type
+                            self.order = order
+                    
+                    person = SimplePerson(author_name)
+                    contribution = SimpleContribution(person, ContributionType.AUTHORED, i)
+                    book.contributors.append(contribution)
+            
+            # Add categories
+            if categories:
+                for cat_name in categories:
+                    class SimpleCategory:
+                        def __init__(self, name):
+                            self.id = str(uuid.uuid4())
+                            self.name = name
+                            self.normalized_name = name.lower()
+                            self.created_at = datetime.utcnow()
+                    
+                    category = SimpleCategory(cat_name)
+                    book.categories.append(category)
+            
+            # Use the repository to create the book
+            created_book = await self.book_repo.create(book)
+            if created_book:
+                logger.info(f"✅ Book service created book: {title}")
+            
+            return created_book
+            
         except Exception as e:
-            current_app.logger.error(f"Error getting all books: {e}")
-            return []
-
-    def get_user_books_sync(self, user_id: str, reading_status: str = None,
-                           limit: int = 50) -> List[Dict[str, Any]]:
-        """Get user's library with global book visibility (default behavior).
-        
-        All users can see all books, with personal data overlaid where it exists.
-        This is the standard Goodreads-style behavior.
-        """
+            logger.error(f"Failed to create book {title}: {e}")
+            return None
+    
+    async def add_book_to_user_library(self, user_id: str, book_id: str,
+                                      reading_status: Union[ReadingStatus, str] = ReadingStatus.PLAN_TO_READ,
+                                      ownership_status: Union[OwnershipStatus, str] = OwnershipStatus.OWNED,
+                                      media_type: Union[MediaType, str] = MediaType.PHYSICAL,
+                                      location_id: Optional[str] = None,
+                                      notes: Optional[str] = None,
+                                      custom_metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Add a book to a user's library."""
         try:
-            # Use global book visibility as default behavior
-            return self.get_all_books_with_user_overlay_sync(user_id, reading_status=reading_status, limit=limit)
+            # Handle both enum and string values
+            if isinstance(reading_status, ReadingStatus):
+                reading_status_value = reading_status.value
+            else:
+                reading_status_value = reading_status
+            
+            if isinstance(ownership_status, OwnershipStatus):
+                ownership_status_value = ownership_status.value
+            else:
+                ownership_status_value = ownership_status
+            
+            if isinstance(media_type, MediaType):
+                media_type_value = media_type.value
+            else:
+                media_type_value = media_type
+            
+            success = await self.user_book_repo.add_book_to_library(
+                user_id, book_id, reading_status_value, ownership_status_value, 
+                media_type_value, notes or "", location_id
+            )
+            
+            if success:
+                logger.info(f"✅ Added book {book_id} to user {user_id} library")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to add book to library: {e}")
+            return False
+    
+    async def get_user_books(self, user_id: str, reading_status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get books in a user's library."""
+        return await self.user_book_repo.get_user_books(user_id, reading_status)
+    
+    def get_user_books_sync(self, user_id: str, reading_status: Optional[str] = None,
+                           limit: int = 50) -> List[Dict[str, Any]]:
+        """Get user's library with global book visibility (default behavior)."""
+        try:
+            return self.get_all_books_with_user_overlay_sync(user_id, limit=limit)
         except Exception as e:
             current_app.logger.error(f"Error getting user books: {e}")
             return []
-
-    def get_all_books_with_user_overlay_sync(self, user_id: str, reading_status: str = None,
-                                           limit: int = 50) -> List[Dict[str, Any]]:
-        """Get ALL books in the system - global book visibility model.
-        
-        All users can see all books. Personal data like reading status, ratings, 
-        and locations are stored directly on Book nodes or in separate user preference tables.
-        """
+    
+    def get_all_books_with_user_overlay_sync(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get ALL books in the system - global book visibility model."""
         try:
             from .infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
@@ -538,8 +536,6 @@ class KuzuBookService:
             
             result = storage.query(query, {'limit': limit})
             books = []
-            
-            print(f"🌍 [GLOBAL_BOOKS] Found {len(result)} global books")
             
             for record in result:
                 if 'col_0' not in record:
@@ -565,13 +561,12 @@ class KuzuBookService:
                 })
                 
                 # For now, set default user-specific fields to None/empty
-                # TODO: Implement user preferences table for personal data
                 book_dict.update({
                     'reading_status': None,
                     'ownership_status': None,
                     'user_rating': None,
                     'personal_notes': '',
-                    'locations': self._get_book_locations(storage, book_data.get('id')),
+                    'locations': self._get_book_locations(storage, book_data.get('id', '')),
                     'location_id': book_data.get('location_id', ''),
                     'custom_metadata': {},
                     'start_date': None,
@@ -580,15 +575,8 @@ class KuzuBookService:
                     'media_type': book_data.get('media_type', 'physical')
                 })
                 
-                print(f"🌍 [GLOBAL_BOOKS] Book '{book_dict['title']}' visible globally")
-                
-                # Filter by reading status if requested (will be empty for now)
-                if reading_status and book_dict.get('reading_status') != reading_status:
-                    continue
-                
                 books.append(book_dict)
             
-            print(f"✅ [GLOBAL_BOOKS] Returning {len(books)} books (global visibility)")
             return books
             
         except Exception as e:
@@ -598,10 +586,8 @@ class KuzuBookService:
             return []
     
     def _get_book_locations(self, storage, book_id: str) -> List[Dict[str, Any]]:
-        """Get location data for a book from current storage (OWNS relationship for now)."""
+        """Get location data for a book from current storage."""
         try:
-            # For now, get location data from OWNS relationship until we migrate
-            # TODO: Implement proper user preferences or move to Book node
             location_query = """
             MATCH (u:User)-[r:OWNS]->(b:Book {id: $book_id})
             WHERE r.location_id IS NOT NULL AND r.location_id <> ''
@@ -620,7 +606,6 @@ class KuzuBookService:
                         location_data = dict(location_node)
                         return [location_data]
                     elif location_id:
-                        # Location ID exists but no location node found
                         return [{'id': location_id, 'name': f'Location {location_id}'}]
             
             return []
@@ -629,620 +614,25 @@ class KuzuBookService:
             print(f"❌ Error getting book locations for {book_id}: {e}")
             return []
     
-    def add_book_to_user_library_sync(self, user_id: str, book_id: str, 
-                                     reading_status: str = 'plan_to_read',
-                                     ownership_status: str = 'owned',
-                                     media_type: str = 'physical',
-                                     location_id: str = None,
-                                     notes: str = None,
-                                     locations: List[str] = None,
-                                     custom_metadata: Dict[str, Any] = None) -> bool:
-        """Add a book to user's library (sync version)."""
-        try:
-            # Handle locations parameter - use first location if provided
-            if locations and len(locations) > 0 and not location_id:
-                location_id = locations[0]
-            
-            return run_async(self.add_book_to_user_library(
-                user_id, book_id, reading_status, ownership_status, 
-                media_type, location_id, notes, custom_metadata
-            ))
-        except Exception as e:
-            current_app.logger.error(f"Error adding book to library: {e}")
-            return False
-
-    def find_or_create_book_sync(self, book: Book) -> Optional[Book]:
-        """Find existing book or create new one (sync version)."""
-        try:
-            # First try to find existing book
-            if book.isbn13:
-                existing = run_async(self.kuzu_service.find_book_by_isbn(book.isbn13))
-                if existing:
-                    return self._convert_to_book_model(existing)
-            
-            # Create new book with full domain object (including relationships)
-            created = run_async(self.kuzu_service.create_book_with_relationships(book))
-            if created:
-                return self._convert_to_book_model(created)
-            return None
-        except Exception as e:
-            current_app.logger.error(f"Error finding or creating book: {e}")
-            return None
-
-    def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get book by UID using global book visibility (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Get the book directly from the global catalog
-            query = """
-            MATCH (b:Book {id: $uid})
-            OPTIONAL MATCH (b)<-[authored:AUTHORED]-(p:Person)
-            OPTIONAL MATCH (b)-[cat_rel:CATEGORIZED_AS]->(c:Category)
-            OPTIONAL MATCH (b)-[pub_rel:PUBLISHED_BY]->(pub:Publisher)
-            RETURN b, 
-                   collect(DISTINCT p) as authors,
-                   collect(DISTINCT c) as categories,
-                   pub
-            """
-            
-            result = storage.query(query, {'uid': uid})
-            
-            if not result or len(result) == 0:
-                return None
-            
-            record = result[0]
-            book_data = dict(record['col_0'])
-            authors_data = record.get('col_1', []) or []
-            categories_data = record.get('col_2', []) or []
-            publisher_data = record.get('col_3')
-            
-            # Build the complete book dict
-            book_dict = dict(book_data)
-            
-            # Ensure uid exists as alias for id (for template compatibility)
-            if 'uid' not in book_dict and 'id' in book_dict:
-                book_dict['uid'] = book_dict['id']
-            
-            # Add relationship data
-            book_dict.update({
-                'authors': [{'id': a.get('id'), 'name': a.get('name')} for a in authors_data if a and isinstance(a, dict)],
-                'categories': [{'id': c.get('id'), 'name': c.get('name')} for c in categories_data if c and isinstance(c, dict)],
-                'publisher': {'id': publisher_data.get('id'), 'name': publisher_data.get('name')} if publisher_data and isinstance(publisher_data, dict) else None
-            })
-            
-            # Add location data
-            book_dict['locations'] = self._get_book_locations(storage, book_data.get('id'))
-            # Get location_id from the locations if available
-            if book_dict['locations'] and len(book_dict['locations']) > 0:
-                book_dict['location_id'] = book_dict['locations'][0].get('id', '')
-            else:
-                book_dict['location_id'] = ''
-            
-            # Set default user-specific fields (TODO: implement user preferences)
-            book_dict.update({
-                'reading_status': None,
-                'ownership_status': None,
-                'user_rating': None,
-                'personal_notes': '',
-                'custom_metadata': {},
-                'start_date': None,
-                'finish_date': None,
-                'date_added': None,
-                'media_type': book_data.get('media_type', 'physical')
-            })
-            
-            return book_dict
-        
-        except Exception as e:
-            print(f"Error in get_book_by_uid_sync: {e}")
-            return None
-
-    def get_user_book_sync(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
-        """Get user's book by book ID - alias for get_book_by_uid_sync for compatibility."""
-        return self.get_book_by_uid_sync(book_id, user_id)
-
-    def update_book_sync(self, uid: str, user_id: str, **kwargs) -> bool:
-        """Update book data directly on Book node (sync version)."""
-        try:
-            print(f"🔍 [UPDATE_BOOK_SYNC] Called with uid={uid}, user_id={user_id}, kwargs={kwargs}")
-            
-            # All fields can now be stored directly on the Book node
-            book_fields = ['title', 'subtitle', 'description', 'published_date', 'page_count', 
-                          'language', 'cover_url', 'isbn13', 'isbn10', 'asin', 'google_books_id', 
-                          'openlibrary_id', 'average_rating', 'rating_count', 'series', 'series_volume', 
-                          'series_order', 'reading_status', 'ownership_status', 'media_type', 'location_id', 
-                          'notes', 'personal_notes', 'start_date', 'finish_date', 'current_page', 'total_pages',
-                          'date_acquired', 'purchase_price', 'condition', 'tags', 'review', 'user_rating',
-                          'pace', 'character_driven', 'source']
-            
-            # Filter updates to valid book fields
-            book_updates = {}
-            for field, value in kwargs.items():
-                if field in book_fields:
-                    book_updates[field] = value
-            
-            print(f"🔍 [UPDATE_BOOK_SYNC] Book updates: {book_updates}")
-            
-            if not book_updates:
-                print(f"🔍 [UPDATE_BOOK_SYNC] No valid updates to apply")
-                return True
-            
-            from .infrastructure.kuzu_graph import get_graph_storage
-            graph_storage = get_graph_storage()
-            
-            # Update the Book node directly
-            query = """
-            MATCH (b:Book {id: $book_id})
-            SET """
-            
-            set_clauses = []
-            params = {'book_id': uid}
-            
-            for field, value in book_updates.items():
-                if field in ['published_date', 'start_date', 'finish_date', 'date_acquired'] and value and hasattr(value, 'isoformat'):
-                    # Convert date to string for Kuzu
-                    params[f'new_{field}'] = value.isoformat()
-                elif field in ['current_page', 'total_pages', 'user_rating'] and value is not None:
-                    # For numeric fields, ensure they're integers/floats, not strings
-                    try:
-                        if field == 'user_rating':
-                            params[f'new_{field}'] = float(value)
-                        else:
-                            params[f'new_{field}'] = int(value)
-                    except (ValueError, TypeError):
-                        params[f'new_{field}'] = value
-                else:
-                    params[f'new_{field}'] = str(value) if value is not None else ''
-                
-                set_clauses.append(f'b.{field} = $new_{field}')
-            
-            query += ', '.join(set_clauses)
-            query += " RETURN b"
-            
-            print(f"🔍 [UPDATE_BOOK_SYNC] Executing query: {query}")
-            print(f"🔍 [UPDATE_BOOK_SYNC] With params: {params}")
-            
-            result = graph_storage.query(query, params)
-            
-            if result and len(result) > 0:
-                print(f"✅ [UPDATE_BOOK_SYNC] Successfully updated Book node")
-                return True
-            else:
-                print(f"❌ [UPDATE_BOOK_SYNC] No Book node found or update failed")
-                return False
-            
-        except Exception as e:
-            print(f"❌ [UPDATE_BOOK_SYNC] Error updating book: {e}")
-            import traceback
-            traceback.print_exc()
-            current_app.logger.error(f"Error updating book: {e}")
-            return False
-
-    def delete_book_sync(self, uid: str, user_id: str) -> bool:
-        """Delete book from user's library (sync version)."""
-        try:
-            return run_async(self.delete_book(uid, user_id))
-        except Exception as e:
-            current_app.logger.error(f"Error deleting book: {e}")
-            return False
-
-    def delete_book_globally_sync(self, uid: str) -> bool:
-        """Delete book globally from system (sync version)."""
-        try:
-            return run_async(self.delete_book_globally(uid))
-        except Exception as e:
-            current_app.logger.error(f"Error deleting book globally: {e}")
-            return False
-
-    def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:
-        """Get categories for a book (sync version)."""
-        try:
-            # Use the repository method instead of direct graph access
-            categories = run_async(self.kuzu_service.book_repo.get_book_categories(book_id))
-            return categories
-        except Exception as e:
-            current_app.logger.error(f"Error getting book categories for {book_id}: {e}")
-            return []
-    
-    def list_all_persons_sync(self) -> List[Dict[str, Any]]:
-        """List all persons (authors, contributors) in the system (sync version)."""
-        try:
-            # Use the Kuzu service to get all persons
-            persons = run_async(self.kuzu_service.book_repo.get_all_persons())
-            return persons or []
-        except Exception as e:
-            current_app.logger.error(f"Error listing persons: {e}")
-            return []
-    
-    def list_all_categories_sync(self, user_id: str = None) -> List[Dict[str, Any]]:
-        """List all categories in the system (sync version)."""
-        try:
-            # Use the Kuzu service to get all categories
-            categories = run_async(self.kuzu_service.book_repo.get_all_categories())
-            return categories or []
-        except Exception as e:
-            current_app.logger.error(f"Error listing categories: {e}")
-            return []
-    
-    def get_books_by_person_sync(self, person_id: str, user_id: str = None) -> Dict[str, List]:
-        """Get books by a specific person, grouped by contribution type (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_kuzu_database
-            db = get_kuzu_database()
-            
-            # Query for books authored by this person using graph relationships
-            query = """
-            MATCH (p:Person {id: $person_id})-[r:AUTHORED]->(b:Book)
-            RETURN b, r.role as role, r.order_index as order_index
-            """
-            
-            results = db.query(query, {"person_id": person_id})
-            
-            contributions = {
-                'authored': [],
-                'narrated': [],
-                'edited': [],
-                'contributed': []
-            }
-            
-            for result in results:
-                if 'col_0' in result and 'col_1' in result:
-                    book_data = dict(result['col_0'])
-                    role = result['col_1'] or 'authored'
-                    book_id = book_data.get('id')
-                    
-                    if book_id and user_id:
-                        # Get full book data with user overlay for template compatibility
-                        full_book = self.get_book_by_uid_sync(book_id, user_id)
-                        if full_book:
-                            # Ensure uid and reading_status are available
-                            if 'uid' not in full_book:
-                                full_book['uid'] = book_id
-                            if 'reading_status' not in full_book or full_book['reading_status'] is None:
-                                full_book['reading_status'] = 'unread'
-                            # Convert to object-like structure
-                            book = type('Book', (), full_book)()
-                        else:
-                            # Fallback to basic book object
-                            book = type('Book', (), {
-                                'id': book_id,
-                                'uid': book_id,  # Ensure uid is available for templates
-                                'title': book_data.get('title', ''),
-                                'cover_url': book_data.get('cover_url', ''),
-                                'published_date': book_data.get('published_date'),
-                                'reading_status': 'unread',  # Default reading status
-                                'ownership_status': None,
-                                'user_rating': None,
-                                'personal_notes': '',
-                                'locations': [],
-                                'custom_metadata': {}
-                            })()
-                    else:
-                        # Create basic book object when no user_id provided
-                        book = type('Book', (), {
-                            'id': book_id,
-                            'uid': book_id,  # Ensure uid is available for templates
-                            'title': book_data.get('title', ''),
-                            'cover_url': book_data.get('cover_url', ''),
-                            'published_date': book_data.get('published_date'),
-                            'reading_status': 'unread',  # Default reading status
-                            'ownership_status': None,
-                            'user_rating': None,
-                            'personal_notes': '',
-                            'locations': [],
-                            'custom_metadata': {}
-                        })()
-                    
-                    # Add to appropriate contribution type
-                    if role in contributions:
-                        contributions[role].append(book)
-                    else:
-                        contributions['authored'].append(book)
-            
-            current_app.logger.info(f"Found contributions for person {person_id}: {[f'{k}: {len(v)}' for k, v in contributions.items()]}")
-            return contributions
-        except Exception as e:
-            current_app.logger.error(f"Error getting books by person {person_id}: {e}")
-            return {'authored': [], 'narrated': [], 'edited': [], 'contributed': []}
-    
-    def get_person_by_id_sync(self, person_id: str) -> object:
-        """Get a person by ID (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Use proper Cypher query instead of get_node_by_id
-            query = """
-            MATCH (p:Person {id: $person_id})
-            RETURN p
-            LIMIT 1
-            """
-            
-            results = storage.query(query, {"person_id": person_id})
-            if not results:
-                return None
-            
-            # Fix query result access - check 'result' first (single column), then 'col_0'
-            result = results[0]
-            person_data = None
-            if 'result' in result:
-                person_data = dict(result['result'])
-            elif 'col_0' in result:
-                person_data = dict(result['col_0'])
-            else:
-                return None
-            
-            # Create person object for template compatibility
-            person = type('Person', (), {
-                'id': person_data.get('id'),
-                'name': person_data.get('name', ''),
-                'normalized_name': person_data.get('normalized_name', ''),
-                'birth_year': person_data.get('birth_year'),
-                'death_year': person_data.get('death_year'),
-                'birth_place': person_data.get('birth_place'),
-                'bio': person_data.get('bio'),
-                'website': person_data.get('website'),
-                'openlibrary_id': person_data.get('openlibrary_id'),
-                'image_url': person_data.get('image_url'),
-                'created_at': person_data.get('created_at'),
-                'updated_at': person_data.get('updated_at')
-            })()
-            
-            current_app.logger.info(f"Found person: {person.name}")
-            return person
-        except Exception as e:
-            current_app.logger.error(f"Error getting person {person_id}: {e}")
-            return None
-    
-    def update_person_sync(self, person_id: str, update_data: Dict[str, Any]) -> bool:
-        """Update a person with new metadata (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Filter out None/empty values and validate fields
-            valid_fields = ['name', 'normalized_name', 'birth_year', 'death_year', 'birth_place', 'bio', 'website', 'openlibrary_id', 'image_url']
-            filtered_data = {}
-            
-            for key, value in update_data.items():
-                if key in valid_fields and value is not None and value != '':
-                    filtered_data[key] = value
-            
-            if not filtered_data:
-                current_app.logger.warning(f"No valid update data provided for person {person_id}")
-                return False
-            
-            # Add updated_at timestamp
-            from datetime import datetime
-            filtered_data['updated_at'] = datetime.utcnow()
-            
-            # Build the SET clause for the Cypher query
-            set_clauses = []
-            params = {'person_id': person_id}
-            
-            for key, value in filtered_data.items():
-                param_name = f"new_{key}"
-                set_clauses.append(f"p.{key} = ${param_name}")
-                params[param_name] = value
-            
-            set_clause = ', '.join(set_clauses)
-            
-            # Execute the update query
-            query = f"""
-            MATCH (p:Person {{id: $person_id}})
-            SET {set_clause}
-            RETURN p
-            """
-            
-            results = storage.query(query, params)
-            
-            if results:
-                current_app.logger.info(f"Successfully updated person {person_id} with fields: {list(filtered_data.keys())}")
-                return True
-            else:
-                current_app.logger.warning(f"Person {person_id} not found for update")
-                return False
-                
-        except Exception as e:
-            current_app.logger.error(f"Error updating person {person_id}: {e}")
-            return False
-    
-    def get_category_by_id_sync(self, category_id: str, user_id: str = None) -> object:
-        """Get a category by ID (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Use proper Cypher query instead of get_node_by_id
-            query = """
-            MATCH (c:Category {id: $category_id})
-            RETURN c
-            LIMIT 1
-            """
-            
-            results = storage.query(query, {"category_id": category_id})
-            if not results:
-                return None
-            
-            # Fix query result access - check 'result' first (single column), then 'col_0'
-            result = results[0]
-            category_data = None
-            if 'result' in result:
-                category_data = dict(result['result'])
-            elif 'col_0' in result:
-                category_data = dict(result['col_0'])
-            else:
-                return None
-            
-            # Create category object for template compatibility
-            class Category:
-                def __init__(self, data):
-                    self.id = data.get('id')
-                    self.name = data.get('name', '')
-                    self.normalized_name = data.get('normalized_name', '')
-                    self.description = data.get('description')
-                    self.color = data.get('color')
-                    self.icon = data.get('icon')
-                    self.created_at = data.get('created_at')
-                    self.parent_id = data.get('parent_id')
-                    self.aliases = data.get('aliases', [])
-                    self.level = 0
-                    self.book_count = 0
-                
-                def get_ancestors(self):
-                    """Get list of ancestor categories for breadcrumb navigation."""
-                    # For now, return empty list since we don't have hierarchy implemented
-                    return []
-            
-            category = Category(category_data)
-            
-            current_app.logger.info(f"Found category: {category.name}")
-            return category
-        except Exception as e:
-            current_app.logger.error(f"Error getting category {category_id}: {e}")
-            return None
-    
-    def get_books_by_category_sync(self, category_id: str, user_id: str = None, include_subcategories: bool = True) -> List[Dict[str, Any]]:
-        """Get books by category ID (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Query for books in the category using graph relationships
-            if user_id:
-                # If user_id provided, only get books owned by that user
-                query = """
-                MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book)-[:CATEGORIZED_AS]->(c:Category {id: $category_id})
-                RETURN b
-                """
-                params = {'user_id': user_id, 'category_id': category_id}
-            else:
-                # Query for all books in the category
-                query = """
-                MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category {id: $category_id})
-                RETURN b
-                """
-                params = {'category_id': category_id}
-            
-            result = storage.query(query, params)
-            books = []
-            
-            for record in result:
-                # Fix query result access - check 'result' first (single column), then 'col_0'
-                book_data = None
-                if 'result' in record:
-                    book_data = dict(record['result'])
-                elif 'col_0' in record:
-                    book_data = dict(record['col_0'])
-                
-                if book_data:
-                    books.append(book_data)
-            
-            current_app.logger.info(f"Found {len(books)} books for category {category_id}")
-            return books
-            
-        except Exception as e:
-            current_app.logger.error(f"Error getting books by category {category_id}: {e}")
-            return []
-
-    def get_child_categories_sync(self, parent_id: str, user_id: str = None) -> List[Dict[str, Any]]:
-        """Get child categories of a parent category (sync version)."""
-        try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
-            # Query for child categories using parent_id field
-            query = """
-            MATCH (c:Category)
-            WHERE c.parent_id = $parent_id
-            RETURN c
-            ORDER BY c.name ASC
-            """
-            
-            result = storage.query(query, {"parent_id": parent_id})
-            categories = []
-            
-            for record in result:
-                # Fix query result access - check 'result' first (single column), then 'col_0'
-                category_data = None
-                if 'result' in record:
-                    category_data = dict(record['result'])
-                elif 'col_0' in record:
-                    category_data = dict(record['col_0'])
-                
-                if category_data:
-                    categories.append(category_data)
-            
-            current_app.logger.info(f"Found {len(categories)} child categories for parent {parent_id}")
-            return categories
-            
-        except Exception as e:
-            current_app.logger.error(f"Error getting child categories for parent {parent_id}: {e}")
-            return []
-
-    def update_user_book_sync(self, user_id: str, book_id: str, custom_metadata: Dict[str, Any] = None, custom_field_types: Dict[str, str] = None, **kwargs) -> bool:
-        """Update user-book relationship with custom metadata (sync version)."""
-        try:
-            from datetime import datetime
-            print(f"🔍 [UPDATE_USER_BOOK_SERVICES] Called with user_id={user_id}, book_id={book_id}, custom_metadata={custom_metadata}")
-            
-            if not custom_metadata:
-                print(f"🔍 [UPDATE_USER_BOOK_SERVICES] No custom metadata to update")
-                return True  # Nothing to update
-            
-            from .infrastructure.kuzu_graph import get_graph_storage
-            graph_storage = get_graph_storage()
-            
-            # Verify user and book exist
-            user_exists = graph_storage.get_node('User', user_id)
-            book_exists = graph_storage.get_node('Book', book_id)
-            print(f"🔍 [UPDATE_USER_BOOK_SERVICES] User exists: {user_exists is not None}, Book exists: {book_exists is not None}")
-            
-            if not user_exists:
-                print(f"❌ [UPDATE_USER_BOOK_SERVICES] User {user_id} not found")
-                return False
-            if not book_exists:
-                print(f"❌ [UPDATE_USER_BOOK_SERVICES] Book {book_id} not found")
-                return False
-            
-            # For each custom field, store it with type information
-            for field_name, field_value in custom_metadata.items():
-                print(f"🔍 [UPDATE_USER_BOOK_SERVICES] Processing field {field_name} = {field_value}")
-                
-                if field_value is not None and field_value != '':
-                    # Get field type if provided
-                    field_type = custom_field_types.get(field_name) if custom_field_types else None
-                    
-                    # Use the enhanced store_custom_metadata method
-                    success = graph_storage.store_custom_metadata(
-                        user_id=user_id,
-                        book_id=book_id,
-                        field_name=field_name,
-                        field_value=field_value,
-                        field_type=field_type
-                    )
-                    
-                    if success:
-                        print(f"✅ [UPDATE_USER_BOOK_SERVICES] Saved custom field {field_name} = {field_value} for user {user_id}, book {book_id}")
-                    else:
-                        print(f"❌ [UPDATE_USER_BOOK_SERVICES] Failed to save custom field {field_name}")
-                else:
-                    print(f"🔍 [UPDATE_USER_BOOK_SERVICES] Skipping empty field {field_name}")
-                        
-            print(f"🔍 [UPDATE_USER_BOOK_SERVICES] Completed processing all custom fields")
-            return True
-            
-        except Exception as e:
-            print(f"❌ [UPDATE_USER_BOOK_SERVICES] Error updating user book custom metadata: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-
-    def _convert_to_book_model(self, book_data: Dict[str, Any]) -> Book:
+    def _convert_to_book_model(self, book_data: Dict[str, Any]) -> Any:
         """Convert book data dictionary to Book domain model."""
-        return Book(
+        # Handle created_at field
+        created_at = book_data.get('created_at')
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                created_at = datetime.utcnow()
+        elif created_at is None:
+            created_at = datetime.utcnow()
+        
+        # Create a simple book object
+        class SimpleBook:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+        
+        return SimpleBook(
             id=book_data['id'],
             title=book_data['title'],
             isbn13=book_data.get('isbn13'),
@@ -1254,520 +644,349 @@ class KuzuBookService:
             cover_url=book_data.get('cover_url'),
             average_rating=book_data.get('average_rating'),
             rating_count=book_data.get('rating_count'),
-            created_at=book_data.get('created_at')
+            created_at=created_at
         )
 
-
-class KuzuReadingLogService:
-    """Reading log service using clean Kuzu architecture."""
-    
-    def __init__(self):
-        self.kuzu_service = get_kuzu_service()
-    
-    async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
-        """Get comprehensive user reading statistics."""
+    # Category management methods
+    def list_all_categories_sync(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all categories."""
         try:
-            return await self.kuzu_service.get_user_statistics(user_id)
+            from .infrastructure.kuzu_repositories import KuzuCategoryRepository
+            category_repo = KuzuCategoryRepository()
+            
+            # Use asyncio to run the async method
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        def run_in_new_loop():
+                            new_loop = asyncio.new_event_loop()
+                            try:
+                                return new_loop.run_until_complete(category_repo.get_all())
+                            finally:
+                                new_loop.close()
+                        future = executor.submit(run_in_new_loop)
+                        return future.result()
+                else:
+                    return loop.run_until_complete(category_repo.get_all())
+            except RuntimeError:
+                return asyncio.run(category_repo.get_all())
         except Exception as e:
-            current_app.logger.error(f"Error getting user statistics: {e}")
-            return {}
-    
-    async def get_reading_timeline(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get user's reading timeline."""
-        try:
-            return await self.kuzu_service.get_reading_timeline(user_id, limit)
-        except Exception as e:
-            current_app.logger.error(f"Error getting reading timeline: {e}")
+            print(f"❌ Error getting all categories: {e}")
             return []
 
-    def get_existing_log_sync(self, book_id: str, user_id: str, log_date) -> Optional[Dict[str, Any]]:
-        """Get existing reading log for a specific date (sync version)."""
+    def get_category_by_id_sync(self, category_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a category by ID."""
         try:
-            # For now, return None until full reading log system is implemented
-            # This would check if a reading log already exists for the given book/user/date
-            return None
+            from .infrastructure.kuzu_repositories import KuzuCategoryRepository
+            category_repo = KuzuCategoryRepository()
+            
+            # Use asyncio to run the async method
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        def run_in_new_loop():
+                            new_loop = asyncio.new_event_loop()
+                            try:
+                                return new_loop.run_until_complete(category_repo.get_by_id(category_id))
+                            finally:
+                                new_loop.close()
+                        future = executor.submit(run_in_new_loop)
+                        return future.result()
+                else:
+                    return loop.run_until_complete(category_repo.get_by_id(category_id))
+            except RuntimeError:
+                return asyncio.run(category_repo.get_by_id(category_id))
         except Exception as e:
-            current_app.logger.error(f"Error getting existing log: {e}")
+            print(f"❌ Error getting category by ID {category_id}: {e}")
             return None
 
-    def create_reading_log_sync(self, book_id: str, user_id: str, log_date) -> bool:
-        """Create a reading log entry (sync version)."""
+    def get_child_categories_sync(self, parent_id: str) -> List[Dict[str, Any]]:
+        """Get child categories for a parent category."""
         try:
-            # For now, return True to avoid errors until full reading log creation is implemented
-            # This would create a new reading session/log entry
-            current_app.logger.info(f"Reading log creation requested for user {user_id}, book {book_id}")
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            # Query for categories that have this parent_id
+            query = """
+            MATCH (c:Category)
+            WHERE c.parent_id = $parent_id
+            RETURN c
+            ORDER BY c.name ASC
+            """
+            
+            results = db.query(query, {"parent_id": parent_id})
+            
+            categories = []
+            for result in results:
+                if 'result' in result:
+                    categories.append(dict(result['result']))
+                elif 'col_0' in result:
+                    categories.append(dict(result['col_0']))
+            
+            return categories
+        except Exception as e:
+            print(f"❌ Error getting child categories for {parent_id}: {e}")
+            return []
+
+    def get_category_children_sync(self, category_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get children of a category (alias for get_child_categories)."""
+        return self.get_child_categories_sync(category_id)
+
+    def get_books_by_category_sync(self, category_id: str, user_id: Optional[str] = None, include_subcategories: bool = False) -> List[Dict[str, Any]]:
+        """Get books in a category."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            if include_subcategories:
+                # For now, just get books from the specific category
+                # TODO: Implement recursive descendant search
+                query = """
+                MATCH (b:Book)-[:BELONGS_TO]->(c:Category {id: $category_id})
+                RETURN b
+                ORDER BY b.title ASC
+                """
+            else:
+                # Query for books in this specific category
+                query = """
+                MATCH (b:Book)-[:BELONGS_TO]->(c:Category {id: $category_id})
+                RETURN b
+                ORDER BY b.title ASC
+                """
+            
+            results = db.query(query, {"category_id": category_id})
+            
+            books = []
+            for result in results:
+                if 'result' in result:
+                    books.append(dict(result['result']))
+                elif 'col_0' in result:
+                    books.append(dict(result['col_0']))
+            
+            return books
+        except Exception as e:
+            print(f"❌ Error getting books by category {category_id}: {e}")
+            return []
+
+    def create_category_sync(self, category: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create a new category."""
+        try:
+            from .infrastructure.kuzu_repositories import KuzuCategoryRepository
+            category_repo = KuzuCategoryRepository()
+            
+            # Convert dict to object if needed
+            if isinstance(category, dict):
+                from types import SimpleNamespace
+                category_obj = SimpleNamespace(**category)
+            else:
+                category_obj = category
+            
+            # Use asyncio to run the async method
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        def run_in_new_loop():
+                            new_loop = asyncio.new_event_loop()
+                            try:
+                                return new_loop.run_until_complete(category_repo.create(category_obj))
+                            finally:
+                                new_loop.close()
+                        future = executor.submit(run_in_new_loop)
+                        return future.result()
+                else:
+                    return loop.run_until_complete(category_repo.create(category_obj))
+            except RuntimeError:
+                return asyncio.run(category_repo.create(category_obj))
+        except Exception as e:
+            print(f"❌ Error creating category: {e}")
+            return None
+
+    def update_category_sync(self, category: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing category."""
+        try:
+            # For now, just return the updated category
+            # TODO: Implement proper update logic in repository
+            return category
+        except Exception as e:
+            print(f"❌ Error updating category: {e}")
+            return None
+
+    def delete_category_sync(self, category_id: str) -> bool:
+        """Delete a category."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            # Query to delete the category node
+            query = """
+            MATCH (c:Category {id: $category_id})
+            DETACH DELETE c
+            """
+            
+            db.query(query, {"category_id": category_id})
             return True
         except Exception as e:
-            current_app.logger.error(f"Error creating reading log: {e}")
+            print(f"❌ Error deleting category {category_id}: {e}")
             return False
 
-    def get_user_logs_count_sync(self, user_id: str) -> int:
-        """Get count of user's reading logs (sync version)."""
+    def search_categories_sync(self, query: str, limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search categories by name."""
         try:
-            # For now, return 0 until full reading log counting is implemented
-            # This would count all reading sessions/logs for the user
-            return 0
-        except Exception as e:
-            current_app.logger.error(f"Error getting user logs count: {e}")
-            return 0
-
-    def get_recent_shared_logs_sync(self, days_back: int = 7, limit: int = 50) -> List[Dict[str, Any]]:
-        """Get recent shared reading logs (sync version)."""
-        try:
-            # For now, return empty list until full shared reading logs system is implemented
-            # This would return recent reading activity from the community
-            return []
-        except Exception as e:
-            current_app.logger.error(f"Error getting recent shared logs: {e}")
-            return []
-
-
-class KuzuLocationService:
-    """Location service using clean Kuzu architecture."""
-    
-    def __init__(self):
-        self.kuzu_service = get_kuzu_service()
-    
-    async def create_location(self, user_id: str, name: str, description: str = None,
-                             location_type: str = 'other', is_default: bool = False) -> Optional[Dict[str, Any]]:
-        """Create a new location for user."""
-        try:
-            location_data = {
-                'name': name,
-                'description': description,
-                'location_type': location_type,
-                'is_default': is_default
-            }
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
             
-            return await self.kuzu_service.create_location(user_id, location_data)
-        except Exception as e:
-            current_app.logger.error(f"Error creating location: {e}")
-            return None
-    
-    async def get_user_locations(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all locations for a user."""
-        try:
-            return await self.kuzu_service.get_user_locations(user_id)
-        except Exception as e:
-            current_app.logger.error(f"Error getting user locations: {e}")
-            return []
-    
-    def get_user_locations_sync(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all locations for a user (sync version)."""
-        try:
-            return run_async(self.get_user_locations(user_id))
-        except Exception as e:
-            current_app.logger.error(f"Error getting user locations sync: {e}")
-            return []
-    
-    def get_location_by_id_sync(self, location_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific location by ID (sync version)."""
-        try:
-            locations = self.get_user_locations_sync(user_id)
-            for location in locations:
-                if location.get('id') == location_id:
-                    return location
-            return None
-        except Exception as e:
-            current_app.logger.error(f"Error getting location by ID: {e}")
-            return None
-
-
-# Custom field service using Kuzu repository pattern
-class CustomFieldService:
-    """Custom field service using existing Kuzu repository."""
-    
-    def __init__(self):
-        from .infrastructure.kuzu_graph import get_graph_storage
-        self.repository = KuzuCustomFieldRepository(get_graph_storage())
-    
-    def get_user_fields_with_calculated_usage_sync(self, user_id: str):
-        """Get user fields with calculated usage statistics."""
-        try:
-            # Use run_async to call the async repository method
-            fields = run_async(self.repository.get_by_user(user_id))
-            current_app.logger.info(f"Retrieved {len(fields)} custom fields for user {user_id}")
-            return fields
-        except Exception as e:
-            current_app.logger.error(f"Error getting user fields with stats: {e}")
-            return []
-    
-    def get_shareable_fields_with_calculated_usage_sync(self, exclude_user_id: str = None):
-        """Get shareable fields with calculated usage statistics."""
-        try:
-            # Use run_async to call the async repository method
-            fields = run_async(self.repository.get_shareable(exclude_user_id))
-            current_app.logger.info(f"Retrieved {len(fields)} shareable custom fields")
-            return fields
-        except Exception as e:
-            current_app.logger.error(f"Error getting shareable fields with stats: {e}")
-            return []
-    
-    def get_user_fields_sync(self, user_id: str):
-        """Get user fields."""
-        try:
-            # Use run_async to call the async repository method
-            fields = run_async(self.repository.get_by_user(user_id))
-            current_app.logger.info(f"Retrieved {len(fields)} custom fields for user {user_id}")
-            return fields
-        except Exception as e:
-            current_app.logger.error(f"Error getting user fields: {e}")
-            return []
-    
-    def create_field_sync(self, field_def):
-        """Create a field."""
-        field_name = getattr(field_def, 'name', 'unknown')
-        current_app.logger.info(f"ℹ️ [CUSTOM_FIELD_SERVICE] Attempting to create custom field '{field_name}' for user {field_def.created_by_user_id}")
-        try:
-            # Use run_async to call the async repository method
-            created_field = run_async(self.repository.create(field_def))
+            search_query = """
+            MATCH (c:Category)
+            WHERE c.name CONTAINS $query OR c.normalized_name CONTAINS $query
+            RETURN c
+            ORDER BY c.name ASC
+            LIMIT $limit
+            """
             
-            if created_field:
-                current_app.logger.info(f"✅ [CUSTOM_FIELD_SERVICE] Successfully created custom field '{field_name}' with id {created_field.id}")
-                return True
-            else:
-                current_app.logger.error(f"❌ [CUSTOM_FIELD_SERVICE] Failed to create custom field '{field_name}' in repository.")
-                return False
-        except Exception as e:
-            current_app.logger.error(f"❌ [CUSTOM_FIELD_SERVICE] Error creating field '{field_name}': {e}", exc_info=True)
-            return False
-    
-    def get_field_by_id_sync(self, field_id: str):
-        """Get field by ID."""
-        try:
-            # Use run_async to call the async repository method
-            field = run_async(self.repository.get_by_id(field_id))
-            return field
-        except Exception as e:
-            current_app.logger.error(f"Error getting field by ID: {e}")
-            return None
-    
-    def update_field_sync(self, field_def):
-        """Update a field."""
-        try:
-            # Use run_async to call the async repository method
-            updated_field = run_async(self.repository.update(field_def))
-            if updated_field:
-                current_app.logger.info(f"Successfully updated custom field {field_def.name}")
-                return True
-            else:
-                current_app.logger.error(f"Failed to update custom field {field_def.name}")
-                return False
-        except Exception as e:
-            current_app.logger.error(f"Error updating field: {e}")
-            return False
-    
-    def delete_field_sync(self, field_id: str):
-        """Delete a field."""
-        try:
-            # Use run_async to call the async repository method
-            success = run_async(self.repository.delete(field_id))
-            if success:
-                current_app.logger.info(f"Successfully deleted custom field {field_id}")
-                return True
-            else:
-                current_app.logger.error(f"Failed to delete custom field {field_id}")
-                return False
-        except Exception as e:
-            current_app.logger.error(f"Error deleting field: {e}")
-            return False
-    
-    def search_fields_sync(self, query: str, user_id: str):
-        """Search fields."""
-        try:
-            # Use run_async to call the async repository method
-            fields = run_async(self.repository.search(query, user_id))
-            current_app.logger.info(f"Found {len(fields)} custom fields matching query '{query}'")
-            return fields
-        except Exception as e:
-            current_app.logger.error(f"Error searching fields: {e}")
-            return []
-    
-    def get_custom_metadata_for_display(self, metadata_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Convert custom metadata dictionary to display format."""
-        try:
-            display_items = []
-            if metadata_dict:
-                for key, value in metadata_dict.items():
-                    if value is not None and value != "":
-                        # Try to get field definition for proper display name
-                        field_definition = None
-                        try:
-                            # Look for field by name in the repository
-                            field_definition = run_async(self.repository.get_by_name(key))
-                        except:
-                            pass  # Field might not exist or other error
-                        
-                        display_name = key
-                        if field_definition:
-                            display_name = field_definition.display_name
-                        else:
-                            # Format the field name for display (convert underscores to spaces, title case)
-                            display_name = key.replace('_', ' ').title()
-                        
-                        display_items.append({
-                            'name': key,
-                            'display_name': display_name,
-                            'display_value': str(value),
-                            'value': str(value),
-                            'type': field_definition.field_type.value if field_definition else 'text'
-                        })
-            return display_items
-        except Exception as e:
-            current_app.logger.error(f"Error formatting metadata for display: {e}")
-            return []
-    
-    def get_available_fields_sync(self, user_id: str, is_global: bool = False):
-        """Get available fields for a user."""
-        try:
-            current_app.logger.info(f"Getting available fields for user {user_id}, global: {is_global}")
-            # Get user's personal fields and optionally global fields
-            if is_global:
-                # Get global/shareable fields
-                fields = run_async(self.repository.get_shareable())
-                current_app.logger.info(f"Retrieved {len(fields)} global/shareable custom fields")
-            else:
-                # Get user's personal fields
-                fields = run_async(self.repository.get_by_user(user_id))
-                current_app.logger.info(f"Retrieved {len(fields)} personal custom fields for user {user_id}")
+            results = db.query(search_query, {
+                "query": query.lower(),
+                "limit": limit
+            })
             
-            return fields
+            categories = []
+            for result in results:
+                if 'result' in result:
+                    categories.append(dict(result['result']))
+                elif 'col_0' in result:
+                    categories.append(dict(result['col_0']))
+            
+            return categories
         except Exception as e:
-            current_app.logger.error(f"Error getting available fields: {e}")
+            print(f"❌ Error searching categories: {e}")
             return []
-    
-    def validate_and_save_metadata(self, metadata: dict, user_id: str, is_global: bool = False):
-        """Validate and save metadata."""
-        try:
-            # For now, return True and empty errors until full metadata system is implemented
-            current_app.logger.info(f"Metadata validation requested for user {user_id}: {metadata}")
-            return True, []
-        except Exception as e:
-            current_app.logger.error(f"Error validating metadata: {e}")
-            return False, [str(e)]
 
-
-class LegacyImportMappingService:
-    """Import mapping service using existing Kuzu repository."""
-    
-    def __init__(self):
-        from .infrastructure.kuzu_graph import get_graph_storage
-        self.repository = KuzuImportMappingRepository(get_graph_storage())
-    
-    def get_user_templates_sync(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get user's import mapping templates (sync version)."""
+    def get_root_categories_sync(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get root categories (categories without parent)."""
         try:
-            # TODO: Implement template system for import configurations
-            current_app.logger.debug(f"Import templates not yet implemented for user {user_id}")
-            return []
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            query = """
+            MATCH (c:Category)
+            WHERE c.parent_id IS NULL
+            RETURN c
+            ORDER BY c.name ASC
+            """
+            
+            results = db.query(query)
+            
+            categories = []
+            for result in results:
+                if 'result' in result:
+                    categories.append(dict(result['result']))
+                elif 'col_0' in result:
+                    categories.append(dict(result['col_0']))
+            
+            return categories
         except Exception as e:
-            current_app.logger.error(f"Error getting user templates: {e}")
+            print(f"❌ Error getting root categories: {e}")
             return []
-    
-    def detect_template_sync(self, headers: List[str], user_id: str):
-        """Detect matching template based on CSV headers (sync version)."""
+
+    def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:
+        """Get categories for a book."""
         try:
-            # For now, return None since template system isn't fully implemented
-            # But check for Goodreads and StoryGraph patterns
-            headers_lower = [h.lower().strip() for h in headers if h]
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
             
-            # Check for Goodreads signature
-            goodreads_signatures = ['book id', 'author l-f', 'bookshelves', 'exclusive shelf']
-            goodreads_matches = sum(1 for sig in goodreads_signatures if sig in headers_lower)
+            query = """
+            MATCH (b:Book {id: $book_id})-[:BELONGS_TO]->(c:Category)
+            RETURN c
+            ORDER BY c.name ASC
+            """
             
-            # Check for StoryGraph signature  
-            storygraph_signatures = ['read status', 'moods', 'pace', 'character- or plot-driven?', 'isbn/uid', 'star rating']
-            storygraph_matches = sum(1 for sig in storygraph_signatures if sig in headers_lower)
+            results = db.query(query, {"book_id": book_id})
             
-            # Return a basic template object if we detect a known format
-            if goodreads_matches >= 3:
-                # Return a basic Goodreads template
-                from .domain.models import ImportMappingTemplate
-                return ImportMappingTemplate(
-                    id="__system_goodreads__",
-                    name="Goodreads Export",
-                    user_id="__system__",
-                    description="Auto-detected Goodreads export file",
-                    field_mappings={
-                        # Standard Book Fields
-                        'Title': 'title',
-                        'Author': 'author',
-                        'Author l-f': 'ignore',  # Ignore this field as specified
-                        'Additional Authors': 'additional_author',  # Map to separate field for proper processing
-                        'ISBN': 'isbn',
-                        'ISBN13': 'isbn13',  # Map to proper isbn13 field
-                        'Publisher': 'publisher',
-                        'Number of Pages': 'page_count',
-                        'Year Published': 'publication_year',
-                        'Average Rating': 'ignore',  # Ignore this field as specified
-                        'Binding': 'media_type',  # Map to Media Type field
-                        
-                        # Personal Reading Data
-                        'My Rating': 'rating',
-                        'Date Read': 'date_read',
-                        'Date Added': 'date_added',
-                        'Exclusive Shelf': 'reading_status',
-                        'My Review': 'notes',
-                        'Private Notes': 'notes',
-                        
-                        # Custom Fields for Goodreads-specific data
-                        'Book Id': 'custom_global_goodreads_id',
-                        'Original Publication Year': 'custom_global_original_publication_date',
-                        'Bookshelves': 'custom_global_bookshelves',
-                        'Bookshelves with positions': 'custom_global_bookshelves_with_positions',
-                        'Spoiler': 'custom_global_spoiler',
-                        'Read Count': 'custom_global_read_count',
-                        'Owned Copies': 'ignore'  # Ignore this field as specified
-                    },
-                    sample_headers=headers,
-                    created_at=datetime.utcnow()
-                )
-            elif storygraph_matches >= 3:
-                # Return a basic StoryGraph template
-                from .domain.models import ImportMappingTemplate
-                return ImportMappingTemplate(
-                    id="__system_storygraph__",
-                    name="StoryGraph Export", 
-                    user_id="__system__",
-                    description="Auto-detected StoryGraph export file",
-                    field_mappings={
-                        # Standard Book Fields
-                        'Title': 'title',
-                        'Authors': 'author',
-                        'Contributors': 'contributors',  # Map to separate field for proper processing
-                        'ISBN/UID': 'isbn',
-                        'Format': 'media_type',
-                        'Read Status': 'reading_status',
-                        'Date Added': 'date_added',
-                        'Read Count': 'read_count',
-                        'Star Rating': 'rating',
-                        'Review': 'notes',
-                        'Tags': 'categories',  # Map to categories/personal tags
-                        'Owned?': 'ownership_status',
-                        
-                        # Custom Fields for StoryGraph-specific data
-                        'Last Date Read': 'custom_global_last_date_read',
-                        'Dates Read': 'custom_global_dates_read',
-                        'Moods': 'custom_global_moods',
-                        'Pace': 'custom_global_pace',
-                        'Character- or Plot-Driven?': 'custom_global_character_or_plot_driven',
-                        'Strong Character Development?': 'custom_global_strong_character_development',
-                        'Loveable Characters?': 'custom_global_loveable_characters',
-                        'Diverse Characters?': 'custom_global_diverse_characters',
-                        'Flawed Characters?': 'custom_global_flawed_characters',
-                        'Content Warnings': 'custom_global_content_warnings',
-                        'Content Warning Description': 'custom_global_content_warning_description'
-                    },
-                    sample_headers=headers,
-                    created_at=datetime.utcnow()
-                )
+            categories = []
+            for result in results:
+                if 'result' in result:
+                    categories.append(dict(result['result']))
+                elif 'col_0' in result:
+                    categories.append(dict(result['col_0']))
             
-            current_app.logger.debug(f"No template detected for headers: {headers}")
-            return None
+            return categories
         except Exception as e:
-            current_app.logger.error(f"Error detecting template: {e}")
-            return None
+            print(f"❌ Error getting book categories for {book_id}: {e}")
+            return []
 
-
-class DirectImportService:
-    """Direct import service for CSV and other formats."""
-    
-    def __init__(self):
-        self.book_service = KuzuBookService()
-    
-    async def import_books_from_csv(self, file_path: str, user_id: str, 
-                                   mapping_template: Dict[str, str] = None) -> Dict[str, Any]:
-        """Import books from CSV file."""
-        results = {
-            'total_rows': 0,
-            'successful_imports': 0,
-            'failed_imports': 0,
-            'errors': []
-        }
-        
+    def merge_categories_sync(self, primary_category_id: str, merge_category_ids: List[str]) -> bool:
+        """Merge multiple categories into one."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            # For each category to merge, move all its books to the primary category
+            for category_id in merge_category_ids:
+                # Move books from this category to primary category
+                query = """
+                MATCH (b:Book)-[r:BELONGS_TO]->(c:Category {id: $category_id})
+                DELETE r
+                WITH b
+                MATCH (primary:Category {id: $primary_category_id})
+                CREATE (b)-[:BELONGS_TO]->(primary)
+                """
                 
-                for row_num, row in enumerate(reader, 1):
-                    results['total_rows'] += 1
-                    
-                    try:
-                        # Apply mapping template if provided
-                        if mapping_template:
-                            mapped_row = {}
-                            for field, csv_column in mapping_template.items():
-                                if csv_column in row:
-                                    mapped_row[field] = row[csv_column]
-                            row = mapped_row
-                        
-                        # Create book data
-                        book_data = {
-                            'title': row.get('title', '').strip(),
-                            'isbn13': normalize_isbn_upc(row.get('isbn13')),
-                            'isbn10': normalize_isbn_upc(row.get('isbn10')),
-                            'description': row.get('description', '').strip(),
-                            'page_count': int(row.get('page_count', 0)) if row.get('page_count') else None,
-                            'language': row.get('language', 'en').strip(),
-                            'authors': [],
-                            'categories': []
-                        }
-                        
-                        # Handle authors
-                        if row.get('authors'):
-                            authors_str = row['authors'].strip()
-                            if authors_str:
-                                author_names = [name.strip() for name in authors_str.split(',')]
-                                book_data['authors'] = [{'name': name, 'role': 'author'} for name in author_names if name]
-                        
-                        # Handle categories
-                        if row.get('categories'):
-                            categories_str = row['categories'].strip()
-                            if categories_str:
-                                category_names = [name.strip() for name in categories_str.split(',')]
-                                book_data['categories'] = [{'name': name} for name in category_names if name]
-                        
-                        # Create book if title exists
-                        if book_data['title']:
-                            created_book = await self.book_service.create_book(book_data)
-                            if created_book:
-                                # Add to user's library
-                                await self.book_service.add_book_to_user_library(
-                                    user_id, created_book.id,
-                                    reading_status=row.get('reading_status', 'plan_to_read'),
-                                    ownership_status=row.get('ownership_status', 'owned'),
-                                    media_type=row.get('media_type', 'physical')
-                                )
-                                results['successful_imports'] += 1
-                            else:
-                                results['failed_imports'] += 1
-                                results['errors'].append(f"Row {row_num}: Failed to create book")
-                        else:
-                            results['failed_imports'] += 1
-                            results['errors'].append(f"Row {row_num}: Missing title")
-                    
-                    except Exception as e:
-                        results['failed_imports'] += 1
-                        results['errors'].append(f"Row {row_num}: {str(e)}")
-        
+                db.query(query, {
+                    "category_id": category_id,
+                    "primary_category_id": primary_category_id
+                })
+                
+                # Delete the merged category
+                self.delete_category_sync(category_id)
+            
+            return True
         except Exception as e:
-            results['errors'].append(f"File reading error: {str(e)}")
-        
-        return results
+            print(f"❌ Error merging categories: {e}")
+            return False
+
+    def find_or_create_book_sync(self, domain_book) -> Optional[Any]:
+        """Find or create a book - stub implementation."""
+        try:
+            # TODO: Implement proper find or create logic
+            return domain_book
+        except Exception as e:
+            print(f"❌ Error finding or creating book: {e}")
+            return None
+
+    def add_book_to_user_library_sync(self, user_id: str, book_id: str, reading_status) -> bool:
+        """Add book to user library - stub implementation."""
+        try:
+            # TODO: Implement proper add to library logic
+            return True
+        except Exception as e:
+            print(f"❌ Error adding book to user library: {e}")
+            return False
 
 
-# Service instances - these are what get imported by routes
+# Service instances
 user_service = KuzuUserService()
-book_service = KuzuBookService()
-reading_log_service = KuzuReadingLogService()
-location_service = KuzuLocationService()
-custom_field_service = CustomFieldService()
-import_mapping_service = LegacyImportMappingService()
-direct_import_service = DirectImportService()
+# Import the full-featured KuzuBookService from kuzu_services
+from .kuzu_services import KuzuBookService as FullKuzuBookService
+book_service = FullKuzuBookService()
 
-# Export the normalize function for direct import
-__all__ = [
-    'user_service', 'book_service', 'reading_log_service', 'location_service',
-    'custom_field_service', 'import_mapping_service', 'direct_import_service',
-    'normalize_isbn_upc', 'extract_digits_only'
-]
+# Placeholder services for compatibility
+class StubService:
+    """Stub service for missing services."""
+    def __getattr__(self, name):
+        def stub_method(*args, **kwargs):
+            print(f"Warning: {name} method called on stub service")
+            return None
+        return stub_method
+
+reading_log_service = StubService()
+custom_field_service = StubService()
+import_mapping_service = StubService()
+direct_import_service = StubService()

@@ -7,13 +7,13 @@ Focus on simple nodes and clear relationships.
 
 import os
 import json
-import kuzu
+import kuzu  # type: ignore
 import logging
 import uuid
-from typing import Optional, Dict, Any, List
+import traceback
+from typing import Optional, Dict, Any, List, Union
 from datetime import datetime, date
 from pathlib import Path
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,23 @@ logger = logging.getLogger(__name__)
 class KuzuGraphDB:
     """Simplified Kuzu graph database with clean schema design."""
     
-    def __init__(self, database_path: str = None):
+    def __init__(self, database_path: Optional[str] = None):
         self.database_path = database_path or os.getenv('KUZU_DB_PATH', 'data/kuzu')
-        self._database = None
-        self._connection = None
+        self._database: Optional[kuzu.Database] = None
+        self._connection: Optional[kuzu.Connection] = None
         self._is_initialized = False
+    
+    def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+        """Execute a query and normalize the result to always return a QueryResult."""
+        if self._connection is None:
+            raise Exception("Connection not established")
+        
+        result = self._connection.execute(query, params or {})  # type: ignore
+        
+        # Handle both single QueryResult and list[QueryResult]
+        if isinstance(result, list):
+            return result[0] if result else None
+        return result
         
     def connect(self) -> kuzu.Connection:
         """Establish connection and initialize schema."""
@@ -107,8 +119,8 @@ class KuzuGraphDB:
             if not force_reset:
                 try:
                     print("🔍 [KUZU_INIT] Checking for existing users...")
-                    result = self._connection.execute("MATCH (u:User) RETURN COUNT(u) as count LIMIT 1")
-                    if result.has_next():
+                    result = self._execute_query("MATCH (u:User) RETURN COUNT(u) as count LIMIT 1")
+                    if result and result.has_next():
                         user_count = result.get_next()[0]
                         print(f"🔍 [KUZU_INIT] Found {user_count} users in database")
                         if user_count > 0:
@@ -119,8 +131,8 @@ class KuzuGraphDB:
                             
                             # Check for books too
                             try:
-                                book_result = self._connection.execute("MATCH (b:Book) RETURN COUNT(b) as count LIMIT 1")
-                                if book_result.has_next():
+                                book_result = self._execute_query("MATCH (b:Book) RETURN COUNT(b) as count LIMIT 1")
+                                if book_result and book_result.has_next():
                                     book_count = book_result.get_next()[0]
                                     print(f"🗄️ Database also contains {book_count} books")
                             except Exception as book_e:
@@ -154,7 +166,7 @@ class KuzuGraphDB:
                 
                 for table in drop_tables:
                     try:
-                        self._connection.execute(f"DROP TABLE {table}")
+                        self._execute_query(f"DROP TABLE {table}")
                         logger.debug(f"Dropped table: {table}")
                         print(f"🗑️ Dropped table: {table}")
                     except Exception as e:
@@ -167,22 +179,25 @@ class KuzuGraphDB:
                 # Check for and add missing columns to Person table
                 try:
                     # Test if openlibrary_id column exists
-                    self._connection.execute("MATCH (p:Person) RETURN p.openlibrary_id LIMIT 1")
-                    print("🔍 [MIGRATION] Person.openlibrary_id column already exists")
+                    if self._connection:
+                        self._connection.execute("MATCH (p:Person) RETURN p.openlibrary_id LIMIT 1")
+                        print("🔍 [MIGRATION] Person.openlibrary_id column already exists")
                 except Exception as e:
                     if "Cannot find property openlibrary_id" in str(e):
                         print("🔧 [MIGRATION] Adding openlibrary_id and image_url columns to Person table...")
                         try:
-                            self._connection.execute("ALTER TABLE Person ADD openlibrary_id STRING")
-                            print("✅ [MIGRATION] Added openlibrary_id column to Person table")
+                            if self._connection:
+                                self._connection.execute("ALTER TABLE Person ADD openlibrary_id STRING")
+                                print("✅ [MIGRATION] Added openlibrary_id column to Person table")
                         except Exception as alter_e:
                             print(f"⚠️ [MIGRATION] Could not add openlibrary_id column: {alter_e}")
                         
                         try:
-                            self._connection.execute("ALTER TABLE Person ADD image_url STRING")
-                            print("✅ [MIGRATION] Added image_url column to Person table")
+                            if self._connection:
+                                self._connection.execute("ALTER TABLE Person ADD image_url STRING")
+                                print("✅ [MIGRATION] Added image_url column to Person table")
                         except Exception as alter_e:
-                            print(f"⚠️ [MIGRATION] Could not add image_url column: {alter_e}")
+                            print(f"⚠️ [MIGRATION] Could not add image_url column to Person table")
                     else:
                         print(f"🔍 [MIGRATION] Unexpected error checking Person table: {e}")
                         
@@ -582,7 +597,7 @@ class KuzuGraphDB:
             
             for i, query in enumerate(all_queries):
                 try:
-                    self._connection.execute(query)
+                    self._execute_query(query)
                     tables_created += 1
                     logger.debug(f"Successfully created table/relationship {i+1}/{len(all_queries)}")
                 except Exception as e:
@@ -635,18 +650,24 @@ class KuzuGraphDB:
                 # Try to get final counts
                 try:
                     user_result = self._connection.execute("MATCH (u:User) RETURN COUNT(u) as count")
-                    if user_result.has_next():
-                        user_count = user_result.get_next()[0]
+                    if isinstance(user_result, list) and user_result:
+                        user_result = user_result[0]
+                    if user_result and user_result.has_next():  # type: ignore
+                        user_count = user_result.get_next()[0]  # type: ignore
                         print(f"🔌 [KUZU_DISCONNECT]   - Users: {user_count}")
                     
                     book_result = self._connection.execute("MATCH (b:Book) RETURN COUNT(b) as count")
-                    if book_result.has_next():
-                        book_count = book_result.get_next()[0]
+                    if isinstance(book_result, list) and book_result:
+                        book_result = book_result[0]
+                    if book_result and book_result.has_next():  # type: ignore
+                        book_count = book_result.get_next()[0]  # type: ignore
                         print(f"🔌 [KUZU_DISCONNECT]   - Books: {book_count}")
                     
                     owns_result = self._connection.execute("MATCH ()-[r:OWNS]->() RETURN COUNT(r) as count")
-                    if owns_result.has_next():
-                        owns_count = owns_result.get_next()[0]
+                    if isinstance(owns_result, list) and owns_result:
+                        owns_result = owns_result[0]
+                    if owns_result and owns_result.has_next():  # type: ignore
+                        owns_count = owns_result.get_next()[0]  # type: ignore
                         print(f"🔌 [KUZU_DISCONNECT]   - OWNS relationships: {owns_count}")
                         
                 except Exception as e:
@@ -703,30 +724,35 @@ class KuzuGraphDB:
         storage = KuzuGraphStorage(self)
         return storage.find_nodes_by_type(node_type, limit, offset)
     
-    def query(self, cypher_query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def query(self, cypher_query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return results."""
         try:
             result = self.connection.execute(cypher_query, params or {})
+            # Handle both single QueryResult and list[QueryResult]
+            if isinstance(result, list) and result:
+                result = result[0]
+            
             rows = []
-            while result.has_next():
-                row = result.get_next()
-                # Convert row to dict
-                if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': row[0]})
-                else:
-                    # Multiple columns - create dict with column names
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[f'col_{i}'] = value
-                    rows.append(row_dict)
+            if result:
+                while result.has_next():  # type: ignore
+                    row = result.get_next()  # type: ignore
+                    # Convert row to dict
+                    if len(row) == 1:
+                        # Single column result
+                        rows.append({'result': row[0]})
+                    else:
+                        # Multiple columns - create dict with column names
+                        row_dict = {}
+                        for i, value in enumerate(row):
+                            row_dict[f'col_{i}'] = value
+                        rows.append(row_dict)
             return rows
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
             return []
     
     def create_relationship(self, from_type: str, from_id: str, rel_type: str,
-                          to_type: str, to_id: str, properties: Dict[str, Any] = None) -> bool:
+                          to_type: str, to_id: str, properties: Optional[Dict[str, Any]] = None) -> bool:
         """Create a relationship between two nodes."""
         try:
             props_str = ""
@@ -767,25 +793,35 @@ class KuzuGraphStorage:
         self.connection = connection
         self.kuzu_conn = connection.connection
     
-    def query(self, cypher_query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+        """Execute a query and normalize the result to always return a QueryResult."""
+        result = self.kuzu_conn.execute(query, params or {})  # type: ignore
+        
+        # Handle both single QueryResult and list[QueryResult]
+        if isinstance(result, list):
+            return result[0] if result else None
+        return result
+    
+    def query(self, cypher_query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return results - compatibility method for services."""
         try:
             params = params or {}
-            result = self.kuzu_conn.execute(cypher_query, params)
+            result = self._execute_query(cypher_query, params)
             
             rows = []
-            while result.has_next():
-                row = result.get_next()
-                # Convert row to dict format expected by services
-                if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': row[0]})
-                else:
-                    # Multiple columns - create dict with generic column names
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[f'col_{i}'] = value
-                    rows.append(row_dict)
+            if result and result.has_next():
+                while result.has_next():
+                    row = result.get_next()
+                    # Convert row to dict format expected by services
+                    if len(row) == 1:
+                        # Single column result
+                        rows.append({'result': row[0]})
+                    else:
+                        # Multiple columns - create dict with generic column names
+                        row_dict = {}
+                        for i, value in enumerate(row):
+                            row_dict[f'col_{i}'] = value
+                        rows.append(row_dict)
             return rows
             
         except Exception as e:
@@ -900,8 +936,8 @@ class KuzuGraphStorage:
             
             # Verify the node was actually stored
             verification_query = f"MATCH (n:{node_type}) WHERE n.id = $node_id RETURN COUNT(n) as count"
-            verify_result = self.kuzu_conn.execute(verification_query, {"node_id": node_id})
-            if verify_result.has_next():
+            verify_result = self._execute_query(verification_query, {"node_id": node_id})
+            if verify_result and verify_result.has_next():
                 count = verify_result.get_next()[0]
                 if count > 0:
                     print(f"[KUZU_STORAGE] ✅ Verification: {node_type} node {node_id} exists in database")
@@ -922,9 +958,9 @@ class KuzuGraphStorage:
         """Get a node by type and ID."""
         try:
             query = f"MATCH (n:{node_type}) WHERE n.id = $node_id RETURN n.id, n"
-            result = self.kuzu_conn.execute(query, {"node_id": node_id})
+            result = self._execute_query(query, {"node_id": node_id})
             
-            if result.has_next():
+            if result and result.has_next():
                 row = result.get_next()
                 returned_id = row[0]
                 node_obj = row[1]
@@ -1012,25 +1048,26 @@ class KuzuGraphStorage:
             SKIP {offset} LIMIT {limit}
             """
             
-            result = self.kuzu_conn.execute(query)
+            result = self._execute_query(query)
             nodes = []
-            while result.has_next():
-                row = result.get_next()
-                node_id = row[0]  # The ID
-                node_obj = row[1]  # The full node object
-                
-                try:
-                    # Try to convert node object to dict
-                    node_data = dict(node_obj)
-                    # Ensure the ID is properly set
-                    if 'id' not in node_data or node_data['id'] != node_id:
-                        node_data['id'] = node_id
-                    nodes.append(node_data)
-                except Exception as conv_error:
-                    logger.warning(f"Could not convert {node_type} node to dict: {conv_error}")
-                    # Fallback: create a minimal dict with just the ID
-                    nodes.append({'id': node_id})
+            if result:
+                while result.has_next():
+                    row = result.get_next()
+                    node_id = row[0]  # The ID
+                    node_obj = row[1]  # The full node object
                     
+                    try:
+                        # Try to convert node object to dict
+                        node_data = dict(node_obj)
+                        # Ensure the ID is properly set
+                        if 'id' not in node_data or node_data['id'] != node_id:
+                            node_data['id'] = node_id
+                        nodes.append(node_data)
+                    except Exception as conv_error:
+                        logger.warning(f"Could not convert {node_type} node to dict: {conv_error}")
+                        # Fallback: create a minimal dict with just the ID
+                        nodes.append({'id': node_id})
+                        
             return nodes
             
         except Exception as e:
@@ -1043,7 +1080,7 @@ class KuzuGraphStorage:
     
     # Relationship Operations
     
-    def create_relationship(self, from_type: str, from_id: str, rel_type: str, to_type: str, to_id: str, properties: Dict[str, Any] = None) -> bool:
+    def create_relationship(self, from_type: str, from_id: str, rel_type: str, to_type: str, to_id: str, properties: Optional[Dict[str, Any]] = None) -> bool:
         """Create a relationship between two nodes."""
         try:
             properties = properties or {}
@@ -1154,8 +1191,8 @@ class KuzuGraphStorage:
             WHERE from.id = $from_id AND to.id = $to_id
             RETURN COUNT(r) as count
             """
-            verify_result = self.kuzu_conn.execute(verify_query, {"from_id": from_id, "to_id": to_id})
-            if verify_result.has_next():
+            verify_result = self._execute_query(verify_query, {"from_id": from_id, "to_id": to_id})
+            if verify_result and verify_result.has_next():
                 count = verify_result.get_next()[0]
                 if count > 0:
                     print(f"[KUZU_STORAGE] ✅ Verification: {rel_type} relationship exists")
@@ -1168,11 +1205,10 @@ class KuzuGraphStorage:
             logger.error(f"Failed to create relationship {from_id} -{rel_type}-> {to_id}: {e}")
             print(f"[KUZU_STORAGE] ❌ Failed to create relationship {from_id} -{rel_type}-> {to_id}: {e}")
             print(f"[KUZU_STORAGE] 🔍 Database path: {getattr(self.connection, 'database_path', 'Unknown')}")
-            import traceback
             traceback.print_exc()
             return False
     
-    def get_relationships(self, from_type: str, from_id: str, rel_type: str = None) -> List[Dict[str, Any]]:
+    def get_relationships(self, from_type: str, from_id: str, rel_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get all relationships from a node."""
         try:
             if rel_type:
@@ -1188,16 +1224,17 @@ class KuzuGraphStorage:
                 RETURN r, to
                 """
             
-            result = self.kuzu_conn.execute(query, {"from_id": from_id})
+            result = self._execute_query(query, {"from_id": from_id})
             relationships = []
-            while result.has_next():
-                row = result.get_next()
-                rel_data = dict(row[0])
-                to_data = dict(row[1])
-                relationships.append({
-                    "relationship": rel_data,
-                    "target": to_data
-                })
+            if result:
+                while result.has_next():
+                    row = result.get_next()
+                    rel_data = dict(row[0])
+                    to_data = dict(row[1])
+                    relationships.append({
+                        "relationship": rel_data,
+                        "target": to_data
+                    })
             return relationships
             
         except Exception as e:
@@ -1220,7 +1257,7 @@ class KuzuGraphStorage:
             logger.error(f"Failed to delete relationship {from_id} -{rel_type}-> {to_id}: {e}")
             return False
     
-    def store_custom_metadata(self, user_id: str, book_id: str, field_name: str, field_value: str, field_type: str = None) -> bool:
+    def store_custom_metadata(self, user_id: str, book_id: str, field_name: str, field_value: str, field_type: Optional[str] = None) -> bool:
         """
         Store custom metadata for a user-book relationship.
         
@@ -1240,9 +1277,6 @@ class KuzuGraphStorage:
             True if successful, False otherwise
         """
         try:
-            from datetime import datetime
-            import json
-            
             print(f"🔍 [STORE_CUSTOM_METADATA] Storing {field_name}={field_value} for user {user_id}, book {book_id}")
             
             # Step 1: Update the OWNS relationship custom_metadata
@@ -1252,10 +1286,10 @@ class KuzuGraphStorage:
             RETURN r.custom_metadata as current_metadata
             """
             
-            result = self.kuzu_conn.execute(query_get_owns, {"user_id": user_id, "book_id": book_id})
+            result = self._execute_query(query_get_owns, {"user_id": user_id, "book_id": book_id})
             current_metadata = {}
             
-            if result.has_next():
+            if result and result.has_next():
                 metadata_json = result.get_next()[0]
                 if metadata_json:
                     try:
@@ -1289,10 +1323,10 @@ class KuzuGraphStorage:
             LIMIT 1
             """
             
-            result = self.kuzu_conn.execute(query_find_field, {"field_name": field_name})
+            result = self._execute_query(query_find_field, {"field_name": field_name})
             field_definition_id = None
             
-            if result.has_next():
+            if result and result.has_next():
                 field_definition_id = result.get_next()[0]
                 print(f"✅ [STORE_CUSTOM_METADATA] Found existing field definition: {field_definition_id}")
                 
@@ -1313,14 +1347,14 @@ class KuzuGraphStorage:
                 RETURN COUNT(r) as count
                 """
                 
-                result = self.kuzu_conn.execute(query_check_rel, {
+                result = self._execute_query(query_check_rel, {
                     "user_id": user_id, 
                     "field_id": field_definition_id, 
                     "book_id": book_id
                 })
                 
                 rel_exists = False
-                if result.has_next():
+                if result and result.has_next():
                     count = result.get_next()[0]
                     rel_exists = count > 0
                 
@@ -1368,23 +1402,23 @@ class KuzuGraphStorage:
             
         except Exception as e:
             print(f"❌ [STORE_CUSTOM_METADATA] Error storing custom metadata: {e}")
-            import traceback
             traceback.print_exc()
             return False
 
     # Advanced Graph Queries
     
-    def execute_cypher(self, query: str, parameters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def execute_cypher(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a custom Cypher query."""
         try:
             parameters = parameters or {}
-            result = self.kuzu_conn.execute(query, parameters)
+            result = self._execute_query(query, parameters)
             
             rows = []
-            while result.has_next():
-                row = result.get_next()
-                # Convert result to dictionary format
-                rows.append({f"col_{i}": val for i, val in enumerate(row)})
+            if result and result.has_next():  # type: ignore
+                while result.has_next():  # type: ignore
+                    row = result.get_next()  # type: ignore
+                    # Convert result to dictionary format
+                    rows.append({f"col_{i}": val for i, val in enumerate(row)})
             return rows
             
         except Exception as e:
@@ -1395,9 +1429,9 @@ class KuzuGraphStorage:
         """Count nodes of a specific type."""
         try:
             query = f"MATCH (n:{node_type}) RETURN COUNT(n) as count"
-            result = self.kuzu_conn.execute(query)
-            if result.has_next():
-                return result.get_next()[0]
+            result = self._execute_query(query)
+            if result and result.has_next():  # type: ignore
+                return result.get_next()[0]  # type: ignore
             return 0
         except Exception as e:
             logger.error(f"Failed to count {node_type} nodes: {e}")
@@ -1407,9 +1441,9 @@ class KuzuGraphStorage:
         """Count relationships of a specific type."""
         try:
             query = f"MATCH ()-[r:{rel_type}]->() RETURN COUNT(r) as count"
-            result = self.kuzu_conn.execute(query)
-            if result.has_next():
-                return result.get_next()[0]
+            result = self._execute_query(query)
+            if result and result.has_next():  # type: ignore
+                return result.get_next()[0]  # type: ignore
             return 0
         except Exception as e:
             logger.error(f"Failed to count {rel_type} relationships: {e}")

@@ -50,10 +50,14 @@ def setup():
             flash('Passwords do not match.', 'error')
             return render_template('auth/simple_setup.html')
         
+        # Ensure we have non-None values after validation
+        assert username is not None
+        assert email is not None
+        assert password is not None
+        
         try:
             # Create the admin user
             from werkzeug.security import generate_password_hash
-            from ..domain.models import User
             import uuid
             from datetime import datetime
             
@@ -61,7 +65,7 @@ def setup():
                 id=str(uuid.uuid4()),
                 username=username,
                 email=email,
-                password=generate_password_hash(password),
+                password_hash=generate_password_hash(password),
                 is_admin=True,
                 is_active=True,
                 created_at=datetime.utcnow(),
@@ -69,7 +73,12 @@ def setup():
             )
             
             # Save the user
-            created_user = user_service.create_user_sync(admin_user)
+            created_user = user_service.create_user_sync(
+                username=admin_user.username,
+                email=admin_user.email,
+                password_hash=admin_user.password_hash,
+                is_admin=admin_user.is_admin
+            )
             if created_user:
                 flash('Admin account created successfully! You can now log in.', 'success')
                 return redirect(url_for('auth.login'))
@@ -152,8 +161,16 @@ def login():
         debug_auth(f"Login form submitted for user: {form.username.data}")
         debug_csrf("Form validation passed, checking CSRF")
         
+        # Ensure form data is not None
+        username_or_email = form.username.data
+        password = form.password.data
+        
+        if not username_or_email or not password:
+            flash('Username/email and password are required.', 'error')
+            return render_template('auth/login.html', title='Sign In', form=form)
+        
         # Try to find user by username or email using Kuzu service
-        user = user_service.get_user_by_username_or_email_sync(form.username.data)
+        user = user_service.get_user_by_username_or_email_sync(username_or_email)
         
         if user:
             debug_auth(f"User found: {user.username} (ID: {user.id})")
@@ -170,7 +187,7 @@ def login():
                 return redirect(url_for('auth.login'))
             
             # Check password
-            if user.check_password(form.password.data):
+            if user.check_password(password):
                 debug_auth("Password check passed")
                 # Successful login - reset failed login attempts if any
                 if user.failed_login_attempts > 0 or user.locked_until:
@@ -238,14 +255,23 @@ def register():
     if form.validate_on_submit():
         try:
             # Check if this is the very first user in the system
-            existing_users = user_service.list_all()
-            is_first_user = len(existing_users) == 0
+            user_count = user_service.get_user_count_sync()
+            is_first_user = user_count == 0
+            
+            # Ensure form data is not None
+            username = form.username.data
+            email = form.email.data
+            password = form.password.data
+            
+            if not username or not email or not password:
+                flash('All fields are required.', 'error')
+                return render_template('auth/register.html', title='Create New User', form=form)
             
             # Create user through Kuzu service
-            password_hash = generate_password_hash(form.password.data)
+            password_hash = generate_password_hash(password)
             domain_user = user_service.create_user_sync(
-                username=form.username.data,
-                email=form.email.data,
+                username=username,
+                email=email,
                 password_hash=password_hash,
                 is_admin=is_first_user,
                 password_must_change=True  # All new users must change password on first login
@@ -254,7 +280,10 @@ def register():
             if is_first_user:
                 flash('Congratulations! As the first user, you have been granted admin privileges. You must change your password on first login.', 'info')
             else:
-                flash(f'User {domain_user.username} has been created successfully! They will be required to change their password on first login.', 'success')
+                if domain_user:
+                    flash(f'User {domain_user.username} has been created successfully! They will be required to change their password on first login.', 'success')
+                else:
+                    flash('User has been created successfully! They will be required to change their password on first login.', 'success')
             
             return redirect(url_for('admin.users'))
         except ValueError as e:
@@ -269,20 +298,33 @@ def profile():
     
     if form.validate_on_submit():
         try:
-            # Update user profile through Kuzu service
-            updated_user = user_service.update_user_profile_sync(
-                user_id=current_user.id,
-                username=form.username.data,
-                email=form.email.data
-            )
-            if updated_user:
-                # Update current_user object for immediate UI reflection
-                current_user.username = updated_user.username
-                current_user.email = updated_user.email
-                flash('Your profile has been updated.', 'success')
-                return redirect(url_for('auth.profile'))
+            # Validate form data
+            username = form.username.data
+            email = form.email.data
+            
+            if not username or not email:
+                flash('Username and email are required.', 'error')
+                return render_template('auth/profile.html', title='Profile', form=form)
+            
+            # Get current user from Kuzu to ensure we have the latest data
+            user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_kuzu:
+                # Update profile fields
+                user_from_kuzu.username = username
+                user_from_kuzu.email = email
+                
+                # Save through Kuzu service
+                updated_user = user_service.update_user_sync(user_from_kuzu)
+                if updated_user:
+                    # Update current_user object for immediate UI reflection
+                    current_user.username = updated_user.username
+                    current_user.email = updated_user.email
+                    flash('Your profile has been updated.', 'success')
+                    return redirect(url_for('auth.profile'))
+                else:
+                    flash('Failed to update profile.', 'error')
             else:
-                flash('Failed to update profile.', 'error')
+                flash('User not found.', 'error')
         except Exception as e:
             flash(f'Failed to update profile: {str(e)}', 'error')
     elif request.method == 'GET':
@@ -297,27 +339,38 @@ def change_password():
     form = ChangePasswordForm()
     
     if form.validate_on_submit():
-        if current_user.check_password(form.current_password.data):
+        current_password = form.current_password.data
+        new_password = form.new_password.data
+        
+        if not current_password or not new_password:
+            flash('Both current and new passwords are required.', 'error')
+            return render_template('auth/change_password.html', title='Change Password', form=form)
+            
+        if current_user.check_password(current_password):
             try:
                 # Generate new password hash
                 from werkzeug.security import generate_password_hash
-                new_password_hash = generate_password_hash(form.new_password.data)
+                new_password_hash = generate_password_hash(new_password)
                 
-                # Update password through Kuzu service
-                updated_user = user_service.update_user_password_sync(
-                    user_id=current_user.id,
-                    password_hash=new_password_hash,
-                    clear_must_change=True
-                )
-                
-                if updated_user:
-                    # Update current_user object for immediate reflection
-                    current_user.password_hash = updated_user.password_hash
-                    current_user.password_must_change = updated_user.password_must_change
-                    flash('Your password has been changed.', 'success')
-                    return redirect(url_for('auth.profile'))
+                # Get current user from Kuzu to update password
+                user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
+                if user_from_kuzu:
+                    # Update password fields
+                    user_from_kuzu.password_hash = new_password_hash
+                    user_from_kuzu.password_must_change = False
+                    
+                    # Save through Kuzu service
+                    updated_user = user_service.update_user_sync(user_from_kuzu)
+                    if updated_user:
+                        # Update current_user object for immediate reflection
+                        current_user.password_hash = updated_user.password_hash
+                        current_user.password_must_change = updated_user.password_must_change
+                        flash('Your password has been changed.', 'success')
+                        return redirect(url_for('auth.profile'))
+                    else:
+                        flash('Failed to update password.', 'error')
                 else:
-                    flash('Failed to update password.', 'error')
+                    flash('User not found.', 'error')
             except Exception as e:
                 flash(f'Failed to update password: {str(e)}', 'error')
         else:
@@ -342,27 +395,36 @@ def forced_password_change():
         debug_auth("Forced password change form submitted")
         debug_csrf("Form validation passed for forced password change")
         
+        new_password = form.new_password.data
+        if not new_password:
+            flash('New password is required.', 'error')
+            return render_template('auth/forced_password_change.html', title='Change Required Password', form=form)
+        
         try:
             # Generate new password hash
             from werkzeug.security import generate_password_hash
-            new_password_hash = generate_password_hash(form.new_password.data)
+            new_password_hash = generate_password_hash(new_password)
             
-            # Update password through Kuzu service
-            updated_user = user_service.update_user_password_sync(
-                user_id=current_user.id,
-                password_hash=new_password_hash,
-                clear_must_change=True
-            )
-            
-            if updated_user:
-                # Update current_user object for immediate reflection
-                current_user.password_hash = updated_user.password_hash
-                current_user.password_must_change = updated_user.password_must_change
-                debug_auth("Password changed successfully")
-                flash('Your password has been changed successfully. You can now continue using the application.', 'success')
-                return redirect(url_for('main.index'))
+            # Get current user from Kuzu to update password
+            user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
+            if user_from_kuzu:
+                # Update password fields
+                user_from_kuzu.password_hash = new_password_hash
+                user_from_kuzu.password_must_change = False
+                
+                # Save through Kuzu service
+                updated_user = user_service.update_user_sync(user_from_kuzu)
+                if updated_user:
+                    # Update current_user object for immediate reflection
+                    current_user.password_hash = updated_user.password_hash
+                    current_user.password_must_change = updated_user.password_must_change
+                    debug_auth("Password changed successfully")
+                    flash('Your password has been changed successfully. You can now continue using the application.', 'success')
+                    return redirect(url_for('main.index'))
+                else:
+                    flash('Failed to update password.', 'error')
             else:
-                flash('Failed to update password.', 'error')
+                flash('User not found.', 'error')
         except Exception as e:
             debug_auth(f"Password update failed: {e}")
             flash(f'Failed to update password: {str(e)}', 'error')
@@ -443,7 +505,8 @@ def privacy_settings():
         ('Australia/Sydney', 'Sydney'),
         ('Australia/Melbourne', 'Melbourne'),
     ]
-    form.timezone.choices = common_timezones
+    # Use type: ignore to suppress the type checker warning for this assignment
+    form.timezone.choices = common_timezones  # type: ignore
     
     # Populate forms with current values
     if request.method == 'GET':
@@ -512,10 +575,14 @@ def my_activity():
         # Get books added this year
         current_year = datetime.now(timezone.utc).year
         books_this_year = sum(1 for book in user_books 
-                             if book.created_at and book.created_at.year == current_year)
+                             if book.get('created_at') and isinstance(book.get('created_at'), datetime) and book['created_at'].year == current_year)
         
         # Get recent books (last 10) - sort by created_at descending
-        recent_books = sorted(user_books, key=lambda x: x.created_at or datetime.min, reverse=True)[:10]
+        # Filter out books without created_at and sort safely
+        books_with_dates = [book for book in user_books if book.get('created_at')]
+        recent_books = sorted(books_with_dates, 
+                             key=lambda x: x.get('created_at') or datetime.min, 
+                             reverse=True)[:10]
         
         # For reading logs, we'll need to implement a method or use a placeholder for now
         # TODO: Implement reading log functionality when needed
@@ -599,7 +666,8 @@ def update_timezone():
         ('Australia/Sydney', 'Sydney'),
         ('Australia/Melbourne', 'Melbourne'),
     ]
-    form.timezone.choices = common_timezones
+    # Use type: ignore to suppress the type checker warning for this assignment
+    form.timezone.choices = common_timezones  # type: ignore
     
     if form.validate_on_submit():
         try:

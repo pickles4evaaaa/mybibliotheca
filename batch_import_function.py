@@ -1,23 +1,45 @@
-def start_import_job_new_batch(task_id):
+def start_import_job(task_id):
     """Start the actual import process with batch-oriented architecture."""
     print(f"🚀 [START] Starting batch import job {task_id}")
     
-    # Import required functions from routes
+    # Import required functions from routes and services
     from app.routes import (get_job_from_kuzu, update_job_in_kuzu, import_jobs,
                            normalize_goodreads_value, batch_fetch_book_metadata, 
                            batch_fetch_author_metadata, auto_create_custom_fields)
+    from app.services import run_async
     
-    # Try to get job from both sources
-    kuzu_job = get_job_from_kuzu(task_id)
+    # Try to get job from both sources - handle potential async issues
+    try:
+        kuzu_job = get_job_from_kuzu(task_id)
+        # If kuzu_job is a coroutine, run it synchronously
+        if hasattr(kuzu_job, '__await__'):
+            kuzu_job = run_async(kuzu_job)
+    except Exception as e:
+        print(f"⚠️ [START] Error getting job from Kuzu: {e}")
+        kuzu_job = None
+    
     memory_job = import_jobs.get(task_id)
     
     print(f"📊 [START] Kuzu job found: {bool(kuzu_job)}")
     print(f"💾 [START] Memory job found: {bool(memory_job)}")
     
+    # Ensure we have a proper job dictionary
     job = kuzu_job or memory_job
+    
+    # Additional safety check - if job is still a coroutine, try to resolve it
+    if job and hasattr(job, '__await__'):
+        try:
+            job = run_async(job)
+        except Exception as e:
+            print(f"⚠️ [START] Failed to resolve job coroutine: {e}")
+            job = memory_job  # Fall back to memory job
+    
     if not job:
         print(f"❌ [START] Import job {task_id} not found in start_import_job")
         return
+
+    # Type assertion for the linter - we know job should be a dict at this point
+    assert isinstance(job, dict), f"Job should be a dictionary, got {type(job)}"
 
     print(f"✅ [START] Starting import job {task_id} for user {job['user_id']}")
     job['status'] = 'running'
@@ -97,7 +119,7 @@ def start_import_job_new_batch(task_id):
                         field_name = book_field.replace('custom_global_', '').replace('custom_personal_', '')
                         custom_metadata[field_name] = row[csv_field]
                 
-                success = service.add_book_to_user_library(
+                success = service.add_book_to_user_library_sync(
                     book_data,
                     user_id=user_id,
                     reading_status=reading_status,

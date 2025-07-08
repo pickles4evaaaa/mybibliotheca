@@ -225,7 +225,7 @@ class SQLiteMigrationService:
         """Process books using the existing batch import infrastructure."""
         
         # ===== PHASE 2-3: Use existing batch API functions =====
-        from app.routes import batch_fetch_book_metadata, batch_fetch_author_metadata
+        from app.routes.import_routes import batch_fetch_book_metadata, batch_fetch_author_metadata
         
         print(f"🔍 [BATCH_MIGRATION] Batch fetching book metadata for {len(all_isbns)} ISBNs...")
         book_api_data = batch_fetch_book_metadata(list(all_isbns))
@@ -235,7 +235,10 @@ class SQLiteMigrationService:
         
         # ===== PHASE 4-5: Use existing book creation pipeline =====
         from app.services import book_service
-        from app.domain.models import ReadingStatus, OwnershipStatus
+        from app.kuzu_services import KuzuUserBookService
+        from app.domain.models import ReadingStatus
+        
+        user_book_service = KuzuUserBookService()
         
         print(f"📚 [BATCH_MIGRATION] Creating books and user relationships...")
         
@@ -248,24 +251,34 @@ class SQLiteMigrationService:
                 # Convert to domain object using the enhanced API data
                 domain_book = self._convert_simplified_book_to_domain(book_data, book_api_data, author_api_data)
                 
-                # Use existing pipeline
-                created_book = book_service.find_or_create_book_sync(domain_book)
+                # Find or create book logic
+                existing_book = None
+                
+                # Try to find existing book by ISBN
+                if book_data.isbn13:
+                    existing_book = book_service.get_book_by_isbn_for_user_sync(book_data.isbn13, target_user_id)
+                if not existing_book and book_data.isbn10:
+                    existing_book = book_service.get_book_by_isbn_for_user_sync(book_data.isbn10, target_user_id)
+                
+                if existing_book:
+                    # Book already exists for this user
+                    created_book = existing_book
+                    print(f"📚 Found existing book: {book_data.title}")
+                else:
+                    # Create new book (this automatically creates the user-book relationship)
+                    created_book = book_service.create_book_sync(domain_book, target_user_id)
+                    print(f"📚 Created new book: {book_data.title}")
                 
                 if created_book:
-                    # Determine reading status from SQLite data
-                    reading_status = self._determine_reading_status(book_data)
+                    # Get book ID (handle both Book objects and book IDs)
+                    book_id = getattr(created_book, 'id', None) if hasattr(created_book, 'id') else str(created_book)
                     
-                    # Add to user's library
-                    library_success = book_service.add_book_to_user_library_sync(
-                        user_id=target_user_id,
-                        book_id=created_book.id,
-                        reading_status=reading_status,
-                        ownership_status=OwnershipStatus.OWNED
-                    )
-                    
-                    if library_success:
+                    if book_id:
                         # Update with personal information from SQLite
-                        self._update_personal_information(book_service, target_user_id, created_book.id, book_data)
+                        self._update_personal_information(user_book_service, target_user_id, book_id, book_data)
+                        
+                        # Determine reading status from SQLite data
+                        reading_status = self._determine_reading_status(book_data)
                         
                         success_count += 1
                         migration_details.append({
@@ -277,8 +290,8 @@ class SQLiteMigrationService:
                         error_count += 1
                         migration_details.append({
                             'title': book_data.title,
-                            'status': 'failed_library_add',
-                            'error': 'Failed to add to user library'
+                            'status': 'failed_creation',
+                            'error': 'Book created but no ID available'
                         })
                 else:
                     error_count += 1
@@ -358,7 +371,7 @@ class SQLiteMigrationService:
             page_count=self._safe_int(row.get('page_count')),
             language=row.get('language', 'en'),
             cover_url=row.get('cover_url'),
-            categories=row.get('categories'),
+            categories=self._parse_categories(row.get('categories')),
             average_rating=self._safe_float(row.get('average_rating')),
             rating_count=self._safe_int(row.get('rating_count')),
             reading_status=reading_status,
@@ -436,7 +449,7 @@ class SQLiteMigrationService:
         else:
             return ReadingStatus.PLAN_TO_READ  # default
     
-    def _update_personal_information(self, book_service, user_id: str, book_id: str, book_data: SimplifiedBook):
+    def _update_personal_information(self, user_book_service, user_id: str, book_id: str, book_data: SimplifiedBook):
         """Update personal information from migrated data."""
         try:
             update_data = {}
@@ -461,7 +474,7 @@ class SQLiteMigrationService:
             update_data['personal_notes'] = "; ".join(migration_notes)
             
             if update_data:
-                book_service.update_user_book_sync(user_id, book_id, **update_data)
+                user_book_service.update_user_book_sync(user_id, book_id, **update_data)
                 
         except Exception as e:
             print(f"⚠️ [MIGRATION] Failed to update personal info for book {book_id}: {e}")
@@ -500,7 +513,7 @@ class SQLiteMigrationService:
             return None
     
     def _parse_date(self, date_str):
-        """Parse date string to date object."""
+        """Parse date string to ISO format date string."""
         if not date_str:
             return None
         
@@ -517,8 +530,30 @@ class SQLiteMigrationService:
         for fmt in date_formats:
             try:
                 parsed_date = datetime.strptime(str(date_str), fmt)
-                return parsed_date.date()
+                return parsed_date.date().isoformat()  # Return ISO format string
             except ValueError:
                 continue
         
         return None
+    
+    def _parse_categories(self, categories_str):
+        """Parse categories string to list of strings."""
+        if not categories_str:
+            return []
+        
+        # If it's already a list, return it
+        if isinstance(categories_str, list):
+            return categories_str
+        
+        # If it's a string, split by common delimiters
+        if isinstance(categories_str, str):
+            # Try different delimiters
+            for delimiter in [';', ',', '|', '\n']:
+                if delimiter in categories_str:
+                    categories = [cat.strip() for cat in categories_str.split(delimiter)]
+                    return [cat for cat in categories if cat]  # Remove empty strings
+            
+            # If no delimiter found, return as single item
+            return [categories_str.strip()] if categories_str.strip() else []
+        
+        return []

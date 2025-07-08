@@ -160,7 +160,8 @@ class SetupForm(FlaskForm):
     def validate(self, extra_validators=None):
         """Enhanced validation with better error handling for onboarding."""
         # Force fresh CSRF token generation if needed
-        if not hasattr(self, 'csrf_token') or not self.csrf_token.data:
+        csrf_token_field = getattr(self, 'csrf_token', None)
+        if not csrf_token_field or not csrf_token_field.data:
             try:
                 from flask_wtf.csrf import generate_csrf
                 from flask import session
@@ -214,14 +215,19 @@ class CategoryForm(FlaskForm):
         """Populate parent category choices, excluding the current category and its descendants"""
         try:
             from .services import book_service
-            categories = book_service.get_all_categories_sync()
+            categories = book_service.list_all_categories_sync()  # type: ignore
             
             # Build choices list
             choices = [('', 'None (Root Category)')]
             
             for category in categories:
+                # Get category attributes safely (handle both dict and object)
+                category_id = category.get('id') if isinstance(category, dict) else getattr(category, 'id', None)
+                category_name = category.get('name') if isinstance(category, dict) else getattr(category, 'name', 'Unknown')
+                category_level = category.get('level', 0) if isinstance(category, dict) else getattr(category, 'level', 0)
+                
                 # Skip current category (for edit form)
-                if self.current_category_id and category.id == self.current_category_id:
+                if self.current_category_id and category_id == self.current_category_id:
                     continue
                 
                 # Skip descendants of current category (for edit form)
@@ -229,23 +235,26 @@ class CategoryForm(FlaskForm):
                     continue
                 
                 # Create indented display name based on level
-                indent = '  ' * category.level
-                display_name = f"{indent}{category.name}"
-                choices.append((category.id, display_name))
+                indent = '  ' * category_level
+                display_name = f"{indent}{category_name}"
+                # Ensure category_id is string
+                if category_id is not None:
+                    choices.append((str(category_id), display_name))
             
-            self.parent_id.choices = choices
+            self.parent_id.choices = choices  # type: ignore
         except Exception as e:
             print(f"Error populating parent choices: {e}")
             self.parent_id.choices = [('', 'None (Root Category)')]
     
     def is_descendant(self, category, ancestor_id):
         """Check if category is a descendant of the given ancestor"""
-        current = category
-        while current.parent_id:
-            if current.parent_id == ancestor_id:
+        # Get parent_id safely (handle both dict and object)
+        parent_id = category.get('parent_id') if isinstance(category, dict) else getattr(category, 'parent_id', None)
+        
+        if parent_id:
+            if parent_id == ancestor_id:
                 return True
             # Would need to fetch parent to continue, simplified for now
-            break
         return False
 
     def validate_name(self, name):
@@ -257,7 +266,7 @@ class CategoryForm(FlaskForm):
             parent_id = self.parent_id.data if self.parent_id.data else None
             
             # Check for existing category with same name and parent
-            existing_categories = book_service.search_categories_sync(name.data)
+            existing_categories = book_service.search_categories_sync(name.data)  # type: ignore
             
             for category in existing_categories:
                 if (category.name.lower() == name.data.lower() and 
@@ -289,21 +298,28 @@ class MergeCategoriesForm(FlaskForm):
         """Populate category choices for source and target"""
         try:
             from .services import book_service
-            categories = book_service.get_all_categories_sync()
+            categories = book_service.get_all_categories_sync()  # type: ignore
             
             choices = []
             for category in categories:
+                # Get category attributes safely (handle both dict and object)
+                category_id = category.get('id') if isinstance(category, dict) else getattr(category, 'id', None)
+                category_name = category.get('name') if isinstance(category, dict) else getattr(category, 'name', 'Unknown')
+                category_level = category.get('level', 0) if isinstance(category, dict) else getattr(category, 'level', 0)
+                category_book_count = category.get('book_count', 0) if isinstance(category, dict) else getattr(category, 'book_count', 0)
+                
                 # Create display name with hierarchy
-                indent = '  ' * category.level
-                book_info = f" ({category.book_count} books)" if category.book_count > 0 else ""
-                display_name = f"{indent}{category.name}{book_info}"
-                choices.append((category.id, display_name))
+                indent = '  ' * category_level
+                book_info = f" ({category_book_count} books)" if category_book_count > 0 else ""
+                display_name = f"{indent}{category_name}{book_info}"
+                if category_id is not None:
+                    choices.append((str(category_id), display_name))
             
             if not choices:
                 choices = [('', 'No categories available')]
             
-            self.source_id.choices = choices
-            self.target_id.choices = choices
+            self.source_id.choices = choices  # type: ignore
+            self.target_id.choices = choices  # type: ignore
         except Exception as e:
             print(f"Error populating category choices: {e}")
             self.source_id.choices = [('', 'No categories available')]

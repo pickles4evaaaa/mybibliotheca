@@ -17,6 +17,11 @@ from flask_login import login_user, current_user
 from werkzeug.security import generate_password_hash
 import json
 import logging
+import csv
+import uuid
+import threading
+import time
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional
 import pytz
@@ -628,7 +633,18 @@ def migration_config_step(data_options: Dict):
             if database_analysis.get('version') == DatabaseVersion.V2_MULTI_USER:
                 # Handle user mapping for V2 databases
                 admin_user_mapping = request.form.get('admin_user_mapping')
-                migration_config['admin_user_mapping'] = int(admin_user_mapping)
+                if not admin_user_mapping:
+                    logger.error("❌ No admin_user_mapping provided for V2 migration")
+                    flash('Please select a user mapping for migration.', 'error')
+                    return redirect(url_for('onboarding.step', step_num=4))
+                
+                try:
+                    migration_config['admin_user_mapping'] = str(int(admin_user_mapping))
+                except (ValueError, TypeError) as e:
+                    logger.error(f"❌ Invalid admin_user_mapping value: {e}")
+                    flash('Invalid user mapping selection.', 'error')
+                    return redirect(url_for('onboarding.step', step_num=4))
+                
                 logger.info(f"🔍 ONBOARDING DEBUG: V2 migration with admin_user_mapping: {admin_user_mapping}")
             
             logger.info(f"🔍 ONBOARDING DEBUG: Saving migration_config: {migration_config}")
@@ -1060,15 +1076,11 @@ def import_progress_json(task_id: str):
     logger.info(f"🔍 ONBOARDING DEBUG: Getting progress JSON for task {task_id}")
     
     try:
-        # Check both regular import jobs and Kuzu storage
-        from .routes import import_jobs, get_job_from_kuzu
+        # For onboarding, check only memory jobs (not Kuzu)
+        from .routes import import_jobs
         
         # Try to get job from memory first
         job = import_jobs.get(task_id)
-        
-        # If not in memory, try Kuzu
-        if not job:
-            job = get_job_from_kuzu(task_id)
         
         if job:
             logger.info(f"📊 Job data: {job}")
@@ -1145,6 +1157,10 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 location_service = LocationService(storage.kuzu_conn)
                 
                 # Create the location
+                if not admin_user.id:
+                    logger.error("❌ Admin user has no ID - cannot create location")
+                    raise ValueError("Admin user has no ID")
+                
                 location = location_service.create_location(
                     user_id=admin_user.id,
                     name=location_name,
@@ -1175,11 +1191,27 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 # Execute migration based on database version
                 database_analysis = data_options.get('database_analysis', {})
                 if database_analysis.get('version') == DatabaseVersion.V1_SINGLE_USER:
+                    # Ensure admin_user.id is not None
+                    if not admin_user.id:
+                        logger.error("❌ Admin user has no ID - cannot migrate V1 database")
+                        return False
                     success = migration_system.migrate_v1_database(db_path, admin_user.id)
                 elif database_analysis.get('version') == DatabaseVersion.V2_MULTI_USER:
                     migration_config = onboarding_data.get('migration_config', {})
                     admin_mapping = migration_config.get('admin_user_mapping')
-                    user_mapping = {admin_mapping: admin_user.id} if admin_mapping else {}
+                    
+                    # Ensure we have valid user mapping with correct types
+                    if not admin_mapping or not admin_user.id:
+                        logger.error("❌ Invalid user mapping for V2 migration")
+                        return False
+                    
+                    # Create user mapping with proper types (Dict[int, str])
+                    try:
+                        user_mapping = {int(admin_mapping): admin_user.id}
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"❌ Invalid admin_mapping type: {e}")
+                        return False
+                    
                     success = migration_system.migrate_v2_database(db_path, user_mapping)
                 else:
                     success = False
@@ -1216,6 +1248,10 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                         field_type = field_type_map.get(field_type_str, CustomFieldType.TEXT)
                         
                         # Create CustomFieldDefinition object
+                        if not admin_user.id:
+                            logger.error("❌ Admin user has no ID - cannot create custom fields")
+                            continue
+                        
                         field_definition = CustomFieldDefinition(
                             name=field_name,
                             display_name=csv_field,  # Use original CSV header as display name
@@ -1240,6 +1276,10 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
             logger.info(f"🔧 Custom fields configured: {len(custom_fields)}")
             
             # Start the CSV import as a background job
+            if not admin_user.id:
+                logger.error("❌ Admin user has no ID")
+                return False
+            
             import_task_id = start_onboarding_import_job(admin_user.id, import_config)
             if not import_task_id:
                 logger.error("❌ Failed to start CSV import job")
@@ -1314,6 +1354,12 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 storage = get_graph_storage()
                 location_service = LocationService(storage.kuzu_conn)
                 
+                # Check if admin user has an ID
+                if not admin_user.id:
+                    print(f"❌ [SETUP] Admin user has no ID for location creation")
+                    logger.error(f"❌ Admin user has no ID for location creation")
+                    raise Exception("Admin user has no ID")
+                
                 # Create the location
                 location = location_service.create_location(
                     user_id=admin_user.id,
@@ -1364,6 +1410,12 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                     }
                     field_type = field_type_map.get(field_type_str, CustomFieldType.TEXT)
                     
+                    # Check if admin user has an ID
+                    if not admin_user.id:
+                        print(f"❌ [SETUP] Admin user has no ID for custom field creation")
+                        logger.error(f"❌ Admin user has no ID for custom field creation")
+                        continue  # Skip this custom field
+                    
                     # Create CustomFieldDefinition object
                     field_definition = CustomFieldDefinition(
                         name=field_name,
@@ -1394,6 +1446,11 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         if data_options.get('option') == 'import':
             print(f"📂 [SETUP] Starting CSV import job")
             logger.info("Starting CSV import job")
+            
+            if not admin_user.id:
+                print(f"❌ [SETUP] Admin user has no ID")
+                logger.error("❌ Admin user has no ID")
+                return False
             
             import_task_id = start_onboarding_import_job(admin_user.id, import_config)
             if not import_task_id:
@@ -1437,8 +1494,11 @@ def handle_onboarding_completion(onboarding_data: Dict):
             from .kuzu_integration import KuzuIntegrationService
             kuzu_service = KuzuIntegrationService()
             kuzu_service.initialize()
-            all_users = kuzu_service.db.query("MATCH (u:User) RETURN u.username, u.id, u.email LIMIT 10")
-            print(f"🔍 [COMPLETION DEBUG] All users in database: {all_users}")
+            if kuzu_service.db is not None:
+                all_users = kuzu_service.db.query("MATCH (u:User) RETURN u.username, u.id, u.email LIMIT 10")
+                print(f"🔍 [COMPLETION DEBUG] All users in database: {all_users}")
+            else:
+                print(f"🔍 [COMPLETION DEBUG] Database connection is None")
         except Exception as debug_error:
             print(f"🔍 [COMPLETION DEBUG] Could not query users: {debug_error}")
         
@@ -1504,11 +1564,8 @@ def handle_onboarding_completion(onboarding_data: Dict):
         return redirect(url_for('auth.login'))
 
 
-def start_onboarding_import_job(user_id: str, import_config: Dict) -> str:
+def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[str]:
     """Start a background import job for onboarding using the proven import system."""
-    import uuid
-    from datetime import datetime
-    
     try:
         # Import the proven import functions from routes
         from .routes import store_job_in_kuzu, import_jobs, start_import_job, auto_create_custom_fields
@@ -1564,18 +1621,16 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> str:
         auto_create_custom_fields(field_mappings, user_id)
         
         # Start the import using the proven working import system
-        app = current_app._get_current_object()
         def run_import():
-            with app.app_context():
-                try:
-                    start_import_job(task_id)
-                except Exception as e:
-                    if task_id in import_jobs:
-                        import_jobs[task_id]['status'] = 'failed'
-                        if 'error_messages' not in import_jobs[task_id]:
-                            import_jobs[task_id]['error_messages'] = []
-                        import_jobs[task_id]['error_messages'].append(str(e))
-                    logger.error(f"Onboarding import job {task_id} failed: {e}")
+            try:
+                start_import_job(task_id)
+            except Exception as e:
+                if task_id in import_jobs:
+                    import_jobs[task_id]['status'] = 'failed'
+                    if 'error_messages' not in import_jobs[task_id]:
+                        import_jobs[task_id]['error_messages'] = []
+                    import_jobs[task_id]['error_messages'].append(str(e))
+                logger.error(f"Onboarding import job {task_id} failed: {e}")
         
         import threading
         thread = threading.Thread(target=run_import)
@@ -1647,55 +1702,23 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> str:
         except:
             pass
 
-def execute_csv_import_with_progress(user_id: str, import_config: Dict, task_id: str) -> bool:
-    """Execute CSV import with progress tracking for onboarding."""
+def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_mappings: Dict[str, str], user_id: str, default_locations: List[str]) -> bool:
+    """Execute CSV import with progress tracking."""
     try:
-        # Import the job functions
+        import csv
+        from .utils import normalize_goodreads_value
         from .routes import import_jobs, update_job_in_kuzu
         
-        # Get the job for progress tracking
+        # Get the job from memory (for onboarding, jobs are stored in memory)
         job = import_jobs.get(task_id)
         if not job:
-            logger.error(f"❌ Job {task_id} not found for progress tracking")
+            logger.error(f"❌ Job {task_id} not found")
             return False
         
-        import csv
+        logger.info(f"📊 Starting CSV import with mappings: {field_mappings}")
         
-        # Get import configuration
-        csv_file_path = import_config.get('csv_file_path')
-        field_mappings = import_config.get('field_mappings', {})
-        
-        if not csv_file_path:
-            logger.error("❌ No CSV file path provided")
-            return False
-            
-        logger.info(f"📂 Importing CSV file: {csv_file_path}")
-        
-        # Import services we need
-        from .services import book_service
-        from .utils import normalize_goodreads_value, get_google_books_cover, fetch_book_data
-        from .domain.models import Book, Person, BookContribution, ContributionType, Publisher, ReadingStatus, OwnershipStatus
-        from .location_service import LocationService
-        from config import Config
-        
-        # Get user's default location for importing books
-        default_locations = []
-        try:
-            # Kuzu version: simplified connection
-            storage = get_graph_storage()
-            location_service = LocationService(storage.kuzu_conn)
-            user_locations = location_service.get_user_locations(str(user_id))
-            default_location = location_service.get_default_location(str(user_id))
-            if default_location:
-                default_locations = [default_location.id]
-            elif user_locations:
-                default_locations = [user_locations[0].id]  # Use first location as default
-            logger.info(f"📍 Default locations for import: {default_locations}")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not get user locations: {e}")
-        
-        # Read and process CSV
-        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+        # Read and process the CSV file
+        with open(csv_file_path, 'r', encoding='utf-8', errors='ignore') as csvfile:
             # Try to detect if CSV has headers
             first_line = csvfile.readline().strip()
             csvfile.seek(0)  # Reset to beginning
@@ -1734,6 +1757,7 @@ def execute_csv_import_with_progress(user_id: str, import_config: Dict, task_id:
                     
                     # Extract book data based on mappings
                     book_data = {}
+                    personal_custom_metadata = {}
                     
                     if has_headers:
                         # Use field mappings for CSV with headers
@@ -1747,7 +1771,14 @@ def execute_csv_import_with_progress(user_id: str, import_config: Dict, task_id:
                                 value = normalize_goodreads_value(raw_value, 'text')
                             
                             if value:  # Only process non-empty values
-                                book_data[book_field] = value
+                                # Check if this is a custom field
+                                if book_field.startswith('custom_'):
+                                    # Extract custom field name and add to personal metadata
+                                    custom_field_name = book_field.replace('custom_', '')
+                                    personal_custom_metadata[custom_field_name] = value
+                                    logger.info(f"📝 Added custom metadata: {custom_field_name} = {value}")
+                                else:
+                                    book_data[book_field] = value
                     else:
                         # For headerless CSV, assume it's ISBN-only
                         isbn_value = row.get('isbn', '').strip()
@@ -1764,8 +1795,8 @@ def execute_csv_import_with_progress(user_id: str, import_config: Dict, task_id:
                     title = book_data.get('title', book_data.get('isbn', 'Unknown Title'))
                     job['current_book'] = title
                     
-                    # Process the book (simplified version for progress tracking)
-                    success = process_single_book_import(book_data, user_id, default_locations, {})
+                    # Process the book with custom metadata
+                    success = process_single_book_import(book_data, user_id, default_locations, personal_custom_metadata)
                     
                     if success:
                         job['success'] += 1
@@ -1816,86 +1847,64 @@ def execute_csv_import_with_progress(user_id: str, import_config: Dict, task_id:
 def process_single_book_import(book_data: Dict, user_id: str, default_locations: List, personal_custom_metadata: Dict) -> bool:
     """Process a single book import with full API metadata enrichment."""
     try:
-        from .services import book_service, normalize_isbn_upc
-        from .domain.models import Book as DomainBook, Person, BookContribution, ContributionType, Publisher, ReadingStatus, OwnershipStatus
-        from .utils import get_google_books_cover, fetch_book_data
-        from datetime import datetime
+        # Import required models and utilities
+        from .domain.models import (
+            Book as DomainBook, 
+            Person, 
+            BookContribution, 
+            ContributionType, 
+            Publisher, 
+            ReadingStatus, 
+            OwnershipStatus
+        )
+        from .services import book_service
+        from .utils import fetch_book_data, get_google_books_cover
         
-        # Extract basic book data
-        title = book_data.get('title', 'Unknown Title')
-        csv_author = book_data.get('author', '')
-        isbn = book_data.get('isbn', '')
-        description = book_data.get('description')
-        page_count = book_data.get('page_count')
-        publisher_name = book_data.get('publisher')
-        language = book_data.get('language', 'en')
-        cover_url = book_data.get('cover_url')
-        reading_status = book_data.get('reading_status', 'library_only')
+        # Extract essential book information
+        title = book_data.get('title', '').strip()
+        if not title:
+            logger.error("❌ Book title is required")
+            return False
         
-        # Clean and normalize ISBN
-        isbn10 = None
-        isbn13 = None
-        if isbn:
-            normalized_isbn = normalize_isbn_upc(isbn)
-            if normalized_isbn:
-                if len(normalized_isbn) == 10:
-                    isbn10 = normalized_isbn
-                elif len(normalized_isbn) == 13:
-                    isbn13 = normalized_isbn
+        csv_author = book_data.get('author', '').strip()
+        isbn = book_data.get('isbn', '').strip()
         
-        # Initialize metadata variables
-        average_rating = None
-        rating_count = None
-        published_date = None
+        logger.info(f"📚 Processing book: {title} by {csv_author}")
+        
+        # API Enrichment Phase
         google_data = None
         ol_data = None
         api_categories = None
+        published_date = book_data.get('published_date')
         
-        # Try to enrich with API data if we have an ISBN
-        api_isbn = isbn13 or isbn10
-        if api_isbn:
-            logger.info(f"🔍 Fetching metadata for ISBN: {api_isbn}")
+        # Try API enrichment if ISBN is available
+        if isbn:
+            api_isbn = ''.join(filter(str.isdigit, isbn))
+            logger.info(f"🔍 Attempting API enrichment for ISBN: {api_isbn}")
+            
             try:
-                # Try Google Books first
+                # Google Books API call
                 google_data = get_google_books_cover(api_isbn, fetch_title_author=True)
                 if google_data:
-                    logger.info(f"✅ Got Google Books data for {title}")
-                    # Update with API data
-                    if google_data.get('title'):
-                        title = google_data['title']
-                    if google_data.get('author'):
-                        csv_author = google_data['author']
-                    description = description or google_data.get('description')
-                    api_publisher = google_data.get('publisher')
-                    if api_publisher:
-                        api_publisher = api_publisher.strip('"\'')
-                        publisher_name = publisher_name or api_publisher
-                    page_count = page_count or google_data.get('page_count')
-                    language = language or google_data.get('language', 'en')
-                    cover_url = google_data.get('cover')
-                    average_rating = google_data.get('average_rating')
-                    rating_count = google_data.get('rating_count')
-                    published_date = google_data.get('published_date')
-                    api_categories = google_data.get('categories')
-                    if api_categories:
+                    logger.info(f"✅ Got Google Books data: {list(google_data.keys())}")
+                    if google_data.get('categories'):
+                        api_categories = google_data['categories']
                         logger.info(f"📚 Got categories from Google Books: {api_categories}")
-                else:
-                    # Fallback to OpenLibrary
-                    logger.info("📚 No Google Books data, trying OpenLibrary...")
-                    ol_data = fetch_book_data(api_isbn)
-                    if ol_data:
-                        logger.info(f"✅ Got OpenLibrary data for {title}")
-                        if ol_data.get('title'):
-                            title = ol_data['title']
-                        if ol_data.get('author'):
-                            csv_author = ol_data['author']
-                        description = description or ol_data.get('description')
-                        api_publisher = ol_data.get('publisher')
-                        if api_publisher:
-                            api_publisher = api_publisher.strip('"\'')
-                            publisher_name = publisher_name or api_publisher
-                        page_count = page_count or ol_data.get('page_count')
-                        language = language or ol_data.get('language', 'en')
+                    if google_data.get('published_date'):
+                        published_date = published_date or google_data.get('published_date')
+            except Exception as google_error:
+                logger.warning(f"⚠️ Google Books API error for ISBN {api_isbn}: {google_error}")
+            
+            try:
+                # OpenLibrary API call
+                ol_data = fetch_book_data(api_isbn)
+                if ol_data:
+                    logger.info(f"✅ Got OpenLibrary data: {list(ol_data.keys())}")
+                    if ol_data.get('categories'):
+                        if not api_categories:  # Only use OL categories if Google didn't provide any
+                            api_categories = ol_data['categories']
+                            logger.info(f"📚 Got categories from OpenLibrary: {api_categories}")
+                    if ol_data.get('published_date'):
                         published_date = published_date or ol_data.get('published_date')
                         if not api_categories:
                             api_categories = ol_data.get('categories')
@@ -1909,7 +1918,51 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
         if final_categories:
             logger.info(f"📚 Final categories to process: {final_categories}")
         
-        # Create contributors
+        # Helper function to find or create person with deduplication
+        def find_or_create_person(person_name: str) -> Person:
+            """Find existing person by name or create new one."""
+            try:
+                # Normalize name for search
+                normalized_name = person_name.strip().lower()
+                
+                # Get all existing persons and check for matches
+                all_persons = book_service.list_all_persons_sync()
+                if all_persons:
+                    for person_data in all_persons:
+                        existing_name = person_data.get('name', '').strip().lower()
+                        existing_normalized = person_data.get('normalized_name', '').strip().lower()
+                        
+                        # Check for exact match or normalized match
+                        if (existing_name == normalized_name or 
+                            existing_normalized == normalized_name or
+                            existing_name == person_name.strip().lower()):
+                            
+                            logger.info(f"📝 Found existing person: {person_name} (ID: {person_data.get('id')})")
+                            return Person(
+                                id=person_data.get('id'),
+                                name=person_data.get('name', person_name),
+                                normalized_name=person_data.get('normalized_name', ''),
+                                birth_year=person_data.get('birth_year'),
+                                death_year=person_data.get('death_year'),
+                                birth_place=person_data.get('birth_place'),
+                                bio=person_data.get('bio'),
+                                website=person_data.get('website'),
+                                openlibrary_id=person_data.get('openlibrary_id'),
+                                image_url=person_data.get('image_url'),
+                                created_at=person_data.get('created_at', datetime.utcnow()),
+                                updated_at=person_data.get('updated_at', datetime.utcnow())
+                            )
+                
+                # If no match found, create new person
+                logger.info(f"📝 Creating new person: {person_name}")
+                return Person(name=person_name)
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Error during person lookup/creation for {person_name}: {e}")
+                # Fallback to creating new person
+                return Person(name=person_name)
+        
+        # Create contributors with deduplication
         contributors = []
         added_author_names = set()
         
@@ -1918,7 +1971,7 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
             for i, author_name in enumerate(google_data['authors_list']):
                 author_name = author_name.strip()
                 if author_name and author_name.lower() not in added_author_names:
-                    person = Person(name=author_name)
+                    person = find_or_create_person(author_name)
                     contribution = BookContribution(
                         person=person,
                         contribution_type=ContributionType.AUTHORED,
@@ -1931,7 +1984,7 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
             for i, author_name in enumerate(ol_data['authors_list']):
                 author_name = author_name.strip()
                 if author_name and author_name.lower() not in added_author_names:
-                    person = Person(name=author_name)
+                    person = find_or_create_person(author_name)
                     contribution = BookContribution(
                         person=person,
                         contribution_type=ContributionType.AUTHORED,
@@ -1943,7 +1996,7 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
         else:
             # Fallback to CSV author
             if csv_author and csv_author.lower() not in added_author_names:
-                person = Person(name=csv_author)
+                person = find_or_create_person(csv_author)
                 contribution = BookContribution(
                     person=person,
                     contribution_type=ContributionType.AUTHORED,
@@ -1959,7 +2012,7 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
             for name in additional_names:
                 name = name.strip()
                 if name and name.lower() not in added_author_names:
-                    person = Person(name=name)
+                    person = find_or_create_person(name)
                     contribution = BookContribution(
                         person=person,
                         contribution_type=ContributionType.AUTHORED,
@@ -1968,6 +2021,26 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
                     contributors.append(contribution)
                     added_author_names.add(name.lower())
                     logger.info(f"📝 Added additional author: {name}")
+        
+        # Extract other book metadata 
+        description = book_data.get('description', '') or book_data.get('summary', '')
+        publisher_name = book_data.get('publisher', '')
+        page_count = book_data.get('page_count') or book_data.get('pages')
+        language = book_data.get('language', 'en')
+        cover_url = book_data.get('cover_url', '')
+        average_rating = book_data.get('average_rating')
+        rating_count = book_data.get('rating_count')
+        reading_status = book_data.get('reading_status', 'library_only')
+        
+        # Process ISBN data 
+        isbn13 = None
+        isbn10 = None
+        if isbn:
+            cleaned_isbn = ''.join(filter(str.isdigit, isbn))
+            if len(cleaned_isbn) == 13:
+                isbn13 = cleaned_isbn
+            elif len(cleaned_isbn) == 10:
+                isbn10 = cleaned_isbn
         
         # Convert date helper function
         def _convert_published_date_to_date(date_str):
@@ -2011,7 +2084,7 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
         # Create book using the service (will auto-process categories)
         created_book = book_service.find_or_create_book_sync(domain_book)
         
-        if created_book:
+        if created_book and created_book.id:
             # Convert reading status
             reading_status_enum = ReadingStatus.LIBRARY_ONLY  # default
             if reading_status:
@@ -2024,15 +2097,17 @@ def process_single_book_import(book_data: Dict, user_id: str, default_locations:
                 elif reading_status == 'on_hold':
                     reading_status_enum = ReadingStatus.ON_HOLD
                 elif reading_status == 'did_not_finish':
-                    reading_status_enum = ReadingStatus.DID_NOT_FINISH
+                    reading_status_enum = ReadingStatus.DNF
             
-            # Add to user's library
+            # Add to user's library with custom metadata
+            custom_metadata_to_pass = personal_custom_metadata if personal_custom_metadata else {}
             success = book_service.add_book_to_user_library_sync(
                 user_id=str(user_id),
                 book_id=created_book.id,
-                reading_status=reading_status_enum,
-                ownership_status=OwnershipStatus.OWNED,
-                locations=default_locations
+                reading_status=reading_status_enum.value if hasattr(reading_status_enum, 'value') else str(reading_status_enum),
+                ownership_status=OwnershipStatus.OWNED.value if hasattr(OwnershipStatus.OWNED, 'value') else str(OwnershipStatus.OWNED),
+                locations=default_locations,
+                custom_metadata=custom_metadata_to_pass
             )
             
             if success:

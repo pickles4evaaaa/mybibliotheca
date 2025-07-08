@@ -28,11 +28,18 @@ def manage_locations():
     # Get book counts for each location
     book_counts = location_service.get_all_location_book_counts(str(current_user.id))
     
-    # Add book count to each location object for template access
+    # Create location data with book counts for template
+    locations_with_counts = []
     for location in locations:
-        location.book_count = book_counts.get(location.id, 0)
+        location_data = {
+            'location': location,
+            'book_count': book_counts.get(location.id, 0) if location.id else 0
+        }
+        locations_with_counts.append(location_data)
     
-    return render_template('locations/manage.html', locations=locations, book_counts=book_counts)
+    return render_template('locations/manage.html', 
+                         locations_with_counts=locations_with_counts, 
+                         book_counts=book_counts)
 
 
 @bp.route('/add', methods=['GET', 'POST'])

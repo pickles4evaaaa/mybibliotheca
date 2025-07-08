@@ -5,7 +5,7 @@
     {% if show_icon %}<i class="bi bi-person-fill me-1"></i>{% endif %}
     {% for author in book.authors[:max_display] %}
       {% if author.id %}
-        <a href="{{ url_for('main.person_details', person_id=author.id) }}" class="text-decoration-none">
+        <a href="{{ url_for('people.person_details', person_id=author.id) }}" class="text-decoration-none">
           {% if style_class %}
             <span class="{{ style_class }}">{{ author.name }}</span>
           {% else %}
@@ -33,7 +33,7 @@
     Narrated by: 
     {% for narrator in book.narrators[:max_display] %}
       {% if narrator.id %}
-        <a href="{{ url_for('main.person_details', person_id=narrator.id) }}" class="text-decoration-none">
+        <a href="{{ url_for('people.person_details', person_id=narrator.id) }}" class="text-decoration-none">
           {% if style_class %}
             <span class="{{ style_class }}">{{ narrator.name }}</span>
           {% else %}
@@ -61,7 +61,7 @@
     Edited by: 
     {% for editor in book.editors[:max_display] %}
       {% if editor.id %}
-        <a href="{{ url_for('main.person_details', person_id=editor.id) }}" class="text-decoration-none">
+        <a href="{{ url_for('people.person_details', person_id=editor.id) }}" class="text-decoration-none">
           {% if style_class %}
             <span class="{{ style_class }}">{{ editor.name }}</span>
           {% else %}

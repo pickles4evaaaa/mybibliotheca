@@ -92,7 +92,7 @@ def start_import_job(task_id):
                         field_name = book_field.replace('custom_global_', '').replace('custom_personal_', '')
                         custom_metadata[field_name] = row[csv_field]
                 
-                success = service.add_book_to_user_library(
+                success = service.add_book_to_user_library_sync(
                     book_data,
                     user_id=user_id,
                     reading_status=reading_status,

@@ -40,7 +40,7 @@ class BookRepository(ABC):
         pass
     
     @abstractmethod
-    async def search(self, query: str, filters: Dict[str, Any] = None) -> List[Book]:
+    async def search(self, query: str, filters: Optional[Dict[str, Any]] = None) -> List[Book]:
         """Search books with optional filters."""
         pass
     
@@ -113,7 +113,7 @@ class UserBookRepository(ABC):
         pass
     
     @abstractmethod
-    async def get_user_library(self, user_id: str, filters: Dict[str, Any] = None) -> List[UserBookRelationship]:
+    async def get_user_library(self, user_id: str, filters: Optional[Dict[str, Any]] = None) -> List[UserBookRelationship]:
         """Get a user's library with optional filters."""
         pass
     
@@ -210,7 +210,7 @@ class ReadingLogRepository(ABC):
         pass
     
     @abstractmethod
-    async def get_user_logs(self, user_id: str, start_date: datetime = None, end_date: datetime = None) -> List[ReadingLog]:
+    async def get_user_logs(self, user_id: str, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> List[ReadingLog]:
         """Get reading logs for a user within a date range."""
         pass
     

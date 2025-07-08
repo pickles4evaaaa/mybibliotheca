@@ -1,0 +1,219 @@
+"""
+Routes package initialization.
+Registers all blueprint modules for the Bibliotheca application.
+"""
+
+from flask import Blueprint
+
+# Import all blueprint modules
+from .book_routes import book_bp
+from .people_routes import people_bp
+from .import_routes import import_bp
+from .stats_routes import stats_bp
+from .misc_routes import misc_bp
+
+# Create a main blueprint that can be registered with the app
+main_bp = Blueprint('main', __name__)
+
+# Add main routes to the main blueprint
+@main_bp.route('/')
+def index():
+    """Main index route - redirect to library for authenticated users, login for others"""
+    from flask_login import current_user
+    from flask import redirect, url_for
+    
+    if current_user.is_authenticated:
+        return redirect(url_for('book.library'))
+    else:
+        return redirect(url_for('auth.login'))
+
+@main_bp.route('/library')
+def library():
+    """Compatibility route for main.library - redirect to book.library"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.library'))
+
+@main_bp.route('/stats')
+def stats():
+    """Compatibility route for main.stats - redirect to stats.index"""
+    from flask import redirect, url_for
+    return redirect(url_for('stats.index'))
+
+@main_bp.route('/people')
+def people():
+    """Compatibility route for main.people - redirect to people.people"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.people'))
+
+@main_bp.route('/import_books')
+def import_books():
+    """Compatibility route for main.import_books - redirect to import.import_books"""
+    from flask import redirect, url_for
+    return redirect(url_for('import.import_books'))
+
+@main_bp.route('/add_book')
+def add_book():
+    """Compatibility route for main.add_book - redirect to book.add_book"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.add_book'))
+
+@main_bp.route('/bulk_delete_books', methods=['POST'])
+def bulk_delete_books():
+    """Compatibility route for main.bulk_delete_books - redirect to book.bulk_delete_books"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.bulk_delete_books'))
+
+@main_bp.route('/view_book_enhanced/<uid>')
+def view_book_enhanced(uid):
+    """Compatibility route for main.view_book_enhanced - redirect to book.view_book_enhanced"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+@main_bp.route('/add_book_from_search', methods=['POST'])
+def add_book_from_search():
+    """Compatibility route for main.add_book_from_search - redirect to book.add_book_from_search"""
+    from flask import redirect, url_for, request
+    return redirect(url_for('book.add_book_from_search'), code=307)
+
+@main_bp.route('/download_db')
+def download_db():
+    """Compatibility route for main.download_db - redirect to book.download_db"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.download_db'))
+
+@main_bp.route('/toggle_theme', methods=['POST'])
+def toggle_theme():
+    """Compatibility route for main.toggle_theme - redirect to people.toggle_theme"""
+    from flask import redirect, url_for, request
+    return redirect(url_for('people.toggle_theme'), code=307)
+
+@main_bp.route('/detect_sqlite', methods=['POST'])
+def detect_sqlite():
+    """Compatibility route for main.detect_sqlite - redirect to misc.detect_sqlite"""
+    from flask import redirect, url_for, request
+    return redirect(url_for('misc.detect_sqlite'), code=307)
+
+@main_bp.route('/index')
+def index_alias():
+    """Alias for main.index - redirect to main index"""
+    from flask import redirect, url_for
+    return redirect(url_for('main.index'))
+
+# People-related compatibility routes
+@main_bp.route('/add_person')
+def add_person():
+    """Compatibility route for main.add_person - redirect to people.add_person"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.add_person'))
+
+@main_bp.route('/edit_person/<person_id>')
+def edit_person(person_id):
+    """Compatibility route for main.edit_person - redirect to people.edit_person"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.edit_person', person_id=person_id))
+
+@main_bp.route('/delete_person/<person_id>', methods=['POST'])
+def delete_person(person_id):
+    """Compatibility route for main.delete_person - redirect to people.delete_person"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.delete_person', person_id=person_id), code=307)
+
+@main_bp.route('/person_details/<person_id>')
+def person_details(person_id):
+    """Compatibility route for main.person_details - redirect to people.person_details"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.person_details', person_id=person_id))
+
+@main_bp.route('/merge_persons')
+def merge_persons():
+    """Compatibility route for main.merge_persons - redirect to people.merge_persons"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.merge_persons'))
+
+@main_bp.route('/bulk_delete_persons', methods=['POST'])
+def bulk_delete_persons():
+    """Compatibility route for main.bulk_delete_persons - redirect to people.bulk_delete_persons"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.bulk_delete_persons'), code=307)
+
+# Additional book-related compatibility routes
+@main_bp.route('/add_book_manual', methods=['POST'])
+def add_book_manual():
+    """Compatibility route for main.add_book_manual - redirect to book.add_book_manual"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.add_book_manual'), code=307)
+
+@main_bp.route('/add_book_from_image', methods=['POST'])
+def add_book_from_image():
+    """Compatibility route for main.add_book_from_image - redirect to book.add_book_from_image"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.add_book_from_image'), code=307)
+
+@main_bp.route('/fetch_book/<isbn>')
+def fetch_book(isbn):
+    """Compatibility route for main.fetch_book - redirect to book.fetch_book"""
+    from flask import redirect, url_for
+    return redirect(url_for('book.fetch_book', isbn=isbn))
+
+@main_bp.route('/refresh_person_metadata/<person_id>', methods=['POST'])
+def refresh_person_metadata(person_id):
+    """Compatibility route for main.refresh_person_metadata - redirect to people.refresh_person_metadata"""
+    from flask import redirect, url_for
+    return redirect(url_for('people.refresh_person_metadata', person_id=person_id), code=307)
+
+@main_bp.route('/direct_import')
+def direct_import():
+    """Compatibility route for main.direct_import - redirect to import.direct_import"""
+    from flask import redirect, url_for
+    return redirect(url_for('import.direct_import'))
+
+@main_bp.route('/import_books_execute', methods=['POST'])
+def import_books_execute():
+    """Compatibility route for main.import_books_execute - redirect to import.import_books_execute"""
+    from flask import redirect, url_for
+    return redirect(url_for('import.import_books_execute'), code=307)
+
+@main_bp.route('/public_library')
+def public_library():
+    """Compatibility route for main.public_library - redirect to book.public_library"""
+    from flask import redirect, url_for, request
+    filter_param = request.args.get('filter', 'all')
+    return redirect(url_for('book.public_library', filter=filter_param))
+
+@main_bp.route('/community_activity')
+def community_activity():
+    """Compatibility route for main.community_activity - redirect to stats.index"""
+    from flask import redirect, url_for
+    return redirect(url_for('stats.index'))
+
+@main_bp.route('/migrate_sqlite', methods=['GET', 'POST'])
+def migrate_sqlite():
+    """Compatibility route for main.migrate_sqlite - redirect to import.migrate_sqlite"""
+    from flask import redirect, url_for, request
+    if request.method == 'POST':
+        return redirect(url_for('import.migrate_sqlite'), code=307)
+    else:
+        return redirect(url_for('import.migrate_sqlite'))
+
+def register_blueprints(app):
+    """Register all blueprints with the Flask application."""
+    
+    # Register the main blueprint
+    app.register_blueprint(main_bp)
+    # Register miscellaneous (legacy compatibility) routes
+    app.register_blueprint(misc_bp)
+
+    # Register stats blueprint at '/stats'
+    app.register_blueprint(stats_bp, url_prefix='/stats')
+    
+    # Register specific feature blueprints
+    app.register_blueprint(book_bp, url_prefix='/books')
+    app.register_blueprint(people_bp, url_prefix='/people')
+    app.register_blueprint(import_bp, url_prefix='/import')
+    
+    # Note: The original routes.py had routes at the root level
+    # We may need to adjust URL prefixes to maintain compatibility
+    # Or add URL rules to the main blueprint for backward compatibility
+
+# For backward compatibility, we can also export the blueprints
+__all__ = ['book_bp', 'people_bp', 'import_bp', 'main_bp', 'register_blueprints']

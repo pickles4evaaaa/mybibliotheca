@@ -8,7 +8,7 @@ replacing the Redis approach with a proper graph database architecture.
 import os
 import asyncio
 import uuid
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypeVar, Callable, Awaitable, Union, cast
 from datetime import datetime, date, timedelta
 from dataclasses import asdict
 from functools import wraps
@@ -16,15 +16,22 @@ from functools import wraps
 from flask import current_app
 
 from .domain.models import Book, User, Author, Publisher, Series, Category, UserBookRelationship, ReadingLog, ReadingStatus
-from .infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository, KuzuAuthorRepository
+from .infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository, KuzuPersonRepository
 from .infrastructure.kuzu_graph import get_graph_storage
 from app.domain.models import ImportMappingTemplate, ReadingStatus
 
+T = TypeVar('T')
 
-def run_async(async_func):
-    """Decorator to run async functions synchronously for Flask compatibility."""
-    @wraps(async_func)
-    def wrapper(*args, **kwargs):
+def run_async(coro_or_func) -> Any:
+    """
+    Run an async coroutine synchronously or convert an async function to sync.
+    
+    Usage:
+    - run_async(async_method(args)) - runs a coroutine
+    - run_async(async_function) - returns a sync wrapper function
+    """
+    # If it's a coroutine, run it directly
+    if hasattr(coro_or_func, '__await__'):
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -32,21 +39,30 @@ def run_async(async_func):
             asyncio.set_event_loop(loop)
         
         if loop.is_running():
-            # If we're already in an async context, create a new thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                # Create the coroutine in the executor thread
                 def run_in_new_loop():
                     new_loop = asyncio.new_event_loop()
                     try:
-                        return new_loop.run_until_complete(async_func(*args, **kwargs))
+                        return new_loop.run_until_complete(coro_or_func)
                     finally:
                         new_loop.close()
                 future = executor.submit(run_in_new_loop)
                 return future.result()
         else:
-            return loop.run_until_complete(async_func(*args, **kwargs))
-    return wrapper
+            return loop.run_until_complete(coro_or_func)
+    
+    # If it's a callable (function), return a sync wrapper
+    elif callable(coro_or_func):
+        @wraps(coro_or_func)
+        def wrapper(*args, **kwargs):
+            coro = coro_or_func(*args, **kwargs)
+            return run_async(coro)
+        return wrapper
+    
+    # Fallback - shouldn't happen
+    else:
+        raise TypeError(f"Expected coroutine or callable, got {type(coro_or_func)}")
 
 
 class KuzuBookService:
@@ -54,11 +70,74 @@ class KuzuBookService:
     
     def __init__(self):
         self.graph_storage = get_graph_storage()
-        self.book_repo = KuzuBookRepository(self.graph_storage)
-        self.author_repo = KuzuAuthorRepository(self.graph_storage)
-        self.user_repo = KuzuUserRepository(self.graph_storage)
-    
-    @run_async
+        self.book_repo = KuzuBookRepository()
+        self.user_repo = KuzuUserRepository()
+        self.person_repo = KuzuPersonRepository()
+        
+    def _dict_to_book(self, book_data: Dict[str, Any]) -> Book:
+        """Convert dictionary data to Book object."""
+        if isinstance(book_data, Book):
+            return book_data
+        
+        # Create a Book object from the dictionary
+        book = Book(
+            id=book_data.get('id'),
+            title=book_data.get('title', ''),
+            normalized_title=book_data.get('normalized_title', ''),
+            subtitle=book_data.get('subtitle'),
+            isbn13=book_data.get('isbn13'),
+            isbn10=book_data.get('isbn10'),
+            asin=book_data.get('asin'),
+            description=book_data.get('description'),
+            published_date=book_data.get('published_date'),
+            page_count=book_data.get('page_count'),
+            language=book_data.get('language', 'en'),
+            cover_url=book_data.get('cover_url'),
+            google_books_id=book_data.get('google_books_id'),
+            openlibrary_id=book_data.get('openlibrary_id'),
+            average_rating=book_data.get('average_rating'),
+            rating_count=book_data.get('rating_count'),
+            custom_metadata=book_data.get('custom_metadata', {}),
+            created_at=book_data.get('created_at', datetime.utcnow()),
+            updated_at=book_data.get('updated_at', datetime.utcnow())
+        )
+        
+        return book
+
+    def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any]) -> Book:
+        """Create an enriched Book object with user-specific attributes."""
+        # Convert book data to Book object
+        book = self._dict_to_book(book_data)
+        
+        # Add user-specific attributes dynamically using setattr
+        setattr(book, 'reading_status', relationship_data.get('reading_status', 'plan_to_read'))
+        setattr(book, 'ownership_status', relationship_data.get('ownership_status', 'owned'))
+        setattr(book, 'start_date', relationship_data.get('start_date'))
+        setattr(book, 'finish_date', relationship_data.get('finish_date'))
+        setattr(book, 'user_rating', relationship_data.get('user_rating'))
+        setattr(book, 'personal_notes', relationship_data.get('personal_notes'))
+        setattr(book, 'date_added', relationship_data.get('date_added'))
+        setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
+        setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
+        # Note: uid property already returns book.id via the Book model, no need to set it
+        
+        # Convert date strings back to date objects if needed
+        start_date = getattr(book, 'start_date', None)
+        if isinstance(start_date, str):
+            try:
+                setattr(book, 'start_date', datetime.fromisoformat(start_date).date())
+            except:
+                setattr(book, 'start_date', None)
+        
+        finish_date = getattr(book, 'finish_date', None)
+        if isinstance(finish_date, str):
+            try:
+                setattr(book, 'finish_date', datetime.fromisoformat(finish_date).date())
+            except:
+                setattr(book, 'finish_date', None)
+        
+        return book
+
     async def create_book(self, domain_book: Book, user_id: str) -> Book:
         """Create a book in Kuzu."""
         try:
@@ -81,39 +160,41 @@ class KuzuBookService:
             created_book = await self.book_repo.create(domain_book)
             print(f"book_repo.create returned: {created_book}")
             
+            # Ensure we have a valid book object
+            if not created_book:
+                print("❌ book_repo.create returned None")
+                raise ValueError("Failed to create book in repository")
+            
             # Create user-book relationship
             relationship = UserBookRelationship(
                 user_id=str(user_id),
-                book_id=created_book.id,
+                book_id=domain_book.id,  # Use the original book ID since we know it exists
                 reading_status=ReadingStatus.PLAN_TO_READ,
                 date_added=datetime.utcnow()
             )
             
-            # Store the relationship in Kuzu
-            rel_key = f"user_book:{user_id}:{created_book.id}"
-            rel_data = asdict(relationship)
+            # Serialize relationship data for Kuzu
+            rel_data = {
+                'user_id': str(user_id),
+                'book_id': domain_book.id,
+                'reading_status': ReadingStatus.PLAN_TO_READ.value,
+                'date_added': datetime.utcnow().isoformat()
+            }
             
-            # Serialize datetime and enum objects for JSON storage
-            def serialize_for_json(obj):
-                if isinstance(obj, datetime):
-                    return obj.isoformat()
-                elif hasattr(obj, 'value'):  # Enum
-                    return obj.value
-                elif isinstance(obj, dict):
-                    return {k: serialize_for_json(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [serialize_for_json(item) for item in obj]
-                else:
-                    return obj
-            
-            rel_data = serialize_for_json(rel_data)
             print(f"Storing relationship data: {rel_data}")
             
-            await self.graph_storage.set_json(rel_key, rel_data)
-            print(f"Successfully stored relationship")
+            # Store the relationship using Kuzu's create_relationship method
+            rel_success = self.graph_storage.create_relationship(
+                'User', user_id, 'OWNS', 'Book', domain_book.id, rel_data
+            )
             
-            print(f"Created book {created_book.id} for user {user_id} in Kuzu")
-            return created_book
+            if rel_success:
+                print(f"Successfully stored relationship")
+            else:
+                print(f"Failed to store relationship")
+            
+            print(f"Created book {domain_book.id} for user {user_id} in Kuzu")
+            return domain_book
             
         except Exception as e:
             print(f"Error in create_book: {e}")
@@ -121,51 +202,37 @@ class KuzuBookService:
             traceback.print_exc()
             raise
     
-    @run_async
     async def get_book_by_id(self, book_id: str) -> Optional[Book]:
         """Get a book by ID."""
-        return await self.book_repo.get_by_id(book_id)
+        book_data = await self.book_repo.get_by_id(book_id)
+        if book_data:
+            return self._dict_to_book(book_data)
+        return None
     
     @run_async
     async def get_books_for_user(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:
         """Get all books for a user with relationship data."""
-        # Find all user-book relationships for this user
-        pattern = f"user_book:{user_id}:*"
-        relationship_keys = await self.graph_storage.scan_keys(pattern)
+        # Use Kuzu's query method to get user's books via OWNS relationships
+        query = """
+        MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+        RETURN b, owns
+        SKIP $offset LIMIT $limit
+        """
+        
+        results = self.graph_storage.query(query, {
+            "user_id": user_id,
+            "offset": offset,
+            "limit": limit
+        })
         
         books = []
-        for rel_key in relationship_keys[offset:offset + limit]:
-            # Extract book_id from the key
-            book_id = rel_key.split(':')[-1]
-            book = await self.book_repo.get_by_id(book_id)
-            if book:
-                # Get the user-book relationship data
-                relationship_data = await self.graph_storage.get_json(rel_key)
-                if relationship_data:
-                    # Add user relationship attributes to the book object
-                    book.reading_status = relationship_data.get('reading_status', 'plan_to_read')
-                    book.ownership_status = relationship_data.get('ownership_status', 'owned')
-                    book.start_date = relationship_data.get('start_date')
-                    book.finish_date = relationship_data.get('finish_date')
-                    book.user_rating = relationship_data.get('user_rating')
-                    book.personal_notes = relationship_data.get('personal_notes')
-                    book.date_added = relationship_data.get('date_added')
-                    book.want_to_read = relationship_data.get('reading_status') == 'plan_to_read'
-                    book.library_only = relationship_data.get('reading_status') == 'library_only'
-                    book.uid = book.id  # Ensure uid is available
-                    
-                    # Convert date strings back to date objects if needed
-                    if isinstance(book.start_date, str):
-                        try:
-                            book.start_date = datetime.fromisoformat(book.start_date).date()
-                        except:
-                            book.start_date = None
-                    if isinstance(book.finish_date, str):
-                        try:
-                            book.finish_date = datetime.fromisoformat(book.finish_date).date()
-                        except:
-                            book.finish_date = None
-                            
+        for result in results:
+            if 'col_0' in result and 'col_1' in result:
+                book_data = result['col_0']
+                relationship_data = result['col_1']
+                
+                # Create enriched book with user-specific attributes
+                book = self._create_enriched_book(book_data, relationship_data)
                 books.append(book)
         
         return books
@@ -192,9 +259,12 @@ class KuzuBookService:
     @run_async 
     async def update_book(self, book_id: str, updates: Dict[str, Any], user_id: str) -> Optional[Book]:
         """Update a book."""
-        book = await self.book_repo.get_by_id(book_id)
-        if not book:
+        book_data = await self.book_repo.get_by_id(book_id)
+        if not book_data:
             return None
+        
+        # Convert to Book object first
+        book = self._dict_to_book(book_data)
         
         # Update fields
         for field, value in updates.items():
@@ -202,50 +272,129 @@ class KuzuBookService:
                 setattr(book, field, value)
         
         book.updated_at = datetime.utcnow()
-        return await self.book_repo.update(book)
+        
+        # Since we don't have an update method, we'll use the graph storage directly
+        # Convert book back to dict for storage
+        book_dict = {
+            'id': book.id,
+            'title': book.title,
+            'normalized_title': book.normalized_title,
+            'subtitle': book.subtitle,
+            'isbn13': book.isbn13,
+            'isbn10': book.isbn10,
+            'asin': book.asin,
+            'description': book.description,
+            'published_date': book.published_date,
+            'page_count': book.page_count,
+            'language': book.language,
+            'cover_url': book.cover_url,
+            'google_books_id': book.google_books_id,
+            'openlibrary_id': book.openlibrary_id,
+            'average_rating': book.average_rating,
+            'rating_count': book.rating_count,
+            'custom_metadata': book.custom_metadata,
+            'created_at': book.created_at,
+            'updated_at': book.updated_at
+        }
+        
+        # Update the book node in Kuzu
+        success = self.graph_storage.update_node('Book', book_id, book_dict)
+        if success:
+            return book
+        return None
     
     @run_async
-    async def delete_book(self, book_id: str, user_id: str) -> bool:
-        """Delete a book."""
-        # Delete user-book relationship
-        rel_key = f"user_book:{user_id}:{book_id}"
-        await self.graph_storage.delete_key(rel_key)
-        
-        # Check if any other users have this book
-        pattern = f"user_book:*:{book_id}"
-        other_relationships = await self.graph_storage.scan_keys(pattern)
-        
-        # If no other users have this book, delete the book itself
-        if not other_relationships:
-            return await self.book_repo.delete(book_id)
-        
-        return True
+    async def delete_book(self, uid: str, user_id: str) -> bool:
+        """Delete a book by UID."""
+        try:
+            print(f"🗑️ [DELETE_BOOK] Deleting book {uid} for user {user_id}")
+            
+            # First, find the book by UID (which might be stored as 'id' field)
+            find_book_query = """
+            MATCH (b:Book {id: $uid})
+            RETURN b.id as book_id
+            """
+            
+            book_results = self.graph_storage.query(find_book_query, {"uid": uid})
+            if not book_results:
+                print(f"❌ [DELETE_BOOK] Book {uid} not found")
+                return False
+            
+            book_id = book_results[0]['col_0']  # Use the actual book ID
+            print(f"✅ [DELETE_BOOK] Found book with ID: {book_id}")
+            
+            # Delete user-book relationship using Kuzu query
+            delete_rel_query = """
+            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
+            DELETE owns
+            """
+            
+            self.graph_storage.query(delete_rel_query, {
+                "user_id": user_id,
+                "book_id": book_id
+            })
+            print(f"✅ [DELETE_BOOK] Deleted OWNS relationship")
+            
+            # Check if any other users have this book
+            check_query = """
+            MATCH (u:User)-[owns:OWNS]->(b:Book {id: $book_id})
+            RETURN COUNT(owns) as count
+            """
+            
+            results = self.graph_storage.query(check_query, {"book_id": book_id})
+            other_relationships_count = 0
+            if results and 'col_0' in results[0]:
+                other_relationships_count = results[0]['col_0']
+            
+            print(f"🔍 [DELETE_BOOK] Other users with this book: {other_relationships_count}")
+            
+            # If no other users have this book, delete the book itself and all its relationships
+            if other_relationships_count == 0:
+                delete_book_query = """
+                MATCH (b:Book {id: $book_id})
+                DETACH DELETE b
+                """
+                self.graph_storage.query(delete_book_query, {"book_id": book_id})
+                print(f"✅ [DELETE_BOOK] Deleted book node and all relationships")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ [DELETE_BOOK] Error deleting book {uid}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     @run_async
     async def get_books_with_sharing_users(self, days_back: int = 30, limit: int = 20) -> List[Book]:
         """Get books from users who share reading activity, finished in the last N days."""
         # Get all users who share reading activity
         sharing_users = await self.user_repo.get_all()
-        sharing_user_ids = [u.id for u in sharing_users if u.share_reading_activity and u.is_active]
+        sharing_user_ids = []
+        
+        for user_dict in sharing_users:
+            if (user_dict.get('share_reading_activity', False) and 
+                user_dict.get('is_active', True)):
+                sharing_user_ids.append(user_dict.get('id'))
         
         if not sharing_user_ids:
             return []
         
-        # Get all books for sharing users
+        # Get all books for sharing users using graph queries
         all_books = []
         for user_id in sharing_user_ids:
-            books = await self.book_repo.get_books_for_user(user_id)
+            books = await self.get_books_for_user(user_id, limit=1000)  # Use service method
             all_books.extend(books)
         
         # Filter for finished books in the specified time range
         cutoff_date = date.today() - timedelta(days=days_back)
         finished_books = [
             book for book in all_books 
-            if book.finish_date and book.finish_date >= cutoff_date
+            if hasattr(book, 'finish_date') and book.finish_date and book.finish_date >= cutoff_date
         ]
         
         # Sort by finish date descending and limit
-        finished_books.sort(key=lambda b: b.finish_date or date.min, reverse=True)
+        finished_books.sort(key=lambda b: getattr(b, 'finish_date', date.min) or date.min, reverse=True)
         return finished_books[:limit]
     
     @run_async
@@ -253,25 +402,31 @@ class KuzuBookService:
         """Get currently reading books from users who share current reading."""
         # Get all users who share current reading
         sharing_users = await self.user_repo.get_all()
-        sharing_user_ids = [u.id for u in sharing_users if u.share_current_reading and u.is_active]
+        sharing_user_ids = []
+        
+        for user_dict in sharing_users:
+            if (user_dict.get('share_current_reading', False) and 
+                user_dict.get('is_active', True)):
+                sharing_user_ids.append(user_dict.get('id'))
         
         if not sharing_user_ids:
             return []
         
-        # Get all books for sharing users
+        # Get all books for sharing users using graph queries
         all_books = []
         for user_id in sharing_user_ids:
-            books = await self.book_repo.get_books_for_user(user_id)
+            books = await self.get_books_for_user(user_id, limit=1000)  # Use service method
             all_books.extend(books)
         
         # Filter for currently reading (has start_date but no finish_date)
         currently_reading = [
             book for book in all_books 
-            if book.start_date and not book.finish_date
+            if (hasattr(book, 'start_date') and book.start_date and 
+                (not hasattr(book, 'finish_date') or not book.finish_date))
         ]
         
         # Sort by start date descending and limit
-        currently_reading.sort(key=lambda b: b.start_date or date.min, reverse=True)
+        currently_reading.sort(key=lambda b: getattr(b, 'start_date', date.min) or date.min, reverse=True)
         return currently_reading[:limit]
     
     @run_async
@@ -279,63 +434,54 @@ class KuzuBookService:
         """Get a book by ISBN for a specific user."""
         books = await self.get_books_for_user(user_id, limit=1000)  # Get enriched books
         for book in books:
-            if book.isbn == isbn:
+            if (hasattr(book, 'isbn13') and book.isbn13 == isbn) or \
+               (hasattr(book, 'isbn10') and book.isbn10 == isbn):
                 return book
         return None
     
     @run_async
     async def get_book_by_id_for_user(self, book_id: str, user_id: str) -> Optional[Book]:
         """Get a specific book for a user with relationship data."""
-        book = await self.book_repo.get_by_id(book_id)
-        if not book:
-            return None
-            
-        # Check if user has this book
-        relationship_key = f"user_book:{user_id}:{book_id}"
-        relationship_data = await self.graph_storage.get_json(relationship_key)
-        if not relationship_data:
-            return None
-            
-        # Add user relationship attributes to the book object
-        book.reading_status = relationship_data.get('reading_status', 'plan_to_read')
-        book.ownership_status = relationship_data.get('ownership_status', 'owned')
-        book.start_date = relationship_data.get('start_date')
-        book.finish_date = relationship_data.get('finish_date')
-        book.user_rating = relationship_data.get('user_rating')
-        book.personal_notes = relationship_data.get('personal_notes')
-        book.date_added = relationship_data.get('date_added')
-        book.want_to_read = relationship_data.get('reading_status') == 'plan_to_read'
-        book.library_only = relationship_data.get('reading_status') == 'library_only'
-        book.uid = book.id  # Ensure uid is available
+        # Use Kuzu's query method to get the book with user relationship data
+        query = """
+        MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
+        RETURN b, owns
+        """
         
-        # Convert date strings back to date objects if needed
-        if isinstance(book.start_date, str):
-            try:
-                book.start_date = datetime.fromisoformat(book.start_date).date()
-            except:
-                book.start_date = None
-        if isinstance(book.finish_date, str):
-            try:
-                book.finish_date = datetime.fromisoformat(book.finish_date).date()
-            except:
-                book.finish_date = None
+        results = self.graph_storage.query(query, {
+            "user_id": user_id,
+            "book_id": book_id
+        })
+        
+        if not results:
+            return None
+            
+        result = results[0]
+        if 'col_0' not in result or 'col_1' not in result:
+            return None
+            
+        book_data = result['col_0']
+        relationship_data = result['col_1']
+        
+        # Create enriched book with user-specific attributes
+        book = self._create_enriched_book(book_data, relationship_data)
         
         # Load custom metadata for this user-book combination
         try:
             custom_metadata = {}
             # Query for HAS_CUSTOM_FIELD relationships from this user for this book
-            query = """
+            custom_query = """
             MATCH (u:User {id: $user_id})-[r:HAS_CUSTOM_FIELD]->(cf:CustomField)
             WHERE r.book_id = $book_id
             RETURN cf.name, cf.value
             """
             
-            results = self.graph_storage.query(query, {
+            custom_results = self.graph_storage.query(custom_query, {
                 "user_id": user_id,
                 "book_id": book_id
             })
             
-            for result in results:
+            for result in custom_results:
                 # Extract field name and value from result
                 if len(result) >= 2:
                     field_name = list(result.values())[0]  # First column
@@ -343,31 +489,82 @@ class KuzuBookService:
                     if field_name and field_value:
                         custom_metadata[field_name] = field_value
                         
-            book.custom_metadata = custom_metadata
+            setattr(book, 'custom_metadata', custom_metadata)
             print(f"🔍 [LOAD_CUSTOM_META] Loaded {len(custom_metadata)} custom fields for book {book_id}, user {user_id}: {custom_metadata}")
         except Exception as e:
             print(f"❌ Error loading custom metadata for book {book_id}, user {user_id}: {e}")
             import traceback
             traceback.print_exc()
-            book.custom_metadata = {}
+            setattr(book, 'custom_metadata', {})
                 
         return book
+
+    def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:
+        """Get categories for a book."""
+        try:
+            book_repo = KuzuBookRepository()
+            # Use run_async to call the async method
+            categories = run_async(book_repo.get_book_categories)(book_id)
+            
+            # Convert to dictionary format
+            category_list = []
+            for category in categories:
+                if isinstance(category, dict):
+                    category_list.append(category)
+                else:
+                    # Convert category object to dictionary
+                    category_dict = {}
+                    for attr in ['id', 'name', 'normalized_name', 'parent_id', 'created_at', 'updated_at']:
+                        if hasattr(category, attr):
+                            value = getattr(category, attr)
+                            if isinstance(value, datetime):
+                                category_dict[attr] = value.isoformat()
+                            else:
+                                category_dict[attr] = value
+                    category_list.append(category_dict)
+            
+            return category_list
+        except Exception as e:
+            print(f"❌ Error getting book categories for {book_id}: {e}")
+            return []
 
     # Sync wrappers for Flask compatibility
     def create_book_sync(self, domain_book: Book, user_id: str) -> Book:
         """Sync wrapper for create_book."""
-        # create_book already has @run_async decorator, so just call it directly
-        return self.create_book(domain_book, user_id)
+        return run_async(self.create_book)(domain_book, user_id)
     
     def get_book_by_id_sync(self, book_id: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_id."""
-        # get_book_by_id already has @run_async decorator, so just call it directly
-        return self.get_book_by_id(book_id)
+        return run_async(self.get_book_by_id)(book_id)
     
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
-        """Sync wrapper for get_book_by_id_for_user (uid is same as book_id)."""
-        # get_book_by_id_for_user already has @run_async decorator, so just call it directly
-        return self.get_book_by_id_for_user(uid, user_id)
+        """Get a book by UID with user overlay data - sync wrapper."""
+        # Use similar query to get_all_books_with_user_overlay but for single book
+        query = """
+        MATCH (b:Book {id: $book_id})
+        OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
+        RETURN b, owns
+        """
+        
+        results = self.graph_storage.query(query, {
+            "user_id": user_id,
+            "book_id": uid
+        })
+        
+        if not results:
+            return None
+            
+        result = results[0]
+        if 'col_0' not in result:
+            return None
+            
+        book_data = result['col_0']
+        relationship_data = result.get('col_1', {}) or {}
+        
+        # Create enriched book with user-specific attributes
+        book = self._create_enriched_book(book_data, relationship_data)
+        
+        return book
     
     def get_user_book_sync(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
         """Get user's book by book ID - alias for get_book_by_uid_sync for compatibility."""
@@ -393,22 +590,18 @@ class KuzuBookService:
     
     def get_user_books_sync(self, user_id: str) -> List[Book]:
         """Sync wrapper for get_books_for_user."""
-        # get_books_for_user already has @run_async decorator, so just call it directly
         return self.get_books_for_user(user_id)
     
     def search_books_sync(self, query: str, user_id: str) -> List[Book]:
         """Sync wrapper for search_books."""
-        # search_books already has @run_async decorator, so just call it directly
         return self.search_books(query, user_id)
     
     def update_book_sync(self, book_id: str, user_id: str, **kwargs) -> Optional[Book]:
         """Sync wrapper for update_book."""
-        # update_book already has @run_async decorator, so just call it directly
         return self.update_book(book_id, kwargs, user_id)
     
     def delete_book_sync(self, book_id: str, user_id: str) -> bool:
         """Sync wrapper for delete_book."""
-        # delete_book already has @run_async decorator, so just call it directly
         return self.delete_book(book_id, user_id)
     
     def get_books_with_sharing_users_sync(self, days_back: int = 30, limit: int = 20) -> List[Book]:
@@ -464,7 +657,8 @@ class KuzuBookService:
                             isbn = ''
                             
                             # Check if this is a headerless ISBN-only file
-                            if len(reader.fieldnames) == 1 and reader.fieldnames[0].startswith('978'):
+                            if (reader.fieldnames and len(reader.fieldnames) == 1 and 
+                                reader.fieldnames[0].startswith('978')):
                                 # This is likely an ISBN-only file where the "header" is actually the first ISBN
                                 # Get the ISBN from the single column
                                 first_col = list(row.values())[0] if row else reader.fieldnames[0]
@@ -510,8 +704,7 @@ class KuzuBookService:
                                 book = Book(
                                     title=title,
                                     isbn13=isbn if len(isbn) == 13 else None,
-                                    isbn10=isbn if len(isbn) == 10 else None,
-                                    authors=[Author(name=author)] if author else []
+                                    isbn10=isbn if len(isbn) == 10 else None
                                 )
                                 
                                 print(f"Created book object: {book}")
@@ -541,6 +734,394 @@ class KuzuBookService:
             import traceback
             traceback.print_exc()
             return task_id
+
+    # Category management methods
+    @run_async
+    async def list_all_categories(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all categories."""
+        try:
+            query = """
+            MATCH (c:Category)
+            RETURN c
+            ORDER BY c.name ASC
+            """
+            
+            results = self.graph_storage.query(query)
+            
+            categories = []
+            for result in results:
+                if 'col_0' in result:
+                    categories.append(result['col_0'])
+            
+            return categories
+        except Exception as e:
+            print(f"❌ Error getting all categories: {e}")
+            return []
+
+    def list_all_categories_sync(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all categories (sync version)."""
+        return self.list_all_categories(user_id)
+
+    @run_async
+    async def list_all_persons(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all persons."""
+        try:
+            return await self.book_repo.get_all_persons()
+        except Exception as e:
+            print(f"❌ Error getting all persons: {e}")
+            return []
+
+    def list_all_persons_sync(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all persons (sync version)."""
+        return self.list_all_persons(user_id)
+
+    @run_async
+    async def get_person_by_id(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """Get a person by ID."""
+        try:
+            from .infrastructure.kuzu_repositories import KuzuPersonRepository
+            person_repo = KuzuPersonRepository()
+            return await person_repo.get_by_id(person_id)
+        except Exception as e:
+            print(f"❌ Error getting person by ID {person_id}: {e}")
+            return None
+
+    def get_person_by_id_sync(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """Get a person by ID (sync version)."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            print(f"🔍 [DEBUG] get_person_by_id_sync: Looking for person_id: '{person_id}'")
+            
+            # First, let's see what persons exist in the database
+            debug_query = "MATCH (p:Person) RETURN p.id, p.name LIMIT 10"
+            debug_results = db.query(debug_query)
+            print(f"🔍 [DEBUG] get_person_by_id_sync: All persons in DB: {debug_results}")
+            
+            query = """
+            MATCH (p:Person {id: $person_id})
+            RETURN p
+            LIMIT 1
+            """
+            
+            print(f"🔍 [DEBUG] get_person_by_id_sync: Executing query: {query}")
+            print(f"🔍 [DEBUG] get_person_by_id_sync: Query parameters: {{'person_id': person_id}}")
+            
+            results = db.query(query, {"person_id": person_id})
+            
+            print(f"🔍 [DEBUG] get_person_by_id_sync: Raw query results: {results}")
+            print(f"🔍 [DEBUG] get_person_by_id_sync: Results type: {type(results)}")
+            print(f"🔍 [DEBUG] get_person_by_id_sync: Results length: {len(results) if results else 'None'}")
+            
+            if results and len(results) > 0:
+                print(f"🔍 [DEBUG] get_person_by_id_sync: First result: {results[0]}")
+                print(f"🔍 [DEBUG] get_person_by_id_sync: First result keys: {list(results[0].keys()) if isinstance(results[0], dict) else 'Not a dict'}")
+                
+                # Try different possible key formats
+                if 'result' in results[0]:
+                    person_data = dict(results[0]['result'])
+                    print(f"🔍 [DEBUG] get_person_by_id_sync: Person data from 'result': {person_data}")
+                    return person_data
+                elif 'col_0' in results[0]:
+                    person_data = dict(results[0]['col_0'])
+                    print(f"🔍 [DEBUG] get_person_by_id_sync: Person data from 'col_0': {person_data}")
+                    return person_data
+                elif 'p' in results[0]:
+                    person_data = dict(results[0]['p'])
+                    print(f"🔍 [DEBUG] get_person_by_id_sync: Person data from 'p': {person_data}")
+                    return person_data
+                else:
+                    print(f"🔍 [DEBUG] get_person_by_id_sync: No expected key found in results[0]. Available keys: {list(results[0].keys())}")
+            else:
+                print(f"🔍 [DEBUG] get_person_by_id_sync: No results found")
+            
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error getting person by ID {person_id}: {e}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
+            return None
+
+    @run_async
+    async def get_category_by_id(self, category_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a category by ID."""
+        try:
+            query = """
+            MATCH (c:Category {id: $category_id})
+            RETURN c
+            """
+            
+            results = self.graph_storage.query(query, {"category_id": category_id})
+            
+            if results and 'col_0' in results[0]:
+                return results[0]['col_0']
+            return None
+        except Exception as e:
+            print(f"❌ Error getting category by ID {category_id}: {e}")
+            return None
+
+    def get_category_by_id_sync(self, category_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a category by ID (sync version)."""
+        return self.get_category_by_id(category_id, user_id)
+
+    @run_async
+    async def get_child_categories(self, parent_id: str) -> List[Dict[str, Any]]:
+        """Get child categories for a parent category."""
+        try:
+            # Query for categories that have this parent_id
+            query = """
+            MATCH (c:Category)
+            WHERE c.parent_id = $parent_id
+            RETURN c
+            ORDER BY c.name ASC
+            """
+            
+            results = self.graph_storage.query(query, {"parent_id": parent_id})
+            
+            categories = []
+            for result in results:
+                if 'col_0' in result:
+                    categories.append(result['col_0'])
+            
+            return categories
+        except Exception as e:
+            print(f"❌ Error getting child categories for {parent_id}: {e}")
+            return []
+
+    def get_child_categories_sync(self, parent_id: str) -> List[Dict[str, Any]]:
+        """Get child categories for a parent category (sync version)."""
+        return self.get_child_categories(parent_id)
+
+    @run_async
+    async def get_category_children(self, category_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get children of a category (alias for get_child_categories)."""
+        return await self.get_child_categories(category_id)
+
+    def get_category_children_sync(self, category_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get children of a category (sync version)."""
+        return self.get_category_children(category_id, user_id)
+
+    @run_async
+    async def get_books_by_category(self, category_id: str, user_id: Optional[str] = None, include_subcategories: bool = False) -> List[Dict[str, Any]]:
+        """Get books in a category."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            if include_subcategories:
+                # Get all descendant categories
+                descendant_ids = await self._get_all_descendant_categories(category_id)
+                descendant_ids.append(category_id)  # Include the category itself
+                
+                # Build query for multiple categories
+                query = """
+                MATCH (b:Book)-[:BELONGS_TO]->(c:Category)
+                WHERE c.id IN $category_ids
+                RETURN DISTINCT b
+                ORDER BY b.title ASC
+                """
+                
+                results = db.query(query, {"category_ids": descendant_ids})
+            else:
+                # Query for books in this specific category
+                query = """
+                MATCH (b:Book)-[:BELONGS_TO]->(c:Category {id: $category_id})
+                RETURN b
+                ORDER BY b.title ASC
+                """
+                
+                results = db.query(query, {"category_id": category_id})
+            
+            books = []
+            for result in results:
+                if 'result' in result:
+                    books.append(dict(result['result']))
+                elif 'col_0' in result:
+                    books.append(dict(result['col_0']))
+            
+            return books
+        except Exception as e:
+            print(f"❌ Error getting books by category {category_id}: {e}")
+            return []
+
+    def get_books_by_category_sync(self, category_id: str, user_id: Optional[str] = None, include_subcategories: bool = False) -> List[Dict[str, Any]]:
+        """Get books in a category (sync version)."""
+        return self.get_books_by_category(category_id, user_id, include_subcategories)
+
+    @run_async
+    async def _get_all_descendant_categories(self, category_id: str) -> List[str]:
+        """Get all descendant category IDs recursively."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            # Use recursive CTE to get all descendants
+            query = """
+            WITH RECURSIVE descendants AS (
+                SELECT c.id as category_id, c.name as category_name
+                FROM Category c
+                WHERE c.id = $category_id
+                
+                UNION ALL
+                
+                SELECT child.id as category_id, child.name as category_name
+                FROM Category child
+                INNER JOIN descendants d ON child.parent_id = d.category_id
+            )
+            SELECT category_id FROM descendants WHERE category_id != $category_id
+            """
+            
+            results = db.query(query, {"category_id": category_id})
+            
+            descendant_ids = []
+            for result in results:
+                if 'result' in result:
+                    descendant_ids.append(result['result'])
+                elif 'col_0' in result:
+                    descendant_ids.append(result['col_0'])
+            
+            return descendant_ids
+        except Exception as e:
+            print(f"❌ Error getting descendant categories for {category_id}: {e}")
+            return []
+
+    @run_async
+    async def get_all_books_with_user_overlay(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all books with user overlay data."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            # Get all books and optionally join with user relationship data
+            query = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
+            RETURN b,
+                   owns.reading_status as reading_status,
+                   owns.ownership_status as ownership_status,
+                   owns.start_date as start_date,
+                   owns.finish_date as finish_date,
+                   owns.user_rating as user_rating,
+                   owns.user_review as user_review,
+                   owns.personal_notes as user_notes,
+                   owns.date_added as date_added
+            ORDER BY b.title ASC
+            """
+            
+            results = db.query(query, {"user_id": user_id})
+            
+            books = []
+            for result in results:
+                book_data = {}
+                
+                # Extract book data
+                if 'b' in result:
+                    book_data = dict(result['b'])
+                elif 'col_0' in result:
+                    book_data = dict(result['col_0'])
+                
+                # Add user-specific overlay data
+                book_data['reading_status'] = result.get('reading_status')
+                book_data['ownership_status'] = result.get('ownership_status')
+                book_data['start_date'] = result.get('start_date')
+                book_data['finish_date'] = result.get('finish_date')
+                book_data['user_rating'] = result.get('user_rating')
+                book_data['user_review'] = result.get('user_review')
+                book_data['user_notes'] = result.get('user_notes')
+                book_data['date_added'] = result.get('date_added')
+                
+                # Ensure uid is available as alias for id (for template compatibility)
+                if 'id' in book_data:
+                    book_data['uid'] = book_data['id']
+                
+                books.append(book_data)
+            
+            return books
+        except Exception as e:
+            print(f"❌ Error getting all books with user overlay: {e}")
+            return []
+
+    def get_all_books_with_user_overlay_sync(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all books with user overlay data (sync version)."""
+        return self.get_all_books_with_user_overlay(user_id)
+
+    @run_async
+    async def get_books_by_person(self, person_id: str, user_id: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+        """Get books associated with a person, grouped by contribution type."""
+        try:
+            from .infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            # Query to get books and their relationship types with the person
+            if user_id:
+                # Include user-specific data if user_id is provided
+                query = """
+                MATCH (p:Person {id: $person_id})-[r:AUTHORED]->(b:Book)
+                OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
+                RETURN b, r.role as contribution_type, 
+                       owns.reading_status as reading_status,
+                       owns.ownership_status as ownership_status,
+                       owns.start_date as start_date,
+                       owns.finish_date as finish_date
+                ORDER BY contribution_type, b.title
+                """
+                results = db.query(query, {"person_id": person_id, "user_id": user_id})
+            else:
+                # Just get the books without user-specific data
+                query = """
+                MATCH (p:Person {id: $person_id})-[r:AUTHORED]->(b:Book)
+                RETURN b, r.role as contribution_type
+                ORDER BY contribution_type, b.title
+                """
+                results = db.query(query, {"person_id": person_id})
+            
+            # Group books by contribution type
+            books_by_type = {}
+            for result in results:
+                # Extract the book data
+                book_data = {}
+                contribution_type = 'author'  # default
+                
+                if 'b' in result:
+                    book_data = dict(result['b'])
+                elif hasattr(result, 'b'):
+                    book_data = dict(getattr(result, 'b'))
+                
+                if 'contribution_type' in result:
+                    contribution_type = result['contribution_type'] or 'author'
+                elif hasattr(result, 'contribution_type'):
+                    contribution_type = getattr(result, 'contribution_type', 'author') or 'author'
+                
+                # Add user-specific data if available
+                if user_id:
+                    book_data['reading_status'] = result.get('reading_status')
+                    book_data['ownership_status'] = result.get('ownership_status') 
+                    book_data['start_date'] = result.get('start_date')
+                    book_data['finish_date'] = result.get('finish_date')
+                
+                # Initialize the contribution type list if not exists
+                if contribution_type not in books_by_type:
+                    books_by_type[contribution_type] = []
+                
+                books_by_type[contribution_type].append(book_data)
+            
+            return books_by_type
+            
+        except Exception as e:
+            print(f"❌ Error getting books by person {person_id}: {e}")
+            # If the AUTHORED table doesn't exist, return empty structure
+            # This handles the case where the database schema is incomplete
+            if "AUTHORED does not exist" in str(e):
+                print(f"⚠️ AUTHORED table missing - returning empty contributions for person {person_id}")
+                return {}
+            # For other errors, also return empty to avoid breaking the UI
+            return {}
+
+    def get_books_by_person_sync(self, person_id: str, user_id: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+        """Get books associated with a person, grouped by contribution type (sync version)."""
+        return self.get_books_by_person(person_id, user_id)
 
 
 # Create service instances
@@ -710,12 +1291,25 @@ class KuzuJobService:
                     'success': job_record.get('success', 0),
                     'errors': job_record.get('errors', 0),
                     'total': job_record.get('total', 0),
-                    'start_time': job_record.get('start_time').isoformat() if job_record.get('start_time') else None,
-                    'end_time': job_record.get('end_time').isoformat() if job_record.get('end_time') else None,
+                    'start_time': None,
+                    'end_time': None,
                     'current_book': job_record.get('current_book'),
                     'error_messages': json.loads(job_record.get('error_messages', '[]')),
                     'recent_activity': json.loads(job_record.get('recent_activity', '[]'))
                 }
+                
+                # Handle datetime fields safely
+                start_time = job_record.get('start_time')
+                if start_time and hasattr(start_time, 'isoformat'):
+                    job_data['start_time'] = start_time.isoformat()
+                elif isinstance(start_time, str):
+                    job_data['start_time'] = start_time
+                    
+                end_time = job_record.get('end_time')
+                if end_time and hasattr(end_time, 'isoformat'):
+                    job_data['end_time'] = end_time.isoformat()
+                elif isinstance(end_time, str):
+                    job_data['end_time'] = end_time
                 
                 print(f"✅ Retrieved job {task_id} from Kuzu")
                 return job_data
@@ -810,7 +1404,7 @@ class KuzuUserBookService:
         self.graph_storage = get_graph_storage()
     
     @run_async
-    async def update_user_book(self, user_id: str, book_id: str, custom_metadata: Dict[str, Any] = None, **kwargs) -> bool:
+    async def update_user_book(self, user_id: str, book_id: str, custom_metadata: Optional[Dict[str, Any]] = None, **kwargs) -> bool:
         """Update user-book relationship with custom metadata."""
         try:
             if not custom_metadata:
@@ -851,7 +1445,7 @@ class KuzuUserBookService:
             traceback.print_exc()
             return False
 
-    def update_user_book_sync(self, user_id: str, book_id: str, custom_metadata: Dict[str, Any] = None, **kwargs) -> bool:
+    def update_user_book_sync(self, user_id: str, book_id: str, custom_metadata: Optional[Dict[str, Any]] = None, **kwargs) -> bool:
         """Synchronous version of update_user_book."""
         try:
             print(f"🔍 [UPDATE_USER_BOOK] Called with user_id={user_id}, book_id={book_id}, custom_metadata={custom_metadata}")

@@ -149,10 +149,10 @@ class ImportMappingTemplate:
         
         return cls(
             id=decoded_data.get("id"),
-            user_id=decoded_data.get("user_id"),
-            name=decoded_data.get("name"),
+            user_id=decoded_data.get("user_id") or "",
+            name=decoded_data.get("name") or "",
             description=decoded_data.get("description"),
-            source_type=decoded_data.get("source_type"),
+            source_type=decoded_data.get("source_type") or "",
             sample_headers=json.loads(decoded_data.get("sample_headers", '[]')),
             field_mappings=json.loads(decoded_data.get("field_mappings", '{}')),
             times_used=int(decoded_data.get("times_used", 0)),
@@ -441,26 +441,30 @@ class Book:
         # Ensure published_date is a date object, not datetime or string
         if self.published_date:
             if isinstance(self.published_date, str):
+                date_string = self.published_date  # Store original string
                 try:
                     # Try parsing as ISO date string
-                    self.published_date = datetime.fromisoformat(self.published_date).date()
+                    self.published_date = datetime.fromisoformat(date_string).date()
                 except ValueError:
                     try:
                         # Try parsing as date-only string (YYYY-MM-DD)
-                        self.published_date = datetime.strptime(self.published_date, '%Y-%m-%d').date()
+                        self.published_date = datetime.strptime(date_string, '%Y-%m-%d').date()
                     except ValueError:
                         try:
                             # Try parsing year-only (common in Google Books API)
-                            if len(self.published_date) == 4 and self.published_date.isdigit():
-                                self.published_date = datetime.strptime(f"{self.published_date}-01-01", '%Y-%m-%d').date()
+                            if len(date_string) == 4 and date_string.isdigit():
+                                self.published_date = datetime.strptime(f"{date_string}-01-01", '%Y-%m-%d').date()
                             else:
-                                print(f"[BOOK_MODEL][WARN] Could not parse published_date string: {self.published_date}")
+                                print(f"[BOOK_MODEL][WARN] Could not parse published_date string: {date_string}")
                                 self.published_date = None
                         except ValueError:
-                            print(f"[BOOK_MODEL][WARN] Could not parse published_date string: {self.published_date}")
+                            print(f"[BOOK_MODEL][WARN] Could not parse published_date string: {date_string}")
                             self.published_date = None
             elif isinstance(self.published_date, datetime):
                 self.published_date = self.published_date.date()
+            elif isinstance(self.published_date, date):
+                # Already a date object, no conversion needed
+                pass
     
     @staticmethod
     def _normalize_title(title: str) -> str:
@@ -581,7 +585,7 @@ class User:
     
     def get_id(self) -> str:
         """Required by Flask-Login."""
-        return self.id
+        return self.id or ""
     
     def set_password(self, password: str):
         """Set password hash using werkzeug."""

@@ -22,15 +22,22 @@ def index():
     try:
         # Get user's custom fields with calculated usage
         user_fields = custom_field_service.get_user_fields_with_calculated_usage_sync(current_user.id)
+        if user_fields is None:
+            user_fields = []
         
         # Get popular shareable fields with calculated usage
         popular_fields = custom_field_service.get_shareable_fields_with_calculated_usage_sync(exclude_user_id=current_user.id)
+        # Handle case where popular_fields might be None
+        if popular_fields is None:
+            popular_fields = []
         # Sort by usage count to get most popular first
         popular_fields.sort(key=lambda x: x.usage_count or 0, reverse=True)
         popular_fields = popular_fields[:10]  # Limit to top 10
         
         # Get user's import templates
         import_templates = import_mapping_service.get_user_templates_sync(current_user.id)
+        if import_templates is None:
+            import_templates = []
         
         return render_template(
             'metadata/index.html',
@@ -50,9 +57,13 @@ def fields():
     try:
         # Get user's custom fields with calculated usage
         user_fields = custom_field_service.get_user_fields_with_calculated_usage_sync(current_user.id)
+        if user_fields is None:
+            user_fields = []
         
         # Get shareable fields from other users with calculated usage
         shareable_fields = custom_field_service.get_shareable_fields_with_calculated_usage_sync(exclude_user_id=current_user.id)
+        if shareable_fields is None:
+            shareable_fields = []
         
         return render_template(
             'metadata/fields.html',
@@ -88,6 +99,8 @@ def create_field():
             
             # Check if field name already exists for this user
             existing_fields = custom_field_service.get_user_fields_sync(current_user.id)
+            if existing_fields is None:
+                existing_fields = []
             if any(field.name == name for field in existing_fields):
                 flash('A field with this name already exists', 'error')
                 return redirect(request.url)
@@ -259,6 +272,8 @@ def search_fields():
         
         # Search user's fields and shareable fields
         fields = custom_field_service.search_fields_sync(query, current_user.id)
+        if fields is None:
+            fields = []
         
         # Return simplified field data for API
         results = []
@@ -287,6 +302,8 @@ def templates():
     try:
         # Get user's templates
         user_templates = import_mapping_service.get_user_templates_sync(current_user.id)
+        if user_templates is None:
+            user_templates = []
         
         return render_template(
             'metadata/templates.html',

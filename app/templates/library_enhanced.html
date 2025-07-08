@@ -763,7 +763,11 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('No UID provided for book');
             return;
         }
-        window.location.href = `{{ url_for('main.view_book_enhanced', uid='PLACEHOLDER') }}`.replace('PLACEHOLDER', uid);
+        console.log('Opening book with UID:', uid);
+        var baseUrl = "{{ url_for('main.view_book_enhanced', uid='PLACEHOLDER') }}";
+        var bookUrl = baseUrl.replace('PLACEHOLDER', uid);
+        console.log('Navigating to:', bookUrl);
+        window.location.href = bookUrl;
     };
 
     window.clearStatusFilter = function() {

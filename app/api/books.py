@@ -13,43 +13,110 @@ import traceback
 
 from ..api_auth import api_token_required, api_auth_optional
 from ..services import book_service
-from ..domain.models import Book as DomainBook, Author, Publisher
+from ..kuzu_services import KuzuBookService, KuzuUserBookService
+from ..domain.models import Book as DomainBook, Author, Publisher, BookContribution, ContributionType
 
 # Create API blueprint
 books_api = Blueprint('books_api', __name__, url_prefix='/api/v1/books')
 
+# Initialize the correct services
+kuzu_book_service = KuzuBookService()
+kuzu_user_book_service = KuzuUserBookService()
+
 
 def serialize_book(domain_book):
     """Convert domain book to API response format."""
-    return {
-        'id': domain_book.id,
-        'title': domain_book.title,
-        'isbn13': domain_book.isbn13,
-        'isbn10': domain_book.isbn10,
-        'authors': [author.name for author in domain_book.authors] if domain_book.authors else [],
-        'publisher': domain_book.publisher.name if domain_book.publisher else None,
-        'published_date': domain_book.published_date.isoformat() if domain_book.published_date else None,
-        'page_count': domain_book.page_count,
-        'language': domain_book.language,
-        'description': domain_book.description,
-        'cover_url': domain_book.cover_url,
-        'categories': domain_book.categories,
-        'average_rating': domain_book.average_rating,
-        'rating_count': domain_book.rating_count,
-        'created_at': domain_book.created_at.isoformat() if domain_book.created_at else None,
-        'updated_at': domain_book.updated_at.isoformat() if domain_book.updated_at else None
-    }
+    def format_date(date_obj):
+        """Helper function to format date objects to ISO string."""
+        if date_obj and hasattr(date_obj, 'isoformat'):
+            return date_obj.isoformat()
+        return None
+    
+    # Handle both domain objects and dictionaries
+    if hasattr(domain_book, '__dict__'):
+        # Domain object
+        return {
+            'id': getattr(domain_book, 'id', None),
+            'title': getattr(domain_book, 'title', ''),
+            'subtitle': getattr(domain_book, 'subtitle', None),
+            'isbn13': getattr(domain_book, 'isbn13', None),
+            'isbn10': getattr(domain_book, 'isbn10', None),
+            'asin': getattr(domain_book, 'asin', None),
+            'authors': [author.name for author in getattr(domain_book, 'authors', [])] if hasattr(domain_book, 'authors') else [],
+            'publisher': getattr(domain_book.publisher, 'name', None) if getattr(domain_book, 'publisher', None) else None,
+            'published_date': format_date(getattr(domain_book, 'published_date', None)),
+            'page_count': getattr(domain_book, 'page_count', None),
+            'language': getattr(domain_book, 'language', 'en'),
+            'description': getattr(domain_book, 'description', None),
+            'cover_url': getattr(domain_book, 'cover_url', None),
+            'google_books_id': getattr(domain_book, 'google_books_id', None),
+            'openlibrary_id': getattr(domain_book, 'openlibrary_id', None),
+            'categories': getattr(domain_book, 'categories', []),
+            'average_rating': getattr(domain_book, 'average_rating', None),
+            'rating_count': getattr(domain_book, 'rating_count', None),
+            'series': getattr(domain_book, 'series', None),
+            'series_volume': getattr(domain_book, 'series_volume', None),
+            'series_order': getattr(domain_book, 'series_order', None),
+            'created_at': format_date(getattr(domain_book, 'created_at', None)),
+            'updated_at': format_date(getattr(domain_book, 'updated_at', None))
+        }
+    else:
+        # Dictionary - return as is with some processing
+        return {
+            'id': domain_book.get('id'),
+            'title': domain_book.get('title', ''),
+            'subtitle': domain_book.get('subtitle'),
+            'isbn13': domain_book.get('isbn13'),
+            'isbn10': domain_book.get('isbn10'),
+            'asin': domain_book.get('asin'),
+            'authors': [author.get('name') if isinstance(author, dict) else str(author) for author in domain_book.get('authors', [])],
+            'publisher': domain_book.get('publisher', {}).get('name') if isinstance(domain_book.get('publisher'), dict) else domain_book.get('publisher'),
+            'published_date': domain_book.get('published_date'),
+            'page_count': domain_book.get('page_count'),
+            'language': domain_book.get('language', 'en'),
+            'description': domain_book.get('description'),
+            'cover_url': domain_book.get('cover_url'),
+            'google_books_id': domain_book.get('google_books_id'),
+            'openlibrary_id': domain_book.get('openlibrary_id'),
+            'categories': domain_book.get('categories', []),
+            'average_rating': domain_book.get('average_rating'),
+            'rating_count': domain_book.get('rating_count'),
+            'series': domain_book.get('series'),
+            'series_volume': domain_book.get('series_volume'),
+            'series_order': domain_book.get('series_order'),
+            'created_at': domain_book.get('created_at'),
+            'updated_at': domain_book.get('updated_at')
+        }
 
 
 def parse_book_data(data):
     """Parse JSON data into domain book object."""
-    # Parse authors
-    authors = []
+    # Parse contributors (authors)
+    contributors = []
     if 'authors' in data and data['authors']:
         if isinstance(data['authors'], list):
-            authors = [Author(name=name.strip()) for name in data['authors'] if name.strip()]
+            for i, name in enumerate(data['authors']):
+                if name.strip():
+                    # Create Person for author
+                    person = Publisher(name=name.strip())  # Temporary use of Publisher as Person-like
+                    # Create BookContribution
+                    contribution = BookContribution(
+                        person_id=str(person),  # Temporary
+                        book_id="",  # Will be set later
+                        contribution_type=ContributionType.AUTHORED,
+                        order=i
+                    )
+                    contributors.append(contribution)
         else:
-            authors = [Author(name=data['authors'].strip())]
+            # Single author
+            person = Publisher(name=data['authors'].strip())  # Temporary
+            contribution = BookContribution(
+                person_id=str(person),
+                book_id="",
+                contribution_type=ContributionType.AUTHORED,
+                order=0
+            )
+            contributors.append(contribution)
     
     # Parse publisher
     publisher = None
@@ -64,22 +131,33 @@ def parse_book_data(data):
         except (ValueError, TypeError):
             pass
     
-    # Create domain book
+    # Create domain book with all fields from comprehensive documentation
     domain_book = DomainBook(
         id=str(data.get('id', '')),
         title=data.get('title', '').strip(),
+        normalized_title=data.get('title', '').strip().lower(),
+        subtitle=data.get('subtitle', '').strip() or None,
         isbn13=data.get('isbn13', '').strip() or None,
         isbn10=data.get('isbn10', '').strip() or None,
-        authors=authors,
-        publisher=publisher,
+        asin=data.get('asin', '').strip() or None,
+        description=data.get('description', '').strip() or None,
         published_date=published_date,
         page_count=data.get('page_count') or None,
         language=data.get('language', '').strip() or 'en',
-        description=data.get('description', '').strip() or None,
         cover_url=data.get('cover_url', '').strip() or None,
-        raw_categories=data.get('categories'),  # Use raw_categories for automatic processing
+        google_books_id=data.get('google_books_id', '').strip() or None,
+        openlibrary_id=data.get('openlibrary_id', '').strip() or None,
         average_rating=data.get('average_rating') or None,
         rating_count=data.get('rating_count') or None,
+        # Series information
+        series_volume=data.get('series_volume', '').strip() or None,
+        series_order=data.get('series_order') or None,
+        # Raw categories for processing
+        raw_categories=data.get('categories'),
+        # Relationships
+        contributors=contributors,
+        publisher=publisher,
+        # Timestamps
         created_at=datetime.now(),
         updated_at=datetime.now()
     )
@@ -119,8 +197,8 @@ def get_books():
 def get_book(book_id):
     """Get a specific book by ID."""
     try:
-        # Use service layer to get book
-        domain_book = book_service.get_book_by_uid_sync(book_id, current_user.id)
+        # Use KuzuBookService to get book for user
+        domain_book = kuzu_book_service.get_book_by_uid_sync(book_id, current_user.id)
         
         if not domain_book:
             return jsonify({
@@ -166,17 +244,14 @@ def create_book():
         # Parse book data
         domain_book = parse_book_data(data)
         
-        # Create book using service layer
-        created_book = book_service.find_or_create_book_sync(domain_book)
+        # Create book using KuzuBookService
+        created_book = kuzu_book_service.create_book_sync(domain_book, current_user.id)
         
-        # Add to user's library
-        if created_book:
-            from ..domain.models import ReadingStatus
-            book_service.add_book_to_user_library_sync(
-                user_id=current_user.id,
-                book_id=created_book.id,
-                reading_status=ReadingStatus.PLAN_TO_READ
-            )
+        if not created_book:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to create book'
+            }), 500
         
         return jsonify({
             'status': 'success',
@@ -208,11 +283,11 @@ def update_book(book_id):
         data = request.json
         data['id'] = book_id  # Ensure ID is set
         
-        # Parse book data
-        domain_book = parse_book_data(data)
+        # Get the updates as a dictionary (excluding domain-specific parsing for now)
+        updates = {k: v for k, v in data.items() if k != 'id'}
         
-        # Update book using service layer
-        updated_book = book_service.update_book_sync(domain_book, current_user.id)
+        # Update book using KuzuBookService
+        updated_book = kuzu_book_service.update_book_sync(book_id, current_user.id, **updates)
         
         if not updated_book:
             return jsonify({
@@ -241,8 +316,8 @@ def update_book(book_id):
 def delete_book(book_id):
     """Delete a book."""
     try:
-        # Delete book using service layer
-        success = book_service.delete_book_sync(book_id, current_user.id)
+        # Delete book using KuzuBookService
+        success = kuzu_book_service.delete_book_sync(book_id, current_user.id)
         
         if not success:
             return jsonify({
@@ -277,38 +352,61 @@ def search_books():
         language = request.args.get('language', '').strip()
         author = request.args.get('author', '').strip()
         
-        # For now, use the existing get_all_books_with_user_overlay_sync and filter in Python
-        # TODO: Implement proper search in service layer
-        domain_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+        # Use KuzuBookService to get user's books
+        books = kuzu_book_service.get_user_books_sync(str(current_user.id))
         
         # Apply filters
         filtered_books = []
-        for book in domain_books:
+        for book in books:
             matches = True
             
             # Text search in title, description, authors
             if query:
                 search_text = f"{book.title} {book.description or ''}"
-                if book.authors:
-                    search_text += " " + " ".join(author.name for author in book.authors)
+                if book.contributors:
+                    # Get author names from contributors
+                    author_names = []
+                    for contrib in book.contributors:
+                        if contrib.person and contrib.person.name:
+                            author_names.append(contrib.person.name)
+                    if author_names:
+                        search_text += " " + " ".join(author_names)
                 if query.lower() not in search_text.lower():
                     matches = False
             
             # Category filter
-            if category and category not in (book.categories or []):
-                matches = False
+            if category:
+                book_categories = [cat.name if hasattr(cat, 'name') else str(cat) for cat in book.categories]
+                if category not in book_categories:
+                    matches = False
             
             # Publisher filter
-            if publisher and (not book.publisher or publisher.lower() != book.publisher.name.lower()):
-                matches = False
+            if publisher:
+                publisher_name = ""
+                if book.publisher:
+                    if hasattr(book.publisher, 'name'):
+                        publisher_name = book.publisher.name
+                    else:
+                        publisher_name = str(book.publisher)
+                
+                if publisher.lower() != publisher_name.lower():
+                    matches = False
             
             # Language filter
-            if language and language.lower() != (book.language or 'en').lower():
-                matches = False
+            if language:
+                book_language = book.language or 'en'
+                if language.lower() != book_language.lower():
+                    matches = False
             
             # Author filter
             if author:
-                if not book.authors or not any(author.lower() in auth.name.lower() for auth in book.authors):
+                author_found = False
+                for contrib in book.contributors:
+                    if contrib.person and contrib.person.name:
+                        if author.lower() in contrib.person.name.lower():
+                            author_found = True
+                            break
+                if not author_found:
                     matches = False
             
             if matches:

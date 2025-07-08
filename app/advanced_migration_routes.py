@@ -107,6 +107,11 @@ def first_time_setup():
                                      form=form, 
                                      databases=db_analysis)
             
+            # Type safety: ensure all values are strings (the check above guarantees they're truthy)
+            username = str(username)
+            email = str(email)
+            password = str(password)
+            
             # Create the first admin user
             admin_user = migration_system.create_first_admin_user(
                 username=username,

@@ -185,6 +185,9 @@ def execute_migration():
 def run_migration(migration_id):
     """API endpoint to actually run the migration."""
     try:
+        if not request.json:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
         config_file = request.json.get('config_file')
         
         if not config_file or not os.path.exists(config_file):

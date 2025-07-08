@@ -231,6 +231,7 @@ cookies.txt
 
 # Development and testing files
 test_*.py
+check_*.py
 tests/
 scripts/debug/
 
@@ -242,6 +243,8 @@ SQLALCHEMY_CLEANUP.md
 
 # Runtime data and sensitive information
 data/
+migration_backups/
+flask_session/
 *.log
 
 # Environment files

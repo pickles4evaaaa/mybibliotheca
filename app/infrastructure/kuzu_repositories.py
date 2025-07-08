@@ -1,1781 +1,2073 @@
 """
-Kuzu-based repository implementations.
-
-Concrete implementations of the domain repository interfaces using Kuzu as the storage backend.
+Clean Kuzu repositories that work with the simplified graph schema.
 """
 
 import uuid
-import json
-from typing import List, Optional, Dict, Any, Tuple
+import logging
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from datetime import datetime, date
-from dataclasses import asdict
-from enum import Enum
 
-from flask import current_app
+if TYPE_CHECKING:
+    # Use TYPE_CHECKING to avoid circular imports during runtime
+    from ..domain.models import (
+        User, Book, Person, Category, Series, Publisher, Location,
+        ReadingStatus, OwnershipStatus, MediaType
+    )
 
-from ..domain.models import Book, User, Author, Person, BookContribution, ContributionType, Publisher, Series, Category, UserBookRelationship, ReadingStatus, OwnershipStatus, MediaType, CustomFieldDefinition, ImportMappingTemplate, CustomFieldType
-from ..domain.repositories import BookRepository, UserRepository, AuthorRepository, UserBookRepository, CustomFieldRepository, ImportMappingRepository
-from .kuzu_graph import KuzuGraphStorage
+try:
+    from .kuzu_graph import get_kuzu_database
+except ImportError:
+    from kuzu_graph import get_kuzu_database
 
-
-def _serialize_for_kuzu(obj: Any) -> Any:
-    """Convert objects to Kuzu-compatible format."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, date):
-        return obj.isoformat()
-    elif isinstance(obj, Enum):
-        return obj.value
-    elif hasattr(obj, '__dict__'):
-        # Handle dataclass or object with attributes
-        return {k: _serialize_for_kuzu(v) for k, v in obj.__dict__.items()}
-    elif isinstance(obj, dict):
-        return {k: _serialize_for_kuzu(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_serialize_for_kuzu(item) for item in obj]
-    else:
-        return obj
+logger = logging.getLogger(__name__)
 
 
-def _ensure_datetime_fields(data: dict, fields: list):
-    """Ensure specified fields in data are Python datetime objects, handling both strings and datetime objects."""
-    for field in fields:
-        if field in data:
-            val = data[field]
-            if isinstance(val, str):
-                try:
-                    data[field] = _safe_fromisoformat(val)
-                except Exception as e:
-                    print(f"[KUZU_REPO][WARN] Could not convert field '{field}' value '{val}' to datetime: {e}")
-            elif isinstance(val, datetime):
-                # Already a datetime object, no conversion needed
-                pass
-            elif val is not None:
-                print(f"[KUZU_REPO][WARN] Field '{field}' is not datetime or str: {type(val)}")
-    return data
-
-def _safe_fromisoformat(value):
-    """Safely convert a value to datetime, handling both strings and datetime objects."""
-    if isinstance(value, datetime):
-        return value
-    elif isinstance(value, str):
-        return datetime.fromisoformat(value)
-    else:
-        return value
-
-def _safe_date_fromisoformat(value):
-    """Safely convert a value to date, handling both strings, dates, and datetime objects."""
-    if isinstance(value, date):
-        return value
-    elif isinstance(value, datetime):
-        return value.date()
-    elif isinstance(value, str):
-        try:
-            # Try parsing as ISO date string
-            return datetime.fromisoformat(value).date()
-        except ValueError:
-            try:
-                # Try parsing as date-only string
-                return datetime.strptime(value, '%Y-%m-%d').date()
-            except ValueError:
-                try:
-                    # Try parsing with full timestamp and extract date
-                    return datetime.fromisoformat(value.replace('Z', '+00:00')).date()
-                except ValueError:
-                    print(f"[KUZU_REPO][WARN] Could not parse date string: {value}")
-                    return None
-    else:
-        return value
-
-def _clean_kuzu_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Clean Kuzu data by removing internal fields like _id."""
-    if not isinstance(data, dict):
-        return data
+class KuzuUserRepository:
+    """Clean user repository using simplified Kuzu schema."""
     
-    cleaned = {}
-    for key, value in data.items():
-        # Skip internal Kuzu fields that start with underscore
-        if key.startswith('_'):
-            continue
-        cleaned[key] = value
-    return cleaned
-
-
-def _filter_model_fields(data: Dict[str, Any], model_class) -> Dict[str, Any]:
-    """Filter data to only include fields that exist in the target dataclass model."""
-    import inspect
+    def __init__(self):
+        self.db = get_kuzu_database()
     
-    # Get field names from the dataclass if available
-    if hasattr(model_class, '__dataclass_fields__'):
-        allowed_fields = set(model_class.__dataclass_fields__.keys())
-    else:
-        # Fallback for non-dataclasses - inspect the __init__ method
-        sig = inspect.signature(model_class.__init__)
-        allowed_fields = set(sig.parameters.keys()) - {'self'}
-    
-    return {k: v for k, v in data.items() if k in allowed_fields}
-
-
-def _clean_custom_field_data(field_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Clean and map custom field data from database to model format."""
-    field_data = _clean_kuzu_data(field_data)
-    
-    # Map field names from database schema to model field names
-    if 'user_id' in field_data:
-        field_data['created_by_user_id'] = field_data.pop('user_id')
-    
-    # Remove fields that don't exist in the CustomFieldDefinition model
-    model_fields = {
-        'id', 'name', 'display_name', 'field_type', 'description', 
-        'created_by_user_id', 'is_shareable', 'is_global', 'default_value',
-        'placeholder_text', 'help_text', 'predefined_options', 'allow_custom_options',
-        'rating_min', 'rating_max', 'rating_labels', 'usage_count', 'created_at', 'updated_at'
-    }
-    field_data = {k: v for k, v in field_data.items() if k in model_fields}
-    
-    # Type conversions
-    if field_data.get('created_at'):
-        field_data['created_at'] = _safe_fromisoformat(field_data['created_at'])
-    if field_data.get('field_type'):
-        field_data['field_type'] = CustomFieldType(field_data['field_type'])
-    
-    return field_data
-
-
-def _old_filter_model_fields_implementation(data: Dict[str, Any], model_class) -> Dict[str, Any]:
-    """Filter data to only include fields that exist in the target dataclass model."""
-    import dataclasses
-    
-    if not dataclasses.is_dataclass(model_class):
-        return data
-    
-    # Get all field names from the dataclass
-    field_names = {field.name for field in dataclasses.fields(model_class)}
-    
-    # Filter data to only include valid fields
-    filtered = {}
-    for key, value in data.items():
-        if key in field_names:
-            filtered[key] = value
-    
-    return filtered
-
-
-class KuzuBookRepository(BookRepository):
-    """Kuzu-based implementation of BookRepository."""
-    
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
-        
-    async def create(self, book: Book) -> Book:
-        """Create a new book."""
-        if not book.id:
-            book.id = str(uuid.uuid4())
-        
-        print(f"🔍 [KUZU_REPO] Creating book: {book.title}")
-        print(f"📚 [KUZU_REPO] Book has {len(book.authors)} authors")
-        
-        # Convert book to dictionary for storage
-        book_data = asdict(book)
-        
-        # Handle DATE fields specifically - ensure they are proper date objects or None
-        if 'published_date' in book_data and book_data['published_date'] is not None:
-            book_data['published_date'] = _safe_date_fromisoformat(book_data['published_date'])
-            print(f"[KUZU_REPO][DEBUG] published_date converted to: {book_data['published_date']} (type: {type(book_data['published_date'])})")
-        
-        # Remove None values for optional fields that should be omitted if empty
-        optional_fields = ['published_date']
-        for field in optional_fields:
-            if book_data.get(field) is None:
-                book_data.pop(field, None)
-        
-        # Ensure TIMESTAMP fields are datetime objects
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in book_data:
-                if isinstance(book_data[ts_field], str):
-                    try:
-                        book_data[ts_field] = _safe_fromisoformat(book_data[ts_field])
-                    except Exception as e:
-                        print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
-        
-        if not book_data.get('created_at'):
-            book_data['created_at'] = datetime.utcnow()
-        if not book_data.get('updated_at'):
-            book_data['updated_at'] = datetime.utcnow()
-            
-        # Ensure normalized_title is set (required by schema)
-        if not book_data.get('normalized_title'):
-            book_data['normalized_title'] = book.title.strip().lower() if book.title else ""
-        
-        # Handle complex fields that need JSON serialization
-        if 'custom_metadata' in book_data and book_data['custom_metadata']:
-            book_data['custom_metadata'] = json.dumps(book_data['custom_metadata'])
-        elif 'custom_metadata' in book_data:
-            book_data['custom_metadata'] = ""  # Empty string for empty dict
-            
-        if 'raw_categories' in book_data and book_data['raw_categories']:
-            book_data['raw_categories'] = json.dumps(book_data['raw_categories'])
-        elif 'raw_categories' in book_data:
-            book_data['raw_categories'] = ""  # Empty string for None
-        
-        # Remove legacy/invalid fields for Book dataclass
-        book_data.pop('isbn', None)  # Remove if present (not a Book field)
-        # Remove nested objects (handled separately)
-        book_data.pop('authors', None)
-        book_data.pop('categories', None)
-        book_data.pop('publisher', None)
-        book_data.pop('series', None)
-        book_data.pop('contributors', None)  # Remove contributors (handled via relationships)
-        # Debug output for TIMESTAMP fields
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in book_data:
-                print(f"[KUZU_REPO][DEBUG] {ts_field}: {book_data[ts_field]} (type: {type(book_data[ts_field])})")
-        success = self.storage.store_node('Book', book.id, book_data)
-        if not success:
-            raise Exception(f"Failed to create book: {book.title}")
-        
-        # Create author relationships (store as Person nodes)
-        for author in book.authors:
-            if not author.id:
-                author.id = str(uuid.uuid4())
-            
-            # Convert Author to Person for storage
-            from ..domain.models import Person
-            person = Person(
-                id=author.id,
-                name=author.name,
-                normalized_name=author.normalized_name,
-                birth_year=author.birth_year,
-                death_year=author.death_year,
-                bio=author.bio,
-                created_at=author.created_at if hasattr(author, 'created_at') else datetime.utcnow()
-            )
-            
-            # Store person node if not exists
-            existing_person = self.storage.get_node('Person', person.id)
-            if not existing_person:
-                person_data = asdict(person)
-                self.storage.store_node('Person', person.id, person_data)
-            
-            # Create AUTHORED relationship
-            self.storage.create_relationship(
-                'Person', person.id, 'AUTHORED', 'Book', book.id,
-                {'created_at': datetime.utcnow().isoformat()}
-            )
-        
-        # Create category relationships
-        for category in book.categories:
-            # Handle both Category objects and strings
-            if isinstance(category, str):
-                # Convert string to Category object
-                from ..domain.models import Category
-                category_obj = Category(
-                    id=str(uuid.uuid4()),
-                    name=category,
-                    normalized_name=category.lower().strip()
-                )
-            else:
-                category_obj = category
-                if not category_obj.id:
-                    category_obj.id = str(uuid.uuid4())
-            
-            # Store category node if not exists
-            existing_category = self.storage.get_node('Category', category_obj.id)
-            if not existing_category:
-                category_data = asdict(category_obj)
-                self.storage.store_node('Category', category_obj.id, category_data)
-            
-            # Create CATEGORIZED_AS relationship
-            self.storage.create_relationship(
-                'Book', book.id, 'CATEGORIZED_AS', 'Category', category_obj.id,
-                {'created_at': datetime.utcnow().isoformat()}
-            )
-        
-        # Create publisher relationship
-        if book.publisher:
-            if not book.publisher.id:
-                book.publisher.id = str(uuid.uuid4())
-            
-            # Store publisher node if not exists
-            existing_publisher = self.storage.get_node('Publisher', book.publisher.id)
-            if not existing_publisher:
-                publisher_data = asdict(book.publisher)
-                self.storage.store_node('Publisher', book.publisher.id, publisher_data)
-            
-            # Create PUBLISHED_BY relationship
-            self.storage.create_relationship(
-                'Book', book.id, 'PUBLISHED_BY', 'Publisher', book.publisher.id,
-                {'publication_date': book.published_date.isoformat() if book.published_date else None, 'created_at': datetime.utcnow().isoformat()}
-            )
-        
-        # Create series relationship
-        if book.series:
-            if not book.series.id:
-                book.series.id = str(uuid.uuid4())
-            
-            # Store series node if not exists
-            existing_series = self.storage.get_node('Series', book.series.id)
-            if not existing_series:
-                series_data = asdict(book.series)
-                self.storage.store_node('Series', book.series.id, series_data)
-            
-            # Create PART_OF_SERIES relationship
-            self.storage.create_relationship(
-                'Book', book.id, 'PART_OF_SERIES', 'Series', book.series.id,
-                {'volume_number': getattr(book, 'volume_number', None), 'created_at': datetime.utcnow().isoformat()}
-            )
-        
-        # Create contributor relationships
-        for contributor in book.contributors:
-            if not contributor.person.id:
-                contributor.person.id = str(uuid.uuid4())
-            
-            # Store person node if not exists
-            existing_person = self.storage.get_node('Person', contributor.person.id)
-            if not existing_person:
-                person_data = asdict(contributor.person)
-                self.storage.store_node('Person', contributor.person.id, person_data)
-            
-            # Create WRITTEN_BY relationship
-            self.storage.create_relationship(
-                'Book', book.id, 'WRITTEN_BY', 'Person', contributor.person.id,
-                {
-                    'contribution_type': contributor.contribution_type.value,  # Convert enum to string
-                    'role': getattr(contributor, 'role', None),
-                    'created_at': datetime.utcnow().isoformat()
-                }
-            )
-        
-        print(f"✅ [KUZU_REPO] Successfully created book: {book.title}")
-        return book
-    
-    async def get_by_id(self, book_id: str) -> Optional[Book]:
-        """Get a book by ID with all relationships."""
-        book_data = self.storage.get_node('Book', book_id)
-        if not book_data:
-            return None
-        
-        # Get relationships to rebuild the complete book object
-        book = self._build_book_from_data(book_data, book_id)
-        return book
-    
-    def _build_book_from_data(self, book_data: Dict[str, Any], book_id: str) -> Book:
-        """Build a complete Book object from stored data and relationships."""
-        # Clean Kuzu data
-        book_data = _clean_kuzu_data(book_data)
-        
-        # Get authors via AUTHORED relationships
-        author_rels = self.storage.get_relationships('Author', None, 'AUTHORED')
-        authors = []
-        for rel in author_rels:
-            if rel['target'].get('id') == book_id:
-                author_data = self.storage.get_node('Author', rel['relationship'].get('from_id'))
-                if author_data:
-                    author_data = _clean_kuzu_data(author_data)
-                    authors.append(Author(**author_data))
-        
-        # Get categories via CATEGORIZED_AS relationships
-        category_rels = self.storage.get_relationships('Book', book_id, 'CATEGORIZED_AS')
-        categories = []
-        for rel in category_rels:
-            category_data = _clean_kuzu_data(rel['target'])
-            categories.append(Category(**category_data))
-        
-        # Get publisher via PUBLISHED_BY relationships
-        publisher = None
-        publisher_rels = self.storage.get_relationships('Book', book_id, 'PUBLISHED_BY')
-        for rel in publisher_rels:
-            if rel['target'].get('id') == book_id:
-                publisher_data = self.storage.get_node('Publisher', rel['relationship'].get('from_id'))
-                if publisher_data:
-                    publisher_data = _clean_kuzu_data(publisher_data)
-                    publisher = Publisher(**publisher_data)
-                    break
-        
-        # Get series via PART_OF_SERIES relationships
-        series = None
-        series_rels = self.storage.get_relationships('Book', book_id, 'PART_OF_SERIES')
-        if series_rels:
-            series_data = _clean_kuzu_data(series_rels[0]['target'])
-            series = Series(**series_data)
-        
-        # Convert date strings back to date objects
-        if book_data.get('published_date'):
-            book_data['published_date'] = _safe_date_fromisoformat(book_data['published_date'])
-        if book_data.get('created_at'):
-            book_data['created_at'] = _safe_fromisoformat(book_data['created_at'])
-        if book_data.get('updated_at'):
-            book_data['updated_at'] = _safe_fromisoformat(book_data['updated_at'])
-        
-        # Convert authors to contributors
-        contributors = []
-        for author in authors:
-            # Convert Author to Person first
-            person = Person(
-                id=author.id,
-                name=author.name,
-                normalized_name=author.normalized_name,
-                birth_year=author.birth_year,
-                death_year=author.death_year,
-                bio=author.bio,
-                created_at=author.created_at if hasattr(author, 'created_at') else datetime.utcnow()
-            )
-            
-            # Create BookContribution
-            contribution = BookContribution(
-                person=person,
-                contribution_type=ContributionType.AUTHORED,
-                created_at=datetime.utcnow()
-            )
-            contributors.append(contribution)
-        
-        # Get contributors via WRITTEN_BY relationships
-        contributed_rels = self.storage.get_relationships('Book', book_id, 'WRITTEN_BY')
-        for rel in contributed_rels:
-            if rel['target'].get('id') == book_id:
-                person_data = self.storage.get_node('Person', rel['relationship'].get('from_id'))
-                if person_data:
-                    person_data = _clean_kuzu_data(person_data)
-                    person = Person(**person_data)
-                    
-                    # Get contribution type from relationship properties
-                    rel_props = rel['relationship']
-                    contribution_type_str = rel_props.get('contribution_type', 'contributed')
-                    try:
-                        contribution_type = ContributionType(contribution_type_str)
-                    except ValueError:
-                        contribution_type = ContributionType.CONTRIBUTED
-                    
-                    # Create BookContribution
-                    contribution = BookContribution(
-                        person=person,
-                        contribution_type=contribution_type,
-                        role=rel_props.get('role'),
-                        created_at=_safe_fromisoformat(rel_props.get('created_at')) if rel_props.get('created_at') else datetime.utcnow()
-                    )
-                    contributors.append(contribution)
-        
-        # Remove legacy/invalid fields for Book dataclass
-        book_data.pop('isbn', None)
-        book_data.pop('authors', None)
-        book_data.pop('categories', None)
-        book_data.pop('publisher', None)
-        book_data.pop('series', None)
-        book_data.pop('contributors', None)
-        
-        # Create Book object
-        book = Book(
-            **book_data,
-            contributors=contributors,
-            categories=categories,
-            publisher=publisher,
-            series=series
-        )
-        
-        return book
-    
-    async def update(self, book: Book) -> Optional[Book]:
-        """Update an existing book."""
-        if not book.id:
-            return None
-        
-        book_data = asdict(book)
-        # Remove None values for optional fields
-        optional_fields = ['published_date', 'created_at', 'updated_at']
-        for field in optional_fields:
-            if book_data.get(field) is None:
-                book_data.pop(field, None)
-        # Ensure TIMESTAMP fields are datetime objects
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in book_data:
-                if isinstance(book_data[ts_field], str):
-                    try:
-                        book_data[ts_field] = _safe_fromisoformat(book_data[ts_field])
-                    except Exception as e:
-                        print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
-        if not book_data.get('updated_at'):
-            book_data['updated_at'] = datetime.utcnow()
-        book_data.pop('isbn', None)
-        book_data.pop('authors', None)
-        book_data.pop('categories', None)
-        book_data.pop('publisher', None)
-        book_data.pop('series', None)
-        book_data.pop('contributors', None)
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in book_data:
-                print(f"[KUZU_REPO][DEBUG] {ts_field}: {book_data[ts_field]} (type: {type(book_data[ts_field])})")
-        success = self.storage.update_node('Book', book.id, book_data)
-        return book if success else None
-    
-    async def delete(self, book_id: str) -> bool:
-        """Delete a book and all its relationships."""
-        return self.storage.delete_node('Book', book_id)
-    
-    async def list_all(self, limit: int = 100, offset: int = 0) -> List[Book]:
-        """List all books with pagination."""
-        book_nodes = self.storage.get_nodes_by_type('Book', limit, offset)
-        books = []
-        for book_data in book_nodes:
-            book = self._build_book_from_data(book_data, book_data['id'])
-            books.append(book)
-        return books
-    
-    async def search_by_title(self, title: str, limit: int = 10) -> List[Book]:
-        """Search books by title."""
-        query = """
-        MATCH (b:Book)
-        WHERE b.title CONTAINS $title
-        RETURN b
-        LIMIT $limit
-        """
-        results = self.storage.execute_cypher(query, {"title": title, "limit": limit})
-        books = []
-        for result in results:
-            book_data = result['col_0']
-            book = self._build_book_from_data(book_data, book_data['id'])
-            books.append(book)
-        return books
-    
-    async def search_by_author(self, author_name: str, limit: int = 10) -> List[Book]:
-        """Search books by author name."""
-        query = """
-        MATCH (a:Author)-[:AUTHORED]->(b:Book)
-        WHERE a.name CONTAINS $author_name
-        RETURN DISTINCT b
-        LIMIT $limit
-        """
-        results = self.storage.execute_cypher(query, {"author_name": author_name, "limit": limit})
-        books = []
-        for result in results:
-            book_data = result['col_0']
-            book = self._build_book_from_data(book_data, book_data['id'])
-            books.append(book)
-        return books
-    
-    async def get_by_isbn(self, isbn: str) -> Optional[Book]:
-        """Get a book by ISBN."""
-        query = """
-        MATCH (b:Book)
-        WHERE b.isbn13 = $isbn OR b.isbn10 = $isbn
-        RETURN b
-        """
-        results = self.storage.execute_cypher(query, {"isbn": isbn})
-        if results:
-            book_data = results[0]['col_0']
-            return self._build_book_from_data(book_data, book_data['id'])
-        return None
-    
-    async def find_duplicates(self, book: Book) -> List[Tuple[Book, float]]:
-        """Find potential duplicate books with confidence scores."""
-        # Basic implementation - can be enhanced with more sophisticated matching
-        duplicates = []
-        
-        # Search by ISBN first (exact match)
-        if book.isbn13:
-            isbn_match = await self.get_by_isbn(book.isbn13)
-            if isbn_match and isbn_match.id != book.id:
-                duplicates.append((isbn_match, 1.0))  # Perfect match
-        
-        # Search by title (fuzzy match)
-        if book.title:
-            title_matches = await self.search_by_title(book.title, limit=5)
-            for match in title_matches:
-                if match.id != book.id:
-                    # Simple confidence based on title similarity
-                    confidence = 0.8 if match.title.lower() == book.title.lower() else 0.6
-                    duplicates.append((match, confidence))
-        
-        # Remove duplicates and sort by confidence
-        seen_ids = set()
-        unique_duplicates = []
-        for dup_book, confidence in duplicates:
-            if dup_book.id not in seen_ids:
-                unique_duplicates.append((dup_book, confidence))
-                seen_ids.add(dup_book.id)
-        
-        return sorted(unique_duplicates, key=lambda x: x[1], reverse=True)
-    
-    async def search(self, query: str, filters: Dict[str, Any] = None) -> List[Book]:
-        """Search books with optional filters."""
-        # Build dynamic query based on filters
-        where_conditions = []
-        params = {"query": f"%{query}%"}
-        
-        # Basic text search across title, description, etc.
-        where_conditions.append("(b.title CONTAINS $query OR b.description CONTAINS $query)")
-        
-        # Add filters if provided
-        if filters:
-            if filters.get('author'):
-                where_conditions.append("EXISTS((b)-[:AUTHORED]-(a:Author)) AND a.name CONTAINS $author_filter")
-                params['author_filter'] = f"%{filters['author']}%"
-            
-            if filters.get('category'):
-                where_conditions.append("EXISTS((b)-[:CATEGORIZED_AS]-(c:Category)) AND c.name CONTAINS $category_filter")
-                params['category_filter'] = f"%{filters['category']}%"
-            
-            if filters.get('isbn'):
-                where_conditions.append("(b.isbn13 = $isbn_filter OR b.isbn10 = $isbn_filter)")
-                params['isbn_filter'] = filters['isbn']
-        
-        where_clause = " AND ".join(where_conditions)
-        cypher_query = f"""
-        MATCH (b:Book)
-        WHERE {where_clause}
-        RETURN b
-        LIMIT 50
-        """
-        
-        results = self.storage.execute_cypher(cypher_query, params)
-        books = []
-        for result in results:
-            book_data = result['col_0']
-            book = self._build_book_from_data(book_data, book_data['id'])
-            books.append(book)
-        return books
-    
-    async def merge_books(self, source_id: str, target_id: str) -> Book:
-        """Merge two duplicate book records (admin only)."""
-        # Get both books
-        source_book = await self.get_by_id(source_id)
-        target_book = await self.get_by_id(target_id)
-        
-        if not source_book or not target_book:
-            raise ValueError("One or both books not found")
-        
-        # Merge logic: update target with any missing data from source
-        merged_data = {}
-        
-        # Copy non-empty fields from source to target if target field is empty
-        for field in ['description', 'isbn13', 'isbn10', 'publisher', 'published_date', 
-                     'page_count', 'language', 'cover_url']:
-            source_val = getattr(source_book, field, None)
-            target_val = getattr(target_book, field, None)
-            if source_val and not target_val:
-                merged_data[field] = source_val
-        
-        # Update target book with merged data
-        if merged_data:
-            for field, value in merged_data.items():
-                setattr(target_book, field, value)
-            target_book = await self.update(target_book)
-        
-        # Move all relationships from source to target
-        # This would involve updating user relationships, reading logs, etc.
-        # For now, we'll implement a basic version
-        
-        # Delete the source book after merging
-        await self.delete(source_id)
-        
-        return target_book
-    
-    async def get_related_books(self, book_id: str) -> List[Book]:
-        """Get books related by the same author or in the same category."""
-        query = """
-        MATCH (b:Book)-[:AUTHORED|CATEGORIZED_AS]-(related:Book)
-        WHERE b.id = $book_id AND related.id <> $book_id
-        RETURN DISTINCT related
-        LIMIT 10
-        """
-        results = self.storage.execute_cypher(query, {"book_id": book_id})
-        related_books = []
-        for result in results:
-            book_data = result['col_0']
-            related_book = self._build_book_from_data(book_data, book_data['id'])
-            related_books.append(related_book)
-        return related_books
-
-
-class KuzuUserRepository(UserRepository):
-    """Kuzu-based implementation of UserRepository."""
-    
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
-    
-    async def create(self, user: User) -> User:
+    async def create(self, user: Any) -> Optional[Any]:
         """Create a new user."""
-        if not user.id:
-            user.id = str(uuid.uuid4())
-        
-        user_data = asdict(user)
-        # Remove None values for optional fields to avoid Kuzu type errors
-        optional_fields = ['locked_until', 'last_login', 'password_changed_at', 'display_name', 'bio', 'location', 'website']
-        for field in optional_fields:
-            if user_data.get(field) is None:
-                user_data.pop(field, None)
-        # Ensure TIMESTAMP fields are datetime objects
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in user_data:
-                if isinstance(user_data[ts_field], str):
-                    try:
-                        user_data[ts_field] = _safe_fromisoformat(user_data[ts_field])
-                    except Exception as e:
-                        print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
-        if not user_data.get('created_at'):
-            user_data['created_at'] = datetime.utcnow()
-        if not user_data.get('updated_at'):
-            user_data['updated_at'] = datetime.utcnow()
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in user_data:
-                print(f"[KUZU_REPO][DEBUG] {ts_field}: {user_data[ts_field]} (type: {type(user_data[ts_field])})")
-        success = self.storage.store_node('User', user.id, user_data)
-        if not success:
-            raise Exception(f"Failed to create user: {user.username}")
-        
-        return user
+        try:
+            if not getattr(user, 'id', None):
+                if hasattr(user, 'id'):
+                    user.id = str(uuid.uuid4())
+            
+            user_data = {
+                'id': getattr(user, 'id', str(uuid.uuid4())),
+                'username': getattr(user, 'username', ''),
+                'email': getattr(user, 'email', ''),
+                'password_hash': getattr(user, 'password_hash', ''),
+                'display_name': getattr(user, 'display_name', ''),
+                'bio': getattr(user, 'bio', ''),
+                'timezone': getattr(user, 'timezone', 'UTC'),
+                'is_admin': getattr(user, 'is_admin', False),
+                'is_active': getattr(user, 'is_active', True),
+                'created_at': getattr(user, 'created_at', datetime.utcnow())
+            }
+            
+            success = self.db.create_node('User', user_data)
+            if success:
+                logger.info(f"✅ Created user: {getattr(user, 'username', 'unknown')} (ID: {user_data['id']})")
+                return user
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create user: {e}")
+            return None
     
-    async def get_by_id(self, user_id: str) -> Optional[User]:
+    async def get_by_id(self, user_id: str) -> Optional[Any]:
         """Get a user by ID."""
-        user_data = self.storage.get_node('User', user_id)
-        if not user_data:
+        try:
+            user_data = self.db.get_node('User', user_id)
+            if user_data:
+                logger.debug(f"Found user: {user_data.get('username', 'unknown')}")
+                return user_data
             return None
-        
-        # Clean Kuzu data 
-        user_data = _clean_kuzu_data(user_data)
-        
-        # Convert timestamp strings back to datetime objects
-        if user_data.get('created_at'):
-            user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
-        if user_data.get('updated_at'):
-            user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
-        
-        return User(**user_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get user {user_id}: {e}")
+            return None
     
-    async def get_by_username(self, username: str) -> Optional[User]:
+    async def get_by_username(self, username: str) -> Optional[Any]:
         """Get a user by username."""
-        query = """
-        MATCH (u:User)
-        WHERE u.username = $username
-        RETURN u
-        """
-        results = self.storage.execute_cypher(query, {"username": username})
-        if results:
-            user_data = _clean_kuzu_data(results[0]['col_0'])
-            if user_data.get('created_at'):
-                user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
-            if user_data.get('updated_at'):
-                user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
-            return User(**user_data)
-        return None
-    
-    async def get_by_email(self, email: str) -> Optional[User]:
-        """Get a user by email."""
-        query = """
-        MATCH (u:User)
-        WHERE u.email = $email
-        RETURN u
-        """
-        results = self.storage.execute_cypher(query, {"email": email})
-        if results:
-            user_data = _clean_kuzu_data(results[0]['col_0'])
-            if user_data.get('created_at'):
-                user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
-            if user_data.get('updated_at'):
-                user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
-            return User(**user_data)
-        return None
-    
-    async def update(self, user: User) -> Optional[User]:
-        """Update an existing user."""
-        if not user.id:
-            return None
-        
-        user_data = asdict(user)
-        # Remove None values for optional fields
-        optional_fields = ['locked_until', 'last_login', 'password_changed_at', 'display_name', 'bio', 'location', 'website']
-        for field in optional_fields:
-            if user_data.get(field) is None:
-                user_data.pop(field, None)
-        # Ensure TIMESTAMP fields are datetime objects
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in user_data:
-                if isinstance(user_data[ts_field], str):
-                    try:
-                        user_data[ts_field] = _safe_fromisoformat(user_data[ts_field])
-                    except Exception as e:
-                        print(f"[KUZU_REPO][ERROR] Could not convert {ts_field}: {e}")
-        if not user_data.get('updated_at'):
-            user_data['updated_at'] = datetime.utcnow()
-        for ts_field in ['created_at', 'updated_at']:
-            if ts_field in user_data:
-                print(f"[KUZU_REPO][DEBUG] {ts_field}: {user_data[ts_field]} (type: {type(user_data[ts_field])})")
-        success = self.storage.update_node('User', user.id, user_data)
-        return user if success else None
-    
-    async def delete(self, user_id: str) -> bool:
-        """Delete a user and all relationships."""
-        return self.storage.delete_node('User', user_id)
-    
-    async def list_all(self, limit: int = 100, offset: int = 0) -> List[User]:
-        """List all users with pagination."""
-        user_nodes = self.storage.get_nodes_by_type('User', limit, offset)
-        users = []
-        for user_data in user_nodes:
-            user_data = _clean_kuzu_data(user_data)
-            if user_data.get('created_at'):
-                user_data['created_at'] = _safe_fromisoformat(user_data['created_at'])
-            if user_data.get('updated_at'):
-                user_data['updated_at'] = _safe_fromisoformat(user_data['updated_at'])
-            users.append(User(**user_data))
-        return users
-    
-    async def get_all(self) -> List[User]:
-        """Get all users (alias for list_all without pagination)."""
-        return await self.list_all(limit=1000, offset=0)
-
-
-class KuzuAuthorRepository(AuthorRepository):
-    """Kuzu-based implementation of AuthorRepository."""
-    
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
-    
-    async def create(self, author: Author) -> Author:
-        """Create a new author."""
-        if not author.id:
-            author.id = str(uuid.uuid4())
-        
-        author_data = asdict(author)
-        success = self.storage.store_node('Author', author.id, author_data)
-        if not success:
-            raise Exception(f"Failed to create author: {author.name}")
-        
-        return author
-    
-    async def get_by_id(self, author_id: str) -> Optional[Author]:
-        """Get an author by ID."""
-        author_data = self.storage.get_node('Author', author_id)
-        if not author_data:
-            return None
-        
-        # Clean Kuzu data
-        author_data = _clean_kuzu_data(author_data)
-        
-        # Convert date strings back to date objects
-        if author_data.get('birth_date'):
-            author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
-        if author_data.get('death_date'):
-            author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
-        if author_data.get('created_at'):
-            author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
-        
-        return Author(**author_data)
-    
-    async def get_by_name(self, name: str) -> Optional[Author]:
-        """Get an author by name."""
-        query = """
-        MATCH (a:Author)
-        WHERE a.name = $name OR a.normalized_name = $normalized_name
-        RETURN a
-        """
-        normalized_name = name.lower().strip()
-        results = self.storage.execute_cypher(query, {"name": name, "normalized_name": normalized_name})
-        if results:
-            author_data = _clean_kuzu_data(results[0]['col_0'])
-            if author_data.get('birth_date'):
-                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
-            if author_data.get('death_date'):
-                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
-            if author_data.get('created_at'):
-                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
-            return Author(**author_data)
-        return None
-    
-    async def search_by_name(self, name: str, limit: int = 10) -> List[Author]:
-        """Search authors by name."""
-        query = """
-        MATCH (a:Author)
-        WHERE a.name CONTAINS $name
-        RETURN a
-        LIMIT $limit
-        """
-        results = self.storage.execute_cypher(query, {"name": name, "limit": limit})
-        authors = []
-        for result in results:
-            author_data = _clean_kuzu_data(result['col_0'])
-            if author_data.get('birth_date'):
-                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
-            if author_data.get('death_date'):
-                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
-            if author_data.get('created_at'):
-                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
-            authors.append(Author(**author_data))
-        return authors
-    
-    async def update(self, author: Author) -> Optional[Author]:
-        """Update an existing author."""
-        if not author.id:
-            return None
-        
-        author_data = asdict(author)
-        success = self.storage.update_node('Author', author.id, author_data)
-        return author if success else None
-    
-    async def delete(self, author_id: str) -> bool:
-        """Delete an author and all relationships."""
-        return self.storage.delete_node('Author', author_id)
-    
-    async def find_by_name(self, name: str) -> List[Author]:
-        """Find authors by name (fuzzy matching)."""
-        query = """
-        MATCH (a:Author)
-        WHERE a.name CONTAINS $name OR a.normalized_name CONTAINS $normalized_name
-        RETURN a
-        """
-        normalized_name = name.lower().strip()
-        results = self.storage.execute_cypher(query, {"name": name, "normalized_name": normalized_name})
-        authors = []
-        for result in results:
-            author_data = _clean_kuzu_data(result['col_0'])
-            if author_data.get('birth_date'):
-                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
-            if author_data.get('death_date'):
-                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
-            if author_data.get('created_at'):
-                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
-            authors.append(Author(**author_data))
-        return authors
-    
-    async def get_collaborators(self, author_id: str) -> List[Author]:
-        """Get authors who have collaborated with this author."""
-        query = """
-        MATCH (a1:Author)-[:COLLABORATED_WITH]-(a2:Author)
-        WHERE a1.id = $author_id
-        RETURN a2
-        """
-        results = self.storage.execute_cypher(query, {"author_id": author_id})
-        collaborators = []
-        for result in results:
-            author_data = _clean_kuzu_data(result['col_0'])
-            if author_data.get('birth_date'):
-                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
-            if author_data.get('death_date'):
-                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
-            if author_data.get('created_at'):
-                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
-            collaborators.append(Author(**author_data))
-        return collaborators
-
-    async def list_all(self, limit: int = 100, offset: int = 0) -> List[Author]:
-        """List all authors with pagination."""
-        author_nodes = self.storage.get_nodes_by_type('Author', limit, offset)
-        authors = []
-        for author_data in author_nodes:
-            author_data = _clean_kuzu_data(author_data)
-            if author_data.get('birth_date'):
-                author_data['birth_date'] = _safe_date_fromisoformat(author_data['birth_date'])
-            if author_data.get('death_date'):
-                author_data['death_date'] = _safe_date_fromisoformat(author_data['death_date'])
-            if author_data.get('created_at'):
-                author_data['created_at'] = _safe_fromisoformat(author_data['created_at'])
-            authors.append(Author(**author_data))
-        return authors
-
-
-class KuzuUserBookRepository(UserBookRepository):
-    """Kuzu-based implementation of UserBookRepository for user-book relationships."""
-    
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
-    
-    async def get_relationship(self, user_id: str, book_id: str) -> Optional[UserBookRelationship]:
-        """Get a specific user-book relationship."""
-        query = """
-        MATCH (u:User)-[r:OWNS]->(b:Book)
-        WHERE u.id = $user_id AND b.id = $book_id
-        RETURN r
-        """
-        results = self.storage.execute_cypher(query, {"user_id": user_id, "book_id": book_id})
-        if results:
-            rel_data = results[0]['col_0']
-            
-            # Convert date strings back to date objects
-            if rel_data.get('reading_start_date'):
-                rel_data['reading_start_date'] = _safe_date_fromisoformat(rel_data['reading_start_date'])
-            if rel_data.get('reading_end_date'):
-                rel_data['reading_end_date'] = _safe_date_fromisoformat(rel_data['reading_end_date'])
-            if rel_data.get('created_at'):
-                rel_data['created_at'] = _safe_fromisoformat(rel_data['created_at'])
-            if rel_data.get('updated_at'):
-                rel_data['updated_at'] = _safe_fromisoformat(rel_data['updated_at'])
-            
-            # Convert string enums back to enum objects
-            if rel_data.get('reading_status'):
-                rel_data['reading_status'] = ReadingStatus(rel_data['reading_status'])
-            if rel_data.get('ownership_status'):
-                rel_data['ownership_status'] = OwnershipStatus(rel_data['ownership_status'])
-            
-            rel_data['user_id'] = user_id
-            rel_data['book_id'] = book_id
-            
-            return UserBookRelationship(**rel_data)
-        return None
-    
-    async def delete_relationship(self, user_id: str, book_id: str) -> bool:
-        """Delete a user-book relationship."""
-        return self.storage.delete_relationship('User', user_id, 'OWNS', 'Book', book_id)
-    
-    async def get_user_books(self, user_id: str, reading_status: Optional[ReadingStatus] = None) -> List[Tuple[Book, UserBookRelationship]]:
-        """Get all books for a user, optionally filtered by reading status."""
-        if reading_status:
-            query = """
-            MATCH (u:User)-[r:OWNS]->(b:Book)
-            WHERE u.id = $user_id AND r.reading_status = $reading_status
-            RETURN b, r
-            """
-            params = {"user_id": user_id, "reading_status": reading_status.value}
-        else:
-            query = """
-            MATCH (u:User)-[r:OWNS]->(b:Book)
-            WHERE u.id = $user_id
-            RETURN b, r
-            """
-            params = {"user_id": user_id}
-        
-        results = self.storage.execute_cypher(query, params)
-        books_with_relationships = []
-        
-        for result in results:
-            book_data = result['col_0']
-            rel_data = result['col_1']
-            
-            # Build complete book object
-            book_repo = KuzuBookRepository(self.storage)
-            book = book_repo._build_book_from_data(book_data, book_data['id'])
-            
-            # Build relationship object
-            if rel_data.get('reading_start_date'):
-                rel_data['reading_start_date'] = _safe_date_fromisoformat(rel_data['reading_start_date'])
-            if rel_data.get('reading_end_date'):
-                rel_data['reading_end_date'] = _safe_date_fromisoformat(rel_data['reading_end_date'])
-            if rel_data.get('created_at'):
-                rel_data['created_at'] = _safe_fromisoformat(rel_data['created_at'])
-            if rel_data.get('updated_at'):
-                rel_data['updated_at'] = _safe_fromisoformat(rel_data['updated_at'])
-            
-            if rel_data.get('reading_status'):
-                rel_data['reading_status'] = ReadingStatus(rel_data['reading_status'])
-            if rel_data.get('ownership_status'):
-                rel_data['ownership_status'] = OwnershipStatus(rel_data['ownership_status'])
-            
-            rel_data['user_id'] = user_id
-            rel_data['book_id'] = book_data['id']
-            
-            relationship = UserBookRelationship(**rel_data)
-            books_with_relationships.append((book, relationship))
-        
-        return books_with_relationships
-    
-    async def create_relationship(self, relationship: UserBookRelationship) -> UserBookRelationship:
-        """Create a user-book relationship."""
-        rel_data = asdict(relationship)
-        # Remove user_id and book_id from the relationship data as they're part of the relationship structure
-        user_id = rel_data.pop('user_id')
-        book_id = rel_data.pop('book_id')
-        
-        # Serialize enum values and dates for Kuzu storage
-        serialized_rel_data = {}
-        for key, value in rel_data.items():
-            if isinstance(value, Enum):
-                serialized_rel_data[key] = value.value
-            elif isinstance(value, (datetime, date)):
-                serialized_rel_data[key] = value.isoformat()
-            elif value is not None:  # Only include non-None values
-                serialized_rel_data[key] = value
-        
-        success = self.storage.create_relationship(
-            'User', user_id, 'OWNS', 'Book', book_id, serialized_rel_data
-        )
-        if success:
-            return relationship
-        else:
-            raise Exception(f"Failed to create user-book relationship for user {user_id} and book {book_id}")
-    
-    async def get_user_library(self, user_id: str, filters: Dict[str, Any] = None) -> List[UserBookRelationship]:
-        """Get a user's library with optional filters."""
-        query_conditions = ["u.id = $user_id"]
-        params = {"user_id": user_id}
-        
-        # Apply filters if provided
-        if filters:
-            if filters.get('reading_status'):
-                query_conditions.append("r.reading_status = $reading_status")
-                params['reading_status'] = filters['reading_status'].value if hasattr(filters['reading_status'], 'value') else filters['reading_status']
-            
-            if filters.get('ownership_status'):
-                query_conditions.append("r.ownership_status = $ownership_status")
-                params['ownership_status'] = filters['ownership_status'].value if hasattr(filters['ownership_status'], 'value') else filters['ownership_status']
-        
-        where_clause = " AND ".join(query_conditions)
-        query = f"""
-        MATCH (u:User)-[r:OWNS]->(b:Book)
-        WHERE {where_clause}
-        RETURN r, u.id, b.id
-        """
-        
-        results = self.storage.execute_cypher(query, params)
-        relationships = []
-        
-        for result in results:
-            rel_data = result['col_0']
-            user_id = result['col_1']
-            book_id = result['col_2']
-            
-            # Convert date strings back to date objects
-            if rel_data.get('reading_start_date'):
-                rel_data['reading_start_date'] = _safe_date_fromisoformat(rel_data['reading_start_date'])
-            if rel_data.get('reading_end_date'):
-                rel_data['reading_end_date'] = _safe_date_fromisoformat(rel_data['reading_end_date'])
-            if rel_data.get('created_at'):
-                rel_data['created_at'] = _safe_fromisoformat(rel_data['created_at'])
-            if rel_data.get('updated_at'):
-                rel_data['updated_at'] = _safe_fromisoformat(rel_data['updated_at'])
-            
-            # Convert string enums back to enum objects
-            if rel_data.get('reading_status'):
-                rel_data['reading_status'] = ReadingStatus(rel_data['reading_status'])
-            if rel_data.get('ownership_status'):
-                rel_data['ownership_status'] = OwnershipStatus(rel_data['ownership_status'])
-            
-            rel_data['user_id'] = user_id
-            rel_data['book_id'] = book_id
-            
-            relationship = UserBookRelationship(**rel_data)
-            relationships.append(relationship)
-        
-        return relationships
-    
-    async def update_relationship(self, relationship: UserBookRelationship) -> UserBookRelationship:
-        """Update a user-book relationship."""
-        if not relationship.user_id or not relationship.book_id:
-            raise ValueError("User ID and Book ID are required for updating relationship")
-        
-        # Convert relationship to updates dict
-        rel_data = asdict(relationship)
-        user_id = rel_data.pop('user_id')
-        book_id = rel_data.pop('book_id')
-        
-        # Serialize enum values and dates
-        serialized_updates = {}
-        for key, value in rel_data.items():
-            if isinstance(value, Enum):
-                serialized_updates[key] = value.value
-            elif isinstance(value, (datetime, date)):
-                serialized_updates[key] = value.isoformat()
-            elif value is not None:  # Only include non-None values
-                serialized_updates[key] = value
-        
-        serialized_updates['updated_at'] = datetime.utcnow().isoformat()
-        
-        query = """
-        MATCH (u:User)-[r:OWNS]->(b:Book)
-        WHERE u.id = $user_id AND b.id = $book_id
-        SET r += $updates
-        RETURN r
-        """
-        
         try:
-            results = self.storage.execute_cypher(query, {
-                "user_id": user_id, 
-                "book_id": book_id, 
-                "updates": serialized_updates
-            })
+            print(f"🔍 [USER_REPO] Searching for user with username: '{username}'")
+            query = "MATCH (u:User {username: $username}) RETURN u"
+            print(f"🔍 [USER_REPO] Executing query: {query} with params: {{'username': '{username}'}}")
+            results = self.db.query(query, {"username": username})
+            print(f"🔍 [USER_REPO] Query results: {results}")
+            
             if results:
-                return relationship
+                # The query returns a single column, so check both 'result' and 'col_0' keys
+                user_data = results[0].get('result') or results[0].get('col_0')
+                print(f"🔍 [USER_REPO] Extracted user_data: {user_data}")
+                if user_data:
+                    logger.debug(f"Found user by username: {username}")
+                    user_dict = dict(user_data)
+                    print(f"🔍 [USER_REPO] Converted to dict: {user_dict}")
+                    return user_dict
+            print(f"🔍 [USER_REPO] No user found for username: '{username}'")
+            return None
+            
+        except Exception as e:
+            print(f"🔍 [USER_REPO] Error getting user by username '{username}': {e}")
+            logger.error(f"❌ Failed to get user by username {username}: {e}")
+            return None
+    
+    async def get_by_email(self, email: str) -> Optional[Any]:
+        """Get a user by email."""
+        try:
+            query = "MATCH (u:User {email: $email}) RETURN u"
+            results = self.db.query(query, {"email": email})
+            
+            if results:
+                # The query returns a single column, so check both 'result' and 'col_0' keys
+                user_data = results[0].get('result') or results[0].get('col_0')
+                if user_data:
+                    logger.debug(f"Found user by email: {email}")
+                    return dict(user_data)
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get user by email {email}: {e}")
+            return None
+    
+    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all users with pagination."""
+        try:
+            query = f"MATCH (u:User) RETURN u SKIP {offset} LIMIT {limit}"
+            results = self.db.query(query)
+            
+            users = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    users.append(dict(result['result']))
+                elif 'col_0' in result:
+                    users.append(dict(result['col_0']))
+            
+            logger.debug(f"Retrieved {len(users)} users")
+            return users
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get users: {e}")
+            return []
+
+
+class KuzuPersonRepository:
+    """Clean person repository using simplified Kuzu schema."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    def create(self, person: Any) -> Optional[Any]:
+        """Create a new person."""
+        try:
+            # Handle both dictionary and object inputs
+            if isinstance(person, dict):
+                person_name = person.get('name', '')
+                person_id = person.get('id', None) or str(uuid.uuid4())
+                birth_year = person.get('birth_year', None)
+                death_year = person.get('death_year', None)
+                bio = person.get('bio', '')
+                created_at = person.get('created_at', datetime.utcnow())
+                openlibrary_id = person.get('openlibrary_id', None)
+                birth_place = person.get('birth_place', None)
+                website = person.get('website', None)
+                image_url = person.get('image_url', None)
             else:
-                raise Exception("Relationship not found or update failed")
-        except Exception as e:
-            raise Exception(f"Failed to update relationship: {e}")
-    
-    async def get_book_owners(self, book_id: str) -> List[str]:
-        """Get all user IDs who own a specific book."""
-        query = """
-        MATCH (u:User)-[:OWNS]->(b:Book)
-        WHERE b.id = $book_id
-        RETURN u.id
-        """
-        results = self.storage.execute_cypher(query, {"book_id": book_id})
-        return [result['col_0'] for result in results]
-    
-    async def get_community_stats(self, user_id: str) -> Dict[str, Any]:
-        """Get community statistics visible to the user based on privacy settings."""
-        # Basic implementation - can be enhanced with privacy controls
-        stats = {}
-        
-        # Get total books in user's library
-        user_books_query = """
-        MATCH (u:User)-[:OWNS]->(b:Book)
-        WHERE u.id = $user_id
-        RETURN COUNT(b) as total_books
-        """
-        results = self.storage.execute_cypher(user_books_query, {"user_id": user_id})
-        stats['total_books'] = results[0]['col_0'] if results else 0
-        
-        # Get reading status breakdown
-        status_query = """
-        MATCH (u:User)-[r:OWNS]->(b:Book)
-        WHERE u.id = $user_id
-        RETURN r.reading_status, COUNT(*) as count
-        """
-        results = self.storage.execute_cypher(status_query, {"user_id": user_id})
-        status_breakdown = {}
-        for result in results:
-            status = result['col_0']
-            count = result['col_1']
-            status_breakdown[status] = count
-        stats['reading_status_breakdown'] = status_breakdown
-        
-        # Get total authors in library
-        authors_query = """
-        MATCH (u:User)-[:OWNS]->(b:Book)<-[:AUTHORED]-(a:Author)
-        WHERE u.id = $user_id
-        RETURN COUNT(DISTINCT a) as total_authors
-        """
-        results = self.storage.execute_cypher(authors_query, {"user_id": user_id})
-        stats['total_authors'] = results[0]['col_0'] if results else 0
-        
-        return stats
-
-
-class KuzuCustomFieldRepository(CustomFieldRepository):
-    """Kuzu-based implementation of CustomFieldRepository."""
-    
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
-    
-    async def create(self, field_def: CustomFieldDefinition) -> CustomFieldDefinition:
-        """Create a new custom field definition."""
-        if not field_def.id:
-            field_def.id = str(uuid.uuid4())
-        
-        field_data = asdict(field_def)
-        # Convert enum to string to avoid Kuzu parameter type error
-        if 'field_type' in field_data and hasattr(field_data['field_type'], 'value'):
-            field_data['field_type'] = field_data['field_type'].value
-        
-        # Safe logging
-        try:
-            current_app.logger.info(f"🔧 [CUSTOM_FIELD_REPO] Creating custom field '{field_def.name}' with data: {field_data}")
-        except:
-            print(f"🔧 [CUSTOM_FIELD_REPO] Creating custom field '{field_def.name}' with data: {field_data}")
-        
-        success = self.storage.store_node('CustomField', field_def.id, field_data)
-        if not success:
-            try:
-                current_app.logger.error(f"❌ [CUSTOM_FIELD_REPO] Failed to store custom field '{field_def.name}' to database")
-            except:
-                print(f"❌ [CUSTOM_FIELD_REPO] Failed to store custom field '{field_def.name}' to database")
-            raise Exception(f"Failed to create custom field: {field_def.name}")
-        
-        try:
-            current_app.logger.info(f"✅ [CUSTOM_FIELD_REPO] Successfully created custom field '{field_def.name}' with id {field_def.id}")
-        except:
-            print(f"✅ [CUSTOM_FIELD_REPO] Successfully created custom field '{field_def.name}' with id {field_def.id}")
-        return field_def
-    
-    async def get_by_id(self, field_id: str) -> Optional[CustomFieldDefinition]:
-        """Get a custom field by ID."""
-        field_data = self.storage.get_node('CustomField', field_id)
-        if not field_data:
-            return None
-        
-        field_data = _clean_custom_field_data(field_data)
-        return CustomFieldDefinition(**field_data)
-    
-    async def get_by_user(self, user_id: str) -> List[CustomFieldDefinition]:
-        """Get all custom fields for a user."""
-        query = """
-        MATCH (cf:CustomField)
-        WHERE cf.created_by_user_id = $user_id
-        RETURN cf
-        """
-        results = self.storage.execute_cypher(query, {"user_id": user_id})
-        fields = []
-        for result in results:
-            field_data = _clean_custom_field_data(result['col_0'])
-            fields.append(CustomFieldDefinition(**field_data))
-        return fields
-    
-    async def update(self, field_def: CustomFieldDefinition) -> Optional[CustomFieldDefinition]:
-        """Update an existing custom field."""
-        if not field_def.id:
-            return None
-        
-        field_data = asdict(field_def)
-        success = self.storage.update_node('CustomField', field_def.id, field_data)
-        return field_def if success else None
-    
-    async def delete(self, field_id: str) -> bool:
-        """Delete a custom field."""
-        return self.storage.delete_node('CustomField', field_id)
-    
-    async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
-        """Get all shareable custom field definitions."""
-        query_conditions = ["cf.is_shareable = true"]
-        params = {}
-        
-        if exclude_user_id:
-            query_conditions.append("cf.created_by_user_id <> $exclude_user_id")
-            params['exclude_user_id'] = exclude_user_id
-        
-        where_clause = " AND ".join(query_conditions)
-        query = f"""
-        MATCH (cf:CustomField)
-        WHERE {where_clause}
-        RETURN cf
-        ORDER BY cf.usage_count DESC
-        """
-        
-        results = self.storage.execute_cypher(query, params)
-        fields = []
-        for result in results:
-            field_data = _clean_custom_field_data(result['col_0'])
-            fields.append(CustomFieldDefinition(**field_data))
-        return fields
-    
-    async def search(self, query: str, user_id: Optional[str] = None) -> List[CustomFieldDefinition]:
-        """Search custom field definitions."""
-        query_conditions = []
-        params = {"search_query": f"%{query}%"}
-        
-        # Search in name and description
-        query_conditions.append("(cf.name CONTAINS $search_query OR cf.description CONTAINS $search_query)")
-        
-        # Optionally filter by user
-        if user_id:
-            query_conditions.append("(cf.created_by_user_id = $user_id OR cf.is_shareable = true)")
-            params['user_id'] = user_id
-        else:
-            # Only show shareable fields if no user specified
-            query_conditions.append("cf.is_shareable = true")
-        
-        where_clause = " AND ".join(query_conditions)
-        cypher_query = f"""
-        MATCH (cf:CustomField)
-        WHERE {where_clause}
-        RETURN cf
-        ORDER BY cf.usage_count DESC
-        LIMIT 50
-        """
-        
-        results = self.storage.execute_cypher(cypher_query, params)
-        fields = []
-        for result in results:
-            field_data = _clean_custom_field_data(result['col_0'])
-            fields.append(CustomFieldDefinition(**field_data))
-        return fields
-    
-    async def increment_usage(self, field_id: str) -> None:
-        """Increment usage count for a field definition."""
-        query = """
-        MATCH (cf:CustomField)
-        WHERE cf.id = $field_id
-        SET cf.usage_count = COALESCE(cf.usage_count, 0) + 1
-        """
-        try:
-            self.storage.execute_cypher(query, {"field_id": field_id})
-        except Exception as e:
-            print(f"Warning: Could not increment usage count for field {field_id}: {e}")
-    
-    async def get_popular(self, limit: int = 20) -> List[CustomFieldDefinition]:
-        """Get most popular shareable custom field definitions."""
-        query = """
-        MATCH (cf:CustomField)
-        WHERE cf.is_shareable = true
-        RETURN cf
-        ORDER BY COALESCE(cf.usage_count, 0) DESC
-        LIMIT $limit
-        """
-        
-        results = self.storage.execute_cypher(query, {"limit": limit})
-        fields = []
-        for result in results:
-            field_data = _clean_custom_field_data(result['col_0'])
-            fields.append(CustomFieldDefinition(**field_data))
-        return fields
-    
-    async def get_by_name(self, name: str) -> Optional[CustomFieldDefinition]:
-        """Get a custom field by name."""
-        query = """
-        MATCH (cf:CustomField)
-        WHERE cf.name = $name
-        RETURN cf
-        LIMIT 1
-        """
-        results = self.storage.execute_cypher(query, {"name": name})
-        if results:
-            field_data = _clean_custom_field_data(results[0]['col_0'])
-            return CustomFieldDefinition(**field_data)
-        return None
-
-
-class KuzuImportMappingRepository(ImportMappingRepository):
-    """Kuzu-based implementation of ImportMappingRepository."""
-    
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
-    
-    async def create(self, template: ImportMappingTemplate) -> ImportMappingTemplate:
-        """Create a new import mapping template."""
-        if not template.id:
-            template.id = str(uuid.uuid4())
-        
-        # Check if template already exists
-        existing_template = await self.get_by_id(template.id)
-        if existing_template:
-            print(f"[KUZU_REPO][INFO] Import mapping template {template.id} already exists, returning existing template")
-            return existing_template
-        
-        template_data = asdict(template)
-        
-        # Map model field names to schema field names
-        if 'times_used' in template_data:
-            template_data['usage_count'] = template_data.pop('times_used')
-        if 'last_used' in template_data:
-            template_data.pop('last_used')  # Remove last_used as it's not in the schema
-        
-        success = self.storage.store_node('ImportMapping', template.id, template_data)
-        if not success:
-            raise Exception(f"Failed to create import mapping: {template.name}")
-        
-        return template
-    
-    async def get_by_id(self, template_id: str) -> Optional[ImportMappingTemplate]:
-        """Get an import mapping template by ID."""
-        template_data = self.storage.get_node('ImportMapping', template_id)
-        if not template_data:
-            return None
-        
-        # Clean Kuzu data to remove internal fields
-        template_data = _clean_kuzu_data(template_data)
-        
-        # Map schema field names to model field names
-        if 'usage_count' in template_data:
-            template_data['times_used'] = template_data.pop('usage_count')
-        
-        # Filter to only include fields that exist in ImportMappingTemplate
-        template_data = _filter_model_fields(template_data, ImportMappingTemplate)
-        
-        if template_data.get('created_at'):
-            template_data['created_at'] = _safe_fromisoformat(template_data['created_at'])
-        if template_data.get('updated_at'):
-            template_data['updated_at'] = _safe_fromisoformat(template_data['updated_at'])
-        
-        return ImportMappingTemplate(**template_data)
-    
-    async def get_by_user(self, user_id: str) -> List[ImportMappingTemplate]:
-        """Get all import mapping templates for a user."""
-        query = """
-        MATCH (im:ImportMapping)
-        WHERE im.user_id = $user_id
-        RETURN im
-        """
-        results = self.storage.execute_cypher(query, {"user_id": user_id})
-        templates = []
-        for result in results:
-            template_data = _clean_kuzu_data(result['col_0'])
+                person_name = getattr(person, 'name', '')
+                person_id = getattr(person, 'id', None) or str(uuid.uuid4())
+                birth_year = getattr(person, 'birth_year', None)
+                death_year = getattr(person, 'death_year', None)
+                bio = getattr(person, 'bio', '')
+                created_at = getattr(person, 'created_at', datetime.utcnow())
+                openlibrary_id = getattr(person, 'openlibrary_id', None)
+                birth_place = getattr(person, 'birth_place', None)
+                website = getattr(person, 'website', None)
+                image_url = getattr(person, 'image_url', None)
             
-            # Map schema field names to model field names
-            if 'usage_count' in template_data:
-                template_data['times_used'] = template_data.pop('usage_count')
+            if not person_name:
+                logger.error("❌ Person name is required")
+                return None
             
-            # Filter to only include fields that exist in ImportMappingTemplate
-            template_data = _filter_model_fields(template_data, ImportMappingTemplate)
+            # Auto-fetch OpenLibrary metadata if not already provided
+            logger.info(f"🔍 [DEBUG] CREATE: Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
+            if not openlibrary_id and not bio and not birth_year and not image_url:
+                try:
+                    from ..utils import search_author_by_name
+                    logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")
+                    author_data = search_author_by_name(person_name)
+                    
+                    if author_data and author_data.get('openlibrary_id'):
+                        openlibrary_id = author_data.get('openlibrary_id')
+                        
+                        if author_data.get('bio') and not bio:
+                            bio = author_data['bio']
+                        
+                        if author_data.get('birth_date') and not birth_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['birth_date']))
+                                if year_match:
+                                    birth_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('death_date') and not death_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['death_date']))
+                                if year_match:
+                                    death_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('photo_url') and not image_url:
+                            image_url = author_data['photo_url']
+                        
+                        logger.info(f"✅ Auto-fetched metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                    else:
+                        logger.info(f"📝 No OpenLibrary data found for: {person_name}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to auto-fetch metadata for {person_name}: {e}")
+                    # Continue with person creation even if metadata fetch fails
             
-            if template_data.get('created_at'):
-                template_data['created_at'] = _safe_fromisoformat(template_data['created_at'])
-            if template_data.get('updated_at'):
-                template_data['updated_at'] = _safe_fromisoformat(template_data['updated_at'])
-            templates.append(ImportMappingTemplate(**template_data))
-        return templates
-    
-    async def get_system_templates(self) -> List[ImportMappingTemplate]:
-        """Get all system default templates."""
-        query = """
-        MATCH (im:ImportMapping)
-        WHERE im.user_id = '__system__'
-        RETURN im
-        """
-        results = self.storage.execute_cypher(query)
-        templates = []
-        for result in results:
-            template_data = _clean_kuzu_data(result['col_0'])
+            # Only include properties that exist in the Person schema
+            person_data = {
+                'id': person_id,
+                'name': person_name,
+                'normalized_name': person_name.strip().lower(),
+                'birth_year': birth_year,
+                'death_year': death_year,
+                'birth_place': birth_place,
+                'bio': bio,
+                'website': website,
+                'openlibrary_id': openlibrary_id,
+                'image_url': image_url,
+                'created_at': created_at,
+                'updated_at': datetime.utcnow()
+            }
             
-            # Map schema field names to model field names
-            if 'usage_count' in template_data:
-                template_data['times_used'] = template_data.pop('usage_count')
-            
-            # Filter to only include fields that exist in ImportMappingTemplate
-            template_data = _filter_model_fields(template_data, ImportMappingTemplate)
-            
-            if template_data.get('created_at'):
-                template_data['created_at'] = _safe_fromisoformat(template_data['created_at'])
-            if template_data.get('updated_at'):
-                template_data['updated_at'] = _safe_fromisoformat(template_data['updated_at'])
-            templates.append(ImportMappingTemplate(**template_data))
-        return templates
-    
-    async def update(self, template: ImportMappingTemplate) -> Optional[ImportMappingTemplate]:
-        """Update an existing import mapping template."""
-        if not template.id:
-            return None
-        
-        template_data = asdict(template)
-        # Map model field names to schema field names
-        if 'times_used' in template_data:
-            template_data['usage_count'] = template_data.pop('times_used')
-        if 'last_used' in template_data:
-            template_data.pop('last_used')  # Remove last_used as it's not in the schema
-        
-        success = self.storage.update_node('ImportMapping', template.id, template_data)
-        return template if success else None
-    
-    async def delete(self, template_id: str) -> bool:
-        """Delete an import mapping template."""
-        return self.storage.delete_node('ImportMapping', template_id)
-    
-    async def detect_template(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
-        """Detect matching template based on CSV headers."""
-        # Convert headers to lowercase for case-insensitive matching
-        headers_lower = [h.lower().strip() for h in headers]
-        
-        # First, try to find user's own templates
-        user_templates = await self.get_by_user(user_id)
-        
-        # Then get system templates
-        system_templates = await self.get_system_templates()
-        
-        # Combine all templates, user templates first (higher priority)
-        all_templates = user_templates + system_templates
-        
-        best_match = None
-        best_score = 0
-        
-        for template in all_templates:
-            if not template.sample_headers:
-                continue
+            success = self.db.create_node('Person', person_data)
+            if success:
+                logger.info(f"✅ Created new person: {person_name} (ID: {person_id})")
+                return person
+            else:
+                logger.error(f"❌ Failed to create person: {person_name}")
+                return None
                 
-            # Calculate match score
-            template_headers_lower = [h.lower().strip() for h in template.sample_headers]
-            
-            # Count exact matches
-            exact_matches = len(set(headers_lower) & set(template_headers_lower))
-            
-            # Calculate percentage match based on template headers
-            if len(template_headers_lower) > 0:
-                match_score = exact_matches / len(template_headers_lower)
-                
-                # Require at least 70% match
-                if match_score >= 0.7 and match_score > best_score:
-                    best_match = template
-                    best_score = match_score
-        
-        return best_match
+        except Exception as e:
+            logger.error(f"❌ Failed to create person: {e}")
+            return None
     
-    async def increment_usage(self, template_id: str) -> None:
-        """Increment usage count and update last used timestamp."""
-        query = """
-        MATCH (im:ImportMapping)
-        WHERE im.id = $template_id
-        SET im.usage_count = COALESCE(im.usage_count, 0) + 1,
-            im.updated_at = $updated_at
-        """
+    async def get_by_id(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """Get a person by ID."""
         try:
-            self.storage.execute_cypher(query, {
-                "template_id": template_id,
-                "updated_at": datetime.utcnow().isoformat()
+            query = """
+            MATCH (p:Person {id: $person_id})
+            RETURN p
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"person_id": person_id})
+            
+            if results and 'col_0' in results[0]:
+                return dict(results[0]['col_0'])
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get person by ID {person_id}: {e}")
+            return None
+    
+    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a person by name."""
+        try:
+            normalized_name = name.strip().lower()
+            query = """
+            MATCH (p:Person) 
+            WHERE p.normalized_name = $normalized_name OR p.name = $name
+            RETURN p
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {
+                "normalized_name": normalized_name,
+                "name": name
             })
+            
+            if results and 'col_0' in results[0]:
+                return dict(results[0]['col_0'])
+            
+            return None
+            
         except Exception as e:
-            print(f"Warning: Could not increment usage count for template {template_id}: {e}")
+            logger.error(f"❌ Failed to get person by name {name}: {e}")
+            return None
+    
+    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all persons with pagination."""
+        try:
+            query = f"""
+            MATCH (p:Person)
+            RETURN p
+            ORDER BY p.name ASC
+            SKIP {offset} LIMIT {limit}
+            """
+            
+            results = self.db.query(query)
+            
+            persons = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    persons.append(dict(result['result']))
+                elif 'col_0' in result:
+                    persons.append(dict(result['col_0']))
+            
+            logger.debug(f"Retrieved {len(persons)} persons")
+            return persons
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get all persons: {e}")
+            return []
+    
+    async def update(self, person_id: str, updates: Dict[str, Any]) -> bool:
+        """Update a person."""
+        try:
+            # Build SET clause for updates
+            set_clauses = []
+            params = {"person_id": person_id}
+            
+            for key, value in updates.items():
+                # Only allow valid schema properties
+                if key in ['name', 'normalized_name', 'birth_year', 'death_year', 'bio', 'openlibrary_id', 'birth_place', 'website', 'image_url']:
+                    set_clauses.append(f"p.{key} = ${key}")
+                    params[key] = value
+            
+            if not set_clauses:
+                logger.warning("❌ No valid properties to update")
+                return False
+            
+            query = f"""
+            MATCH (p:Person {{id: $person_id}})
+            SET {', '.join(set_clauses)}
+            RETURN p
+            """
+            
+            results = self.db.query(query, params)
+            success = bool(results)
+            
+            if success:
+                logger.info(f"✅ Updated person {person_id}")
+            else:
+                logger.error(f"❌ Failed to update person {person_id}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to update person: {e}")
+            return False
+    
+    async def delete(self, person_id: str) -> bool:
+        """Delete a person."""
+        try:
+            query = """
+            MATCH (p:Person {id: $person_id})
+            DETACH DELETE p
+            """
+            
+            results = self.db.query(query, {"person_id": person_id})
+            success = True  # KuzuDB doesn't return explicit success for DELETE
+            
+            if success:
+                logger.info(f"✅ Deleted person {person_id}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to delete person: {e}")
+            return False
+
+
+class KuzuBookRepository:
+    """Clean book repository using simplified Kuzu schema."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    async def create(self, book: Any) -> Optional[Any]:
+        """Create a new book with relationships."""
+        try:
+            print(f"📚 [REPO] Starting book creation: {getattr(book, 'title', 'unknown')}")
+            print(f"📚 [REPO] Book ID: {getattr(book, 'id', 'none')}")
+            
+            # Debug contributors
+            contributors = getattr(book, 'contributors', [])
+            print(f"📚 [REPO] Contributors: {len(contributors)}")
+            for i, contrib in enumerate(contributors):
+                person = getattr(contrib, 'person', None)
+                person_name = getattr(person, 'name', 'unknown') if person else 'no person'
+                contrib_type = getattr(contrib, 'contribution_type', 'unknown')
+                print(f"📚 [REPO]   {i}: {person_name} ({contrib_type})")
+            
+            # Debug categories
+            categories = getattr(book, 'categories', [])
+            raw_categories = getattr(book, 'raw_categories', None)
+            print(f"📚 [REPO] Categories: {len(categories)} items: {categories}")
+            print(f"📚 [REPO] Raw categories: {raw_categories}")
+            
+            # Debug publisher
+            publisher = getattr(book, 'publisher', None)
+            if publisher:
+                publisher_name = getattr(publisher, 'name', 'unknown')
+                print(f"📚 [REPO] Publisher: {publisher_name} (type: {type(publisher)})")
+            else:
+                print(f"📚 [REPO] Publisher: none")
+            
+            if not getattr(book, 'id', None):
+                if hasattr(book, 'id'):
+                    book.id = str(uuid.uuid4())
+            
+            book_data = {
+                'id': getattr(book, 'id', str(uuid.uuid4())),
+                'title': getattr(book, 'title', ''),
+                'normalized_title': getattr(book, 'normalized_title', None) or getattr(book, 'title', '').lower(),
+                'isbn13': getattr(book, 'isbn13', ''),
+                'isbn10': getattr(book, 'isbn10', ''),
+                'description': getattr(book, 'description', ''),
+                'published_date': getattr(book, 'published_date', None),
+                'page_count': getattr(book, 'page_count', 0),
+                'language': getattr(book, 'language', 'en'),
+                'cover_url': getattr(book, 'cover_url', ''),
+                'average_rating': getattr(book, 'average_rating', 0.0),
+                'rating_count': getattr(book, 'rating_count', 0),
+                'created_at': getattr(book, 'created_at', datetime.utcnow())
+            }
+            
+            # Create the book node first
+            success = self.db.create_node('Book', book_data)
+            if not success:
+                logger.error(f"❌ Failed to create book node: {getattr(book, 'title', 'unknown')}")
+                return None
+            
+            logger.info(f"✅ Created book node: {getattr(book, 'title', 'unknown')}")
+            book_id = book_data['id']
+            
+            # Create author relationships
+            contributors = getattr(book, 'contributors', [])
+            if contributors:
+                logger.info(f"🔗 Creating {len(contributors)} contributor relationships")
+                for i, contribution in enumerate(contributors):
+                    await self._create_contributor_relationship(book_id, contribution, i)
+            
+            # Create category relationships
+            categories = getattr(book, 'categories', [])
+            raw_categories = getattr(book, 'raw_categories', None)
+            
+            # Process raw_categories if available (from API data)
+            if raw_categories:
+                await self._create_category_relationships_from_raw(book_id, raw_categories)
+            # Otherwise use existing categories
+            elif categories:
+                logger.info(f"🔗 Creating {len(categories)} category relationships")
+                for category in categories:
+                    await self._create_category_relationship(book_id, category)
+            
+            # Create publisher relationship if present
+            publisher = getattr(book, 'publisher', None)
+            if publisher:
+                await self._create_publisher_relationship(book_id, publisher)
+            
+            logger.info(f"✅ Created book with all relationships: {getattr(book, 'title', 'unknown')}")
+            return book
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create book: {e}")
+            return None
+    
+    async def _create_contributor_relationship(self, book_id: str, contribution: Any, order_index: int = 0):
+        """Create a contributor relationship (AUTHORED, EDITED, etc.)."""
+        try:
+            person = getattr(contribution, 'person', None)
+            if not person:
+                logger.warning(f"⚠️ Contribution has no person: {contribution}")
+                return
+            
+            # Create or find the person
+            person_id = await self._ensure_person_exists(person)
+            if not person_id:
+                logger.warning(f"⚠️ Could not create/find person: {getattr(person, 'name', 'unknown')}")
+                return
+            
+            # Determine relationship type and properties
+            contribution_type = getattr(contribution, 'contribution_type', None)
+            if contribution_type and hasattr(contribution_type, 'value'):
+                contribution_str = contribution_type.value.upper()
+            else:
+                contribution_str = str(contribution_type).upper() if contribution_type else 'AUTHORED'
+            
+            # Map contribution types to relationship types
+            rel_type_map = {
+                'AUTHORED': 'AUTHORED',
+                'EDITED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'NARRATED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'CONTRIBUTED': 'AUTHORED'  # Use AUTHORED relationship with role property
+            }
+            
+            rel_type = rel_type_map.get(contribution_str, 'AUTHORED')
+            
+            # Create the relationship with properties
+            role = contribution_str.lower()
+            rel_props = {
+                'role': role,
+                'order_index': getattr(contribution, 'order', order_index)
+            }
+            
+            success = self.db.create_relationship(
+                'Person', person_id, rel_type, 'Book', book_id, rel_props
+            )
+            
+            if success:
+                logger.info(f"✅ Created {rel_type} relationship: {getattr(person, 'name', 'unknown')} -> {book_id}")
+            else:
+                logger.error(f"❌ Failed to create {rel_type} relationship: {getattr(person, 'name', 'unknown')} -> {book_id}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create contributor relationship: {e}")
+    
+    async def _ensure_person_exists(self, person: Any) -> Optional[str]:
+        """Ensure a person exists in the database, create if necessary."""
+        try:
+            person_name = getattr(person, 'name', '')
+            if not person_name:
+                return None
+            
+            # Try to find existing person by name
+            normalized_name = person_name.strip().lower()
+            query = """
+            MATCH (p:Person) 
+            WHERE p.normalized_name = $normalized_name OR p.name = $name
+            RETURN p.id
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {
+                "normalized_name": normalized_name,
+                "name": person_name
+            })
+            
+            if results and (results[0].get('result') or results[0].get('col_0')):
+                person_id = results[0].get('result') or results[0]['col_0']
+                logger.debug(f"Found existing person: {person_name} (ID: {person_id})")
+                return person_id
+            
+            # Create new person
+            person_id = getattr(person, 'id', None) or str(uuid.uuid4())
+            
+            # Auto-fetch OpenLibrary metadata if available
+            birth_year = getattr(person, 'birth_year', None)
+            death_year = getattr(person, 'death_year', None)
+            bio = getattr(person, 'bio', '')
+            openlibrary_id = getattr(person, 'openlibrary_id', None)
+            image_url = getattr(person, 'image_url', None)
+            birth_place = getattr(person, 'birth_place', None)
+            website = getattr(person, 'website', None)
+            
+            # Auto-fetch OpenLibrary metadata if not already provided
+            logger.info(f"🔍 [DEBUG] Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
+            if not openlibrary_id and not bio and not birth_year and not image_url:
+                try:
+                    from ..utils import search_author_by_name
+                    logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")
+                    author_data = search_author_by_name(person_name)
+                    
+                    if author_data and author_data.get('openlibrary_id'):
+                        openlibrary_id = author_data.get('openlibrary_id')
+                        
+                        if author_data.get('bio') and not bio:
+                            bio = author_data['bio']
+                        
+                        if author_data.get('birth_date') and not birth_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['birth_date']))
+                                if year_match:
+                                    birth_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('death_date') and not death_year:
+                            try:
+                                import re
+                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['death_date']))
+                                if year_match:
+                                    death_year = int(year_match.group())
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if author_data.get('photo_url') and not image_url:
+                            image_url = author_data['photo_url']
+                        
+                        logger.info(f"✅ Auto-fetched metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                    else:
+                        logger.info(f"📝 No OpenLibrary data found for: {person_name}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to auto-fetch metadata for {person_name}: {e}")
+                    # Continue with person creation even if metadata fetch fails
+            
+            # Only include properties that exist in the Person schema
+            person_data = {
+                'id': person_id,
+                'name': person_name,
+                'normalized_name': normalized_name,
+                'birth_year': birth_year,
+                'death_year': death_year,
+                'birth_place': birth_place,
+                'bio': bio,
+                'website': website,
+                'openlibrary_id': openlibrary_id,
+                'image_url': image_url,
+                'created_at': getattr(person, 'created_at', datetime.utcnow()),
+                'updated_at': datetime.utcnow()
+            }
+            # Filter out fields that don't exist in the current schema
+            # birth_place and website are not in the current schema, but openlibrary_id and image_url are
+            filtered_person_data = {
+                'id': person_data['id'],
+                'name': person_data['name'],
+                'normalized_name': person_data['normalized_name'],
+                'birth_year': person_data['birth_year'],
+                'death_year': person_data['death_year'],
+                'bio': person_data['bio'],
+                'openlibrary_id': person_data['openlibrary_id'],
+                'image_url': person_data['image_url'],
+                'created_at': person_data['created_at']
+            }
+            
+            success = self.db.create_node('Person', filtered_person_data)
+            if success:
+                logger.info(f"✅ Created new person: {person_name} (ID: {person_id})")
+                return person_id
+            else:
+                logger.error(f"❌ Failed to create person: {person_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure person exists: {e}")
+            return None
+    
+    async def _create_category_relationships_from_raw(self, book_id: str, raw_categories: Any):
+        """Create category relationships from raw category data (strings or list)."""
+        try:
+            # Handle different raw_categories formats
+            if isinstance(raw_categories, str):
+                # Split comma-separated string
+                category_names = [cat.strip() for cat in raw_categories.split(',') if cat.strip()]
+            elif isinstance(raw_categories, list):
+                category_names = [str(cat).strip() for cat in raw_categories if str(cat).strip()]
+            else:
+                logger.warning(f"⚠️ Unknown raw_categories format: {type(raw_categories)}")
+                return
+            
+            logger.info(f"🔗 Processing {len(category_names)} categories from raw data: {category_names}")
+            
+            for category_name in category_names:
+                await self._create_category_relationship_by_name(book_id, category_name)
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create category relationships from raw data: {e}")
+    
+    async def _create_category_relationship_by_name(self, book_id: str, category_name: str):
+        """Create a category relationship by category name (create category if needed)."""
+        try:
+            category_id = await self._ensure_category_exists(category_name)
+            if not category_id:
+                logger.warning(f"⚠️ Could not create/find category: {category_name}")
+                return
+            
+            # Create the CATEGORIZED_AS relationship
+            success = self.db.create_relationship(
+                'Book', book_id, 'CATEGORIZED_AS', 'Category', category_id, {}
+            )
+            
+            if success:
+                logger.info(f"✅ Created CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+            else:
+                logger.error(f"❌ Failed to create CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create category relationship: {e}")
+    
+    async def _create_category_relationship(self, book_id: str, category: Any):
+        """Create a category relationship with an existing category object."""
+        try:
+            category_id = getattr(category, 'id', None)
+            category_name = getattr(category, 'name', '')
+            
+            if not category_id and category_name:
+                # Try to find/create by name
+                category_id = await self._ensure_category_exists(category_name)
+            
+            if not category_id:
+                logger.warning(f"⚠️ Could not determine category ID for: {category}")
+                return
+            
+            # Create the relationship
+            success = self.db.create_relationship(
+                'Book', book_id, 'CATEGORIZED_AS', 'Category', category_id, {}
+            )
+            
+            if success:
+                logger.info(f"✅ Created CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+            else:
+                logger.error(f"❌ Failed to create CATEGORIZED_AS relationship: {book_id} -> {category_name}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create category relationship: {e}")
+    
+    async def _ensure_category_exists(self, category_name: str) -> Optional[str]:
+        """Ensure a category exists in the database, create if necessary."""
+        try:
+            if not category_name:
+                return None
+            
+            # Normalize the category name
+            normalized_name = category_name.strip().lower()
+            
+            # Try to find existing category
+            query = """
+            MATCH (c:Category) 
+            WHERE c.normalized_name = $normalized_name OR c.name = $name
+            RETURN c.id
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {
+                "normalized_name": normalized_name,
+                "name": category_name
+            })
+            
+            if results and (results[0].get('result') or results[0].get('col_0')):
+                category_id = results[0].get('result') or results[0]['col_0']
+                logger.debug(f"Found existing category: {category_name} (ID: {category_id})")
+                return category_id
+            
+            # Create new category
+            category_id = str(uuid.uuid4())
+            # Include all properties that exist in the Category schema
+            category_data = {
+                'id': category_id,
+                'name': category_name,
+                'normalized_name': normalized_name,
+                'description': '',
+                'level': 0,  # Default to root level
+                'color': '',
+                'icon': '',
+                'book_count': 0,
+                'user_book_count': 0,
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow()
+            }
+            # Note: parent_id and aliases are not included as they need special handling
+            
+            success = self.db.create_node('Category', category_data)
+            if success:
+                logger.info(f"✅ Created new category: {category_name} (ID: {category_id})")
+                return category_id
+            else:
+                logger.error(f"❌ Failed to create category: {category_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure category exists: {e}")
+            return None
+    
+    async def _create_publisher_relationship(self, book_id: str, publisher: Any):
+        """Create a publisher relationship."""
+        try:
+            publisher_id = await self._ensure_publisher_exists(publisher)
+            if not publisher_id:
+                logger.warning(f"⚠️ Could not create/find publisher: {publisher}")
+                return
+            
+            # Create the PUBLISHED_BY relationship
+            success = self.db.create_relationship(
+                'Book', book_id, 'PUBLISHED_BY', 'Publisher', publisher_id, {}
+            )
+            
+            if success:
+                logger.info(f"✅ Created PUBLISHED_BY relationship: {book_id} -> {getattr(publisher, 'name', publisher)}")
+            else:
+                logger.error(f"❌ Failed to create PUBLISHED_BY relationship: {book_id} -> {getattr(publisher, 'name', publisher)}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to create publisher relationship: {e}")
+    
+    async def _ensure_publisher_exists(self, publisher: Any) -> Optional[str]:
+        """Ensure a publisher exists in the database, create if necessary."""
+        try:
+            # Handle both string and object publishers
+            if isinstance(publisher, str):
+                publisher_name = publisher
+                publisher_country = None
+                publisher_founded = None
+            else:
+                publisher_name = getattr(publisher, 'name', '')
+                publisher_country = getattr(publisher, 'country', None)
+                publisher_founded = getattr(publisher, 'founded_year', None)
+            
+            if not publisher_name:
+                return None
+            
+            # Try to find existing publisher
+            query = """
+            MATCH (p:Publisher {name: $name})
+            RETURN p.id
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"name": publisher_name})
+            
+            if results and (results[0].get('result') or results[0].get('col_0')):
+                publisher_id = results[0].get('result') or results[0]['col_0']
+                logger.debug(f"Found existing publisher: {publisher_name} (ID: {publisher_id})")
+                return publisher_id
+            
+            # Create new publisher
+            publisher_id = str(uuid.uuid4())
+            # Only include properties that exist in the Publisher schema
+            publisher_data = {
+                'id': publisher_id,
+                'name': publisher_name,
+                'country': publisher_country or '',
+                'founded_year': publisher_founded,
+                'created_at': datetime.utcnow()
+            }
+            # Note: Filtering out updated_at as it doesn't exist in DB schema
+            
+            success = self.db.create_node('Publisher', publisher_data)
+            if success:
+                logger.info(f"✅ Created new publisher: {publisher_name} (ID: {publisher_id})")
+                return publisher_id
+            else:
+                logger.error(f"❌ Failed to create publisher: {publisher_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure publisher exists: {e}")
+            return None
+    
+    # ========================================
+    # Missing Methods Required by kuzu_integration
+    # ========================================
+    
+    async def get_by_id(self, book_id: str) -> Optional[Dict[str, Any]]:
+        """Get a book by ID."""
+        try:
+            query = """
+            MATCH (b:Book {id: $book_id})
+            RETURN b
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"book_id": book_id})
+            logger.info(f"🔍 Query results for book {book_id}: {results}")
+            
+            if results and len(results) > 0:
+                result = results[0]
+                logger.info(f"🔍 First result structure: {result}")
+                
+                # Try different ways to access the book data - try 'result' first (single column)
+                book_data = None
+                if 'result' in result:
+                    book_data = result['result']
+                    logger.info(f"✅ Found book via 'result' key: {type(book_data)}")
+                elif 'col_0' in result:
+                    book_data = result['col_0']
+                    logger.info(f"✅ Found book via 'col_0' key: {type(book_data)}")
+                else:
+                    # Fallback: return whatever we got
+                    logger.warning(f"⚠️ Unexpected result structure for book {book_id}: {result}")
+                    return result
+                
+                # Convert book data to dict
+                if book_data is not None:
+                    if hasattr(book_data, '__dict__'):
+                        book_dict = dict(book_data)
+                        logger.info(f"✅ Converted book object to dict with keys: {list(book_dict.keys())}")
+                        return book_dict
+                    elif isinstance(book_data, dict):
+                        logger.info(f"✅ Book data is already dict with keys: {list(book_data.keys())}")
+                        return book_data
+                    else:
+                        logger.warning(f"⚠️ Book data is unexpected type: {type(book_data)}")
+                        return {'id': book_id, 'data': str(book_data)}
+            
+            logger.warning(f"⚠️ No results found for book {book_id}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get book by ID {book_id}: {e}")
+            return None
+    
+    async def get_by_uid(self, book_uid: str) -> Optional[Dict[str, Any]]:
+        """Get a book by UID (alias for get_by_id for backward compatibility)."""
+        logger.info(f"🔍 get_by_uid called with: {book_uid}")
+        result = await self.get_by_id(book_uid)
+        logger.info(f"🔍 get_by_uid result: {result}")
+        return result
+    
+    async def get_by_isbn(self, isbn: str) -> Optional[Dict[str, Any]]:
+        """Get a book by ISBN (13 or 10)."""
+        try:
+            query = """
+            MATCH (b:Book)
+            WHERE b.isbn13 = $isbn OR b.isbn10 = $isbn
+            RETURN b
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"isbn": isbn})
+            
+            if results and len(results) > 0:
+                result = results[0]
+                
+                # Try different ways to access the book data - try 'result' first (single column)
+                book_data = None
+                if 'result' in result:
+                    book_data = result['result']
+                elif 'col_0' in result:
+                    book_data = result['col_0']
+                else:
+                    return result
+                
+                # Convert book data to dict
+                if book_data is not None:
+                    if hasattr(book_data, '__dict__'):
+                        return dict(book_data)
+                    elif isinstance(book_data, dict):
+                        return book_data
+                    else:
+                        return {'isbn': isbn, 'data': str(book_data)}
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get book by ISBN {isbn}: {e}")
+            return None
+    
+    async def search(self, query_text: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search for books by title or author."""
+        try:
+            # Search by title
+            query = """
+            MATCH (b:Book)
+            WHERE b.title CONTAINS $query_text OR b.normalized_title CONTAINS $query_text
+            RETURN b
+            LIMIT $limit
+            """
+            
+            results = self.db.query(query, {
+                "query_text": query_text.lower(),
+                "limit": limit
+            })
+            
+            books = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    books.append(dict(result['result']))
+                elif 'col_0' in result:
+                    books.append(dict(result['col_0']))
+            
+            logger.debug(f"Found {len(books)} books matching query: {query_text}")
+            return books
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to search books: {e}")
+            return []
+    
+    async def get_all(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all books with pagination."""
+        try:
+            query = f"""
+            MATCH (b:Book)
+            RETURN b
+            SKIP {offset} LIMIT {limit}
+            """
+            
+            results = self.db.query(query)
+            
+            books = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    books.append(dict(result['result']))
+                elif 'col_0' in result:
+                    books.append(dict(result['col_0']))
+            
+            logger.debug(f"Retrieved {len(books)} books")
+            return books
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get all books: {e}")
+            return []
+    
+    async def get_book_authors(self, book_id: str) -> List[Dict[str, Any]]:
+        """Get all authors/contributors for a book."""
+        try:
+            query = """
+            MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
+            RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
+            ORDER BY rel.order_index ASC
+            """
+            
+            results = self.db.query(query, {"book_id": book_id})
+            
+            authors = []
+            for result in results:
+                if result.get('col_0'):  # name
+                    authors.append({
+                        'name': result.get('col_0', ''),
+                        'id': result.get('col_1', ''),
+                        'role': result.get('col_2', 'authored'),
+                        'order_index': result.get('col_3', 0)
+                    })
+            
+            logger.debug(f"Found {len(authors)} authors for book {book_id}")
+            return authors
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get book authors: {e}")
+            return []
+    
+    async def get_book_categories(self, book_id: str) -> List[Dict[str, Any]]:
+        """Get all categories for a book."""
+        try:
+            query = """
+            MATCH (b:Book {id: $book_id})-[:CATEGORIZED_AS]->(c:Category)
+            RETURN c.name as name, c.id as id, c.description as description
+            ORDER BY c.name ASC
+            """
+            
+            results = self.db.query(query, {"book_id": book_id})
+            
+            categories = []
+            for result in results:
+                if result.get('col_0'):  # name
+                    categories.append({
+                        'name': result.get('col_0', ''),
+                        'id': result.get('col_1', ''),
+                        'description': result.get('col_2', '')
+                    })
+            
+            logger.debug(f"Found {len(categories)} categories for book {book_id}")
+            return categories
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get book categories: {e}")
+            return []
+    
+    async def get_book_publisher(self, book_id: str) -> Optional[Dict[str, Any]]:
+        """Get the publisher for a book."""
+        try:
+            query = """
+            MATCH (b:Book {id: $book_id})-[:PUBLISHED_BY]->(p:Publisher)
+            RETURN p.name as name, p.id as id, p.country as country, p.founded_year as founded_year
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"book_id": book_id})
+            
+            if results and results[0].get('col_0'):
+                return {
+                    'name': results[0].get('col_0', ''),
+                    'id': results[0].get('col_1', ''),
+                    'country': results[0].get('col_2', ''),
+                    'founded_year': results[0].get('col_3', None)
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get book publisher: {e}")
+            return None
+    
+    async def get_all_persons(self) -> List[Dict[str, Any]]:
+        """Get all persons in the database with book counts."""
+        try:
+            query = """
+            MATCH (p:Person)
+            OPTIONAL MATCH (p)-[:AUTHORED]->(b:Book)
+            RETURN p, COUNT(DISTINCT b) as book_count
+            ORDER BY p.name ASC
+            """
+            
+            results = self.db.query(query)
+            
+            persons = []
+            for result in results:
+                # Handle both result formats for two column queries
+                person_data = None
+                book_count = 0
+                
+                if 'col_0' in result and 'col_1' in result:
+                    person_data = dict(result['col_0'])
+                    book_count = result['col_1'] or 0
+                elif 'result' in result:
+                    # Fallback for single column format
+                    person_data = dict(result['result'])
+                    book_count = 0
+                
+                if person_data:
+                    person_data['book_count'] = book_count
+                    persons.append(person_data)
+            
+            logger.debug(f"Retrieved {len(persons)} persons with book counts")
+            return persons
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get all persons: {e}")
+            return []
+    
+    async def get_all_categories(self) -> List[Dict[str, Any]]:
+        """Get all categories in the database."""
+        try:
+            query = """
+            MATCH (c:Category)
+            RETURN c
+            ORDER BY c.name ASC
+            """
+            
+            results = self.db.query(query)
+            
+            categories = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    categories.append(dict(result['result']))
+                elif 'col_0' in result:
+                    categories.append(dict(result['col_0']))
+            
+            logger.debug(f"Retrieved {len(categories)} categories")
+            return categories
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get all categories: {e}")
+            return []
+
+    async def delete(self, book_id: str) -> bool:
+        """Delete a book and all its relationships globally."""
+        try:
+            logger.info(f"🗑️ Starting global delete for book ID: {book_id}")
+            
+            # Use DETACH DELETE to remove the book and all its relationships
+            delete_query = """
+            MATCH (b:Book {id: $book_id})
+            DETACH DELETE b
+            """
+            
+            # Execute the deletion
+            self.db.query(delete_query, {"book_id": book_id})
+            logger.info(f"✅ Successfully deleted book and all relationships: {book_id}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to delete book {book_id}: {e}")
+            return False
+
+
+class KuzuUserBookRepository:
+    """Repository for user-book relationships."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    async def add_book_to_library(self, user_id: str, book_id: str, 
+                                 reading_status: str = "plan_to_read",
+                                 ownership_status: str = "owned",
+                                 media_type: str = "physical",
+                                 notes: str = "",
+                                 location_id: Optional[str] = None) -> bool:
+        """Add a book to user's library."""
+        try:
+            # Ensure all properties are strings except date_added which should be TIMESTAMP
+            owns_props = {
+                'reading_status': str(reading_status),
+                'ownership_status': str(ownership_status),
+                'media_type': str(media_type),
+                'date_added': datetime.utcnow(),  # Always use current time as datetime
+                'source': str('manual'),
+                'personal_notes': str(notes or ''),
+                'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
+            }
+            
+            success = self.db.create_relationship(
+                'User', user_id, 'OWNS', 'Book', book_id, owns_props
+            )
+            
+            if success:
+                logger.info(f"✅ Added book {book_id} to user {user_id} library")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to add book to library: {e}")
+            return False
+    
+    async def get_user_books(self, user_id: str, reading_status: Optional[str] = None, 
+                           limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all books in user's library, optionally filtered by reading status."""
+        try:
+            if reading_status:
+                query = """
+                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+                WHERE owns.reading_status = $reading_status
+                RETURN b, owns
+                SKIP $offset LIMIT $limit
+                """
+                params = {"user_id": user_id, "reading_status": reading_status, "offset": offset, "limit": limit}
+            else:
+                query = """
+                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+                RETURN b, owns
+                SKIP $offset LIMIT $limit
+                """
+                params = {"user_id": user_id, "offset": offset, "limit": limit}
+            
+            results = self.db.query(query, params)
+            
+            books = []
+            for result in results:
+                if 'col_0' in result and 'col_1' in result:
+                    book_data = dict(result['col_0'])
+                    owns_data = dict(result['col_1'])
+                    
+                    books.append({
+                        'book': book_data,
+                        'ownership': owns_data
+                    })
+            
+            return books
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get user books: {e}")
+            return []
+    
+    async def update_reading_status(self, user_id: str, book_id: str, new_status: str) -> bool:
+        """Update the reading status of a book."""
+        try:
+            query = """
+            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
+            SET owns.reading_status = $new_status
+            RETURN owns
+            """
+            
+            results = self.db.query(query, {
+                "user_id": user_id,
+                "book_id": book_id,
+                "new_status": new_status
+            })
+            
+            return len(results) > 0
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to update reading status: {e}")
+            return False
+
+    async def create_ownership(self, user_id: str, book_id: str, 
+                             reading_status, ownership_status, media_type,
+                             location_id: Optional[str] = None, source: str = "manual",
+                             notes: str = "", date_added = None, 
+                             custom_metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Create an ownership relationship between user and book."""
+        try:
+            # Import here to avoid circular imports
+            from app.domain.models import ReadingStatus, OwnershipStatus, MediaType
+            
+            # Convert enum values to strings
+            reading_status_str = reading_status.value if hasattr(reading_status, 'value') else str(reading_status)
+            ownership_status_str = ownership_status.value if hasattr(ownership_status, 'value') else str(ownership_status)
+            media_type_str = media_type.value if hasattr(media_type, 'value') else str(media_type)
+            
+            # Ensure date_added is a proper datetime object
+            if date_added is None:
+                final_date_added = datetime.utcnow()
+            elif isinstance(date_added, datetime):
+                final_date_added = date_added
+            elif isinstance(date_added, str):
+                try:
+                    # Try to parse ISO format string
+                    final_date_added = datetime.fromisoformat(date_added.replace('Z', '+00:00'))
+                except ValueError:
+                    final_date_added = datetime.utcnow()
+            elif isinstance(date_added, (int, float)):
+                try:
+                    # Try to parse as timestamp
+                    final_date_added = datetime.fromtimestamp(date_added)
+                except (ValueError, OSError):
+                    final_date_added = datetime.utcnow()
+            else:
+                # Fallback to current time for any other type
+                final_date_added = datetime.utcnow()
+            
+            # Ensure all properties are the correct types
+            owns_props = {
+                'reading_status': str(reading_status_str),
+                'ownership_status': str(ownership_status_str),
+                'media_type': str(media_type_str),
+                'date_added': final_date_added,  # Now guaranteed to be datetime
+                'source': str(source),
+                'personal_notes': str(notes or ''),
+                'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
+            }
+            
+            # Handle custom metadata if provided
+            if custom_metadata:
+                import json
+                owns_props['custom_metadata'] = json.dumps(custom_metadata)
+                print(f"🔍 [CREATE_OWNERSHIP] Adding custom metadata to OWNS relationship: {custom_metadata}")
+            
+            success = self.db.create_relationship(
+                'User', user_id, 'OWNS', 'Book', book_id, owns_props
+            )
+            
+            if success and custom_metadata:
+                # Also store individual custom field relationships for tracking
+                print(f"🔍 [CREATE_OWNERSHIP] Storing individual custom field relationships")
+                from app.infrastructure.kuzu_graph import get_graph_storage
+                storage = get_graph_storage()
+                
+                for field_name, field_value in custom_metadata.items():
+                    try:
+                        storage.store_custom_metadata(user_id, book_id, field_name, str(field_value))
+                        print(f"✅ [CREATE_OWNERSHIP] Stored custom field: {field_name} = {field_value}")
+                    except Exception as e:
+                        print(f"⚠️ [CREATE_OWNERSHIP] Failed to store custom field {field_name}: {e}")
+            
+            if success:
+                logger.info(f"✅ Created ownership relationship: user {user_id} owns book {book_id}")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create ownership: {e}")
+            return False
+    
+    async def remove_ownership(self, user_id: str, book_id: str) -> bool:
+        """Remove an ownership relationship between user and book."""
+        try:
+            # Execute Cypher query to delete the OWNS relationship
+            query = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            DELETE r
+            RETURN COUNT(r) as deleted_count
+            """
+            
+            result = self.db.query(query, {"user_id": user_id, "book_id": book_id})
+            
+            if result and len(result) > 0:
+                deleted_count = result[0].get('col_0', 0)  # Access the first column
+                if deleted_count > 0:
+                    logger.info(f"✅ Removed ownership relationship: user {user_id} no longer owns book {book_id}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ No ownership relationship found between user {user_id} and book {book_id}")
+                    return False
+            else:
+                logger.warning(f"⚠️ Query returned no results for removing ownership: user {user_id}, book {book_id}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to remove ownership: {e}")
+            return False
+    
+    async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
+        """Get comprehensive user library statistics."""
+        try:
+            stats = {}
+            
+            # Get total books count
+            query = """
+            MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book)
+            RETURN COUNT(b) as total_books
+            """
+            result = self.db.query(query, {"user_id": user_id})
+            stats['total_books'] = result[0].get('col_0', 0) if result else 0
+            
+            # Get counts by reading status
+            status_queries = {
+                'plan_to_read': 'plan_to_read',
+                'currently_reading': 'currently_reading',
+                'completed': 'completed',
+                'on_hold': 'on_hold',
+                'dropped': 'dropped'
+            }
+            
+            for status_key, status_value in status_queries.items():
+                query = """
+                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+                WHERE owns.reading_status = $status
+                RETURN COUNT(b) as count
+                """
+                result = self.db.query(query, {"user_id": user_id, "status": status_value})
+                stats[status_key] = result[0].get('col_0', 0) if result else 0
+            
+            # Get counts by ownership status
+            ownership_queries = {
+                'owned': 'owned',
+                'wishlist': 'wishlist',
+                'borrowed': 'borrowed',
+                'loaned': 'loaned'
+            }
+            
+            for ownership_key, ownership_value in ownership_queries.items():
+                query = """
+                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+                WHERE owns.ownership_status = $status
+                RETURN COUNT(b) as count
+                """
+                result = self.db.query(query, {"user_id": user_id, "status": ownership_value})
+                stats[ownership_key] = result[0].get('col_0', 0) if result else 0
+            
+            # Get counts by media type
+            media_queries = {
+                'physical': 'physical',
+                'ebook': 'ebook',
+                'audiobook': 'audiobook'
+            }
+            
+            for media_key, media_value in media_queries.items():
+                query = """
+                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+                WHERE owns.media_type = $media_type
+                RETURN COUNT(b) as count
+                """
+                result = self.db.query(query, {"user_id": user_id, "media_type": media_value})
+                stats[media_key] = result[0].get('col_0', 0) if result else 0
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get user statistics: {e}")
+            return {}
+    
+    async def get_reading_timeline(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get user's reading timeline - recent activity and books."""
+        try:
+            # Get recent books added to library, ordered by date_added
+            query = """
+            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+            RETURN b, owns
+            ORDER BY owns.date_added DESC
+            LIMIT $limit
+            """
+            
+            results = self.db.query(query, {"user_id": user_id, "limit": limit})
+            
+            timeline = []
+            for result in results:
+                if 'col_0' in result and 'col_1' in result:
+                    book_data = dict(result['col_0'])
+                    owns_data = dict(result['col_1'])
+                    
+                    # Create timeline entry
+                    timeline_entry = {
+                        'book': book_data,
+                        'activity_type': 'added_to_library',
+                        'activity_date': owns_data.get('date_added'),
+                        'reading_status': owns_data.get('reading_status'),
+                        'ownership_status': owns_data.get('ownership_status'),
+                        'media_type': owns_data.get('media_type'),
+                        'notes': owns_data.get('personal_notes', '')
+                    }
+                    timeline.append(timeline_entry)
+            
+            return timeline
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get reading timeline: {e}")
+            return []
+
+
+class KuzuLocationRepository:
+    """Clean location repository."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    async def create(self, location: Any, user_id: str) -> Optional[Any]:
+        """Create a new location for a user."""
+        try:
+            if not getattr(location, 'id', None):
+                if hasattr(location, 'id'):
+                    location.id = str(uuid.uuid4())
+            
+            location_data = {
+                'id': getattr(location, 'id', str(uuid.uuid4())),
+                'name': getattr(location, 'name', ''),
+                'description': getattr(location, 'description', ''),
+                'location_type': getattr(location, 'location_type', 'room'),
+                'is_default': getattr(location, 'is_default', False),
+                'created_at': getattr(location, 'created_at', datetime.utcnow())
+            }
+            
+            success = self.db.create_node('Location', location_data)
+            if success:
+                # Create LOCATED_AT relationship with user
+                rel_success = self.db.create_relationship(
+                    'User', user_id, 'LOCATED_AT', 'Location', location_data['id'],
+                    {'is_primary': getattr(location, 'is_default', False)}
+                )
+                
+                if rel_success:
+                    logger.info(f"✅ Created location: {getattr(location, 'name', 'unknown')}")
+                    return location
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create location: {e}")
+            return None
+    
+    async def get_user_locations(self, user_id: str, active_only: bool = True) -> List[Any]:
+        """Get all locations for a user."""
+        try:
+            query = """
+            MATCH (u:User {id: $user_id})-[:LOCATED_AT]->(l:Location)
+            RETURN l
+            """
+            
+            results = self.db.query(query, {"user_id": user_id})
+            
+            locations = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    locations.append(dict(result['result']))
+                elif 'col_0' in result:
+                    locations.append(dict(result['col_0']))
+            
+            return locations
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get user locations: {e}")
+            return []
+    
+    async def get_default_location(self, user_id: str) -> Optional[Any]:
+        """Get the default location for a user."""
+        try:
+            query = """
+            MATCH (u:User {id: $user_id})-[:LOCATED_AT {is_primary: true}]->(l:Location)
+            RETURN l
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"user_id": user_id})
+            
+            if results and 'col_0' in results[0]:
+                return dict(results[0]['col_0'])
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get default location: {e}")
+            return None
+    
+    async def get_by_id(self, location_id: str) -> Optional[Dict[str, Any]]:
+        """Get a location by ID."""
+        try:
+            query = """
+            MATCH (l:Location {id: $location_id})
+            RETURN l
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"location_id": location_id})
+            
+            if results and 'col_0' in results[0]:
+                return dict(results[0]['col_0'])
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get location by ID {location_id}: {e}")
+            return None
 
 
 class KuzuCategoryRepository:
-    """Kuzu-based implementation of CategoryRepository."""
+    """Clean category repository using simplified Kuzu schema."""
     
-    def __init__(self, storage: KuzuGraphStorage):
-        self.storage = storage
+    def __init__(self):
+        self.db = get_kuzu_database()
     
-    async def create(self, category: Category) -> Category:
+    async def create(self, category: Any) -> Optional[Any]:
         """Create a new category."""
-        if not category.id:
-            category.id = str(uuid.uuid4())
-        
-        category_data = asdict(category)
-        success = self.storage.store_node('Category', category.id, category_data)
-        if not success:
-            raise Exception(f"Failed to create category: {category.name}")
-        
-        return category
-    
-    async def get_by_name(self, name: str) -> Optional[Category]:
-        """Get a category by name."""
-        query = """
-        MATCH (c:Category)
-        WHERE c.name = $name OR c.normalized_name = $normalized_name
-        RETURN c
-        """
-        normalized_name = name.lower().strip()
-        results = self.storage.execute_cypher(query, {"name": name, "normalized_name": normalized_name})
-        if results:
-            category_data = _clean_kuzu_data(results[0]['col_0'])
-            if category_data.get('created_at'):
-                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
-            return Category(**category_data)
-        return None
-    
-    async def get_by_id(self, category_id: str) -> Optional[Category]:
-        """Get a category by ID."""
-        category_data = self.storage.get_node('Category', category_id)
-        if not category_data:
-            return None
-        
-        category_data = _clean_kuzu_data(category_data)
-        if category_data.get('created_at'):
-            category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
-        
-        return Category(**category_data)
-    
-    async def search_by_name(self, name: str, limit: int = 10) -> List[Category]:
-        """Search categories by name."""
-        query = """
-        MATCH (c:Category)
-        WHERE c.name CONTAINS $name
-        RETURN c
-        LIMIT $limit
-        """
-        results = self.storage.execute_cypher(query, {"name": name, "limit": limit})
-        categories = []
-        for result in results:
-            category_data = _clean_kuzu_data(result['col_0'])
-            if category_data.get('created_at'):
-                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
-            categories.append(Category(**category_data))
-        return categories
-    
-    async def get_all(self) -> List[Category]:
-        """Get all categories."""
-        category_nodes = self.storage.get_nodes_by_type('Category')
-        categories = []
-        for category_data in category_nodes:
-            # Clean the data - convert _id to id if needed
-            if '_id' in category_data and 'id' not in category_data:
-                category_data['id'] = category_data.pop('_id')
+        try:
+            category_name = getattr(category, 'name', '')
+            if not category_name:
+                logger.error("❌ Category name is required")
+                return None
             
-            # Remove any other unexpected fields
-            expected_fields = {'id', 'name', 'normalized_name', 'parent_id', 'description', 'level', 
-                              'color', 'icon', 'aliases', 'book_count', 'user_book_count', 
-                              'created_at', 'updated_at'}
-            cleaned_data = {k: v for k, v in category_data.items() if k in expected_fields}
+            # Generate ID if not provided
+            category_id = getattr(category, 'id', None) or str(uuid.uuid4())
             
-            if cleaned_data.get('created_at'):
-                cleaned_data['created_at'] = _safe_fromisoformat(cleaned_data['created_at'])
-            if cleaned_data.get('updated_at'):
-                cleaned_data['updated_at'] = _safe_fromisoformat(cleaned_data['updated_at'])
+            # Include all properties that exist in the Category schema
+            category_data = {
+                'id': category_id,
+                'name': category_name,
+                'normalized_name': category_name.strip().lower(),
+                'description': getattr(category, 'description', ''),
+                'level': getattr(category, 'level', 0),  # Default to root level
+                'color': getattr(category, 'color', ''),
+                'icon': getattr(category, 'icon', ''),
+                'book_count': getattr(category, 'book_count', 0),
+                'user_book_count': getattr(category, 'user_book_count', 0),
+                'created_at': getattr(category, 'created_at', datetime.utcnow()),
+                'updated_at': getattr(category, 'updated_at', datetime.utcnow())
+            }
+            # Note: parent_id and aliases need special handling
+            
+            success = self.db.create_node('Category', category_data)
+            if success:
+                logger.info(f"✅ Created new category: {category_name} (ID: {category_id})")
+                return category
+            else:
+                logger.error(f"❌ Failed to create category: {category_name}")
+                return None
                 
-            categories.append(Category(**cleaned_data))
-        return categories
-    
-    async def update(self, category: Category) -> Optional[Category]:
-        """Update an existing category."""
-        if not category.id:
+        except Exception as e:
+            logger.error(f"❌ Failed to create category: {e}")
             return None
-        
-        category_data = asdict(category)
-        success = self.storage.update_node('Category', category.id, category_data)
-        return category if success else None
     
-    async def delete(self, category_id: str) -> bool:
-        """Delete a category."""
-        return self.storage.delete_node('Category', category_id)
+    async def get_by_id(self, category_id: str) -> Optional[Dict[str, Any]]:
+        """Get a category by ID."""
+        try:
+            query = """
+            MATCH (c:Category {id: $category_id})
+            RETURN c
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {"category_id": category_id})
+            
+            if results and 'col_0' in results[0]:
+                return dict(results[0]['col_0'])
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get category by ID {category_id}: {e}")
+            return None
     
-    async def find_or_create(self, category_name: str, parent_id: Optional[str] = None) -> Optional[Category]:
-        """Find existing category by name or create a new one."""
-        # First try to find existing category
-        existing_category = await self.get_by_name(category_name)
-        if existing_category:
-            return existing_category
-        
-        # Create new category if not found
-        new_category = Category(
-            id=str(uuid.uuid4()),
-            name=category_name,
-            normalized_name=category_name.lower().strip(),
-            parent_id=parent_id,
-            created_at=datetime.utcnow()
-        )
-        
-        return await self.create(new_category)
+    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a category by name."""
+        try:
+            normalized_name = name.strip().lower()
+            query = """
+            MATCH (c:Category) 
+            WHERE c.normalized_name = $normalized_name OR c.name = $name
+            RETURN c
+            LIMIT 1
+            """
+            
+            results = self.db.query(query, {
+                "normalized_name": normalized_name,
+                "name": name
+            })
+            
+            if results and 'col_0' in results[0]:
+                return dict(results[0]['col_0'])
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get category by name {name}: {e}")
+            return None
     
-    async def get_children(self, category_id: str) -> List[Category]:
-        """Get direct children of a category."""
-        query = """
-        MATCH (c:Category)
-        WHERE c.parent_id = $parent_id
-        RETURN c
-        """
-        results = self.storage.execute_cypher(query, {"parent_id": category_id})
-        categories = []
-        for result in results:
-            category_data = _clean_kuzu_data(result['col_0'])
-            if category_data.get('created_at'):
-                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
-            categories.append(Category(**category_data))
-        return categories
-    
-    async def get_root_categories(self) -> List[Category]:
-        """Get top-level categories (no parent)."""
-        query = """
-        MATCH (c:Category)
-        WHERE c.parent_id IS NULL OR c.parent_id = ''
-        RETURN c
-        """
-        results = self.storage.execute_cypher(query)
-        categories = []
-        for result in results:
-            category_data = _clean_kuzu_data(result['col_0'])
-            if category_data.get('created_at'):
-                category_data['created_at'] = _safe_fromisoformat(category_data['created_at'])
-            categories.append(Category(**category_data))
-        return categories
-    
-    async def build_hierarchy_for_categories(self, categories: List[Category]) -> List[Category]:
-        """Build parent-child relationships for a list of categories."""
-        category_map = {cat.id: cat for cat in categories}
-        
-        for category in categories:
-            if category.parent_id and category.parent_id in category_map:
-                category.parent = category_map[category.parent_id]
-                if not hasattr(category.parent, 'children'):
-                    category.parent.children = []
-                category.parent.children.append(category)
-        
-        return categories
-    
-    async def get_category_usage_stats(self, category_id: str, user_id: Optional[str] = None) -> Dict[str, int]:
-        """Get usage statistics for a category."""
-        # Count books in this category
-        query = """
-        MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category)
-        WHERE c.id = $category_id
-        RETURN COUNT(b) as total_books
-        """
-        results = self.storage.execute_cypher(query, {"category_id": category_id})
-        total_books = results[0]['col_0'] if results else 0
-        
-        return {"total_books": total_books}
-    
-    async def increment_book_count(self, category_id: str):
-        """Increment book count for a category (for statistics)."""
-        # This is handled automatically by relationship counting in Kuzu
-        # No need to maintain separate counters
-        pass
+    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all categories with pagination."""
+        try:
+            query = f"""
+            MATCH (c:Category)
+            RETURN c
+            ORDER BY c.name ASC
+            SKIP {offset} LIMIT {limit}
+            """
+            
+            results = self.db.query(query)
+            
+            categories = []
+            for result in results:
+                # Handle both result formats for single column queries
+                if 'result' in result:
+                    categories.append(dict(result['result']))
+                elif 'col_0' in result:
+                    categories.append(dict(result['col_0']))
+            
+            logger.debug(f"Retrieved {len(categories)} categories")
+            return categories
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get all categories: {e}")
+            return []
 
-__all__ = [
-    "KuzuBookRepository",
-    "KuzuUserRepository",
-    "KuzuAuthorRepository",
-    "KuzuUserBookRepository",
-    "KuzuCustomFieldRepository",
-    "KuzuImportMappingRepository",
-    "KuzuCategoryRepository"
-]
+
+class KuzuCustomFieldRepository:
+    """Clean custom field repository using simplified Kuzu schema."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    async def create(self, field_def: Any) -> Optional[Any]:
+        """Create a new custom field definition."""
+        try:
+            if not getattr(field_def, 'id', None):
+                if hasattr(field_def, 'id'):
+                    field_def.id = str(uuid.uuid4())
+            
+            field_data = {
+                'id': getattr(field_def, 'id', str(uuid.uuid4())),
+                'name': getattr(field_def, 'name', ''),
+                'display_name': getattr(field_def, 'display_name', ''),
+                'field_type': getattr(field_def, 'field_type', ''),
+                'description': getattr(field_def, 'description', ''),
+                'created_by_user_id': getattr(field_def, 'created_by_user_id', ''),
+                'is_shareable': getattr(field_def, 'is_shareable', False),
+                'is_global': getattr(field_def, 'is_global', False),
+                'default_value': getattr(field_def, 'default_value', ''),
+                'usage_count': getattr(field_def, 'usage_count', 0),
+                'created_at': getattr(field_def, 'created_at', datetime.utcnow())
+            }
+            
+            # Convert enum to string if needed
+            if hasattr(field_data['field_type'], 'value'):
+                field_data['field_type'] = field_data['field_type'].value
+            
+            success = self.db.create_node('CustomField', field_data)
+            if success:
+                logger.info(f"✅ Created custom field: {getattr(field_def, 'name', 'unknown')}")
+                return field_def
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create custom field: {e}")
+            return None
+    
+    async def get_by_id(self, field_id: str) -> Optional[Any]:
+        """Get a custom field by ID."""
+        try:
+            field_data = self.db.get_node('CustomField', field_id)
+            if field_data:
+                return field_data
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get custom field {field_id}: {e}")
+            return None
+    
+    async def get_by_user(self, user_id: str) -> List[Any]:
+        """Get all custom fields for a user."""
+        try:
+            query = """
+            MATCH (cf:CustomField)
+            WHERE cf.created_by_user_id = $user_id
+            RETURN cf
+            """
+            results = self.db.query(query, {"user_id": user_id})
+            fields = []
+            for result in results:
+                if 'col_0' in result:
+                    fields.append(dict(result['col_0']))
+            return fields
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get custom fields for user {user_id}: {e}")
+            return []
+    
+    async def update(self, field_def: Any) -> Optional[Any]:
+        """Update an existing custom field."""
+        try:
+            field_id = getattr(field_def, 'id', None)
+            if not field_id:
+                return None
+            
+            field_data = {
+                'name': getattr(field_def, 'name', ''),
+                'display_name': getattr(field_def, 'display_name', ''),
+                'description': getattr(field_def, 'description', ''),
+                'is_shareable': getattr(field_def, 'is_shareable', False),
+                'updated_at': datetime.utcnow()
+            }
+            
+            success = self.db.update_node('CustomField', field_id, field_data)
+            return field_def if success else None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to update custom field: {e}")
+            return None
+    
+    async def delete(self, field_id: str) -> bool:
+        """Delete a custom field."""
+        try:
+            return self.db.delete_node('CustomField', field_id)
+        except Exception as e:
+            logger.error(f"❌ Failed to delete custom field {field_id}: {e}")
+            return False
+    
+    async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[Any]:
+        """Get all shareable custom field definitions."""
+        try:
+            query_conditions = ["cf.is_shareable = true"]
+            params = {}
+            
+            if exclude_user_id:
+                query_conditions.append("cf.created_by_user_id <> $exclude_user_id")
+                params['exclude_user_id'] = exclude_user_id
+            
+            where_clause = " AND ".join(query_conditions)
+            query = f"""
+            MATCH (cf:CustomField)
+            WHERE {where_clause}
+            RETURN cf
+            ORDER BY cf.usage_count DESC
+            """
+            
+            results = self.db.query(query, params)
+            fields = []
+            for result in results:
+                if 'col_0' in result:
+                    fields.append(dict(result['col_0']))
+            return fields
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get shareable custom fields: {e}")
+            return []
+    
+    async def search(self, query: str, user_id: Optional[str] = None) -> List[Any]:
+        """Search custom field definitions."""
+        try:
+            query_conditions = []
+            params = {"search_query": f"%{query}%"}
+            
+            query_conditions.append("(cf.name CONTAINS $search_query OR cf.description CONTAINS $search_query)")
+            
+            if user_id:
+                query_conditions.append("(cf.created_by_user_id = $user_id OR cf.is_shareable = true)")
+                params['user_id'] = user_id
+            else:
+                query_conditions.append("cf.is_shareable = true")
+            
+            where_clause = " AND ".join(query_conditions)
+            cypher_query = f"""
+            MATCH (cf:CustomField)
+            WHERE {where_clause}
+            RETURN cf
+            ORDER BY cf.usage_count DESC
+            LIMIT 50
+            """
+            
+            results = self.db.query(cypher_query, params)
+            fields = []
+            for result in results:
+                if 'col_0' in result:
+                    fields.append(dict(result['col_0']))
+            return fields
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to search custom fields: {e}")
+            return []
+    
+    async def increment_usage(self, field_id: str) -> None:
+        """Increment usage count for a field definition."""
+        try:
+            query = """
+            MATCH (cf:CustomField)
+            WHERE cf.id = $field_id
+            SET cf.usage_count = COALESCE(cf.usage_count, 0) + 1
+            """
+            self.db.query(query, {"field_id": field_id})
+        except Exception as e:
+            logger.warning(f"Could not increment usage count for field {field_id}: {e}")
+    
+    async def get_popular(self, limit: int = 20) -> List[Any]:
+        """Get most popular shareable custom field definitions."""
+        try:
+            query = """
+            MATCH (cf:CustomField)
+            WHERE cf.is_shareable = true
+            RETURN cf
+            ORDER BY COALESCE(cf.usage_count, 0) DESC
+            LIMIT $limit
+            """
+            
+            results = self.db.query(query, {"limit": limit})
+            fields = []
+            for result in results:
+                if 'col_0' in result:
+                    fields.append(dict(result['col_0']))
+            return fields
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get popular custom fields: {e}")
+            return []
+
+
+class KuzuImportMappingRepository:
+    """Clean import mapping repository using simplified Kuzu schema."""
+    
+    def __init__(self):
+        self.db = get_kuzu_database()
+    
+    async def create(self, template: Any) -> Optional[Any]:
+        """Create a new import mapping template."""
+        try:
+            if not getattr(template, 'id', None):
+                if hasattr(template, 'id'):
+                    template.id = str(uuid.uuid4())
+            
+            template_data = {
+                'id': getattr(template, 'id', str(uuid.uuid4())),
+                'name': getattr(template, 'name', ''),
+                'description': getattr(template, 'description', ''),
+                'user_id': getattr(template, 'user_id', ''),
+                'import_type': getattr(template, 'import_type', ''),
+                'field_mappings': getattr(template, 'field_mappings', ''),
+                'sample_headers': getattr(template, 'sample_headers', ''),
+                'usage_count': getattr(template, 'usage_count', 0),
+                'created_at': getattr(template, 'created_at', datetime.utcnow())
+            }
+            
+            success = self.db.create_node('ImportMapping', template_data)
+            if success:
+                logger.info(f"✅ Created import mapping template: {getattr(template, 'name', 'unknown')}")
+                return template
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create import mapping template: {e}")
+            return None
+    
+    async def get_by_id(self, template_id: str) -> Optional[Any]:
+        """Get an import mapping template by ID."""
+        try:
+            template_data = self.db.get_node('ImportMapping', template_id)
+            if template_data:
+                return template_data
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get import mapping template {template_id}: {e}")
+            return None
+    
+    async def get_by_user(self, user_id: str) -> List[Any]:
+        """Get all import mapping templates for a user."""
+        try:
+            query = """
+            MATCH (im:ImportMapping)
+            WHERE im.user_id = $user_id
+            RETURN im
+            """
+            results = self.db.query(query, {"user_id": user_id})
+            templates = []
+            for result in results:
+                if 'col_0' in result:
+                    templates.append(dict(result['col_0']))
+            return templates
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get import mapping templates for user {user_id}: {e}")
+            return []
+    
+    async def update(self, template: Any) -> Optional[Any]:
+        """Update an existing import mapping template."""
+        try:
+            template_id = getattr(template, 'id', None)
+            if not template_id:
+                return None
+            
+            template_data = {
+                'name': getattr(template, 'name', ''),
+                'description': getattr(template, 'description', ''),
+                'field_mappings': getattr(template, 'field_mappings', ''),
+                'updated_at': datetime.utcnow()
+            }
+            
+            success = self.db.update_node('ImportMapping', template_id, template_data)
+            return template if success else None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to update import mapping template: {e}")
+            return None
+    
+    async def delete(self, template_id: str) -> bool:
+        """Delete an import mapping template."""
+        try:
+            return self.db.delete_node('ImportMapping', template_id)
+        except Exception as e:
+            logger.error(f"❌ Failed to delete import mapping template {template_id}: {e}")
+            return False
+    
+    async def detect_template(self, headers: List[str], user_id: str) -> Optional[Any]:
+        """Detect matching template based on CSV headers."""
+        try:
+            headers_lower = [h.lower().strip() for h in headers]
+            
+            # Get user's templates
+            user_templates = await self.get_by_user(user_id)
+            
+            # Get system templates
+            system_templates = await self.get_system_templates()
+            
+            # Combine templates
+            all_templates = user_templates + system_templates
+            
+            best_match = None
+            best_score = 0
+            
+            for template in all_templates:
+                sample_headers = template.get('sample_headers', [])
+                if not sample_headers:
+                    continue
+                    
+                template_headers_lower = [h.lower().strip() for h in sample_headers]
+                
+                # Count exact matches
+                exact_matches = len(set(headers_lower) & set(template_headers_lower))
+                
+                # Calculate percentage match
+                if len(template_headers_lower) > 0:
+                    match_score = exact_matches / len(template_headers_lower)
+                    
+                    if match_score >= 0.7 and match_score > best_score:
+                        best_match = template
+                        best_score = match_score
+            
+            return best_match
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to detect template: {e}")
+            return None
+    
+    async def get_system_templates(self) -> List[Any]:
+        """Get all system default templates."""
+        try:
+            query = """
+            MATCH (im:ImportMapping)
+            WHERE im.user_id = '__system__'
+            RETURN im
+            """
+            results = self.db.query(query)
+            templates = []
+            for result in results:
+                if 'col_0' in result:
+                    templates.append(dict(result['col_0']))
+            return templates
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get system templates: {e}")
+            return []
+    
+    async def increment_usage(self, template_id: str) -> None:
+        """Increment usage count and update last used timestamp."""
+        try:
+            query = """
+            MATCH (im:ImportMapping)
+            WHERE im.id = $template_id
+            SET im.usage_count = COALESCE(im.usage_count, 0) + 1,
+                im.updated_at = $updated_at
+            """
+            self.db.query(query, {
+                "template_id": template_id,
+                "updated_at": datetime.utcnow()
+            })
+        except Exception as e:
+            logger.warning(f"Could not increment usage count for template {template_id}: {e}")

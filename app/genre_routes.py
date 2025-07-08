@@ -47,6 +47,20 @@ import traceback
 from .services import book_service
 from .domain.models import Category, ReadingStatus
 
+# Global helper function for dict/object attribute access
+def get_attr(obj, attr, default=None):
+    """Safely get attribute from dict or object."""
+    if isinstance(obj, dict):
+        return obj.get(attr, default)
+    return getattr(obj, attr, default)
+
+def set_attr(obj, attr, value):
+    """Safely set attribute on dict or object."""
+    if isinstance(obj, dict):
+        obj[attr] = value
+    else:
+        setattr(obj, attr, value)
+
 # Create blueprint
 genres_bp = Blueprint('genres', __name__, url_prefix='/genres')
 
@@ -204,6 +218,12 @@ def category_details(category_id):
     """Display detailed information about a category."""
     from app.debug_system import debug_log, debug_genre_details, debug_service_call, debug_template_data
     
+    def get_attr(obj, attr, default=None):
+        """Safely get attribute from dict or object."""
+        if isinstance(obj, dict):
+            return obj.get(attr, default)
+        return getattr(obj, attr, default)
+    
     try:
         debug_log(f"🔍 [GENRE] Starting category details page for category_id: {category_id}, user: {current_user.id}", "GENRE_DETAILS")
         
@@ -217,7 +237,9 @@ def category_details(category_id):
             flash('Category not found.', 'error')
             return redirect(url_for('genres.index'))
         
-        debug_log(f"✅ [GENRE] Found category: {category.name} (ID: {category.id})", "GENRE_DETAILS")
+        category_name = get_attr(category, 'name', 'Unknown')
+        category_id_val = get_attr(category, 'id', category_id)
+        debug_log(f"✅ [GENRE] Found category: {category_name} (ID: {category_id_val})", "GENRE_DETAILS")
         
         # Enhanced genre debugging
         debug_genre_details(category, category_id, str(current_user.id), "VIEW")
@@ -229,10 +251,10 @@ def category_details(category_id):
         debug_service_call("book_service", "get_books_by_category_sync", {"category_id": category_id, "user_id": str(current_user.id)}, books, "AFTER")
         
         if not books:
-            debug_log(f"ℹ️ [GENRE] No books found in category {category.name}", "GENRE_DETAILS")
+            debug_log(f"ℹ️ [GENRE] No books found in category {category_name}", "GENRE_DETAILS")
             books = []
         
-        debug_log(f"📚 [GENRE] Found {len(books)} books in category {category.name}", "GENRE_DETAILS")
+        debug_log(f"📚 [GENRE] Found {len(books)} books in category {category_name}", "GENRE_DETAILS")
         
         # Get subcategories if this is a parent category
         debug_service_call("book_service", "get_child_categories_sync", {"parent_id": category_id}, None, "BEFORE")
@@ -247,23 +269,27 @@ def category_details(category_id):
         # Calculate total books including subcategories
         total_books_with_descendants = len(books)
         for subcat in subcategories:
-            debug_service_call("book_service", "get_books_by_category_sync", {"category_id": subcat.id, "user_id": str(current_user.id)}, None, "BEFORE")
-            subcat_books = book_service.get_books_by_category_sync(subcat.id, str(current_user.id), True)  # Include subcategories recursively
-            debug_service_call("book_service", "get_books_by_category_sync", {"category_id": subcat.id, "user_id": str(current_user.id)}, subcat_books, "AFTER")
-            if subcat_books:
-                total_books_with_descendants += len(subcat_books)
+            subcat_id = get_attr(subcat, 'id')
+            if subcat_id:
+                debug_service_call("book_service", "get_books_by_category_sync", {"category_id": subcat_id, "user_id": str(current_user.id)}, None, "BEFORE")
+                subcat_books = book_service.get_books_by_category_sync(subcat_id, str(current_user.id), True)  # Include subcategories recursively
+                debug_service_call("book_service", "get_books_by_category_sync", {"category_id": subcat_id, "user_id": str(current_user.id)}, subcat_books, "AFTER")
+                if subcat_books:
+                    total_books_with_descendants += len(subcat_books)
         
         debug_log(f"📊 [GENRE] Total books with descendants: {total_books_with_descendants}", "GENRE_DETAILS")
         
         # Get parent category if this is a child
         parent_category = None
-        if category.parent_id:
-            debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category.parent_id, "user_id": str(current_user.id)}, None, "BEFORE")
-            parent_category = book_service.get_category_by_id_sync(category.parent_id, str(current_user.id))
-            debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category.parent_id, "user_id": str(current_user.id)}, parent_category, "AFTER")
+        category_parent_id = get_attr(category, 'parent_id')
+        if category_parent_id:
+            debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category_parent_id, "user_id": str(current_user.id)}, None, "BEFORE")
+            parent_category = book_service.get_category_by_id_sync(category_parent_id, str(current_user.id))
+            debug_service_call("book_service", "get_category_by_id_sync", {"category_id": category_parent_id, "user_id": str(current_user.id)}, parent_category, "AFTER")
             
             if parent_category:
-                debug_log(f"🌳 [GENRE] Parent category: {parent_category.name}", "GENRE_DETAILS")
+                parent_name = get_attr(parent_category, 'name', 'Unknown')
+                debug_log(f"🌳 [GENRE] Parent category: {parent_name}", "GENRE_DETAILS")
         
         template_data = {
             'category': category,
@@ -321,7 +347,8 @@ def add_category():
             if parent_id:
                 parent = book_service.get_category_by_id_sync(parent_id, None)
                 if parent:
-                    level = parent.level + 1
+                    parent_level = get_attr(parent, 'level', 0)
+                    level = parent_level + 1
                 else:
                     flash('Invalid parent category.', 'error')
                     return render_template('genres/add.html')
@@ -340,12 +367,13 @@ def add_category():
                 updated_at=datetime.now()
             )
             
-            # Create category in storage
-            created_category = book_service.create_category_sync(category)
+            # Create category in storage  
+            created_category = book_service.create_category_sync(category.__dict__)
             
             if created_category:
+                created_id = get_attr(created_category, 'id')
                 flash(f'Category "{name}" added successfully!', 'success')
-                return redirect(url_for('genres.category_details', category_id=created_category.id))
+                return redirect(url_for('genres.category_details', category_id=created_id))
             else:
                 flash('Error creating category. Please try again.', 'error')
                 
@@ -390,18 +418,22 @@ def edit_category(category_id):
                 aliases = [alias.strip() for alias in aliases_str.split(',') if alias.strip()]
             
             # Check for circular reference if parent is changing
-            if parent_id and parent_id != category.parent_id:
+            category_parent_id = get_attr(category, 'parent_id')
+            if parent_id and parent_id != category_parent_id:
                 # Make sure we're not creating a circular reference
                 parent = book_service.get_category_by_id_sync(parent_id, None)
                 if parent:
                     # Check if the new parent is a descendant of this category
                     temp_parent = parent
+                    category_id_val = get_attr(category, 'id')
                     while temp_parent:
-                        if temp_parent.id == category.id:
+                        temp_parent_id = get_attr(temp_parent, 'id')
+                        if temp_parent_id == category_id_val:
                             flash('Cannot set a descendant as parent (would create circular reference).', 'error')
                             return render_template('genres/edit.html', category=category)
-                        if temp_parent.parent_id:
-                            temp_parent = book_service.get_category_by_id_sync(temp_parent.parent_id, None)
+                        temp_parent_parent_id = get_attr(temp_parent, 'parent_id')
+                        if temp_parent_parent_id:
+                            temp_parent = book_service.get_category_by_id_sync(temp_parent_parent_id, None)
                         else:
                             break
             
@@ -410,24 +442,26 @@ def edit_category(category_id):
             if parent_id:
                 parent = book_service.get_category_by_id_sync(parent_id, None)
                 if parent:
-                    level = parent.level + 1
+                    parent_level = get_attr(parent, 'level', 0)
+                    level = parent_level + 1
             
             # Update category data
-            category.name = name
-            category.description = description if description else None
-            category.parent_id = parent_id
-            category.level = level
-            category.color = color
-            category.icon = icon
-            category.aliases = aliases
-            category.updated_at = datetime.now()
+            set_attr(category, 'name', name)
+            set_attr(category, 'description', description if description else None)
+            set_attr(category, 'parent_id', parent_id)
+            set_attr(category, 'level', level)
+            set_attr(category, 'color', color)
+            set_attr(category, 'icon', icon)
+            set_attr(category, 'aliases', aliases)
+            set_attr(category, 'updated_at', datetime.now())
             
             # Update in storage
             updated_category = book_service.update_category_sync(category)
             
             if updated_category:
                 flash(f'Category "{name}" updated successfully!', 'success')
-                return redirect(url_for('genres.category_details', category_id=category.id))
+                category_id_val = get_attr(category, 'id')
+                return redirect(url_for('genres.category_details', category_id=category_id_val))
             else:
                 flash('Error updating category. Please try again.', 'error')
         
@@ -439,15 +473,18 @@ def edit_category(category_id):
         # Filter out this category and its descendants to prevent circular references
         valid_parents = []
         for cat in all_categories:
-            if cat.id != category.id:
+            cat_id = get_attr(cat, 'id')
+            category_id_val = get_attr(category, 'id')
+            if cat_id != category_id_val:
                 # Check if this category is a descendant of the current category
                 temp_cat = cat
                 is_descendant = False
-                while temp_cat and temp_cat.parent_id:
-                    if temp_cat.parent_id == category.id:
+                while temp_cat and get_attr(temp_cat, 'parent_id'):
+                    temp_parent_id = get_attr(temp_cat, 'parent_id')
+                    if temp_parent_id == category_id_val:
                         is_descendant = True
                         break
-                    temp_cat = next((c for c in all_categories if c.id == temp_cat.parent_id), None)
+                    temp_cat = next((c for c in all_categories if get_attr(c, 'id') == temp_parent_id), None)
                 
                 if not is_descendant:
                     valid_parents.append(cat)
@@ -475,18 +512,21 @@ def delete_category(category_id):
         books = book_service.get_books_by_category_sync(category_id, include_subcategories=False)
         
         if children:
-            flash(f'Cannot delete category "{category.name}" because it has {len(children)} child categories. Move or delete the child categories first.', 'error')
+            category_name = get_attr(category, 'name', 'Unknown')
+            flash(f'Cannot delete category "{category_name}" because it has {len(children)} child categories. Move or delete the child categories first.', 'error')
             return redirect(url_for('genres.category_details', category_id=category_id))
         
         if books:
-            flash(f'Cannot delete category "{category.name}" because it is used by {len(books)} books. Remove the category from those books first.', 'error')
+            category_name = get_attr(category, 'name', 'Unknown')
+            flash(f'Cannot delete category "{category_name}" because it is used by {len(books)} books. Remove the category from those books first.', 'error')
             return redirect(url_for('genres.category_details', category_id=category_id))
         
         # Delete the category
         success = book_service.delete_category_sync(category_id)
         
         if success:
-            flash(f'Category "{category.name}" deleted successfully.', 'success')
+            category_name = get_attr(category, 'name', 'Unknown')
+            flash(f'Category "{category_name}" deleted successfully.', 'success')
         else:
             flash('Error deleting category. Please try again.', 'error')
         
@@ -525,7 +565,8 @@ def bulk_delete_categories():
                     books = book_service.get_books_by_category_sync(category_id, include_subcategories=False)
                     
                     if children or books:
-                        errors.append(f'"{category.name}" has {len(children)} children and {len(books)} books')
+                        category_name = get_attr(category, 'name', 'Unknown')
+                        errors.append(f'"{category_name}" has {len(children)} children and {len(books)} books')
                         continue
                 
                 # Delete the category
@@ -533,7 +574,8 @@ def bulk_delete_categories():
                 if success:
                     deleted_count += 1
                 else:
-                    errors.append(f'Failed to delete "{category.name}"')
+                    category_name = get_attr(category, 'name', 'Unknown')
+                    errors.append(f'Failed to delete "{category_name}"')
                     
             except Exception as e:
                 errors.append(f'Error deleting category: {str(e)}')
@@ -562,7 +604,7 @@ def merge_categories():
             all_categories = book_service.list_all_categories_sync()
             if all_categories is None:
                 all_categories = []
-            all_categories.sort(key=lambda c: c.name.lower())
+            all_categories.sort(key=lambda c: get_attr(c, 'name', '').lower())
             return render_template('genres/merge.html', categories=all_categories)
         
         except Exception as e:
@@ -603,8 +645,9 @@ def merge_categories():
         success = book_service.merge_categories_sync(primary_category_id, merge_category_ids)
         
         if success:
-            merge_names = [cat.name for cat in merge_categories]
-            flash(f'Successfully merged {len(merge_names)} categories into "{primary_category.name}": {", ".join(merge_names)}.', 'success')
+            merge_names = [get_attr(cat, 'name', 'Unknown') for cat in merge_categories]
+            primary_name = get_attr(primary_category, 'name', 'Unknown')
+            flash(f'Successfully merged {len(merge_names)} categories into "{primary_name}": {", ".join(merge_names)}.', 'success')
             return redirect(url_for('genres.category_details', category_id=primary_category_id))
         else:
             flash('Error merging categories. Please try again.', 'error')
@@ -632,12 +675,12 @@ def api_search_categories():
         results = []
         for category in categories:
             results.append({
-                'id': category.id,
-                'name': category.name,
-                'full_path': category.full_path if hasattr(category, 'full_path') else category.name,
-                'level': category.level,
-                'book_count': getattr(category, 'book_count', 0),
-                'description': category.description
+                'id': get_attr(category, 'id'),
+                'name': get_attr(category, 'name'),
+                'full_path': get_attr(category, 'full_path', get_attr(category, 'name')),
+                'level': get_attr(category, 'level', 0),
+                'book_count': get_attr(category, 'book_count', 0),
+                'description': get_attr(category, 'description')
             })
         
         return jsonify(results)
@@ -754,7 +797,8 @@ def test_auto_mapping():
                 # Get the categories that were created
                 book_categories = book_service.get_book_categories_sync(created_book.id)
                 
-                flash(f'✅ Test successful! Created book "{created_book.title}" with {len(book_categories)} categories: {", ".join([cat.name for cat in book_categories])}', 'success')
+                category_names = [get_attr(cat, 'name', 'Unknown') for cat in book_categories]
+                flash(f'✅ Test successful! Created book "{created_book.title}" with {len(book_categories)} categories: {", ".join(category_names)}', 'success')
                 print(f"✅ [TEST] Book created with {len(book_categories)} categories")
                 
                 # Also add to user's library for testing
