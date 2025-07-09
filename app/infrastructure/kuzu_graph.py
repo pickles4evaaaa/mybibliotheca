@@ -995,6 +995,9 @@ class KuzuGraphStorage:
     def update_node(self, node_type: str, node_id: str, updates: Dict[str, Any]) -> bool:
         """Update specific fields of a node."""
         try:
+            print(f"🔧 [UPDATE_NODE] Called with node_type={node_type}, node_id={node_id}")
+            print(f"🔧 [UPDATE_NODE] Raw updates: {updates}")
+            
             # Serialize updates
             # Convert custom_metadata dict to JSON string so it persists
             if 'custom_metadata' in updates and isinstance(updates['custom_metadata'], dict):
@@ -1004,6 +1007,8 @@ class KuzuGraphStorage:
                     pass
             serialized_updates = self._serialize_datetime_values(updates)
             serialized_updates['updated_at'] = datetime.utcnow()
+            
+            print(f"🔧 [UPDATE_NODE] Serialized updates: {serialized_updates}")
             
             # Build SET clause
             set_clauses = [f"n.{key} = ${key}" for key in serialized_updates.keys()]
@@ -1015,10 +1020,16 @@ class KuzuGraphStorage:
             """
             
             params = {"node_id": node_id, **serialized_updates}
+            
+            print(f"🔧 [UPDATE_NODE] Generated query: {query}")
+            print(f"🔧 [UPDATE_NODE] Query parameters: {params}")
+            
             self.kuzu_conn.execute(query, params)
+            print(f"✅ [UPDATE_NODE] Successfully executed update")
             return True
             
         except Exception as e:
+            print(f"❌ [UPDATE_NODE] Exception occurred: {e}")
             logger.error(f"Failed to update {node_type} node {node_id}: {e}")
             return False
     

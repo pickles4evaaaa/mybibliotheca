@@ -550,7 +550,7 @@
                                 <!-- Book Cover -->
                                 <div class="book-cover-wrapper" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
                                     {% if book.cover_url %}
-                                        {% set fallback_url = url_for('static', filename='bookshelf.png') %}
+                                        {% set fallback_url = url_for('serve_static', filename='bookshelf.png') %}
                                         <img src="{{ book.cover_url }}" 
                                              class="card-img-top book-cover" 
                                              alt="{{ book.title }} cover"

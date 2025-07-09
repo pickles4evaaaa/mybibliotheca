@@ -414,6 +414,17 @@ class KuzuBookRepository:
                 if hasattr(book, 'id'):
                     book.id = str(uuid.uuid4())
             
+            # Handle series field - it can be a Series object or a string
+            series_value = None
+            series_obj = getattr(book, 'series', None)
+            if series_obj:
+                if hasattr(series_obj, 'name'):
+                    # Series object with name attribute
+                    series_value = series_obj.name
+                else:
+                    # Assume it's already a string
+                    series_value = str(series_obj)
+            
             book_data = {
                 'id': getattr(book, 'id', str(uuid.uuid4())),
                 'title': getattr(book, 'title', ''),
@@ -427,6 +438,10 @@ class KuzuBookRepository:
                 'cover_url': getattr(book, 'cover_url', ''),
                 'average_rating': getattr(book, 'average_rating', 0.0),
                 'rating_count': getattr(book, 'rating_count', 0),
+                'series': series_value,
+                'series_volume': getattr(book, 'series_volume', None),
+                'series_order': getattr(book, 'series_order', None),
+                'custom_metadata': getattr(book, 'custom_metadata', None),
                 'created_at': getattr(book, 'created_at', datetime.utcnow())
             }
             

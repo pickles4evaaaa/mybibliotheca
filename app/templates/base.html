@@ -6,9 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <!-- Bootstrap CSS (local) -->
-  <link href="{{ url_for('static', filename='bootstrap.min.css') }}" rel="stylesheet">
+  <link href="{{ url_for('serve_static', filename='bootstrap.min.css') }}" rel="stylesheet">
   <!-- Bootstrap Icons (local) -->
-  <link href="{{ url_for('static', filename='bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet">
+  <link href="{{ url_for('serve_static', filename='bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet">
   <style>
     :root {
       /* Light theme variables */
@@ -22,7 +22,7 @@
       --link-color: #8d5524;
       --link-hover-color: #c68642;
       --border-color: #e0c9a6;
-      --bookshelf-bg: url("{{ url_for('static', filename='bookshelf.png') }}");
+      --bookshelf-bg: url("{{ url_for('serve_static', filename='bookshelf.png') }}");
       --primary-brown: #8B4513;
       --light-brown: #D2B48C;
       --cream: #F5F5DC;
@@ -679,7 +679,7 @@
       <div class="text-center mt-4">
         <div class="social-icons">
           <a href="https://github.com/pickles4evaaaa/mybibliotheca" target="_blank" rel="noopener" title="View on GitHub" class="social-icon">
-            <img src="{{ url_for('static', filename='github-mark.png') }}" alt="GitHub">
+            <img src="{{ url_for('serve_static', filename='github-mark.png') }}" alt="GitHub">
           </a>
           <a href="https://discord.gg/Hc8C5eRm7Q" target="_blank" rel="noopener" title="Join our Discord" class="social-icon">
             <i class="bi bi-discord" style="color: #5865F2;"></i>
@@ -703,7 +703,7 @@
     </div>
   </div>
   <!-- Bootstrap JS (local file) -->
-  <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
+  <script src="{{ url_for('serve_static', filename='bootstrap.bundle.min.js') }}"></script>
   
   <!-- Global CSRF utilities -->
   <script>

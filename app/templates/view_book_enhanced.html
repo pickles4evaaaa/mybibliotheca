@@ -52,7 +52,7 @@
                                 {% if book.cover_url %}
                                     <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
                                          class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover"
-                                         onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+                                         onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
                                 {% else %}
                                     <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
                                          style="height: 300px; width: 200px; margin: 0 auto;" id="book-cover">

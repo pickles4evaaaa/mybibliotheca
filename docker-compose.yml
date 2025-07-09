@@ -6,8 +6,8 @@ services:
     volumes:
       # Mount local data directory for migration support and Kuzu database
       - ./data:/app/data
-      # Mount covers directory for persistent cover images
-      - ./data/covers:/app/static/covers
+      # Mount static directory for CSS, JS, and other static files
+      - ./app/static:/app/static
     environment:
       # Security - MUST be set via .env file or environment
       - SECRET_KEY=${SECRET_KEY}

@@ -228,7 +228,15 @@ def _initialize_default_templates():
 
 
 def create_app():
-    app = Flask(__name__)
+    import os
+    
+    # Ensure static folder exists and is correctly configured
+    static_folder = os.path.join(os.path.dirname(__file__), 'static')
+    if not os.path.exists(static_folder):
+        os.makedirs(static_folder, exist_ok=True)
+    
+    # Disable Flask's default static file handling completely
+    app = Flask(__name__, static_folder=None, static_url_path=None)
     app.config.from_object(Config)
     
     # Explicitly set the secret key for Flask-Session compatibility
@@ -534,6 +542,18 @@ def create_app():
         if hasattr(current_user, 'password_must_change') and current_user.password_must_change:
             if request.endpoint != 'auth.forced_password_change':
                 return redirect(url_for('auth.forced_password_change'))
+
+    # Add explicit static file serving for production (gunicorn doesn't serve static files by default)
+    @app.route('/static/<path:filename>')
+    def serve_static(filename):
+        """Serve static files in production mode."""
+        import os
+        from flask import send_from_directory
+        # Use the explicit static folder path since we disabled Flask's static handling
+        # Point to the volume-mounted static directory
+        static_dir = '/app/static'
+        print(f"🔧 [STATIC] Serving {filename} from {static_dir}")
+        return send_from_directory(static_dir, filename)
 
     # Register application routes via modular blueprints
     from .routes import register_blueprints

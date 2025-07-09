@@ -748,14 +748,14 @@ class KuzuBookService:
                 # For now, just get books from the specific category
                 # TODO: Implement recursive descendant search
                 query = """
-                MATCH (b:Book)-[:BELONGS_TO]->(c:Category {id: $category_id})
+                MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category {id: $category_id})
                 RETURN b
                 ORDER BY b.title ASC
                 """
             else:
                 # Query for books in this specific category
                 query = """
-                MATCH (b:Book)-[:BELONGS_TO]->(c:Category {id: $category_id})
+                MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category {id: $category_id})
                 RETURN b
                 ORDER BY b.title ASC
                 """
@@ -903,7 +903,7 @@ class KuzuBookService:
             db = get_kuzu_database()
             
             query = """
-            MATCH (b:Book {id: $book_id})-[:BELONGS_TO]->(c:Category)
+            MATCH (b:Book {id: $book_id})-[:CATEGORIZED_AS]->(c:Category)
             RETURN c
             ORDER BY c.name ASC
             """
@@ -932,11 +932,11 @@ class KuzuBookService:
             for category_id in merge_category_ids:
                 # Move books from this category to primary category
                 query = """
-                MATCH (b:Book)-[r:BELONGS_TO]->(c:Category {id: $category_id})
+                MATCH (b:Book)-[r:CATEGORIZED_AS]->(c:Category {id: $category_id})
                 DELETE r
                 WITH b
                 MATCH (primary:Category {id: $primary_category_id})
-                CREATE (b)-[:BELONGS_TO]->(primary)
+                CREATE (b)-[:CATEGORIZED_AS]->(primary)
                 """
                 
                 db.query(query, {

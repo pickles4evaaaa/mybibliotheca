@@ -128,12 +128,13 @@
                                                 <img src="{{ book.cover_url }}" 
                                                      alt="{{ book.title }}" 
                                                      class="img-fluid rounded-start h-100"
-                                                     style="object-fit: cover; max-height: 160px;">
+                                                     style="object-fit: cover; max-height: 160px;"
+                                                     onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
                                             {% else %}
-                                                <div class="bg-light rounded-start h-100 d-flex align-items-center justify-content-center" 
-                                                     style="min-height: 160px;">
-                                                    <i class="bi bi-book text-muted" style="font-size: 2rem;"></i>
-                                                </div>
+                                                <img src="{{ url_for('serve_static', filename='bookshelf.png') }}" 
+                                                     alt="{{ book.title }}" 
+                                                     class="img-fluid rounded-start h-100"
+                                                     style="object-fit: cover; max-height: 160px;">
                                             {% endif %}
                                         </div>
                                         <div class="col-8">

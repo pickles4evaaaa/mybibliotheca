@@ -263,3 +263,7 @@ flask_session/
 .swp
 .swo
 dev_docs/
+
+# Cover images (user-generated content)
+app/static/covers/
+data/covers/

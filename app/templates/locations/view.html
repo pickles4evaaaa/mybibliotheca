@@ -67,18 +67,7 @@
 </style>
 
 <div class="container mt-4">
-    <!-- Location Header -->
-    <div class="location-header text-center">
-        <h1>
-            <i class="bi bi-geo-alt-fill"></i> {{ location.name }}
-            {% if location.is_default %}
-                <span class="badge bg-light text-dark ms-2">Default</span>
-            {% endif %}
-        </h1>
-        {% if location.description %}
-            <p class="mb-0 opacity-75">{{ location.description }}</p>
-        {% endif %}
-    </div>
+
 
     <!-- Navigation -->
     <div class="row mb-4">
@@ -164,7 +153,7 @@
                                      class="card-img-top" 
                                      alt="{{ book.title }}"
                                      style="height: 200px; object-fit: cover;"
-                                     onerror="this.onerror=null;this.src='{{ url_for('static', filename='bookshelf.png') }}';">
+                                     onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
                             {% else %}
                                 <div class="card-img-top d-flex align-items-center justify-content-center bg-light" 
                                      style="height: 200px;">

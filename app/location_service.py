@@ -335,11 +335,12 @@ class LocationService:
             
             storage = get_graph_storage()
             
-            # Query for books owned by user that contain this location_id
-            # Handle location_id as either a string or potentially in a list format
+            # Query for books owned by user that have this location as primary or in locations list
+            # Handle cases where location fields might not exist on older relationships
             query = """
             MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book)
-            WHERE r.location_id = $location_id
+            WHERE (EXISTS(r.primary_location_id) AND r.primary_location_id = $location_id) 
+               OR (EXISTS(r.locations) AND $location_id IN r.locations)
             RETURN b.id as book_id
             """
             
@@ -371,3 +372,57 @@ class LocationService:
             import traceback
             traceback.print_exc()
             return []
+    
+    def migrate_existing_books_to_default_location(self, user_id: str) -> int:
+        """Migrate existing user books to have default location if they don't have location data."""
+        debug_log(f"Migrating existing books for user {user_id} to default location", "LOCATION")
+        
+        # Get default location
+        default_location = self.get_default_location(user_id)
+        if not default_location:
+            debug_log(f"No default location found for user {user_id}, cannot migrate", "LOCATION")
+            return 0
+        
+        # Find relationships that don't have location data
+        query = """
+        MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book)
+        WHERE r.primary_location_id IS NULL
+        RETURN b.id as book_id, r
+        """
+        
+        from app.infrastructure.kuzu_graph import get_graph_storage
+        storage = get_graph_storage()
+        results = storage.query(query, {'user_id': user_id})
+        
+        migration_count = 0
+        for result in results:
+            book_id = None  # Initialize to avoid unbound variable
+            try:
+                if 'col_0' in result:
+                    book_id = result['col_0']
+                elif 'book_id' in result:
+                    book_id = result['book_id']
+                    
+                if book_id:
+                    # Update the relationship to include location data
+                    update_query = """
+                    MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+                    SET r.primary_location_id = $location_id,
+                        r.locations = [$location_id]
+                    """
+                    
+                    storage.query(update_query, {
+                        'user_id': user_id,
+                        'book_id': book_id,
+                        'location_id': default_location.id
+                    })
+                    
+                    migration_count += 1
+                    debug_log(f"Migrated book {book_id} to default location {default_location.name}", "LOCATION")
+                    
+            except Exception as e:
+                debug_log(f"Error migrating book {book_id}: {e}", "LOCATION")
+                continue
+        
+        debug_log(f"Successfully migrated {migration_count} books to default location for user {user_id}", "LOCATION")
+        return migration_count

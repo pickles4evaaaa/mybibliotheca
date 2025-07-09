@@ -66,7 +66,7 @@ def fetch_book(isbn):
     
     # If neither source provides a cover, set a default
     if not book_data.get('cover'):
-        book_data['cover'] = url_for('static', filename='bookshelf.png')
+        book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
     return jsonify(book_data), 200 if book_data else 404
 
 @book_bp.route('/')
@@ -1152,10 +1152,8 @@ def update_book_details(uid):
     if media_type:
         update_data['media_type'] = media_type
     
-    # Location
+    # Location (handle separately as it's a relationship property, not a book property)
     location_id = request.form.get('location_id')
-    if location_id:
-        update_data['location_id'] = location_id
     
     # Borrowing details
     borrowed_from = request.form.get('borrowed_from', '').strip()
@@ -1186,7 +1184,21 @@ def update_book_details(uid):
     
     # Use service layer to update
     try:
+        print(f"🔍 [EDIT_BOOK] Calling book_service.update_book_sync with update_data: {update_data}")
         updated_book = book_service.update_book_sync(uid, str(current_user.id), **update_data)
+        
+        # Handle location update separately
+        print(f"🔍 [EDIT_BOOK] location_id from form: '{location_id}' (type: {type(location_id)})")
+        if location_id is not None:  # Allow empty string to clear location
+            print(f"🔍 [EDIT_BOOK] Proceeding with location update...")
+            from app.kuzu_services import user_book_service
+            location_success = user_book_service.update_book_location_sync(str(current_user.id), uid, location_id if location_id.strip() else None)
+            print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
+            if not location_success:
+                print(f"⚠️ Failed to update location for book {uid}")
+        else:
+            print(f"🔍 [EDIT_BOOK] Skipping location update (location_id is None)")
+        
         if updated_book is not None:
             flash('Book details updated successfully.', 'success')
             

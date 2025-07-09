@@ -102,6 +102,21 @@ class KuzuBookService:
             updated_at=book_data.get('updated_at', datetime.utcnow())
         )
         
+        # Handle series fields - the database stores series as a string, but the model expects a Series object
+        # For now, we'll store the series name as a string directly on the book object
+        series_name = book_data.get('series')
+        if series_name:
+            # Create a simple Series object if we have a series name
+            from app.domain.models import Series
+            book.series = Series(name=series_name)
+        
+        # Set series volume and order
+        book.series_volume = book_data.get('series_volume')
+        book.series_order = book_data.get('series_order')
+        
+        # Load related entities from database
+        self._load_book_relationships(book)
+        
         return book
 
     def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any]) -> Book:
@@ -165,12 +180,24 @@ class KuzuBookService:
                 print("❌ book_repo.create returned None")
                 raise ValueError("Failed to create book in repository")
             
-            # Create user-book relationship
+            # Create user-book relationship with default location
+            from .location_service import LocationService
+            
+            # Get the user's default location
+            location_service = LocationService(self.graph_storage.kuzu_conn)
+            default_location = location_service.get_default_location(user_id)
+            
+            # Handle location assignment safely
+            primary_location_id = default_location.id if default_location else None
+            locations: List[str] = [default_location.id] if default_location and default_location.id else []
+            
             relationship = UserBookRelationship(
                 user_id=str(user_id),
                 book_id=domain_book.id,  # Use the original book ID since we know it exists
                 reading_status=ReadingStatus.PLAN_TO_READ,
-                date_added=datetime.utcnow()
+                date_added=datetime.utcnow(),
+                primary_location_id=primary_location_id,
+                locations=locations
             )
             
             # Serialize relationship data for Kuzu
@@ -178,10 +205,17 @@ class KuzuBookService:
                 'user_id': str(user_id),
                 'book_id': domain_book.id,
                 'reading_status': ReadingStatus.PLAN_TO_READ.value,
-                'date_added': datetime.utcnow().isoformat()
+                'date_added': datetime.utcnow().isoformat(),
+                'primary_location_id': primary_location_id,
+                'locations': locations
             }
             
-            print(f"Storing relationship data: {rel_data}")
+            print(f"Storing relationship data with location: {rel_data}")
+            if default_location:
+                print(f"✅ Assigned book to default location: {default_location.name} (ID: {default_location.id})")
+            else:
+                print(f"⚠️ No default location found for user {user_id}")
+            
             
             # Store the relationship using Kuzu's create_relationship method
             rel_success = self.graph_storage.create_relationship(
@@ -259,24 +293,58 @@ class KuzuBookService:
     @run_async 
     async def update_book(self, book_id: str, updates: Dict[str, Any], user_id: str) -> Optional[Book]:
         """Update a book."""
+        print(f"📖 [UPDATE_BOOK] Called with book_id={book_id}, user_id={user_id}")
+        print(f"📖 [UPDATE_BOOK] Updates received: {updates}")
+        
+        # Filter out any location-related fields that might have leaked through
+        location_fields = {'location_id', 'primary_location_id', 'locations'}
+        filtered_updates = {k: v for k, v in updates.items() if k not in location_fields}
+        
+        if location_fields & set(updates.keys()):
+            filtered_out = {k: v for k, v in updates.items() if k in location_fields}
+            print(f"⚠️ [UPDATE_BOOK] WARNING: Location fields found in updates, filtering out: {filtered_out}")
+        
+        print(f"📖 [UPDATE_BOOK] Filtered updates: {filtered_updates}")
+        
         book_data = await self.book_repo.get_by_id(book_id)
         if not book_data:
+            print(f"❌ [UPDATE_BOOK] Book {book_id} not found")
             return None
         
         # Convert to Book object first
         book = self._dict_to_book(book_data)
         
         # Update fields
-        for field, value in updates.items():
+        for field, value in filtered_updates.items():
             if hasattr(book, field):
-                setattr(book, field, value)
+                print(f"📖 [UPDATE_BOOK] Setting {field} = {value}")
+                # Special handling for series field - convert string to Series object
+                if field == 'series' and isinstance(value, str):
+                    from app.domain.models import Series
+                    setattr(book, field, Series(name=value))
+                else:
+                    setattr(book, field, value)
+            else:
+                print(f"⚠️ [UPDATE_BOOK] WARNING: Book object has no field '{field}', skipping")
         
         book.updated_at = datetime.utcnow()
         
         # Since we don't have an update method, we'll use the graph storage directly
         # Convert book back to dict for storage
+        # IMPORTANT: Do NOT include the 'id' field in updates as it's the primary key
+        # and the node is already identified by book_id parameter
+        
+        # Handle series field - it can be a Series object or a string
+        series_value = None
+        if hasattr(book, 'series') and book.series:
+            if hasattr(book.series, 'name'):
+                # Series object with name attribute
+                series_value = book.series.name
+            else:
+                # Assume it's already a string
+                series_value = str(book.series)
+        
         book_dict = {
-            'id': book.id,
             'title': book.title,
             'normalized_title': book.normalized_title,
             'subtitle': book.subtitle,
@@ -293,15 +361,24 @@ class KuzuBookService:
             'average_rating': book.average_rating,
             'rating_count': book.rating_count,
             'custom_metadata': book.custom_metadata,
+            'series': series_value,
+            'series_volume': getattr(book, 'series_volume', None),
+            'series_order': getattr(book, 'series_order', None),
             'created_at': book.created_at,
             'updated_at': book.updated_at
         }
         
+        print(f"📖 [UPDATE_BOOK] Final book_dict for storage (excluding id): {book_dict}")
+        
         # Update the book node in Kuzu
+        print(f"📖 [UPDATE_BOOK] Calling graph_storage.update_node with book_id={book_id}")
         success = self.graph_storage.update_node('Book', book_id, book_dict)
         if success:
+            print(f"✅ [UPDATE_BOOK] Successfully updated book {book_id}")
             return book
-        return None
+        else:
+            print(f"❌ [UPDATE_BOOK] Failed to update book {book_id}")
+            return None
     
     @run_async
     async def delete_book(self, uid: str, user_id: str) -> bool:
@@ -598,7 +675,25 @@ class KuzuBookService:
     
     def update_book_sync(self, book_id: str, user_id: str, **kwargs) -> Optional[Book]:
         """Sync wrapper for update_book."""
-        return self.update_book(book_id, kwargs, user_id)
+        print("🚨🚨🚨 UPDATE_BOOK_SYNC CALLED - NEW CODE ACTIVE 🚨🚨🚨")
+        print(f"📖 [UPDATE_BOOK_SYNC] Called with book_id={book_id}, user_id={user_id}")
+        print(f"📖 [UPDATE_BOOK_SYNC] Raw kwargs: {kwargs}")
+        
+        # Filter out location-related fields that should not be passed to Book node update
+        location_fields = {'location_id', 'primary_location_id', 'locations'}
+        book_updates = {k: v for k, v in kwargs.items() if k not in location_fields}
+        
+        if location_fields & set(kwargs.keys()):
+            filtered_out = {k: v for k, v in kwargs.items() if k in location_fields}
+            print(f"📖 [UPDATE_BOOK_SYNC] Filtered out location fields: {filtered_out}")
+        
+        print(f"📖 [UPDATE_BOOK_SYNC] Book updates after filtering: {book_updates}")
+        
+        if not book_updates:
+            print(f"📖 [UPDATE_BOOK_SYNC] No book updates needed, skipping Book node update")
+            return self.get_book_by_uid_sync(book_id, user_id)
+        
+        return self.update_book(book_id, book_updates, user_id)
     
     def delete_book_sync(self, book_id: str, user_id: str) -> bool:
         """Sync wrapper for delete_book."""
@@ -750,8 +845,18 @@ class KuzuBookService:
             
             categories = []
             for result in results:
-                if 'col_0' in result:
+                if 'result' in result:
+                    categories.append(result['result'])
+                elif 'col_0' in result:
                     categories.append(result['col_0'])
+                elif 'c' in result:
+                    categories.append(result['c'])
+                else:
+                    # Return the first value if it looks like a category
+                    for key, value in result.items():
+                        if isinstance(value, dict) and 'id' in value and 'name' in value:
+                            categories.append(value)
+                            break
             
             return categories
         except Exception as e:
@@ -855,16 +960,100 @@ class KuzuBookService:
             
             results = self.graph_storage.query(query, {"category_id": category_id})
             
-            if results and 'col_0' in results[0]:
-                return results[0]['col_0']
+            if results and len(results) > 0:
+                result = results[0]
+                # Check different possible result formats
+                if 'result' in result:
+                    return result['result']
+                elif 'col_0' in result:
+                    return result['col_0']
+                elif 'c' in result:
+                    return result['c']
+                else:
+                    # Return the first value if it looks like a category
+                    for key, value in result.items():
+                        if isinstance(value, dict) and 'id' in value and 'name' in value:
+                            return value
+            
             return None
         except Exception as e:
             print(f"❌ Error getting category by ID {category_id}: {e}")
             return None
 
-    def get_category_by_id_sync(self, category_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a category by ID (sync version)."""
-        return self.get_category_by_id(category_id, user_id)
+    def get_category_by_id_sync(self, category_id: str, user_id: Optional[str] = None) -> Optional['Category']:
+        """Get a category by ID with full hierarchy (sync version)."""
+        try:
+            return self._build_category_with_hierarchy(category_id)
+        except Exception as e:
+            print(f"❌ Error getting category by ID {category_id}: {e}")
+            return None
+    
+    def _build_category_with_hierarchy(self, category_id: str) -> Optional['Category']:
+        """Build a Category object with proper parent hierarchy."""
+        try:
+            from app.domain.models import Category
+            
+            # Get the category data
+            query = """
+            MATCH (c:Category {id: $category_id})
+            RETURN c
+            """
+            
+            results = self.graph_storage.query(query, {"category_id": category_id})
+            
+            if not results or len(results) == 0:
+                return None
+            
+            result = results[0]
+            category_data = None
+            
+            # Check different possible result formats
+            if 'result' in result:
+                category_data = result['result']
+            elif 'col_0' in result:
+                category_data = result['col_0']
+            elif 'c' in result:
+                category_data = result['c']
+            else:
+                # Return the first value if it looks like a category
+                for key, value in result.items():
+                    if isinstance(value, dict) and 'id' in value and 'name' in value:
+                        category_data = value
+                        break
+            
+            if not category_data:
+                return None
+            
+            # Create the Category object
+            created_at = category_data.get('created_at')
+            updated_at = category_data.get('updated_at')
+            
+            category = Category(
+                id=category_data.get('id'),
+                name=category_data.get('name', ''),
+                normalized_name=category_data.get('normalized_name', ''),
+                parent_id=category_data.get('parent_id'),
+                description=category_data.get('description'),
+                level=category_data.get('level', 0),
+                color=category_data.get('color'),
+                icon=category_data.get('icon'),
+                aliases=category_data.get('aliases', []),
+                book_count=category_data.get('book_count', 0),
+                user_book_count=category_data.get('user_book_count', 0),
+                created_at=created_at if created_at else datetime.utcnow(),
+                updated_at=updated_at if updated_at else datetime.utcnow()
+            )
+            
+            # Recursively build parent hierarchy if parent_id exists
+            if category.parent_id:
+                parent_category = self._build_category_with_hierarchy(category.parent_id)
+                category.parent = parent_category
+            
+            return category
+            
+        except Exception as e:
+            print(f"❌ Error building category hierarchy for {category_id}: {e}")
+            return None
 
     @run_async
     async def get_child_categories(self, parent_id: str) -> List[Dict[str, Any]]:
@@ -917,7 +1106,7 @@ class KuzuBookService:
                 
                 # Build query for multiple categories
                 query = """
-                MATCH (b:Book)-[:BELONGS_TO]->(c:Category)
+                MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category)
                 WHERE c.id IN $category_ids
                 RETURN DISTINCT b
                 ORDER BY b.title ASC
@@ -927,7 +1116,7 @@ class KuzuBookService:
             else:
                 # Query for books in this specific category
                 query = """
-                MATCH (b:Book)-[:BELONGS_TO]->(c:Category {id: $category_id})
+                MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category {id: $category_id})
                 RETURN b
                 ORDER BY b.title ASC
                 """
@@ -936,10 +1125,17 @@ class KuzuBookService:
             
             books = []
             for result in results:
+                book_data = None
                 if 'result' in result:
-                    books.append(dict(result['result']))
+                    book_data = dict(result['result'])
                 elif 'col_0' in result:
-                    books.append(dict(result['col_0']))
+                    book_data = dict(result['col_0'])
+                
+                if book_data:
+                    # Ensure uid is available as alias for id (for template compatibility)
+                    if 'id' in book_data:
+                        book_data['uid'] = book_data['id']
+                    books.append(book_data)
             
             return books
         except Exception as e:
@@ -1080,14 +1276,28 @@ class KuzuBookService:
             # Group books by contribution type
             books_by_type = {}
             for result in results:
+                # Debug: Show raw result structure
+                print(f"🔍 [DEBUG] Raw result for person {person_id}: {result}")
+                print(f"🔍 [DEBUG] Result keys: {list(result.keys())}")
+                
                 # Extract the book data
                 book_data = {}
                 contribution_type = 'author'  # default
                 
                 if 'b' in result:
                     book_data = dict(result['b'])
+                    print(f"🔍 [DEBUG] Extracted book_data from 'b': {list(book_data.keys())}")
                 elif hasattr(result, 'b'):
                     book_data = dict(getattr(result, 'b'))
+                    print(f"🔍 [DEBUG] Extracted book_data from getattr(result, 'b'): {list(book_data.keys())}")
+                else:
+                    print(f"🔍 [DEBUG] No 'b' found in result!")
+                    # Try to find book data in other result keys
+                    for key, value in result.items():
+                        if isinstance(value, dict) and 'title' in str(value):
+                            print(f"🔍 [DEBUG] Found potential book data in key '{key}': {value}")
+                            book_data = dict(value)
+                            break
                 
                 if 'contribution_type' in result:
                     contribution_type = result['contribution_type'] or 'author'
@@ -1100,6 +1310,15 @@ class KuzuBookService:
                     book_data['ownership_status'] = result.get('ownership_status') 
                     book_data['start_date'] = result.get('start_date')
                     book_data['finish_date'] = result.get('finish_date')
+                
+                # Ensure uid is available as alias for id (for template compatibility)
+                if 'id' in book_data:
+                    book_data['uid'] = book_data['id']
+                
+                # Debug: Print book data to see what fields are available
+                print(f"🔍 [DEBUG] Final book data for person {person_id}: {list(book_data.keys())}")
+                print(f"🔍 [DEBUG] Cover URL: {book_data.get('cover_url', 'NO COVER_URL')}")
+                print(f"🔍 [DEBUG] Title: {book_data.get('title', 'NO TITLE')}")
                 
                 # Initialize the contribution type list if not exists
                 if contribution_type not in books_by_type:
@@ -1122,6 +1341,94 @@ class KuzuBookService:
     def get_books_by_person_sync(self, person_id: str, user_id: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
         """Get books associated with a person, grouped by contribution type (sync version)."""
         return self.get_books_by_person(person_id, user_id)
+
+    def _load_book_relationships(self, book: Book) -> None:
+        """Load related entities (authors, categories, publisher) for a book."""
+        if not book.id:
+            return
+        
+        try:
+            # Load authors via AUTHORED relationships
+            authors_query = """
+            MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
+            RETURN p.id as id, p.name as name, p.normalized_name as normalized_name, 
+                   rel.role as role, rel.order_index as order_index
+            ORDER BY rel.order_index ASC
+            """
+            
+            author_results = self.graph_storage.query(authors_query, {"book_id": book.id})
+            
+            for result in author_results:
+                # Create a Person object for the author
+                from app.domain.models import Person, BookContribution, ContributionType
+                
+                person = Person(
+                    id=result.get('col_0'),  # id
+                    name=result.get('col_1', ''),  # name
+                    normalized_name=result.get('col_2', '')  # normalized_name
+                )
+                
+                # Determine contribution type from role
+                role = result.get('col_3', 'authored')
+                try:
+                    contribution_type = ContributionType.AUTHORED
+                    if 'narrator' in role.lower():
+                        contribution_type = ContributionType.NARRATED
+                    elif 'editor' in role.lower() or 'edit' in role.lower():
+                        contribution_type = ContributionType.EDITED
+                except:
+                    contribution_type = ContributionType.AUTHORED
+                
+                # Create BookContribution
+                contribution = BookContribution(
+                    person_id=person.id or '',
+                    book_id=book.id,
+                    person=person,
+                    contribution_type=contribution_type,
+                    order=result.get('col_4', 0)  # order_index
+                )
+                
+                book.contributors.append(contribution)
+            
+            # Load categories via CATEGORIZED_AS relationships  
+            categories_query = """
+            MATCH (b:Book {id: $book_id})-[rel:CATEGORIZED_AS]->(c:Category)
+            RETURN c.id as id, c.name as name, c.normalized_name as normalized_name
+            """
+            
+            category_results = self.graph_storage.query(categories_query, {"book_id": book.id})
+            
+            for result in category_results:
+                from app.domain.models import Category
+                
+                category = Category(
+                    id=result.get('col_0'),  # id
+                    name=result.get('col_1', ''),  # name
+                    normalized_name=result.get('col_2', '')  # normalized_name
+                )
+                
+                book.categories.append(category)
+                
+            # Load publisher via PUBLISHED_BY relationship
+            publisher_query = """
+            MATCH (b:Book {id: $book_id})-[rel:PUBLISHED_BY]->(p:Publisher)
+            RETURN p.id as id, p.name as name
+            """
+            
+            publisher_results = self.graph_storage.query(publisher_query, {"book_id": book.id})
+            
+            if publisher_results:
+                result = publisher_results[0]
+                from app.domain.models import Publisher
+                
+                book.publisher = Publisher(
+                    id=result.get('col_0'),  # id
+                    name=result.get('col_1', '')  # name
+                )
+                
+        except Exception as e:
+            print(f"❌ Error loading book relationships for {book.id}: {e}")
+            # Don't raise - just log the error and continue with empty relationships
 
 
 # Create service instances
@@ -1510,6 +1817,81 @@ class KuzuUserBookService:
             
         except Exception as e:
             print(f"❌ Error updating user book custom metadata: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def update_book_location_sync(self, user_id: str, book_id: str, location_id: Optional[str] = None) -> bool:
+        """Update the location for a user's book."""
+        try:
+            print(f"🏠 [UPDATE_LOCATION] Updating location for user {user_id}, book {book_id} to location {location_id}")
+            
+            # First check if the user has an OWNS relationship with this book
+            check_query = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            RETURN r
+            """
+            
+            results = self.graph_storage.query(check_query, {
+                "user_id": user_id,
+                "book_id": book_id
+            })
+            
+            if not results:
+                print(f"⚠️ [UPDATE_LOCATION] No OWNS relationship found for user {user_id} and book {book_id}")
+                # Create a new relationship with the location if one doesn't exist
+                rel_data = {
+                    'user_id': user_id,
+                    'book_id': book_id,
+                    'reading_status': 'plan_to_read',
+                    'date_added': datetime.utcnow().isoformat(),
+                    'primary_location_id': location_id,
+                    'locations': [location_id] if location_id else []
+                }
+                
+                success = self.graph_storage.create_relationship(
+                    'User', user_id, 'OWNS', 'Book', book_id, rel_data
+                )
+                
+                if success:
+                    print(f"✅ [UPDATE_LOCATION] Created new OWNS relationship with location")
+                    return True
+                else:
+                    print(f"❌ [UPDATE_LOCATION] Failed to create new OWNS relationship")
+                    return False
+            else:
+                # Update the existing relationship
+                print(f"✅ [UPDATE_LOCATION] Found existing OWNS relationship, updating location")
+                
+                if location_id:
+                    update_query = """
+                    MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+                    SET r.primary_location_id = $location_id,
+                        r.locations = [$location_id]
+                    """
+                    params = {
+                        "user_id": user_id,
+                        "book_id": book_id,
+                        "location_id": location_id
+                    }
+                else:
+                    # Remove location
+                    update_query = """
+                    MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+                    SET r.primary_location_id = null,
+                        r.locations = null
+                    """
+                    params = {
+                        "user_id": user_id,
+                        "book_id": book_id
+                    }
+                
+                self.graph_storage.query(update_query, params)
+                print(f"✅ [UPDATE_LOCATION] Updated existing OWNS relationship")
+                return True
+                
+        except Exception as e:
+            print(f"❌ [UPDATE_LOCATION] Error updating book location: {e}")
             import traceback
             traceback.print_exc()
             return False
