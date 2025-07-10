@@ -235,10 +235,10 @@ class SQLiteMigrationService:
         
         # ===== PHASE 4-5: Use existing book creation pipeline =====
         from app.services import book_service
-        from app.kuzu_services import KuzuUserBookService
+        from app.infrastructure.kuzu_repositories import KuzuUserBookRepository
         from app.domain.models import ReadingStatus
         
-        user_book_service = KuzuUserBookService()
+        user_book_repo = KuzuUserBookRepository()
         
         print(f"📚 [BATCH_MIGRATION] Creating books and user relationships...")
         
@@ -275,7 +275,7 @@ class SQLiteMigrationService:
                     
                     if book_id:
                         # Update with personal information from SQLite
-                        self._update_personal_information(user_book_service, target_user_id, book_id, book_data)
+                        self._update_personal_information(user_book_repo, target_user_id, book_id, book_data)
                         
                         # Determine reading status from SQLite data
                         reading_status = self._determine_reading_status(book_data)
@@ -449,20 +449,10 @@ class SQLiteMigrationService:
         else:
             return ReadingStatus.PLAN_TO_READ  # default
     
-    def _update_personal_information(self, user_book_service, user_id: str, book_id: str, book_data: SimplifiedBook):
+    def _update_personal_information(self, user_book_repo, user_id: str, book_id: str, book_data: SimplifiedBook):
         """Update personal information from migrated data."""
         try:
-            update_data = {}
-            
-            # Add dates if available
-            if book_data.date_read:
-                update_data['date_read'] = book_data.date_read
-            if book_data.date_started:
-                update_data['date_started'] = book_data.date_started
-            if book_data.date_added:
-                update_data['date_added'] = book_data.date_added
-            
-            # Add migration note
+            # Build migration notes
             migration_notes = []
             if hasattr(book_data, 'reading_logs') and book_data.reading_logs:
                 log_dates = [str(log_date) for log_date in book_data.reading_logs[:5]]  # First 5 dates
@@ -471,10 +461,50 @@ class SQLiteMigrationService:
                 migration_notes.append(f"Reading logs: {', '.join(log_dates)}")
             
             migration_notes.append("Migrated from SQLite database")
-            update_data['personal_notes'] = "; ".join(migration_notes)
+            personal_notes = "; ".join(migration_notes)
             
-            if update_data:
-                user_book_service.update_user_book_sync(user_id, book_id, **update_data)
+            # Update reading status using the repository method
+            reading_status = self._determine_reading_status(book_data)
+            from app.services.kuzu_async_helper import run_async
+            run_async(user_book_repo.update_reading_status(user_id, book_id, reading_status.value))
+            
+            # Update the OWNS relationship with additional personal data using direct graph query
+            from app.infrastructure.kuzu_graph import get_graph_storage
+            storage = get_graph_storage()
+            
+            # Build update properties
+            update_props = {
+                'personal_notes': personal_notes
+            }
+            
+            # Add dates if available
+            if book_data.date_read:
+                update_props['date_read'] = book_data.date_read
+            if book_data.date_started:
+                update_props['date_started'] = book_data.date_started
+            if book_data.date_added:
+                update_props['date_added'] = book_data.date_added
+            
+            # Update the OWNS relationship with personal information
+            set_clauses = []
+            for key, value in update_props.items():
+                set_clauses.append(f"owns.{key} = ${key}")
+            
+            if set_clauses:
+                query = f"""
+                MATCH (u:User {{id: $user_id}})-[owns:OWNS]->(b:Book {{id: $book_id}})
+                SET {', '.join(set_clauses)}
+                RETURN owns
+                """
+                
+                params = {
+                    'user_id': user_id,
+                    'book_id': book_id,
+                    **update_props
+                }
+                
+                storage.query(query, params)
+                print(f"✅ [MIGRATION] Updated personal info for book {book_id}")
                 
         except Exception as e:
             print(f"⚠️ [MIGRATION] Failed to update personal info for book {book_id}: {e}")

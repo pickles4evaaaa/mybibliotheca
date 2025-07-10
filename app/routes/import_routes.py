@@ -1116,7 +1116,7 @@ def process_import_job(task_id):
 def store_job_in_kuzu(task_id, job_data):
     """Store import job data in Kuzu."""
     try:
-        from app.kuzu_services import job_service
+        from app.services import job_service
         success = job_service.store_job(task_id, job_data)
         if success:
             print(f"✅ Stored job {task_id} in Kuzu")
@@ -1130,7 +1130,7 @@ def store_job_in_kuzu(task_id, job_data):
 def get_job_from_kuzu(task_id):
     """Retrieve import job data from Kuzu."""
     try:
-        from app.kuzu_services import job_service
+        from app.services import job_service
         job_data = job_service.get_job(task_id)
         if job_data:
             print(f"✅ Retrieved job {task_id} from Kuzu")
@@ -1144,7 +1144,7 @@ def get_job_from_kuzu(task_id):
 def update_job_in_kuzu(task_id, updates):
     """Update specific fields in an import job stored in Kuzu."""
     try:
-        from app.kuzu_services import job_service
+        from app.services import job_service
         success = job_service.update_job(task_id, updates)
         if success:
             print(f"✅ Updated job {task_id} in Kuzu with: {list(updates.keys())}")

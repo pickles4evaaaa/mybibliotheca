@@ -13,7 +13,7 @@ import traceback
 
 from ..api_auth import api_token_required, api_auth_optional
 from ..services import book_service
-from ..kuzu_services import KuzuBookService, KuzuUserBookService
+from ..services.kuzu_service_facade import KuzuServiceFacade as KuzuBookService
 from ..domain.models import Book as DomainBook, Author, Publisher, BookContribution, ContributionType
 
 # Create API blueprint
@@ -21,7 +21,7 @@ books_api = Blueprint('books_api', __name__, url_prefix='/api/v1/books')
 
 # Initialize the correct services
 kuzu_book_service = KuzuBookService()
-kuzu_user_book_service = KuzuUserBookService()
+# Note: KuzuUserBookService was removed - functionality is now part of the facade
 
 
 def serialize_book(domain_book):

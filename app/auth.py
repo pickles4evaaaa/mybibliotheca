@@ -10,6 +10,7 @@ from .forms import (LoginForm, RegistrationForm, UserProfileForm, ChangePassword
                    PrivacySettingsForm, ForcedPasswordChangeForm, SetupForm, ReadingStreakForm)
 from .debug_utils import debug_route, debug_auth, debug_csrf, debug_session
 from datetime import datetime, timezone
+from typing import cast
 
 auth = Blueprint('auth', __name__)
 
@@ -23,9 +24,9 @@ def setup():
     
     # Check if any users already exist using Kuzu service
     try:
-        user_count = user_service.get_user_count_sync()
+        user_count = cast(int, user_service.get_user_count_sync())
         debug_auth(f"Current user count in database: {user_count}")
-        if user_count > 0:
+        if user_count and user_count > 0:
             debug_auth("Users already exist, redirecting to login")
             flash('Setup has already been completed.', 'info')
             return redirect(url_for('auth.login'))
@@ -93,10 +94,10 @@ def setup():
     
     # Handle GET request - check if setup is actually needed
     try:
-        user_count = user_service.get_user_count_sync()
+        user_count = cast(int, user_service.get_user_count_sync())
         debug_auth(f"Setup route GET: User count is {user_count}")
         
-        if user_count > 0:
+        if user_count and user_count > 0:
             debug_auth("Setup already completed, redirecting to login")
             flash('Setup has already been completed.', 'info')
             return redirect(url_for('auth.login'))
@@ -121,7 +122,7 @@ def setup():
 def setup_status():
     """API endpoint to check setup status - useful for troubleshooting"""
     try:
-        user_count = user_service.get_user_count_sync()
+        user_count = cast(int, user_service.get_user_count_sync())
         return {
             'setup_completed': user_count > 0,
             'user_count': user_count,

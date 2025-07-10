@@ -18,7 +18,8 @@ from dataclasses import asdict
 from functools import wraps
 import logging
 
-from .kuzu_services import run_async
+# Import async helper from new services
+from .services.kuzu_async_helper import run_async
 
 from flask import current_app
 from flask_login import current_user
@@ -256,7 +257,8 @@ class KuzuUserService:
         """Get total user count (sync version for compatibility)."""
         try:
             count = run_async(self.kuzu_service.get_user_count())
-            return count
+            # Ensure we always return an int, never None
+            return int(count) if count is not None else 0
         except Exception as e:
             current_app.logger.error(f"Error getting user count: {e}")
             return 0
@@ -973,8 +975,8 @@ class KuzuBookService:
 
 # Service instances
 user_service = KuzuUserService()
-# Import the full-featured KuzuBookService from kuzu_services
-from .kuzu_services import KuzuBookService as FullKuzuBookService
+# Import the new KuzuServiceFacade which provides 100% compatibility with original KuzuBookService
+from .services.kuzu_service_facade import KuzuServiceFacade as FullKuzuBookService
 book_service = FullKuzuBookService()
 
 # Placeholder services for compatibility

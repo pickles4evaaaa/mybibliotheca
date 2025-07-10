@@ -43,7 +43,6 @@ from app.domain.models import (
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
 from app.infrastructure.kuzu_graph import KuzuGraphStorage, get_graph_storage
 from app.services import book_service, user_service, run_async
-from app.kuzu_services import user_book_service
 from config import Config
 
 # Setup logging

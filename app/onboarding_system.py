@@ -28,6 +28,7 @@ import pytz
 from datetime import datetime
 
 from .advanced_migration_system import AdvancedMigrationSystem, DatabaseVersion
+from .routes.import_routes import import_jobs, store_job_in_kuzu, start_import_job, auto_create_custom_fields, update_job_in_kuzu
 from .services import user_service
 from .location_service import LocationService
 from .forms import SetupForm
@@ -153,7 +154,7 @@ def start():
         if current_step == 0 and not onboarding_data:  # Only check on fresh start
             user_count = user_service.get_user_count_sync()
             print(f"🔍 ONBOARDING START: User count: {user_count}")
-            if user_count > 0:
+            if user_count is not None and user_count > 0:
                 print(f"🔍 ONBOARDING START: Users exist and no active onboarding, should redirect to login")
                 flash('Setup has already been completed.', 'info')
                 return redirect(url_for('auth.login'))
@@ -1027,7 +1028,6 @@ def import_progress(task_id: str):
     try:
         # Get total books from job data if available
         try:
-            from .routes import import_jobs
             job = import_jobs.get(task_id)
             total_books = job.get('total', 0) if job else 0
         except Exception as e:
@@ -1077,7 +1077,6 @@ def import_progress_json(task_id: str):
     
     try:
         # For onboarding, check only memory jobs (not Kuzu)
-        from .routes import import_jobs
         
         # Try to get job from memory first
         job = import_jobs.get(task_id)
@@ -1206,8 +1205,9 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                         return False
                     
                     # Create user mapping with proper types (Dict[int, str])
+                    # At this point we know admin_user.id is not None due to the check above
                     try:
-                        user_mapping = {int(admin_mapping): admin_user.id}
+                        user_mapping: Dict[int, str] = {int(admin_mapping): admin_user.id}
                     except (ValueError, TypeError) as e:
                         logger.error(f"❌ Invalid admin_mapping type: {e}")
                         return False
@@ -1529,7 +1529,7 @@ def handle_onboarding_completion(onboarding_data: Dict):
             final_user_count = user_service.get_user_count_sync()
             print(f"🎉 [COMPLETION] User count check attempt {attempt + 1}: {final_user_count}")
             
-            if final_user_count > 0:
+            if final_user_count is not None and final_user_count > 0:
                 print(f"🎉 [COMPLETION] User count confirmed: {final_user_count}")
                 break
             elif attempt < max_retries - 1:
@@ -1568,7 +1568,6 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
     """Start a background import job for onboarding using the proven import system."""
     try:
         # Import the proven import functions from routes
-        from .routes import store_job_in_kuzu, import_jobs, start_import_job, auto_create_custom_fields
         from flask import current_app
         
         # Create a unique task ID
@@ -1648,7 +1647,6 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
     """Execute the onboarding import job in the background."""
     try:
         # Import the job functions from routes
-        from .routes import import_jobs, update_job_in_kuzu
         
         # Get the job data
         job = import_jobs.get(task_id)
@@ -1691,7 +1689,6 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         logger.error(f"❌ Error in onboarding import job {task_id}: {e}")
         # Update job status to failed
         try:
-            from .routes import import_jobs, update_job_in_kuzu
             job = import_jobs.get(task_id)
             if job:
                 job['status'] = 'failed'
@@ -1707,7 +1704,6 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
     try:
         import csv
         from .utils import normalize_goodreads_value
-        from .routes import import_jobs, update_job_in_kuzu
         
         # Get the job from memory (for onboarding, jobs are stored in memory)
         job = import_jobs.get(task_id)

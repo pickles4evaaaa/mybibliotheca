@@ -1,0 +1,296 @@
+"""
+Kuzu Search Service
+
+Handles search, filtering, and discovery functionality using Kuzu.
+Focused responsibility: Search operations and book discovery.
+"""
+
+import traceback
+from typing import List, Optional, Dict, Any
+from datetime import date, timedelta
+
+from ..domain.models import Book
+from ..infrastructure.kuzu_repositories import KuzuUserRepository
+from ..infrastructure.kuzu_graph import get_graph_storage
+from .kuzu_async_helper import run_async
+from .kuzu_relationship_service import KuzuRelationshipService
+
+
+class KuzuSearchService:
+    """Service for search and discovery operations."""
+    
+    def __init__(self):
+        self.graph_storage = get_graph_storage()
+        self.user_repo = KuzuUserRepository()
+        self.relationship_service = KuzuRelationshipService()
+    
+    async def search_books(self, query: str, user_id: str, limit: int = 50) -> List[Book]:
+        """Search books for a user."""
+        try:
+            # Get all user books first
+            user_books = await self.relationship_service.get_books_for_user(user_id, limit=1000)  # Get all books for filtering
+            
+            # Simple text search across title and authors
+            query_lower = query.lower()
+            filtered_books = []
+            
+            for book in user_books:
+                if (query_lower in book.title.lower() or 
+                    any(query_lower in author.name.lower() for author in book.authors)):
+                    filtered_books.append(book)
+            
+            return filtered_books[:limit]
+            
+        except Exception as e:
+            print(f"❌ [SEARCH_BOOKS] Error searching books for user {user_id}: {e}")
+            traceback.print_exc()
+            return []
+    
+    async def search_books_global(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search all books in the system (not user-specific)."""
+        try:
+            query_lower = query.lower()
+            
+            # Search books by title
+            search_query = """
+            MATCH (b:Book)
+            WHERE toLower(b.title) CONTAINS $query
+            RETURN b
+            ORDER BY b.title ASC
+            LIMIT $limit
+            """
+            
+            results = self.graph_storage.query(search_query, {
+                "query": query_lower,
+                "limit": limit
+            })
+            
+            books = []
+            for result in results:
+                if 'col_0' in result:
+                    book_data = dict(result['col_0'])
+                    # Ensure uid is available as alias for id
+                    if 'id' in book_data:
+                        book_data['uid'] = book_data['id']
+                    books.append(book_data)
+            
+            return books
+            
+        except Exception as e:
+            print(f"❌ [SEARCH_GLOBAL] Error in global book search: {e}")
+            traceback.print_exc()
+            return []
+    
+    async def get_book_by_isbn_for_user(self, isbn: str, user_id: str) -> Optional[Book]:
+        """Get a book by ISBN for a specific user."""
+        try:
+            books = await self.relationship_service.get_books_for_user(user_id, limit=1000)  # Get enriched books
+            for book in books:
+                if (hasattr(book, 'isbn13') and book.isbn13 == isbn) or \
+                   (hasattr(book, 'isbn10') and book.isbn10 == isbn):
+                    return book
+            return None
+            
+        except Exception as e:
+            print(f"❌ [GET_BY_ISBN] Error getting book by ISBN {isbn} for user {user_id}: {e}")
+            return None
+    
+    async def get_books_with_sharing_users(self, days_back: int = 30, limit: int = 20) -> List[Book]:
+        """Get books from users who share reading activity, finished in the last N days."""
+        try:
+            # Get all users who share reading activity
+            sharing_users = await self.user_repo.get_all()
+            sharing_user_ids = []
+            
+            for user_dict in sharing_users:
+                if (user_dict.get('share_reading_activity', False) and 
+                    user_dict.get('is_active', True)):
+                    sharing_user_ids.append(user_dict.get('id'))
+            
+            if not sharing_user_ids:
+                return []
+            
+            # Get all books for sharing users using graph queries
+            all_books = []
+            for user_id in sharing_user_ids:
+                books = await self.relationship_service.get_books_for_user(user_id, limit=1000)
+                all_books.extend(books)
+            
+            # Filter for finished books in the specified time range
+            cutoff_date = date.today() - timedelta(days=days_back)
+            finished_books = [
+                book for book in all_books 
+                if hasattr(book, 'finish_date') and book.finish_date and book.finish_date >= cutoff_date
+            ]
+            
+            # Sort by finish date descending and limit
+            finished_books.sort(key=lambda b: getattr(b, 'finish_date', date.min) or date.min, reverse=True)
+            return finished_books[:limit]
+            
+        except Exception as e:
+            print(f"❌ [GET_SHARING_BOOKS] Error getting books with sharing users: {e}")
+            traceback.print_exc()
+            return []
+    
+    async def get_currently_reading_shared(self, limit: int = 20) -> List[Book]:
+        """Get currently reading books from users who share current reading."""
+        try:
+            # Get all users who share current reading
+            sharing_users = await self.user_repo.get_all()
+            sharing_user_ids = []
+            
+            for user_dict in sharing_users:
+                if (user_dict.get('share_current_reading', False) and 
+                    user_dict.get('is_active', True)):
+                    sharing_user_ids.append(user_dict.get('id'))
+            
+            if not sharing_user_ids:
+                return []
+            
+            # Get all books for sharing users using graph queries
+            all_books = []
+            for user_id in sharing_user_ids:
+                books = await self.relationship_service.get_books_for_user(user_id, limit=1000)
+                all_books.extend(books)
+            
+            # Filter for currently reading (has start_date but no finish_date)
+            currently_reading = [
+                book for book in all_books 
+                if (hasattr(book, 'start_date') and book.start_date and 
+                    (not hasattr(book, 'finish_date') or not book.finish_date))
+            ]
+            
+            # Sort by start date descending and limit
+            currently_reading.sort(key=lambda b: getattr(b, 'start_date', date.min) or date.min, reverse=True)
+            return currently_reading[:limit]
+            
+        except Exception as e:
+            print(f"❌ [GET_CURRENTLY_READING] Error getting currently reading shared books: {e}")
+            traceback.print_exc()
+            return []
+    
+    async def get_recommended_books(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get recommended books for a user based on their reading history."""
+        try:
+            # This is a simple recommendation system - can be enhanced later
+            # For now, get books from users with similar reading patterns
+            
+            # Get user's books
+            user_books = await self.relationship_service.get_books_for_user(user_id, limit=1000)
+            user_book_ids = {book.id for book in user_books}
+            
+            # Find users who have read similar books
+            similar_users_query = """
+            MATCH (u1:User {id: $user_id})-[:OWNS]->(b:Book)<-[:OWNS]-(u2:User)
+            WHERE u1 <> u2
+            WITH u2, COUNT(b) as shared_books
+            WHERE shared_books >= 3
+            RETURN u2.id as similar_user_id
+            ORDER BY shared_books DESC
+            LIMIT 10
+            """
+            
+            results = self.graph_storage.query(similar_users_query, {"user_id": user_id})
+            similar_user_ids = [result['col_0'] for result in results if 'col_0' in result]
+            
+            # Get books from similar users that this user doesn't have
+            recommended_books = []
+            for similar_user_id in similar_user_ids:
+                similar_user_books = await self.relationship_service.get_books_for_user(similar_user_id, limit=500)
+                
+                for book in similar_user_books:
+                    if book.id not in user_book_ids and len(recommended_books) < limit:
+                        book_dict = book.__dict__.copy() if hasattr(book, '__dict__') else {}
+                        # Ensure uid is available
+                        if 'id' in book_dict:
+                            book_dict['uid'] = book_dict['id']
+                        recommended_books.append(book_dict)
+            
+            return recommended_books[:limit]
+            
+        except Exception as e:
+            print(f"❌ [GET_RECOMMENDED] Error getting recommended books for user {user_id}: {e}")
+            traceback.print_exc()
+            return []
+    
+    async def search_by_filters(self, user_id: str, filters: Dict[str, Any], limit: int = 50) -> List[Book]:
+        """Search books with advanced filters."""
+        try:
+            # Get all user books first
+            user_books = await self.relationship_service.get_books_for_user(user_id, limit=10000)
+            
+            filtered_books = []
+            
+            for book in user_books:
+                include_book = True
+                
+                # Apply filters
+                if 'reading_status' in filters:
+                    if getattr(book, 'reading_status', None) != filters['reading_status']:
+                        include_book = False
+                
+                if 'language' in filters and include_book:
+                    if getattr(book, 'language', None) != filters['language']:
+                        include_book = False
+                
+                if 'year_published' in filters and include_book:
+                    year_filter = filters['year_published']
+                    book_year = None
+                    if hasattr(book, 'published_date') and book.published_date:
+                        try:
+                            book_year = int(str(book.published_date)[:4])
+                        except:
+                            pass
+                    
+                    if isinstance(year_filter, dict):
+                        if 'min' in year_filter and (not book_year or book_year < year_filter['min']):
+                            include_book = False
+                        if 'max' in year_filter and (not book_year or book_year > year_filter['max']):
+                            include_book = False
+                    elif isinstance(year_filter, int):
+                        if book_year != year_filter:
+                            include_book = False
+                
+                if 'has_rating' in filters and include_book:
+                    has_rating = getattr(book, 'user_rating', None) is not None
+                    if has_rating != filters['has_rating']:
+                        include_book = False
+                
+                if include_book:
+                    filtered_books.append(book)
+            
+            return filtered_books[:limit]
+            
+        except Exception as e:
+            print(f"❌ [SEARCH_BY_FILTERS] Error searching with filters: {e}")
+            traceback.print_exc()
+            return []
+    
+    # Sync wrappers for backward compatibility
+    def search_books_sync(self, query: str, user_id: str, limit: int = 50) -> List[Book]:
+        """Sync wrapper for search_books."""
+        return run_async(self.search_books(query, user_id, limit))
+    
+    def search_books_global_sync(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Sync wrapper for search_books_global."""
+        return run_async(self.search_books_global(query, limit))
+    
+    def get_book_by_isbn_for_user_sync(self, isbn: str, user_id: str) -> Optional[Book]:
+        """Sync wrapper for get_book_by_isbn_for_user."""
+        return run_async(self.get_book_by_isbn_for_user(isbn, user_id))
+    
+    def get_books_with_sharing_users_sync(self, days_back: int = 30, limit: int = 20) -> List[Book]:
+        """Sync wrapper for get_books_with_sharing_users."""
+        return run_async(self.get_books_with_sharing_users(days_back, limit))
+    
+    def get_currently_reading_shared_sync(self, limit: int = 20) -> List[Book]:
+        """Sync wrapper for get_currently_reading_shared."""
+        return run_async(self.get_currently_reading_shared(limit))
+    
+    def get_recommended_books_sync(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Sync wrapper for get_recommended_books."""
+        return run_async(self.get_recommended_books(user_id, limit))
+    
+    def search_by_filters_sync(self, user_id: str, filters: Dict[str, Any], limit: int = 50) -> List[Book]:
+        """Sync wrapper for search_by_filters."""
+        return run_async(self.search_by_filters(user_id, filters, limit))

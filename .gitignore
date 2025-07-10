@@ -256,6 +256,7 @@ flask_session/
 *.db
 *.sqlite
 *.sqlite3
+kuzu_db/
 
 # Temporary editor files
 .DS_Store
@@ -267,3 +268,61 @@ dev_docs/
 # Cover images (user-generated content)
 app/static/covers/
 data/covers/
+
+# Debug and development scripts (not needed for production)
+debug_*.py
+check_*.py
+test_*.py
+verify_*.py
+*_test.py
+*_debug.py
+
+# Migration and development documentation  
+*MIGRATION*.md
+*SUMMARY*.md
+*FIXES*.md
+*GUIDE*.md
+*ANALYSIS*.md
+*PROGRESS*.md
+*IMPLEMENTATION*.md
+PHASE*.md
+DEV_*.md
+WEB_*.md
+KUZU_*.md
+REDIS_*.md
+ROUTES_*.md
+SERVICE_*.md
+USERS_*.md
+IMPORT_*.md
+ISBN_*.md
+COVER_*.md
+COROUTINE_*.md
+LOCALPROXY_*.md
+BATCH_*.md
+BOOK_DETAILS_*.md
+CLEAN_*.md
+COMPREHENSIVE_*.md
+CUSTOM_FIELD_*.md
+GENRE_MAPPING_*.md
+PROGRESS_BAR_*.md
+session_strategy.md
+
+# Temporary migration and example files
+app_factory_example.py
+batch_import_function.py
+kuzu_schema_redesign.py
+new_batch_import_function.py
+new_start_import_job.py
+persistence_before.json
+recalculate_category_counts.py
+remove_owns_relationships.py
+run_kuzu.py
+run_location_migration.py
+*_example.py
+*_temp.py
+
+# Development tools and scripts
+scripts/debug/
+scripts/migration/
+scripts/temp/
+dev_tools/

@@ -1191,8 +1191,11 @@ def update_book_details(uid):
         print(f"🔍 [EDIT_BOOK] location_id from form: '{location_id}' (type: {type(location_id)})")
         if location_id is not None:  # Allow empty string to clear location
             print(f"🔍 [EDIT_BOOK] Proceeding with location update...")
-            from app.kuzu_services import user_book_service
-            location_success = user_book_service.update_book_location_sync(str(current_user.id), uid, location_id if location_id.strip() else None)
+            # Use the facade for location updates - this functionality is now part of the relationship service
+            from app.services.kuzu_service_facade import KuzuServiceFacade
+            facade = KuzuServiceFacade()
+            # For now, we'll use the update_book method which handles location updates
+            location_success = facade.update_book_sync(uid, str(current_user.id), location_id=location_id if location_id.strip() else None)
             print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
             if not location_success:
                 print(f"⚠️ Failed to update location for book {uid}")
