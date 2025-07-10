@@ -1263,7 +1263,15 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                         )
                         
                         # Create the custom field
-                        custom_field = custom_field_service.create_field_sync(field_definition)
+                        field_data = {
+                            'name': field_definition.name,
+                            'display_name': field_definition.display_name,
+                            'field_type': field_definition.field_type.value if hasattr(field_definition.field_type, 'value') else str(field_definition.field_type),
+                            'description': field_definition.description,
+                            'is_global': field_definition.is_global,
+                            'is_shareable': field_definition.is_shareable
+                        }
+                        custom_field = custom_field_service.create_field_sync(admin_user.id, field_data)
                         
                         logger.info(f"✅ Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
                         
@@ -1428,7 +1436,15 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                     )
                     
                     # Create the custom field
-                    custom_field = custom_field_service.create_field_sync(field_definition)
+                    field_data = {
+                        'name': field_definition.name,
+                        'display_name': field_definition.display_name,
+                        'field_type': field_definition.field_type.value if hasattr(field_definition.field_type, 'value') else str(field_definition.field_type),
+                        'description': field_definition.description,
+                        'is_global': field_definition.is_global,
+                        'is_shareable': field_definition.is_shareable
+                    }
+                    custom_field = custom_field_service.create_field_sync(admin_user.id, field_data)
                     
                     print(f"✅ [SETUP] Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
                     logger.info(f"✅ Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
