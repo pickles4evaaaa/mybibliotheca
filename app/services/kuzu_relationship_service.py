@@ -41,6 +41,17 @@ class KuzuRelationshipService:
         setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
         
+        # Add location information
+        location_id = relationship_data.get('location_id')
+        if location_id:
+            # Set location_id for backward compatibility
+            setattr(book, 'location_id', location_id)
+            # Set locations list for template compatibility
+            setattr(book, 'locations', [{'id': location_id, 'name': location_id}])
+        else:
+            setattr(book, 'location_id', None)
+            setattr(book, 'locations', [])
+        
         # Convert date strings back to date objects if needed
         start_date = getattr(book, 'start_date', None)
         if isinstance(start_date, str):

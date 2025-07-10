@@ -80,10 +80,11 @@ class KuzuServiceFacade:
                        if k not in location_fields and k not in relationship_fields}
         relationship_updates = {k: v for k, v in kwargs.items() 
                                if k in relationship_fields}
+        location_updates = {k: v for k, v in kwargs.items() 
+                           if k in location_fields}
         
-        if location_fields & set(kwargs.keys()):
-            filtered_out = {k: v for k, v in kwargs.items() if k in location_fields}
-            print(f"🔄 [FACADE] Filtered out location fields: {filtered_out}")
+        if location_updates:
+            print(f"🔄 [FACADE] Location updates: {location_updates}")
         
         print(f"🔄 [FACADE] Book updates: {book_updates}")
         print(f"🔄 [FACADE] Relationship updates: {relationship_updates}")
@@ -93,10 +94,12 @@ class KuzuServiceFacade:
         if book_updates:
             updated_book = self.book_service.update_book_sync(book_id, book_updates)
         
-        # Update relationship if there are relationship-specific updates
-        if relationship_updates:
+        # Update relationship if there are relationship-specific updates or location updates
+        if relationship_updates or location_updates:
+            # Merge relationship and location updates
+            all_relationship_updates = {**relationship_updates, **location_updates}
             success = self.relationship_service.update_user_book_relationship_sync(
-                user_id, book_id, relationship_updates
+                user_id, book_id, all_relationship_updates
             )
             if success:
                 print(f"✅ [FACADE] Updated relationship for user {user_id} and book {book_id}")
@@ -106,7 +109,7 @@ class KuzuServiceFacade:
         # Return the updated book or fetch it fresh if only relationship was updated
         if updated_book:
             return updated_book
-        elif relationship_updates:
+        elif relationship_updates or location_updates:
             return self.get_book_by_uid_sync(book_id, user_id)
         else:
             return self.get_book_by_id_sync(book_id)
@@ -221,7 +224,7 @@ class KuzuServiceFacade:
                                    include_subcategories: bool = False) -> List[Dict[str, Any]]:
         """Get books in a category."""
         return self.category_service.get_books_by_category_sync(category_id, include_subcategories)
-    
+
     def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:
         """Get categories for a book."""
         try:
@@ -250,6 +253,30 @@ class KuzuServiceFacade:
             print(f"❌ [FACADE] Error getting book categories for {book_id}: {e}")
             return []
     
+    def create_category_sync(self, category_data: Dict[str, Any]) -> Optional[Category]:
+        """Create a new category."""
+        return self.category_service.create_category_sync(category_data)
+    
+    def update_category_sync(self, category: Category) -> Optional[Category]:
+        """Update an existing category."""
+        return self.category_service.update_category_sync(category)
+    
+    def delete_category_sync(self, category_id: str) -> bool:
+        """Delete a category."""
+        return self.category_service.delete_category_sync(category_id)
+    
+    def merge_categories_sync(self, primary_category_id: str, merge_category_ids: List[str]) -> bool:
+        """Merge multiple categories into one."""
+        return self.category_service.merge_categories_sync(primary_category_id, merge_category_ids)
+    
+    def search_categories_sync(self, query: str, limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search categories by name or description."""
+        return self.category_service.search_categories_sync(query, limit, user_id)
+    
+    def get_root_categories_sync(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get root categories (categories without parent)."""
+        return self.category_service.get_root_categories_sync(user_id)
+    
     # ==========================================
     # Person Service Methods
     # ==========================================
@@ -261,6 +288,27 @@ class KuzuServiceFacade:
     def get_person_by_id_sync(self, person_id: str) -> Optional[Dict[str, Any]]:
         """Get a person by ID."""
         return self.person_service.get_person_by_id_sync(person_id)
+    
+    def get_books_by_person_sync(self, person_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Get books associated with a person organized by contribution type."""
+        # Get all books by this person
+        all_books = self.person_service.get_books_by_person_sync(person_id)
+        
+        # Filter books to only include those in the user's library
+        user_books = self.get_all_books_with_user_overlay_sync(user_id)
+        user_book_ids = {book.get('id') for book in user_books}
+        
+        # Filter and organize by contribution type
+        books_by_type = {}
+        for book in all_books:
+            book_id = book.get('id') or book.get('uid')
+            if book_id in user_book_ids:
+                contribution_type = book.get('relationship_type', 'AUTHORED')
+                if contribution_type not in books_by_type:
+                    books_by_type[contribution_type] = []
+                books_by_type[contribution_type].append(book)
+        
+        return books_by_type
     
     # ==========================================
     # Legacy Compatibility Methods

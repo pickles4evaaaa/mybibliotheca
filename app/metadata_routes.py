@@ -31,7 +31,7 @@ def index():
         if popular_fields is None:
             popular_fields = []
         # Sort by usage count to get most popular first
-        popular_fields.sort(key=lambda x: x.usage_count or 0, reverse=True)
+        popular_fields.sort(key=lambda x: x.get('usage_count', 0), reverse=True)
         popular_fields = popular_fields[:10]  # Limit to top 10
         
         # Get user's import templates
@@ -101,7 +101,7 @@ def create_field():
             existing_fields = custom_field_service.get_user_fields_sync(current_user.id)
             if existing_fields is None:
                 existing_fields = []
-            if any(field.name == name for field in existing_fields):
+            if any(field.get('name') == name for field in existing_fields):
                 flash('A field with this name already exists', 'error')
                 return redirect(request.url)
             
@@ -152,8 +152,32 @@ def create_field():
                 field_def.help_text = help_text
             
             current_app.logger.info(f"ℹ️ [METADATA_ROUTES] Custom field definition for '{name}' created. Saving...")
-            # Save field definition
-            success = custom_field_service.create_field_sync(field_def)
+            
+            # Check if custom field service is available (not a stub)
+            if hasattr(custom_field_service, '__class__') and 'StubService' in str(custom_field_service.__class__):
+                flash('Custom fields functionality is not yet available in this version.', 'warning')
+                current_app.logger.warning(f"⚠️ [METADATA_ROUTES] Custom field service is not implemented (stub service)")
+                return redirect(url_for('metadata.fields'))
+            
+            # Save field definition - convert field_def to dict for service call
+            field_data = {
+                'id': field_def.id,
+                'name': field_def.name,
+                'display_name': field_def.display_name,
+                'field_type': field_def.field_type.value if hasattr(field_def.field_type, 'value') else str(field_def.field_type),
+                'description': field_def.description,
+                'is_global': field_def.is_global,
+                'is_shareable': field_def.is_shareable,
+                'default_value': getattr(field_def, 'default_value', None),
+                'placeholder_text': getattr(field_def, 'placeholder_text', None),
+                'help_text': getattr(field_def, 'help_text', None),
+                'rating_max': getattr(field_def, 'rating_max', None),
+                'rating_labels': getattr(field_def, 'rating_labels', {}),
+                'predefined_options': getattr(field_def, 'predefined_options', []),
+                'allow_custom_options': getattr(field_def, 'allow_custom_options', False)
+            }
+            
+            success = custom_field_service.create_field_sync(current_user.id, field_data)
             
             if success:
                 flash(f'Custom field "{display_name}" created successfully!', 'success')
@@ -180,59 +204,45 @@ def edit_field(field_id):
         field_def = custom_field_service.get_field_by_id_sync(field_id)
         if not field_def:
             flash('Custom field not found', 'error')
-            return redirect(url_for('metadata.fields'))
+            return redirect(url_for('metadata.index'))
         
         # Check ownership
-        if field_def.created_by_user_id != current_user.id:
+        if field_def.get('created_by_user_id') != current_user.id:
             flash('You can only edit your own custom fields', 'error')
-            return redirect(url_for('metadata.fields'))
+            return redirect(url_for('metadata.index'))
         
         if request.method == 'POST':
+            # Get updated field data
+            field_data = {
+                'name': request.form.get('name', '').strip(),
+                'display_name': request.form.get('display_name', '').strip(),
+                'description': request.form.get('description', '').strip(),
+                'field_type': request.form.get('field_type', 'text'),
+                'is_global': request.form.get('is_global') == 'on'
+            }
+            
+            # Basic validation
+            if not field_data['name']:
+                flash('Field name is required', 'error')
+                return render_template('metadata/edit_field.html', field_def=field_def)
+            
+            if not field_data['display_name']:
+                field_data['display_name'] = field_data['name']
+            
             # Update field definition
-            field_def.display_name = request.form.get('display_name', '').strip()
-            field_def.description = request.form.get('description', '').strip()
-            field_def.is_shareable = request.form.get('is_shareable') == 'on'
-            field_def.is_global = request.form.get('is_global') == 'on'
+            updated_field = custom_field_service.update_field_sync(field_id, current_user.id, field_data)
             
-            # Update field type specific configuration
-            if field_def.field_type in [CustomFieldType.RATING_5, CustomFieldType.RATING_10]:
-                rating_max = 5 if field_def.field_type == CustomFieldType.RATING_5 else 10
-                rating_labels = {}
-                for i in range(1, rating_max + 1):
-                    label = request.form.get(f'rating_label_{i}', '').strip()
-                    if label:
-                        rating_labels[i] = label
-                field_def.rating_labels = rating_labels
-            
-            elif field_def.field_type in [CustomFieldType.LIST, CustomFieldType.TAGS]:
-                predefined_options = request.form.get('predefined_options', '').strip()
-                if predefined_options:
-                    field_def.predefined_options = [opt.strip() for opt in predefined_options.split(',') if opt.strip()]
-                else:
-                    field_def.predefined_options = []
-                field_def.allow_custom_options = request.form.get('allow_custom_options') == 'on'
-            
-            # Update additional properties
-            default_value = request.form.get('default_value', '').strip()
-            field_def.default_value = default_value if default_value else None
-                
-            placeholder_text = request.form.get('placeholder_text', '').strip()
-            field_def.placeholder_text = placeholder_text if placeholder_text else None
-                
-            help_text = request.form.get('help_text', '').strip()
-            field_def.help_text = help_text if help_text else None
-            
-            # Save changes
-            custom_field_service.update_field_sync(field_def)
-            
-            flash(f'Custom field "{field_def.display_name}" updated successfully!', 'success')
-            return redirect(url_for('metadata.fields'))
+            if updated_field:
+                flash(f'Custom field "{field_data["display_name"]}" updated successfully!', 'success')
+                return redirect(url_for('metadata.index'))
+            else:
+                flash('Failed to update custom field', 'error')
         
-        return render_template('metadata/edit_field.html', field_def=field_def, field_types=CustomFieldType)
+        return render_template('metadata/edit_field.html', field_def=field_def)
         
     except Exception as e:
         flash(f'Error editing custom field: {str(e)}', 'error')
-        return redirect(url_for('metadata.fields'))
+        return redirect(url_for('metadata.index'))
 
 
 @metadata_bp.route('/fields/<field_id>/delete', methods=['POST'])
@@ -246,19 +256,22 @@ def delete_field(field_id):
             return redirect(url_for('metadata.fields'))
         
         # Check ownership
-        if field_def.created_by_user_id != current_user.id:
+        if field_def.get('created_by_user_id') != current_user.id:
             flash('You can only delete your own custom fields', 'error')
             return redirect(url_for('metadata.fields'))
         
         # Delete field definition
-        custom_field_service.delete_field_sync(field_id)
+        success = custom_field_service.delete_field_sync(field_id, current_user.id)
         
-        flash(f'Custom field "{field_def.display_name}" deleted successfully!', 'success')
+        if success:
+            flash(f'Custom field "{field_def.get("display_name", field_def.get("name"))}" deleted successfully!', 'success')
+        else:
+            flash('Failed to delete custom field', 'error')
         
     except Exception as e:
         flash(f'Error deleting custom field: {str(e)}', 'error')
     
-    return redirect(url_for('metadata.fields'))
+    return redirect(url_for('metadata.index'))
 
 
 @metadata_bp.route('/api/fields/search')
@@ -271,7 +284,10 @@ def search_fields():
             return jsonify([])
         
         # Search user's fields and shareable fields
-        fields = custom_field_service.search_fields_sync(query, current_user.id)
+        # TODO: Implement search_fields_sync in KuzuCustomFieldService
+        # For now, return empty results
+        fields = []
+        # fields = custom_field_service.search_fields_sync(query, current_user.id)
         if fields is None:
             fields = []
         
@@ -335,7 +351,7 @@ def delete_template(template_id):
             return redirect(url_for('metadata.templates'))
         
         # Delete template
-        import_mapping_service.delete_template_sync(template_id)
+        import_mapping_service.delete_template_sync(template_id, current_user.id)
         
         flash(f'Template "{template.name}" deleted successfully!', 'success')
         

@@ -8,9 +8,11 @@ Focused responsibility: Category entity management and hierarchical relationship
 import traceback
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import uuid
 
 from ..domain.models import Category
 from ..infrastructure.kuzu_graph import get_graph_storage, get_kuzu_database
+from ..infrastructure.kuzu_repositories import KuzuCategoryRepository
 from .kuzu_async_helper import run_async
 
 
@@ -19,6 +21,7 @@ class KuzuCategoryService:
     
     def __init__(self):
         self.graph_storage = get_graph_storage()
+        self.category_repo = KuzuCategoryRepository()
     
     async def list_all_categories(self) -> List[Dict[str, Any]]:
         """Get all categories."""
@@ -253,6 +256,189 @@ class KuzuCategoryService:
             traceback.print_exc()
             return []
     
+    async def create_category(self, category: Category) -> Optional[Category]:
+        """Create a new category."""
+        try:
+            print(f"📁 [CREATE_CATEGORY] Creating category: {category.name}")
+            
+            # Use the repository to create the category
+            created_category = await self.category_repo.create(category)
+            
+            if created_category:
+                print(f"✅ [CREATE_CATEGORY] Successfully created category: {category.name}")
+                return created_category
+            else:
+                print(f"❌ [CREATE_CATEGORY] Failed to create category: {category.name}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ [CREATE_CATEGORY] Error creating category: {e}")
+            traceback.print_exc()
+            return None
+    
+    async def update_category(self, category: Category) -> Optional[Category]:
+        """Update an existing category."""
+        try:
+            print(f"📁 [UPDATE_CATEGORY] Updating category: {category.name}")
+            
+            # Convert category to dict format for update
+            category_data = {
+                'id': category.id,
+                'name': category.name,
+                'normalized_name': category.name.strip().lower(),
+                'description': category.description,
+                'parent_id': category.parent_id,
+                'level': category.level,
+                'color': category.color,
+                'icon': category.icon,
+                'aliases': category.aliases or [],
+                'updated_at': datetime.utcnow()
+            }
+            
+            # Update using Kuzu query
+            query = """
+            MATCH (c:Category {id: $id})
+            SET c.name = $name,
+                c.normalized_name = $normalized_name,
+                c.description = $description,
+                c.parent_id = $parent_id,
+                c.level = $level,
+                c.color = $color,
+                c.icon = $icon,
+                c.updated_at = $updated_at
+            RETURN c
+            """
+            
+            results = self.graph_storage.query(query, category_data)
+            
+            if results:
+                print(f"✅ [UPDATE_CATEGORY] Successfully updated category: {category.name}")
+                return category
+            else:
+                print(f"❌ [UPDATE_CATEGORY] Failed to update category: {category.name}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ [UPDATE_CATEGORY] Error updating category: {e}")
+            traceback.print_exc()
+            return None
+    
+    async def delete_category(self, category_id: str) -> bool:
+        """Delete a category."""
+        try:
+            print(f"🗑️ [DELETE_CATEGORY] Deleting category: {category_id}")
+            
+            # Delete using Kuzu query with DETACH DELETE to remove relationships
+            query = """
+            MATCH (c:Category {id: $category_id})
+            DETACH DELETE c
+            """
+            
+            self.graph_storage.query(query, {"category_id": category_id})
+            print(f"✅ [DELETE_CATEGORY] Successfully deleted category: {category_id}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ [DELETE_CATEGORY] Error deleting category: {e}")
+            traceback.print_exc()
+            return False
+    
+    async def merge_categories(self, primary_category_id: str, merge_category_ids: List[str]) -> bool:
+        """Merge multiple categories into a primary category."""
+        try:
+            print(f"🔄 [MERGE_CATEGORIES] Merging {len(merge_category_ids)} categories into {primary_category_id}")
+            
+            # For each category to merge
+            for merge_id in merge_category_ids:
+                # Move all books from merge category to primary category
+                move_books_query = """
+                MATCH (b:Book)-[r:CATEGORIZED_AS]->(merge:Category {id: $merge_id})
+                MATCH (primary:Category {id: $primary_id})
+                DELETE r
+                CREATE (b)-[:CATEGORIZED_AS]->(primary)
+                """
+                
+                self.graph_storage.query(move_books_query, {
+                    "merge_id": merge_id,
+                    "primary_id": primary_category_id
+                })
+                
+                # Move all child categories from merge category to primary category
+                move_children_query = """
+                MATCH (child:Category {parent_id: $merge_id})
+                SET child.parent_id = $primary_id
+                """
+                
+                self.graph_storage.query(move_children_query, {
+                    "merge_id": merge_id,
+                    "primary_id": primary_category_id
+                })
+                
+                # Delete the merge category
+                await self.delete_category(merge_id)
+            
+            print(f"✅ [MERGE_CATEGORIES] Successfully merged categories")
+            return True
+            
+        except Exception as e:
+            print(f"❌ [MERGE_CATEGORIES] Error merging categories: {e}")
+            traceback.print_exc()
+            return False
+    
+    async def search_categories(self, query: str, limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search categories by name or description."""
+        try:
+            search_query = """
+            MATCH (c:Category)
+            WHERE toLower(c.name) CONTAINS toLower($query) 
+               OR toLower(c.description) CONTAINS toLower($query)
+            RETURN c
+            ORDER BY c.name ASC
+            LIMIT $limit
+            """
+            
+            results = self.graph_storage.query(search_query, {
+                "query": query,
+                "limit": limit
+            })
+            
+            categories = []
+            for result in results:
+                if 'col_0' in result:
+                    category = result['col_0']
+                    # Add full_path for better search results
+                    category['full_path'] = category.get('name', '')
+                    categories.append(category)
+            
+            return categories
+            
+        except Exception as e:
+            print(f"❌ [SEARCH_CATEGORIES] Error searching categories: {e}")
+            return []
+    
+    async def get_root_categories(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get root categories (categories without parent)."""
+        try:
+            query = """
+            MATCH (c:Category)
+            WHERE c.parent_id IS NULL
+            RETURN c
+            ORDER BY c.name ASC
+            """
+            
+            results = self.graph_storage.query(query)
+            
+            categories = []
+            for result in results:
+                if 'col_0' in result:
+                    categories.append(result['col_0'])
+            
+            return categories
+            
+        except Exception as e:
+            print(f"❌ [GET_ROOT_CATEGORIES] Error getting root categories: {e}")
+            return []
+
     # Sync wrappers for backward compatibility
     def list_all_categories_sync(self) -> List[Dict[str, Any]]:
         """Get all categories (sync version)."""
@@ -273,6 +459,50 @@ class KuzuCategoryService:
     def get_books_by_category_sync(self, category_id: str, include_subcategories: bool = False) -> List[Dict[str, Any]]:
         """Get books in a category (sync version)."""
         return run_async(self.get_books_by_category(category_id, include_subcategories))
+    
+    def create_category_sync(self, category_data: Dict[str, Any]) -> Optional[Category]:
+        """Create a new category (sync version)."""
+        # Convert dict to Category object if needed
+        if isinstance(category_data, dict):
+            category = Category(
+                id=category_data.get('id'),
+                name=category_data.get('name', ''),
+                normalized_name=category_data.get('normalized_name', ''),
+                description=category_data.get('description'),
+                parent_id=category_data.get('parent_id'),
+                level=category_data.get('level', 0),
+                color=category_data.get('color'),
+                icon=category_data.get('icon'),
+                aliases=category_data.get('aliases', []),
+                book_count=category_data.get('book_count', 0),
+                user_book_count=category_data.get('user_book_count', 0),
+                created_at=category_data.get('created_at', datetime.utcnow()),
+                updated_at=category_data.get('updated_at', datetime.utcnow())
+            )
+        else:
+            category = category_data
+        
+        return run_async(self.create_category(category))
+    
+    def update_category_sync(self, category: Category) -> Optional[Category]:
+        """Update a category (sync version)."""
+        return run_async(self.update_category(category))
+    
+    def delete_category_sync(self, category_id: str) -> bool:
+        """Delete a category (sync version)."""
+        return run_async(self.delete_category(category_id))
+    
+    def merge_categories_sync(self, primary_category_id: str, merge_category_ids: List[str]) -> bool:
+        """Merge categories (sync version)."""
+        return run_async(self.merge_categories(primary_category_id, merge_category_ids))
+    
+    def search_categories_sync(self, query: str, limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search categories (sync version)."""
+        return run_async(self.search_categories(query, limit, user_id))
+    
+    def get_root_categories_sync(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get root categories (sync version)."""
+        return run_async(self.get_root_categories(user_id))
     
     # ==========================================
     # Sync Wrapper Methods for Compatibility

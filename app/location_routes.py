@@ -195,3 +195,36 @@ def view_location(location_id):
                          location=location, 
                          books=books, 
                          book_count=book_count)
+
+
+@bp.route('/api/set_book_location', methods=['POST'])
+@login_required
+def api_set_book_location():
+    """API endpoint to set a book's location."""
+    try:
+        data = request.get_json()
+        book_id = data.get('book_id')
+        location_id = data.get('location_id')
+        
+        if not book_id:
+            return jsonify({'success': False, 'error': 'Book ID is required'}), 400
+        
+        location_service = get_location_service()
+        
+        # Verify the location belongs to the current user (if location_id is provided)
+        if location_id:
+            location = location_service.get_location(location_id)
+            if not location or location.user_id != str(current_user.id):
+                return jsonify({'success': False, 'error': 'Location not found or access denied'}), 403
+        
+        # Update the book's location
+        result = location_service.set_book_location(book_id, location_id, str(current_user.id))
+        
+        if result:
+            return jsonify({'success': True, 'message': 'Book location updated successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to update book location'}), 500
+        
+    except Exception as e:
+        print(f"❌ Error setting book location: {e}")
+        return jsonify({'success': False, 'error': 'Server error'}), 500

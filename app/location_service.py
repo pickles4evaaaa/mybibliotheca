@@ -426,3 +426,46 @@ class LocationService:
         
         debug_log(f"Successfully migrated {migration_count} books to default location for user {user_id}", "LOCATION")
         return migration_count
+    
+    def set_book_location(self, book_id: str, location_id: Optional[str], user_id: str) -> bool:
+        """Set a book's location."""
+        debug_log(f"Setting book {book_id} location to {location_id} for user {user_id}", "LOCATION")
+        
+        try:
+            # Remove any existing location assignment for this book
+            remove_query = """
+            MATCH (b:Book {id: $book_id})-[r:LOCATED_AT]->(l:Location)
+            WHERE l.user_id = $user_id
+            DELETE r
+            """
+            self.kuzu_conn.execute(remove_query, {"book_id": book_id, "user_id": user_id})
+            
+            # If location_id is provided, create new assignment
+            if location_id:
+                # Verify the location exists and belongs to the user
+                location = self.get_location(location_id)
+                if not location or location.user_id != user_id:
+                    debug_log(f"Location {location_id} not found or access denied for user {user_id}", "LOCATION")
+                    return False
+                
+                # Create new location assignment
+                assign_query = """
+                MATCH (b:Book {id: $book_id}), (l:Location {id: $location_id})
+                WHERE l.user_id = $user_id
+                CREATE (b)-[:LOCATED_AT]->(l)
+                """
+                self.kuzu_conn.execute(assign_query, {
+                    "book_id": book_id,
+                    "location_id": location_id,
+                    "user_id": user_id
+                })
+                
+                debug_log(f"✅ Book {book_id} assigned to location {location_id}", "LOCATION")
+            else:
+                debug_log(f"✅ Book {book_id} location assignment removed", "LOCATION")
+            
+            return True
+            
+        except Exception as e:
+            debug_log(f"❌ Error setting book location: {e}", "LOCATION")
+            return False

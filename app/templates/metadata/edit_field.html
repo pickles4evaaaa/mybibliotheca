@@ -189,7 +189,7 @@
                                             <strong>Usage Statistics:</strong><br>
                                             Used {{ field_def.usage_count }} times<br>
                                             Created: {{ field_def.created_at.strftime('%Y-%m-%d') }}
-                                            {% if field_def.updated_at != field_def.created_at %}
+                                            {% if field_def.updated_at and field_def.updated_at != field_def.created_at %}
                                             <br>Last updated: {{ field_def.updated_at.strftime('%Y-%m-%d') }}
                                             {% endif %}
                                         </small>

@@ -44,8 +44,8 @@ from datetime import datetime
 import uuid
 import traceback
 
-from .services import book_service
-from .domain.models import Category, ReadingStatus
+from app.services import book_service
+from app.domain.models import Category, ReadingStatus
 
 # Global helper function for dict/object attribute access
 def get_attr(obj, attr, default=None):
@@ -764,8 +764,8 @@ def search_categories():
 def test_auto_mapping():
     """Test automatic genre mapping from a known book with categories."""
     try:
-        from .utils import get_google_books_cover
-        from .domain.models import Book as DomainBook, Publisher
+        from app.utils import get_google_books_cover
+        from app.domain.models import Book as DomainBook, Publisher
         
         # Test with a book known to have categories - The Hobbit
         test_isbn = "9780547928227"
@@ -795,20 +795,23 @@ def test_auto_mapping():
             
             if created_book:
                 # Get the categories that were created
-                book_categories = book_service.get_book_categories_sync(created_book.id)
-                
-                category_names = [get_attr(cat, 'name', 'Unknown') for cat in book_categories]
-                flash(f'✅ Test successful! Created book "{created_book.title}" with {len(book_categories)} categories: {", ".join(category_names)}', 'success')
-                print(f"✅ [TEST] Book created with {len(book_categories)} categories")
-                
-                # Also add to user's library for testing
-                book_service.add_book_to_user_library_sync(
-                    user_id=current_user.id,
-                    book_id=created_book.id,
-                    reading_status=ReadingStatus.PLAN_TO_READ
-                )
-                
-                flash(f'📚 Book also added to your library!', 'info')
+                if created_book.id:
+                    book_categories = book_service.get_book_categories_sync(created_book.id)
+                    
+                    category_names = [get_attr(cat, 'name', 'Unknown') for cat in book_categories]
+                    flash(f'✅ Test successful! Created book "{created_book.title}" with {len(book_categories)} categories: {", ".join(category_names)}', 'success')
+                    print(f"✅ [TEST] Book created with {len(book_categories)} categories")
+                    
+                    # Also add to user's library for testing
+                    book_service.add_book_to_user_library_sync(
+                        user_id=current_user.id,
+                        book_id=created_book.id,
+                        reading_status=ReadingStatus.PLAN_TO_READ.value
+                    )
+                    
+                    flash(f'📚 Book also added to your library!', 'info')
+                else:
+                    flash(f'✅ Test successful! Created book "{created_book.title}" but no ID available', 'success')
             else:
                 flash('❌ Failed to create test book', 'error')
         else:

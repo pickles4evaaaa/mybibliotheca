@@ -269,9 +269,14 @@ class CategoryForm(FlaskForm):
             existing_categories = book_service.search_categories_sync(name.data)  # type: ignore
             
             for category in existing_categories:
-                if (category.name.lower() == name.data.lower() and 
-                    category.parent_id == parent_id and
-                    (not self.current_category_id or category.id != self.current_category_id)):
+                # Handle both dictionary and object formats
+                category_name = category.get('name') if isinstance(category, dict) else getattr(category, 'name', None)
+                category_parent_id = category.get('parent_id') if isinstance(category, dict) else getattr(category, 'parent_id', None)
+                category_id = category.get('id') if isinstance(category, dict) else getattr(category, 'id', None)
+                
+                if (category_name and category_name.lower() == name.data.lower() and 
+                    category_parent_id == parent_id and
+                    (not self.current_category_id or category_id != self.current_category_id)):
                     if parent_id:
                         raise ValidationError(f'A category named "{name.data}" already exists under the selected parent.')
                     else:

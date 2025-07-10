@@ -14,12 +14,18 @@ This package contains decomposed service classes for better maintainability:
 try:
     from .kuzu_async_helper import KuzuAsyncHelper, run_async
     from .kuzu_service_facade import KuzuServiceFacade
+    from .kuzu_user_service import KuzuUserService
+    from .kuzu_custom_field_service import KuzuCustomFieldService
+    from .kuzu_import_mapping_service import KuzuImportMappingService
 
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade
     
-    # Create default service instance for app.services.book_service import
+    # Create default service instances
     book_service = KuzuServiceFacade()
+    user_service = KuzuUserService()
+    custom_field_service = KuzuCustomFieldService()
+    import_mapping_service = KuzuImportMappingService()
 
     # Placeholder services for compatibility during migration
     class StubService:
@@ -32,23 +38,18 @@ try:
 
     # Create stub service instances
     reading_log_service = StubService()
-    custom_field_service = StubService()
-    import_mapping_service = StubService()
     direct_import_service = StubService()
     job_service = StubService()
-
-    # Create user_service - using stub for now to avoid circular imports
-    # TODO: Implement proper KuzuUserService when needed
-    user_service = StubService()
 
     __all__ = [
         'KuzuAsyncHelper',
         'KuzuServiceFacade', 
-        'KuzuBookService',  # Backward compatibility alias
-        'book_service',     # Default service instance
+        'KuzuBookService',     # Backward compatibility alias
+        'KuzuUserService',     # User service
+        'KuzuImportMappingService',  # Import mapping service
+        'book_service',        # Default service instance
+        'user_service',        # User service instance
         'run_async',
-        # Real services
-        'user_service',
         # Stub services for compatibility
         'reading_log_service',
         'custom_field_service',

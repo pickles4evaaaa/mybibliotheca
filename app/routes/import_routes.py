@@ -7,6 +7,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from datetime import datetime
+from typing import List, Any
 import uuid
 import os
 import csv
@@ -169,8 +170,12 @@ def auto_create_custom_fields(field_mappings, user_id):
         try:
             # Handle case where service returns None or empty result
             for field in existing_fields:
-                if hasattr(field, 'name'):
-                    existing_field_names.add(field.name)
+                if isinstance(field, dict) and 'name' in field:
+                    existing_field_names.add(field['name'])
+                elif hasattr(field, 'name'):
+                    field_name = getattr(field, 'name', None)
+                    if field_name:
+                        existing_field_names.add(field_name)
         except:
             pass
     
@@ -208,7 +213,15 @@ def auto_create_custom_fields(field_mappings, user_id):
                     )
                     
                     # Create the field using the service
-                    success = custom_field_service.create_field_sync(field_definition)
+                    field_data = {
+                        'name': field_definition.name,
+                        'display_name': field_definition.display_name,
+                        'field_type': field_definition.field_type,
+                        'is_global': field_definition.is_global,
+                        'created_by_user_id': field_definition.created_by_user_id,
+                        'description': field_definition.description
+                    }
+                    success = custom_field_service.create_field_sync(user_id, field_data)
                     if success:
                         print(f"✅ Created custom field: {config['display_name']} ({field_name})")
                         existing_field_names.add(field_name)
@@ -232,7 +245,15 @@ def auto_create_custom_fields(field_mappings, user_id):
                         description=f'Auto-created during import for CSV column "{csv_field}"'
                     )
                     
-                    success = custom_field_service.create_field_sync(field_definition)
+                    field_data = {
+                        'name': field_definition.name,
+                        'display_name': field_definition.display_name,
+                        'field_type': field_definition.field_type,
+                        'is_global': field_definition.is_global,
+                        'created_by_user_id': field_definition.created_by_user_id,
+                        'description': field_definition.description
+                    }
+                    success = custom_field_service.create_field_sync(user_id, field_data)
                     if success:
                         print(f"✅ Created generic custom field: {display_name} ({field_name})")
                         existing_field_names.add(field_name)
@@ -373,11 +394,15 @@ def import_books():
                     # Use explicit loops to avoid "Never" is not iterable errors
                     user_fields_list = list(user_fields)  # Convert to list to avoid type issues
                     for field in user_fields_list:
-                        if hasattr(field, 'is_global'):
-                            if field.is_global:
-                                global_custom_fields.append(field)
-                            else:
-                                personal_custom_fields.append(field)
+                        if isinstance(field, dict):
+                            is_global = field.get('is_global', False)
+                        else:
+                            is_global = getattr(field, 'is_global', False)
+                        
+                        if is_global:
+                            global_custom_fields.append(field)
+                        else:
+                            personal_custom_fields.append(field)
                 
                 # Also get shareable fields from other users
                 shareable_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
@@ -385,7 +410,11 @@ def import_books():
                 if shareable_fields and hasattr(shareable_fields, '__iter__'):
                     shareable_fields_list = list(shareable_fields)  # Convert to list to avoid type issues
                     for field in shareable_fields_list:
-                        if hasattr(field, 'id') and not any(hasattr(gf, 'id') and gf.id == field.id for gf in global_custom_fields):
+                        field_id = field.get('id') if isinstance(field, dict) else getattr(field, 'id', None)
+                        if field_id and not any(
+                            (gf.get('id') if isinstance(gf, dict) else getattr(gf, 'id', None)) == field_id 
+                            for gf in global_custom_fields
+                        ):
                             global_custom_fields.append(field)
                         
                 print(f"🔧 [IMPORT] Loaded {len(global_custom_fields)} global fields and {len(personal_custom_fields)} personal fields")
@@ -399,13 +428,13 @@ def import_books():
                 import_templates = import_mapping_service.get_user_templates_sync(current_user.id)
                 
                 # Handle None return from stub service
-                template_list = []
+                template_list: List[Any] = []
                 if import_templates and hasattr(import_templates, '__iter__'):
                     template_list = list(import_templates)
                 
                 print(f"DEBUG: CSV headers: {headers}")
                 print(f"DEBUG: Force custom mapping: {force_custom}")
-                print(f"DEBUG: Available templates: {[t.get('name', 'Unknown') for t in template_list] if template_list else []}")
+                print(f"DEBUG: Available templates: {[t.get('name', 'Unknown') if isinstance(t, dict) else getattr(t, 'name', 'Unknown') for t in template_list] if template_list else []}")
                 
                 # Skip template detection if user wants custom mapping
                 if force_custom:
@@ -441,11 +470,15 @@ def import_books():
                         personal_custom_fields = []
                         user_fields_list = list(user_fields)  # Convert to list to avoid type issues
                         for field in user_fields_list:
-                            if hasattr(field, 'is_global'):
-                                if field.is_global:
-                                    global_custom_fields.append(field)
-                                else:
-                                    personal_custom_fields.append(field)
+                            if isinstance(field, dict):
+                                is_global = field.get('is_global', False)
+                            else:
+                                is_global = getattr(field, 'is_global', False)
+                            
+                            if is_global:
+                                global_custom_fields.append(field)
+                            else:
+                                personal_custom_fields.append(field)
                     else:
                         global_custom_fields = []
                         personal_custom_fields = []
@@ -465,7 +498,10 @@ def import_books():
                         'sample_headers': getattr(detected_template, 'sample_headers', []),
                         'created_at': detected_template.created_at
                     }
-                    if template_list and not any(t.get('id') == detected_template.id for t in template_list):
+                    if template_list and not any(
+                        (t.get('id') if isinstance(t, dict) else getattr(t, 'id', None)) == detected_template.id 
+                        for t in template_list
+                    ):
                         template_list.append(template_dict)
                         print(f"DEBUG: Added detected template to dropdown: {detected_template.name}")
                 
@@ -483,11 +519,15 @@ def import_books():
                         personal_custom_fields = []
                         user_fields_list = list(user_fields)  # Convert to list to avoid type issues
                         for field in user_fields_list:
-                            if hasattr(field, 'is_global'):
-                                if field.is_global:
-                                    global_custom_fields.append(field)
-                                else:
-                                    personal_custom_fields.append(field)
+                            if isinstance(field, dict):
+                                is_global = field.get('is_global', False)
+                            else:
+                                is_global = getattr(field, 'is_global', False)
+                            
+                            if is_global:
+                                global_custom_fields.append(field)
+                            else:
+                                personal_custom_fields.append(field)
                     else:
                         global_custom_fields = []
                         personal_custom_fields = []
@@ -503,7 +543,10 @@ def import_books():
                         'sample_headers': getattr(detected_template, 'sample_headers', []),
                         'created_at': detected_template.created_at
                     }
-                    if template_list and not any(t.get('id') == detected_template.id for t in template_list):
+                    if template_list and not any(
+                        (t.get('id') if isinstance(t, dict) else getattr(t, 'id', None)) == detected_template.id 
+                        for t in template_list
+                    ):
                         template_list.append(template_dict)
                         print(f"DEBUG: Added detected template to dropdown: {detected_template.name}")
                 else:
@@ -559,13 +602,21 @@ def import_books_execute():
             if all_templates_raw and hasattr(all_templates_raw, '__iter__'):
                 templates_list = list(all_templates_raw)  # Convert to list to avoid type issues
                 for t in templates_list:
-                    if hasattr(t, 'get') and (t.get('name') == use_template or t.get('id') == use_template):
+                    t_name = t.get('name') if isinstance(t, dict) else getattr(t, 'name', None)
+                    t_id = t.get('id') if isinstance(t, dict) else getattr(t, 'id', None)
+                    
+                    if t_name == use_template or t_id == use_template:
                         # Convert dict to object-like structure for compatibility
                         class TemplateObj:
                             def __init__(self, data):
-                                self.id = data.get('id')
-                                self.name = data.get('name')
-                                self.field_mappings = data.get('field_mappings', {})
+                                if isinstance(data, dict):
+                                    self.id = data.get('id')
+                                    self.name = data.get('name')
+                                    self.field_mappings = data.get('field_mappings', {})
+                                else:
+                                    self.id = getattr(data, 'id', None)
+                                    self.name = getattr(data, 'name', None)
+                                    self.field_mappings = getattr(data, 'field_mappings', {})
                         template = TemplateObj(t)
                         break
             
@@ -627,7 +678,10 @@ def import_books_execute():
                         field_exists = False
                         if existing_fields and hasattr(existing_fields, '__iter__'):
                             existing_fields_list = list(existing_fields)  # Convert to list to avoid type issues
-                            field_exists = any(hasattr(f, 'name') and f.name == field_name for f in existing_fields_list)
+                            field_exists = any(
+                                (f.get('name') if isinstance(f, dict) else getattr(f, 'name', None)) == field_name 
+                                for f in existing_fields_list
+                            )
                         
                         if field_exists:
                             flash(f'A custom field with name "{field_name}" already exists', 'error')
@@ -660,7 +714,15 @@ def import_books_execute():
                             description=f'Created during CSV import for column "{csv_field}"'
                         )
                         
-                        custom_field_service.create_field_sync(field_definition)
+                        field_data = {
+                            'name': field_definition.name,
+                            'display_name': field_definition.display_name,
+                            'field_type': field_definition.field_type,
+                            'is_global': field_definition.is_global,
+                            'created_by_user_id': field_definition.created_by_user_id,
+                            'description': field_definition.description
+                        }
+                        custom_field_service.create_field_sync(current_user.id, field_data)
                         
                         # Update mapping to use the new field
                         mappings[csv_field] = f'custom_{"global" if is_global else "personal"}_{field_name}'

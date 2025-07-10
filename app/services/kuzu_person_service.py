@@ -141,7 +141,7 @@ class KuzuPersonService:
             
             # Check if person is referenced by any books
             check_query = """
-            MATCH (p:Person {id: $person_id})<-[:AUTHORED|:ILLUSTRATED|:EDITED|:TRANSLATED]-(b:Book)
+            MATCH (p:Person {id: $person_id})<-[:AUTHORED]-(b:Book)
             RETURN COUNT(b) as book_count
             """
             
@@ -195,7 +195,7 @@ class KuzuPersonService:
         """Get all books associated with a person (as author, illustrator, etc.)."""
         try:
             query = """
-            MATCH (p:Person {id: $person_id})<-[r:AUTHORED|:ILLUSTRATED|:EDITED|:TRANSLATED]-(b:Book)
+            MATCH (p:Person {id: $person_id})<-[r:AUTHORED]-(b:Book)
             RETURN b, type(r) as relationship_type
             ORDER BY b.title ASC
             """

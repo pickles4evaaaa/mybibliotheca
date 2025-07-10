@@ -5,6 +5,7 @@ This version completely removes SQLite dependency and uses Kuzu as the sole data
 """
 
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
@@ -16,6 +17,11 @@ from config import Config
 login_manager = LoginManager()
 csrf = CSRFProtect()
 sess = Session()
+
+# Global flag to track template creation failures and prevent crash loops
+_template_creation_disabled = True  # Disabled due to KuzuDB segfault
+_template_creation_failures = 0
+_template_creation_last_attempt = None
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -105,15 +111,41 @@ def _check_for_sqlite_migration():
     """Disabled: Manual migration preferred over automatic migration."""
     pass
 
+# Global variable to track template initialization attempts
+_template_init_last_attempt = 0
+
 def _initialize_default_templates():
     """Initialize default import templates for Goodreads and StoryGraph if they don't exist."""
     try:
+        import time
         from datetime import datetime
         from .domain.models import ImportMappingTemplate
         from .services import import_mapping_service
         
+        global _template_creation_disabled, _template_creation_failures, _template_creation_last_attempt
+        
         # Check if verbose logging is enabled
         verbose_init = os.getenv('BIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        
+        # Circuit breaker: disable template creation if too many failures
+        if _template_creation_disabled:
+            if verbose_init:
+                print("🚫 Template creation disabled due to KuzuDB segmentation fault")
+                print("   The application will continue without default import templates")
+            return
+        
+        # Check if template creation failed recently
+        if _template_creation_last_attempt and _template_creation_failures >= 3:
+            time_since_last = time.time() - _template_creation_last_attempt
+            if time_since_last < 300:  # Don't retry for 5 minutes after 3 failures
+                if verbose_init:
+                    print(f"⏳ Skipping template initialization - {_template_creation_failures} recent failures")
+                return
+            else:
+                # Reset failures after cooldown period
+                _template_creation_failures = 0
+        
+        _template_creation_last_attempt = time.time()
         
         # Check if default templates already exist
         goodreads_template = None
@@ -134,88 +166,143 @@ def _initialize_default_templates():
         
         # Create Goodreads template
         if not goodreads_template:
-            goodreads_template = ImportMappingTemplate(
-                id="default_goodreads",
-                user_id="__system__",
-                name="Goodreads Export (Default)",
-                description="Default template for standard Goodreads library export CSV files",
-                source_type="goodreads",
-                sample_headers=[
-                    "Book Id", "Title", "Author", "Author l-f", "Additional Authors", 
-                    "ISBN", "ISBN13", "My Rating", "Average Rating", "Publisher", 
-                    "Binding", "Number of Pages", "Year Published", "Original Publication Year", 
-                    "Date Read", "Date Added", "Bookshelves", "Bookshelves with positions", 
-                    "Exclusive Shelf", "My Review", "Spoiler", "Private Notes", "Read Count", "Owned Copies"
-                ],
-                field_mappings={
-                    "Title": {"action": "map_existing", "target_field": "title"},
-                    "Author": {"action": "map_existing", "target_field": "author"},
-                    "Additional Authors": {"action": "map_existing", "target_field": "additional_authors"},
-                    "ISBN13": {"action": "map_existing", "target_field": "isbn"},
-                    "ISBN": {"action": "map_existing", "target_field": "isbn"},
-                    "My Rating": {"action": "map_existing", "target_field": "rating"},
-                    "Average Rating": {"action": "map_existing", "target_field": "average_rating"},
-                    "Publisher": {"action": "map_existing", "target_field": "publisher"},
-                    "Number of Pages": {"action": "map_existing", "target_field": "page_count"},
-                    "Year Published": {"action": "map_existing", "target_field": "publication_year"},
-                    "Original Publication Year": {"action": "map_existing", "target_field": "original_publication_year"},
-                    "Date Read": {"action": "map_existing", "target_field": "date_read"},
-                    "Date Added": {"action": "map_existing", "target_field": "date_added"},
-                    "Bookshelves": {"action": "map_existing", "target_field": "reading_status"},
-                    "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},
-                    "My Review": {"action": "map_existing", "target_field": "notes"},
-                    "Private Notes": {"action": "map_existing", "target_field": "private_notes"}
-                },
-                times_used=0,
-                last_used=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-            import_mapping_service.create_template_sync(goodreads_template)
-            if verbose_init:
-                print("✅ Created Goodreads default template")
+            try:
+                if verbose_init:
+                    print("🔄 Creating Goodreads template...")
+                    
+                goodreads_template = ImportMappingTemplate(
+                    id="default_goodreads",
+                    user_id="__system__",
+                    name="Goodreads Export (Default)",
+                    description="Default template for standard Goodreads library export CSV files",
+                    source_type="goodreads",
+                    sample_headers=[
+                        "Book Id", "Title", "Author", "Author l-f", "Additional Authors", 
+                        "ISBN", "ISBN13", "My Rating", "Average Rating", "Publisher", 
+                        "Binding", "Number of Pages", "Year Published", "Original Publication Year", 
+                        "Date Read", "Date Added", "Bookshelves", "Bookshelves with positions", 
+                        "Exclusive Shelf", "My Review", "Spoiler", "Private Notes", "Read Count", "Owned Copies"
+                    ],
+                    field_mappings={
+                        "Title": {"action": "map_existing", "target_field": "title"},
+                        "Author": {"action": "map_existing", "target_field": "author"},
+                        "Additional Authors": {"action": "map_existing", "target_field": "additional_authors"},
+                        "ISBN13": {"action": "map_existing", "target_field": "isbn"},
+                        "ISBN": {"action": "map_existing", "target_field": "isbn"},
+                        "My Rating": {"action": "map_existing", "target_field": "rating"},
+                        "Average Rating": {"action": "map_existing", "target_field": "average_rating"},
+                        "Publisher": {"action": "map_existing", "target_field": "publisher"},
+                        "Number of Pages": {"action": "map_existing", "target_field": "page_count"},
+                        "Year Published": {"action": "map_existing", "target_field": "publication_year"},
+                        "Original Publication Year": {"action": "map_existing", "target_field": "original_publication_year"},
+                        "Date Read": {"action": "map_existing", "target_field": "date_read"},
+                        "Date Added": {"action": "map_existing", "target_field": "date_added"},
+                        "Bookshelves": {"action": "map_existing", "target_field": "reading_status"},
+                        "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},
+                        "My Review": {"action": "map_existing", "target_field": "notes"},
+                        "Private Notes": {"action": "map_existing", "target_field": "private_notes"}
+                    },
+                    times_used=0,
+                    last_used=None,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                
+                # Attempt to create template with error tracking
+                created_template = import_mapping_service.create_template_sync(goodreads_template)
+                if created_template:
+                    if verbose_init:
+                        print("✅ Created Goodreads default template")
+                    # Reset failure count on success
+                    _template_creation_failures = 0
+                else:
+                    if verbose_init:
+                        print("⚠️  Failed to create Goodreads default template")
+                    _template_creation_failures += 1
+                    # Disable template creation after 5 failures
+                    if _template_creation_failures >= 5:
+                        _template_creation_disabled = True
+                        if verbose_init:
+                            print("🚫 Template creation disabled after 5 failures")
+                
+            except Exception as e:
+                if verbose_init:
+                    print(f"⚠️  Error creating Goodreads template: {e}")
+                _template_creation_failures += 1
+                # Disable template creation after 5 failures
+                if _template_creation_failures >= 5:
+                    _template_creation_disabled = True
+                    if verbose_init:
+                        print("🚫 Template creation disabled after 5 failures")
+                # Continue without crashing the application
         
         # Create StoryGraph template
         if not storygraph_template:
-            storygraph_template = ImportMappingTemplate(
-                id="default_storygraph",
-                user_id="__system__",
-                name="StoryGraph Export (Default)",
-                description="Default template for standard StoryGraph library export CSV files",
-                source_type="storygraph", 
-                sample_headers=[
-                    "Title", "Authors", "Contributors", "ISBN/UID", "Format",
-                    "Read Status", "Date Added", "Last Date Read", "Dates Read", 
-                    "Read Count", "Moods", "Pace", "Character- or Plot-Driven?",
-                    "Strong Character Development?", "Loveable Characters?", 
-                    "Diverse Characters?", "Flawed Characters?", "Star Rating",
-                    "Review", "Content Warnings", "Content Warning Description", 
-                    "Tags", "Owned?"
-                ],
-                field_mappings={
-                    "Title": {"action": "map_existing", "target_field": "title"},
-                    "Authors": {"action": "map_existing", "target_field": "author"},
-                    "Contributors": {"action": "map_existing", "target_field": "additional_authors"},
-                    "ISBN/UID": {"action": "map_existing", "target_field": "isbn"},
-                    "Format": {"action": "map_existing", "target_field": "format"},
-                    "Read Status": {"action": "map_existing", "target_field": "reading_status"},
-                    "Date Added": {"action": "map_existing", "target_field": "date_added"},
-                    "Last Date Read": {"action": "map_existing", "target_field": "date_read"},
-                    "Dates Read": {"action": "map_existing", "target_field": "date_ranges"},
-                    "Read Count": {"action": "map_existing", "target_field": "read_count"},
-                    "Star Rating": {"action": "map_existing", "target_field": "rating"},
-                    "Review": {"action": "map_existing", "target_field": "notes"},
-                    "Tags": {"action": "map_existing", "target_field": "categories"},
-                    "Moods": {"action": "map_existing", "target_field": "categories"}
-                },
-                times_used=0,
-                last_used=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-            import_mapping_service.create_template_sync(storygraph_template)
-            if verbose_init:
-                print("✅ Created StoryGraph default template")
+            try:
+                storygraph_template = ImportMappingTemplate(
+                    id="default_storygraph",
+                    user_id="__system__",
+                    name="StoryGraph Export (Default)",
+                    description="Default template for standard StoryGraph library export CSV files",
+                    source_type="storygraph", 
+                    sample_headers=[
+                        "Title", "Authors", "Contributors", "ISBN/UID", "Format",
+                        "Read Status", "Date Added", "Last Date Read", "Dates Read", 
+                        "Read Count", "Moods", "Pace", "Character- or Plot-Driven?",
+                        "Strong Character Development?", "Loveable Characters?", 
+                        "Diverse Characters?", "Flawed Characters?", "Star Rating",
+                        "Review", "Content Warnings", "Content Warning Description", 
+                        "Tags", "Owned?"
+                    ],
+                    field_mappings={
+                        "Title": {"action": "map_existing", "target_field": "title"},
+                        "Authors": {"action": "map_existing", "target_field": "author"},
+                        "Contributors": {"action": "map_existing", "target_field": "additional_authors"},
+                        "ISBN/UID": {"action": "map_existing", "target_field": "isbn"},
+                        "Format": {"action": "map_existing", "target_field": "format"},
+                        "Read Status": {"action": "map_existing", "target_field": "reading_status"},
+                        "Date Added": {"action": "map_existing", "target_field": "date_added"},
+                        "Last Date Read": {"action": "map_existing", "target_field": "date_read"},
+                        "Dates Read": {"action": "map_existing", "target_field": "date_ranges"},
+                        "Read Count": {"action": "map_existing", "target_field": "read_count"},
+                        "Star Rating": {"action": "map_existing", "target_field": "rating"},
+                        "Review": {"action": "map_existing", "target_field": "notes"},
+                        "Tags": {"action": "map_existing", "target_field": "categories"},
+                        "Moods": {"action": "map_existing", "target_field": "categories"}
+                    },
+                    times_used=0,
+                    last_used=None,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                
+                # Attempt to create template with error tracking
+                created_template = import_mapping_service.create_template_sync(storygraph_template)
+                if created_template:
+                    if verbose_init:
+                        print("✅ Created StoryGraph default template")
+                    # Reset failure count on success
+                    _template_creation_failures = 0
+                else:
+                    if verbose_init:
+                        print("⚠️  Failed to create StoryGraph default template")
+                    _template_creation_failures += 1
+                    # Disable template creation after 5 failures
+                    if _template_creation_failures >= 5:
+                        _template_creation_disabled = True
+                        if verbose_init:
+                            print("🚫 Template creation disabled after 5 failures")
+                
+            except Exception as e:
+                if verbose_init:
+                    print(f"⚠️  Error creating StoryGraph template: {e}")
+                _template_creation_failures += 1
+                # Disable template creation after 5 failures
+                if _template_creation_failures >= 5:
+                    _template_creation_disabled = True
+                    if verbose_init:
+                        print("🚫 Template creation disabled after 5 failures")
+                # Continue without crashing the application
             
         if verbose_init:
             print("🎉 Default import templates initialized successfully!")
@@ -589,11 +676,12 @@ def create_app():
     except ImportError as e:
         print(f"⚠️  Could not import onboarding system: {e}")
     
-    try:
-        from .genre_routes import genres_bp
-        app.register_blueprint(genres_bp, url_prefix='/genres')
-    except ImportError as e:
-        print(f"⚠️  Could not import genre routes: {e}")
+    # Note: Genre routes temporarily disabled due to missing category management methods
+    # try:
+    #     from .routes.genre_routes import genres_bp
+    #     app.register_blueprint(genres_bp, url_prefix='/genres')
+    # except ImportError as e:
+    #     print(f"⚠️  Could not import genre routes: {e}")
     
     # Register main and modular routes
     register_blueprints(app)

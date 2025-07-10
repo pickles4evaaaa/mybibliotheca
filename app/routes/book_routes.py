@@ -553,7 +553,7 @@ def library():
                     locations.add(str(loc))
 
     # Get users through Kuzu service layer
-    domain_users = user_service.get_all_users_sync()
+    domain_users = user_service.get_all_users_sync() or []
     
     # Convert domain users to simple objects for template compatibility
     users = []
@@ -1050,6 +1050,54 @@ def view_book_enhanced(uid):
         if not hasattr(user_book, 'isbn'):
             user_book.isbn = isbn13 or isbn10  # Fallback for any other template expectations
 
+    # Get book authors
+    try:
+        book_id = getattr(user_book, 'id', None)
+        debug_log(f"🔍 [VIEW] Getting authors for book ID: {book_id}", "BOOK_VIEW")
+        if book_id and hasattr(user_book, 'contributors') and not user_book.contributors:
+            # Fetch authors from database using the same pattern as categories
+            from app.infrastructure.kuzu_graph import get_kuzu_connection
+            from app.domain.models import BookContribution, Person, ContributionType
+            kuzu_connection = get_kuzu_connection()
+            
+            query = """
+            MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
+            RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
+            ORDER BY rel.order_index ASC
+            """
+            
+            results = kuzu_connection.query(query, {"book_id": book_id})
+            
+            contributors = []
+            for result in results:
+                person_id = result.get('col_1', '')
+                person_name = result.get('col_0', '')
+                if person_name and person_id:  # Ensure both name and id exist
+                    person = Person(
+                        id=person_id,
+                        name=person_name,
+                        normalized_name=person_name.lower()
+                    )
+                    
+                    contribution = BookContribution(
+                        person_id=person_id,
+                        book_id=book_id,
+                        contribution_type=ContributionType.AUTHORED,
+                        order=result.get('col_3', 0),
+                        person=person
+                    )
+                    
+                    contributors.append(contribution)
+            
+            # Update the book object with the fetched contributors
+            user_book.contributors = contributors
+            debug_log(f"✅ [VIEW] Found and populated {len(contributors)} authors as contributors", "BOOK_VIEW")
+        else:
+            debug_log(f"ℹ️ [VIEW] Book already has contributors or no book ID", "BOOK_VIEW")
+    except Exception as e:
+        current_app.logger.error(f"Error loading book authors: {e}")
+        debug_log(f"❌ [VIEW] Error loading book authors: {e}", "BOOK_VIEW")
+
     # Get book categories
     book_categories = []
     try:
@@ -1072,11 +1120,8 @@ def view_book_enhanced(uid):
     
     try:
         debug_log(f"🔍 [VIEW] Processing custom metadata", "BOOK_VIEW")
-        # Global metadata is stored on the book itself, but we don't have a separate method to get just the book
-        # For now, assume no global metadata since we're storing everything on relationships
-        # TODO: Implement proper global vs personal metadata separation
-        
-        custom_metadata = getattr(user_book, 'custom_metadata', None)
+        # Get custom metadata using the custom field service
+        custom_metadata = custom_field_service.get_custom_metadata_sync(uid, str(current_user.id))
         if custom_metadata:
             debug_log(f"✅ [VIEW] Personal metadata found: {custom_metadata}", "BOOK_VIEW")
             personal_metadata_display = custom_field_service.get_custom_metadata_for_display(
@@ -1347,18 +1392,19 @@ def edit_book_custom_metadata(uid):
             # Process all fields as personal metadata
             for field in all_fields:
                 # Check both global_ and personal_ prefixes for backward compatibility
-                personal_key = f'personal_{field.name}'
-                global_key = f'global_{field.name}'
+                field_name = field.get('name', '')
+                personal_key = f'personal_{field_name}'
+                global_key = f'global_{field_name}'
                 
                 personal_value = request.form.get(personal_key, '').strip()
                 global_value = request.form.get(global_key, '').strip()
                 
-                print(f"🔍 [EDIT_META] Field {field.name}: personal_key='{personal_key}' value='{personal_value}', global_key='{global_key}' value='{global_value}'")
+                print(f"🔍 [EDIT_META] Field {field_name}: personal_key='{personal_key}' value='{personal_value}', global_key='{global_key}' value='{global_value}'")
                 
                 value = personal_value or global_value
                 if value:
-                    personal_metadata[field.name] = value
-                    print(f"✅ [EDIT_META] Added to metadata: {field.name} = {value}")
+                    personal_metadata[field_name] = value
+                    print(f"✅ [EDIT_META] Added to metadata: {field_name} = {value}")
             
             print(f"📝 [EDIT_META] Final processed metadata: {personal_metadata}")
             
@@ -1373,24 +1419,18 @@ def edit_book_custom_metadata(uid):
                     from app.infrastructure.kuzu_graph import get_graph_storage
                     storage = get_graph_storage()
                     
-                    # Store each metadata field using the graph storage method
-                    success = True
-                    for field_name, field_value in personal_metadata.items():
-                        if field_value:  # Only store non-empty values
-                            field_success = storage.store_custom_metadata(
-                                str(current_user.id), uid, field_name, str(field_value)
-                            )
-                            if not field_success:
-                                success = False
-                                print(f"❌ [EDIT_META] Failed to store custom field: {field_name}")
+                    # Store custom metadata using the custom field service
+                    success = custom_field_service.save_custom_metadata_sync(
+                        uid, str(current_user.id), personal_metadata
+                    )
                     
                     if success:
                         print(f"✅ [EDIT_META] Updated user book personal metadata")
                         flash('Custom metadata updated successfully!', 'success')
                         return redirect(url_for('book.view_book_enhanced', uid=uid))
                     else:
-                        print(f"❌ [EDIT_META] Failed to update some custom metadata fields")
-                        flash('Failed to update some custom metadata fields.', 'warning')
+                        print(f"❌ [EDIT_META] Failed to update custom metadata")
+                        flash('Failed to update custom metadata.', 'error')
                 except Exception as e:
                     print(f"❌ [EDIT_META] Exception updating metadata: {e}")
                     flash('Failed to update custom metadata.', 'error')
@@ -1408,8 +1448,8 @@ def edit_book_custom_metadata(uid):
         print(f"   📋 [EDIT_META] Personal fields count: {len(personal_fields)}")
         print(f"   📋 [EDIT_META] Global fields count: {len(global_fields)}")
         
-        # Get existing custom metadata
-        existing_metadata = getattr(user_book, 'custom_metadata', {}) or {}
+        # Get existing custom metadata using the custom field service
+        existing_metadata = custom_field_service.get_custom_metadata_sync(uid, str(current_user.id))
         print(f"   📊 [EDIT_META] Existing metadata: {existing_metadata}")
         
         # Prepare template data
@@ -1417,8 +1457,8 @@ def edit_book_custom_metadata(uid):
         personal_metadata = existing_metadata
         
         print(f"   📤 [EDIT_META] Passing to template:")
-        print(f"      🌐 global_fields: {[f.name for f in global_fields]}")
-        print(f"      👤 personal_fields: {[f.name for f in personal_fields]}")
+        print(f"      🌐 global_fields: {[f.get('name', '') for f in global_fields]}")
+        print(f"      👤 personal_fields: {[f.get('name', '') for f in personal_fields]}")
         print(f"      🌐 global_metadata: {global_metadata}")
         print(f"      👤 personal_metadata: {personal_metadata}")
         
@@ -1860,7 +1900,7 @@ def search_books_in_library():
             ])
 
     # Get users through Kuzu service layer
-    domain_users = user_service.get_all_users_sync()
+    domain_users = user_service.get_all_users_sync() or []
     
     # Convert domain users to simple objects for template compatibility
     users = []
