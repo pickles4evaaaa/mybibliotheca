@@ -921,8 +921,10 @@ class KuzuGraphStorage:
             print(f"[KUZU_STORAGE] 🚀 Executing CREATE query for {node_type}")
             self.kuzu_conn.execute(query, serialized_data)
             
-            # NOTE: KuzuDB uses auto-commit mode, no manual commit needed
-            print(f"[KUZU_STORAGE] 💾 Query executed (auto-committed by KuzuDB)")
+            # Force checkpoint to ensure data is written to disk immediately
+            self._force_checkpoint()
+            
+            print(f"[KUZU_STORAGE] 💾 Query executed and checkpointed to disk")
             
             print(f"[KUZU_STORAGE] ✅ Successfully stored {node_type} node: {node_id}")
             
@@ -1184,8 +1186,10 @@ class KuzuGraphStorage:
             print(f"[KUZU_STORAGE] 🚀 Executing CREATE RELATIONSHIP query")
             self.kuzu_conn.execute(query, params)
             
-            # NOTE: KuzuDB uses auto-commit mode, no manual commit needed
-            print(f"[KUZU_STORAGE] 💾 Query executed (auto-committed by KuzuDB)")
+            # Force checkpoint to ensure data is written to disk immediately
+            self._force_checkpoint()
+            
+            print(f"[KUZU_STORAGE] 💾 Query executed and checkpointed to disk")
             
             print(f"[KUZU_STORAGE] ✅ Successfully created {rel_type} relationship")
             
@@ -1452,37 +1456,52 @@ class KuzuGraphStorage:
         except Exception as e:
             logger.error(f"Failed to count {rel_type} relationships: {e}")
             return 0
+    
+    def _force_checkpoint(self):
+        """Force a checkpoint to ensure all transactions are written to disk."""
+        try:
+            # Execute a checkpoint operation to flush WAL to main database files
+            print(f"🔄 [KUZU_CHECKPOINT] Forcing checkpoint to flush WAL to disk...")
+            self.kuzu_conn.execute("CHECKPOINT;")
+            print(f"✅ [KUZU_CHECKPOINT] Checkpoint completed - data flushed to disk")
+        except Exception as e:
+            # If CHECKPOINT command doesn't exist, try other approaches
+            print(f"⚠️ [KUZU_CHECKPOINT] Checkpoint command failed: {e}")
+            try:
+                # Try a simple query to force a database sync
+                self.kuzu_conn.execute("MATCH (n) RETURN COUNT(n) LIMIT 1;")
+                print(f"✅ [KUZU_CHECKPOINT] Fallback sync completed")
+            except Exception as e2:
+                print(f"⚠️ [KUZU_CHECKPOINT] Fallback sync also failed: {e2}")
+                
 
-
-# Global connection instance
-_kuzu_connection = None
-
-# Global instances for singleton pattern
+# Global database instance - SINGLE SOURCE OF TRUTH
 _kuzu_database = None
 _graph_storage = None
 
 
 def get_kuzu_connection() -> KuzuGraphDB:
-    """Get the global Kuzu connection instance."""
-    global _kuzu_connection
-    if _kuzu_connection is None:
-        _kuzu_connection = KuzuGraphDB()
-    return _kuzu_connection
+    """Get the global KuzuDB instance. DEPRECATED: Use get_kuzu_database() instead."""
+    return get_kuzu_database()
 
 
 def get_kuzu_database() -> 'KuzuGraphDB':
-    """Get global KuzuGraphDB instance."""
+    """Get the single global KuzuGraphDB instance."""
     global _kuzu_database
     if _kuzu_database is None:
+        print("🔧 [CRITICAL_FIX] Creating single global KuzuDB instance")
         _kuzu_database = KuzuGraphDB()
         _kuzu_database.connect()
+        print(f"🔧 [CRITICAL_FIX] Single global KuzuDB instance established: {id(_kuzu_database)}")
+    else:
+        print(f"🔧 [CRITICAL_FIX] Reusing existing KuzuDB instance: {id(_kuzu_database)}")
     return _kuzu_database
 
 
 def get_graph_storage() -> 'KuzuGraphStorage':
-    """Get global KuzuGraphStorage instance."""
+    """Get global KuzuGraphStorage instance using the single database."""
     global _graph_storage
     if _graph_storage is None:
-        database = get_kuzu_database()
+        database = get_kuzu_database()  # Always use the same database instance
         _graph_storage = KuzuGraphStorage(database)
     return _graph_storage

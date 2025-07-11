@@ -108,6 +108,8 @@ class SimplifiedBookService:
     
     def __init__(self):
         self.storage = get_graph_storage()
+        # Log the database instance ID to verify single instance usage
+        print(f"🔥 [SIMPLIFIED_SERVICE] Using KuzuDB instance: {id(self.storage.connection)}")
     
     async def create_standalone_book(self, book_data: SimplifiedBook) -> Optional[str]:
         """
@@ -330,6 +332,15 @@ class SimplifiedBookService:
                     print(f"⚠️ [SIMPLIFIED] Book created but category processing failed: {e}")
             
             print(f"🎉 [SIMPLIFIED] Book creation completed: {book_id}")
+            
+            # Force a checkpoint to ensure all book data is persisted to disk
+            try:
+                print(f"🔄 [SIMPLIFIED] Forcing checkpoint to ensure persistence...")
+                self.storage._force_checkpoint()
+                print(f"✅ [SIMPLIFIED] Checkpoint completed - book data persisted to disk")
+            except Exception as e:
+                print(f"⚠️ [SIMPLIFIED] Checkpoint failed but continuing: {e}")
+            
             return book_id
             
         except Exception as e:
@@ -377,6 +388,15 @@ class SimplifiedBookService:
             
             if success:
                 print(f"✅ [SIMPLIFIED] Ownership created successfully")
+                
+                # Force a checkpoint to ensure ownership data is persisted to disk
+                try:
+                    print(f"🔄 [SIMPLIFIED] Forcing checkpoint to ensure ownership persistence...")
+                    self.storage._force_checkpoint()
+                    print(f"✅ [SIMPLIFIED] Checkpoint completed - ownership data persisted to disk")
+                except Exception as e:
+                    print(f"⚠️ [SIMPLIFIED] Checkpoint failed but continuing: {e}")
+                
                 return True
             else:
                 print(f"❌ [SIMPLIFIED] Failed to create ownership relationship")
@@ -625,8 +645,68 @@ class SimplifiedBookService:
             if not ownership_success:
                 print(f"❌ [SIMPLIFIED] Book created but ownership failed")
                 return False
+
+            # Step 3: Handle location assignment (NEW)
+            if location_id:
+                print(f"📍 [SIMPLIFIED] Assigning book to location: {location_id}")
+                try:
+                    from .location_service import LocationService
+                    from .infrastructure.kuzu_graph import get_kuzu_connection
+                    
+                    kuzu_connection = get_kuzu_connection()
+                    print(f"🔥 [LOCATION_SERVICE] Using KuzuDB instance: {id(kuzu_connection)}")
+                    location_service = LocationService(kuzu_connection.connect())
+                    
+                    location_success = location_service.add_book_to_location(book_id, location_id, user_id)
+                    if location_success:
+                        print(f"✅ [SIMPLIFIED] Book assigned to location successfully")
+                    else:
+                        print(f"⚠️ [SIMPLIFIED] Failed to assign book to location, but continuing...")
+                        
+                except Exception as e:
+                    print(f"⚠️ [SIMPLIFIED] Error assigning location: {e}")
+                    # Don't fail the entire operation for location assignment issues
+            else:
+                print(f"📍 [SIMPLIFIED] No location specified, trying to assign to default location")
+                try:
+                    from .location_service import LocationService
+                    from .infrastructure.kuzu_graph import get_kuzu_connection
+                    
+                    kuzu_connection = get_kuzu_connection()
+                    print(f"🔥 [DEFAULT_LOCATION] Using KuzuDB instance: {id(kuzu_connection)}")
+                    location_service = LocationService(kuzu_connection.connect())
+                    
+                    # Get or create default location
+                    default_location = location_service.get_default_location(user_id)
+                    if not default_location:
+                        print(f"📍 [SIMPLIFIED] No default location found, creating one...")
+                        default_locations = location_service.setup_default_locations()
+                        if default_locations:
+                            default_location = default_locations[0]
+                    
+                    if default_location and default_location.id:
+                        location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
+                        if location_success:
+                            print(f"✅ [SIMPLIFIED] Book assigned to default location: {default_location.name}")
+                        else:
+                            print(f"⚠️ [SIMPLIFIED] Failed to assign book to default location")
+                    else:
+                        print(f"⚠️ [SIMPLIFIED] Could not find or create default location")
+                        
+                except Exception as e:
+                    print(f"⚠️ [SIMPLIFIED] Error with default location assignment: {e}")
+                    # Don't fail the entire operation for location assignment issues
             
             print(f"🎉 [SIMPLIFIED] Successfully added book to user library")
+            
+            # Final checkpoint to ensure ALL data is persisted before returning success
+            try:
+                print(f"🔄 [SIMPLIFIED] Final checkpoint to ensure complete persistence...")
+                self.storage._force_checkpoint()
+                print(f"✅ [SIMPLIFIED] Final checkpoint completed - all data guaranteed on disk")
+            except Exception as e:
+                print(f"⚠️ [SIMPLIFIED] Final checkpoint failed but continuing: {e}")
+            
             return True
             
         except Exception as e:

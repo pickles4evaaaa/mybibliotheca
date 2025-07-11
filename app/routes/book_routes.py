@@ -1018,7 +1018,8 @@ def view_book_enhanced(uid):
                         # Get current user ID properly
                         user_id_for_location = str(current_user.id) if 'current_user' in globals() and hasattr(current_user, 'id') else str(data.get('user_id', ''))
                         if user_id_for_location:
-                            user_locations = location_service.get_user_locations(user_id_for_location)
+                            # Get all available locations, not just those with books
+                            user_locations = location_service.get_all_locations()
                             
                             # Find the location object by ID
                             for user_loc in user_locations:
@@ -1105,7 +1106,7 @@ def view_book_enhanced(uid):
     try:
         book_id = getattr(user_book, 'id', None)
         debug_log(f"🔍 [VIEW] Getting authors for book ID: {book_id}", "BOOK_VIEW")
-        if book_id and hasattr(user_book, 'contributors') and not user_book.contributors:
+        if book_id and ((hasattr(user_book, 'contributors') and not user_book.contributors) or (hasattr(user_book, 'authors') and not user_book.authors)):
             # Fetch authors from database using the same pattern as categories
             from app.infrastructure.kuzu_graph import get_kuzu_connection
             from app.domain.models import BookContribution, Person, ContributionType
@@ -1142,9 +1143,29 @@ def view_book_enhanced(uid):
             
             # Update the book object with the fetched contributors
             user_book.contributors = contributors
+            
+            # Map contributors to authors property for template compatibility
+            authors_list = []
+            for contribution in contributors:
+                if hasattr(contribution, 'person') and contribution.person:
+                    authors_list.append(contribution.person)
+            
+            # Use setattr to ensure compatibility
+            setattr(user_book, 'authors', authors_list)
+                    
             debug_log(f"✅ [VIEW] Found and populated {len(contributors)} authors as contributors", "BOOK_VIEW")
+            debug_log(f"✅ [VIEW] Mapped to {len(authors_list)} authors for template", "BOOK_VIEW")
         else:
             debug_log(f"ℹ️ [VIEW] Book already has contributors or no book ID", "BOOK_VIEW")
+            
+            # Even if contributors exist, make sure authors are properly mapped
+            if hasattr(user_book, 'contributors') and user_book.contributors and (not hasattr(user_book, 'authors') or not user_book.authors):
+                authors_list = []
+                for contribution in user_book.contributors:
+                    if hasattr(contribution, 'person') and contribution.person:
+                        authors_list.append(contribution.person)
+                setattr(user_book, 'authors', authors_list)
+                debug_log(f"✅ [VIEW] Mapped existing {len(user_book.contributors)} contributors to {len(authors_list)} authors", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading book authors: {e}")
         debug_log(f"❌ [VIEW] Error loading book authors: {e}", "BOOK_VIEW")
@@ -1195,7 +1216,8 @@ def view_book_enhanced(uid):
         
         kuzu_connection = get_kuzu_connection()
         location_service = LocationService(kuzu_connection.connect())
-        user_locations = location_service.get_user_locations(str(current_user.id))
+        # Get all available locations, not just those with books
+        user_locations = location_service.get_all_locations()
         debug_log(f"✅ [VIEW] Found {len(user_locations)} locations for user {current_user.id}", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading user locations: {e}")
@@ -2798,10 +2820,10 @@ def add_book_manual():
                 else:
                     print(f"📍 [MANUAL] ❌ No default location found for user {current_user.id}")
                     # Check if user has any locations at all
-                    all_locations = location_service.get_user_locations(str(current_user.id))
+                    all_locations = location_service.get_all_locations()
                     if not all_locations:
                         print(f"📍 [MANUAL] 🏗️ User has no locations, creating default location...")
-                        default_locations_created = location_service.setup_default_locations(str(current_user.id))
+                        default_locations_created = location_service.setup_default_locations()
                         if default_locations_created:
                             final_locations = [default_locations_created[0].id]
                             print(f"📍 [MANUAL] ✅ Created and assigned default location: {default_locations_created[0].name} (ID: {default_locations_created[0].id})")

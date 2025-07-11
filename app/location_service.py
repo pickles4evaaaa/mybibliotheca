@@ -163,6 +163,40 @@ class LocationService:
         print(f"🏠 [GET_USER_LOCATIONS] Returning {len(locations)} locations for user {user_id}")
         return locations
     
+    def get_all_locations(self, active_only: bool = True) -> List[Location]:
+        """Get all locations in the system, regardless of whether they have books."""
+        print(f"🏠 [GET_ALL_LOCATIONS] Fetching all locations (active_only: {active_only})")
+        
+        # Query all locations in the system
+        query = "MATCH (l:Location)"
+        if active_only:
+            query += " WHERE l.is_active = true"
+        query += " RETURN l ORDER BY l.is_default DESC, l.name ASC"
+        
+        result = self.kuzu_conn.execute(query, {})
+        
+        locations = []
+        while result.has_next():
+            row = result.get_next()
+            location_data = dict(row[0])
+            location = Location(
+                id=location_data['id'],
+                user_id="",  # Locations don't belong to users
+                name=location_data['name'],
+                description=location_data.get('description'),
+                location_type=location_data['location_type'],
+                address=location_data.get('address'),
+                is_default=location_data['is_default'],
+                is_active=location_data.get('is_active', True),
+                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
+                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+            )
+            locations.append(location)
+            print(f"🏠 [GET_ALL_LOCATIONS] Added location: '{location.name}' (default: {location.is_default})")
+        
+        print(f"🏠 [GET_ALL_LOCATIONS] Returning {len(locations)} total locations")
+        return locations
+    
     def update_location(self, location_id: str, **updates) -> Optional[Location]:
         """Update a location."""
         print(f"🏠 [UPDATE_LOCATION] Updating location {location_id} with: {updates}")
@@ -226,8 +260,8 @@ class LocationService:
         return True
     
     def get_default_location(self, user_id: str) -> Optional[Location]:
-        """Get the default location that has books for this user."""
-        print(f"🏠 [GET_DEFAULT] Looking for default location with books for user {user_id}")
+        """Get the default location."""
+        print(f"🏠 [GET_DEFAULT] Looking for default location for user {user_id}")
         
         # First try to find a default location that has books for this user
         query = """
@@ -256,14 +290,48 @@ class LocationService:
             print(f"🏠 [GET_DEFAULT] Found default location for user {user_id}: '{location.name}' (ID: {location.id})")
             return location
         
-        # If no default location with books, get any location with books for this user
+        # If no default location with books, try to find any default location in the system
+        default_query = """
+        MATCH (l:Location)
+        WHERE l.is_default = true
+        RETURN l
+        LIMIT 1
+        """
+        result = self.kuzu_conn.execute(default_query, {})
+        
+        if result.has_next():
+            row = result.get_next()
+            location_data = dict(row[0])
+            location = Location(
+                id=location_data['id'],
+                user_id="",
+                name=location_data['name'],
+                description=location_data.get('description'),
+                location_type=location_data['location_type'],
+                address=location_data.get('address'),
+                is_default=location_data['is_default'],
+                is_active=location_data.get('is_active', True),
+                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
+                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+            )
+            print(f"🏠 [GET_DEFAULT] Found system default location: '{location.name}' (ID: {location.id})")
+            return location
+        
+        # If no default location at all, get any location with books for this user
         locations = self.get_user_locations(user_id)
         if locations:
             default_location = locations[0]
-            print(f"🏠 [GET_DEFAULT] No default found, using first location for user {user_id}: '{default_location.name}' (ID: {default_location.id})")
+            print(f"🏠 [GET_DEFAULT] No default found, using first location with books for user {user_id}: '{default_location.name}' (ID: {default_location.id})")
             return default_location
         
-        print(f"🏠 [GET_DEFAULT] No locations found for user {user_id}")
+        # If no locations with books, get any available location
+        all_locations = self.get_all_locations()
+        if all_locations:
+            default_location = all_locations[0]
+            print(f"🏠 [GET_DEFAULT] No locations with books, using first available location: '{default_location.name}' (ID: {default_location.id})")
+            return default_location
+        
+        print(f"🏠 [GET_DEFAULT] No locations found at all")
         return None
     
     def setup_default_locations(self) -> List[Location]:
@@ -340,31 +408,8 @@ class LocationService:
         """
         debug_log(f"Getting book counts for all locations (user filter: {user_id})", "LOCATION", {"user_id": user_id})
         
-        # Get all locations first
-        if user_id:
-            locations = self.get_user_locations(user_id)
-        else:
-            # Get all locations in system
-            query = "MATCH (l:Location) RETURN l"
-            result = self.kuzu_conn.execute(query, {})
-            
-            locations = []
-            while result.has_next():
-                row = result.get_next()
-                location_data = dict(row[0])
-                location = Location(
-                    id=location_data['id'],
-                    user_id="",  # System-wide query
-                    name=location_data['name'],
-                    description=location_data.get('description'),
-                    location_type=location_data['location_type'],
-                    address=location_data.get('address'),
-                    is_default=location_data['is_default'],
-                    is_active=True,
-                    created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                    updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
-                )
-                locations.append(location)
+        # Get all locations first - use the new method to get all locations
+        locations = self.get_all_locations()
         
         counts = {}
         for location in locations:

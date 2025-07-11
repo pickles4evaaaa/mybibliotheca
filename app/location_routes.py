@@ -23,9 +23,10 @@ def get_location_service():
 def manage_locations():
     """Manage user locations page."""
     location_service = get_location_service()
-    locations = location_service.get_user_locations(str(current_user.id))
+    # Get all locations, not just those with books
+    locations = location_service.get_all_locations()
     
-    # Get book counts for each location
+    # Get book counts for each location (filtered by user)
     book_counts = location_service.get_all_location_book_counts(str(current_user.id))
     
     # Create location data with book counts for template
@@ -148,7 +149,8 @@ def delete_location(location_id):
 def api_user_locations():
     """API endpoint to get user locations for dropdowns."""
     location_service = get_location_service()
-    locations = location_service.get_user_locations(str(current_user.id))
+    # Get all available locations, not just those with books
+    locations = location_service.get_all_locations()
     
     return jsonify([
         {

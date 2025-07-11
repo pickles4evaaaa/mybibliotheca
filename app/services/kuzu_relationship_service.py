@@ -26,7 +26,7 @@ class KuzuRelationshipService:
         self.user_repo = KuzuUserRepository()
         self.book_service = KuzuBookService()
     
-    def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any]) -> Book:
+    def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any], locations_data: Optional[List[Dict[str, Any]]] = None) -> Book:
         """Create an enriched Book object with user-specific attributes."""
         # Convert book data to Book object using the book service
         book = self.book_service._dict_to_book(book_data)
@@ -42,32 +42,41 @@ class KuzuRelationshipService:
         setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
         
-        # Add location information with proper name lookup
-        location_id = relationship_data.get('location_id')
-        if location_id:
-            # Set location_id for backward compatibility
-            setattr(book, 'location_id', location_id)
-            
-            # Look up the actual location name
-            location_name = location_id  # Default fallback
-            try:
-                # Get the proper connection for LocationService
-                from app.location_routes import get_location_service
-                location_service = get_location_service()
-                location = location_service.get_location(location_id)
-                if location:
-                    location_name = location.name
-                    debug_log(f"Resolved location {location_id} to name '{location_name}'", "RELATIONSHIP")
-                else:
-                    debug_log(f"Location {location_id} not found, using ID as name", "RELATIONSHIP")
-            except Exception as e:
-                debug_log(f"Error resolving location name for {location_id}: {e}", "RELATIONSHIP")
-            
-            # Set locations list for template compatibility with proper name
-            setattr(book, 'locations', [{'id': location_id, 'name': location_name}])
+        # Handle location information
+        locations = locations_data if locations_data else []
+        location_id = None
+        
+        # If we have locations from STORED_AT relationships, use them
+        if locations:
+            location_id = locations[0].get('id')  # Use first location for backward compatibility
+            debug_log(f"Using STORED_AT locations: {locations}", "RELATIONSHIP")
         else:
-            setattr(book, 'location_id', None)
-            setattr(book, 'locations', [])
+            # Fall back to old location_id field for backward compatibility
+            location_id = relationship_data.get('location_id')
+            if location_id:
+                # Look up the actual location name
+                location_name = location_id  # Default fallback
+                try:
+                    from app.infrastructure.kuzu_graph import get_kuzu_connection
+                    from app.location_service import LocationService
+                    
+                    kuzu_connection = get_kuzu_connection()
+                    location_service = LocationService(kuzu_connection.connect())
+                    location = location_service.get_location(location_id)
+                    if location:
+                        location_name = location.name
+                        debug_log(f"Resolved legacy location {location_id} to name '{location_name}'", "RELATIONSHIP")
+                    else:
+                        debug_log(f"Legacy location {location_id} not found, using ID as name", "RELATIONSHIP")
+                except Exception as e:
+                    debug_log(f"Error resolving legacy location name for {location_id}: {e}", "RELATIONSHIP")
+                
+                # Create locations list from legacy data
+                locations = [{'id': location_id, 'name': location_name}]
+        
+        # Set location attributes on book
+        setattr(book, 'location_id', location_id)
+        setattr(book, 'locations', locations)
         
         # Convert date strings back to date objects if needed
         start_date = getattr(book, 'start_date', None)
@@ -87,12 +96,14 @@ class KuzuRelationshipService:
         return book
     
     async def get_books_for_user(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:
-        """Get all books for a user with relationship data."""
+        """Get all books for a user with relationship data and locations."""
         try:
-            # Use Kuzu's query method to get user's books via OWNS relationships
+            # Enhanced query to also get location information via STORED_AT relationships
             query = """
             MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-            RETURN b, owns
+            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            WHERE stored.user_id = $user_id OR stored IS NULL
+            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
             SKIP $offset LIMIT $limit
             """
             
@@ -107,7 +118,12 @@ class KuzuRelationshipService:
                 if 'col_0' in result and 'col_1' in result:
                     book_data = result['col_0']
                     relationship_data = result['col_1'] or {}
-                    book = self._create_enriched_book(book_data, relationship_data)
+                    locations_data = result.get('col_2', []) or []
+                    
+                    # Filter out null/empty locations
+                    valid_locations = [loc for loc in locations_data if loc.get('id')]
+                    
+                    book = self._create_enriched_book(book_data, relationship_data, valid_locations)
                     books.append(book)
             
             return books
@@ -120,10 +136,12 @@ class KuzuRelationshipService:
     async def get_book_by_id_for_user(self, book_id: str, user_id: str) -> Optional[Book]:
         """Get a specific book for a user with relationship data."""
         try:
-            # Use Kuzu's query method to get the book with user relationship data
+            # Enhanced query to also get location information via STORED_AT relationships
             query = """
             MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
-            RETURN b, owns
+            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            WHERE stored.user_id = $user_id OR stored IS NULL
+            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
             """
             
             results = self.graph_storage.query(query, {
@@ -140,9 +158,13 @@ class KuzuRelationshipService:
                 
             book_data = result['col_0']
             relationship_data = result['col_1']
+            locations_data = result.get('col_2', []) or []
+            
+            # Filter out null/empty locations
+            valid_locations = [loc for loc in locations_data if loc.get('id')]
             
             # Create enriched book with user-specific attributes
-            book = self._create_enriched_book(book_data, relationship_data)
+            book = self._create_enriched_book(book_data, relationship_data, valid_locations)
             
             # Load custom metadata for this user-book combination
             custom_metadata = self._load_custom_metadata(relationship_data)
@@ -404,11 +426,13 @@ class KuzuRelationshipService:
     
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
         """Get a book by UID with user overlay data - sync wrapper."""
-        # Use similar query to get_all_books_with_user_overlay but for single book
+        # Enhanced query to also get location information via STORED_AT relationships
         query = """
         MATCH (b:Book {id: $book_id})
         OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
-        RETURN b, owns
+        OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+        WHERE stored.user_id = $user_id OR stored IS NULL
+        RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
         """
         
         results = self.graph_storage.query(query, {
@@ -425,9 +449,13 @@ class KuzuRelationshipService:
             
         book_data = result['col_0']
         relationship_data = result.get('col_1', {}) or {}
+        locations_data = result.get('col_2', []) or []
+        
+        # Filter out null/empty locations
+        valid_locations = [loc for loc in locations_data if loc.get('id')]
         
         # Create enriched book with user-specific attributes
-        book = self._create_enriched_book(book_data, relationship_data)
+        book = self._create_enriched_book(book_data, relationship_data, valid_locations)
         
         # Load custom metadata for this user-book combination
         custom_metadata = self._load_custom_metadata(relationship_data)

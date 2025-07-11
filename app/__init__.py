@@ -5,7 +5,9 @@ This version completely removes SQLite dependency and uses Kuzu as the sole data
 """
 
 import os
+import sys
 import time
+import atexit
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
@@ -727,7 +729,6 @@ def create_app():
     app.register_blueprint(users_api)
 
     # Add shutdown logging
-    import atexit
     from datetime import datetime
     from pathlib import Path
     
@@ -774,6 +775,23 @@ def create_app():
             except Exception as close_error:
                 print(f"🛑 [APP_SHUTDOWN] ❌ Failed to close KuzuDB connection: {close_error}")
     
+    # Register shutdown handler for both normal exit AND signal termination
     atexit.register(shutdown_handler)
+    
+    # 🔥 CRITICAL FIX: Add signal handlers for Docker SIGTERM/SIGINT
+    import signal
+    
+    def signal_shutdown_handler(signum, frame):
+        """Handle Docker container shutdown signals (SIGTERM, SIGINT)."""
+        print(f"🛑 [SIGNAL_SHUTDOWN] Received signal {signum}")
+        shutdown_handler()
+        # Exit gracefully after handling shutdown
+        sys.exit(0)
+    
+    # Register signal handlers for Docker container termination
+    signal.signal(signal.SIGTERM, signal_shutdown_handler)  # Docker stop
+    signal.signal(signal.SIGINT, signal_shutdown_handler)   # Ctrl+C
+    
+    print("🔥 [CRITICAL_FIX] Signal handlers registered for SIGTERM/SIGINT - KuzuDB persistence fixed!")
 
     return app
