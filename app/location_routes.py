@@ -84,8 +84,8 @@ def edit_location(location_id):
     location_service = get_location_service()
     location = location_service.get_location(location_id)
     
-    if not location or location.user_id != str(current_user.id):
-        flash('Location not found or access denied.', 'error')
+    if not location:
+        flash('Location not found.', 'error')
         return redirect(url_for('locations.manage_locations'))
     
     if request.method == 'POST':
@@ -129,8 +129,8 @@ def delete_location(location_id):
     location_service = get_location_service()
     location = location_service.get_location(location_id)
     
-    if not location or location.user_id != str(current_user.id):
-        flash('Location not found or access denied.', 'error')
+    if not location:
+        flash('Location not found.', 'error')
         return redirect(url_for('locations.manage_locations'))
     
     try:
@@ -170,8 +170,8 @@ def view_location(location_id):
     location_service = get_location_service()
     location = location_service.get_location(location_id)
     
-    if not location or location.user_id != str(current_user.id):
-        flash('Location not found or access denied.', 'error')
+    if not location:
+        flash('Location not found.', 'error')
         return redirect(url_for('locations.manage_locations'))
     
     # Get books at this location
@@ -212,11 +212,11 @@ def api_set_book_location():
         
         location_service = get_location_service()
         
-        # Verify the location belongs to the current user (if location_id is provided)
+        # Verify the location exists (if location_id is provided)
         if location_id:
             location = location_service.get_location(location_id)
-            if not location or location.user_id != str(current_user.id):
-                return jsonify({'success': False, 'error': 'Location not found or access denied'}), 403
+            if not location:
+                return jsonify({'success': False, 'error': 'Location not found'}), 404
         
         # Update the book's location
         result = location_service.set_book_location(book_id, location_id, str(current_user.id))
