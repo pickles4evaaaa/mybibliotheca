@@ -1,135 +1,132 @@
-<!-- onboarding/step2_site_config.html -->
-{% extends "base.html" %}
+{% extends "onboarding/base_onboarding.html" %}
 
-{% block title %}Site Configuration - Bibliotheca{% endblock %}
+{% block title %}Site Configuration - MyBibliotheca{% endblock %}
+
+{% block progress_width %}40%{% endblock %}
+
+{% block step_info %}Step 2 of 5: Site Configuration{% endblock %}
 
 {% block content %}
-<div class="container mt-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <!-- Progress Indicator -->
-            <div class="card mb-4">
-                <div class="card-body">
-                    <div class="progress mb-2">
-                        <div class="progress-bar" role="progressbar" style="width: 40%" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100"></div>
-                    </div>
-                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Site Configuration</small>
-                </div>
-            </div>
-            
-            <div class="card shadow">
-                <div class="card-header bg-info text-white">
-                    <h3 class="mb-0">
-                        <i class="fas fa-cog"></i> Step 2: Configure Your Library
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <p class="lead">Customize your Bibliotheca installation.</p>
-                    <p>These settings can be changed later in the admin panel.</p>
-                    
-                    <form method="POST">
-                        <div class="form-group">
-                            <label for="site_name" class="font-weight-bold">
-                                <i class="fas fa-home"></i> Site Name
-                            </label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="site_name" 
-                                   name="site_name" 
-                                   value="{{ current_config.get('site_name', 'MyBibliotheca') }}" 
-                                   placeholder="Enter your library name"
-                                   tabindex="1">
-                            <small class="form-text text-muted">This will appear in the header and page titles.</small>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="timezone" class="font-weight-bold">
-                                <i class="fas fa-clock"></i> Time Zone
-                            </label>
-                            <select class="form-control" id="timezone" name="timezone" tabindex="2">
-                                {% for tz in timezones %}
-                                <option value="{{ tz }}" {% if tz == current_config.get('timezone', 'UTC') %}selected{% endif %}>
-                                    {{ tz }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                            <small class="form-text text-muted">Used for displaying dates and reading logs.</small>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="location" class="form-label">
-                                <i class="fas fa-map-marker-alt"></i> Default Location <span class="text-muted">(Optional)</span>
-                            </label>
-                            <input type="text" 
-                                   id="location" 
-                                   name="location" 
-                                   class="form-control" 
-                                   value="{{ current_config.get('location', '') }}" 
-                                   placeholder="e.g., New York, NY"
-                                   tabindex="3">
-                            <small class="form-text text-muted">Set a default location for your books and reading logs</small>
-                        </div>
-                        
-                        <div class="form-group">
-                            <div class="custom-control custom-checkbox">
-                                <input type="checkbox" 
-                                       class="custom-control-input" 
-                                       id="location_set_as_default" 
-                                       name="location_set_as_default"
-                                       {% if current_config.get('location_set_as_default') %}checked{% endif %}
-                                       tabindex="4">
-                                <label class="custom-control-label" for="location_set_as_default">
-                                    <strong>Set as default location for all new/migrated/imported books</strong>
-                                </label>
-                            </div>
-                            <small class="form-text text-muted">
-                                If enabled, this location will be automatically assigned to all books added to your library
-                            </small>
-                        </div>
-                        
-                        <div class="d-flex justify-content-between mt-4">
-                            <a href="{{ url_for('onboarding.step', step_num=1) }}" class="btn btn-outline-secondary" tabindex="6">
-                                <i class="fas fa-arrow-left"></i> Back
-                            </a>
-                            <button type="submit" class="btn btn-primary btn-lg px-4" tabindex="5">
-                                <i class="fas fa-arrow-right"></i> Continue to Data Options
-                            </button>
-                        </div>
-                    </form>
-                </div>
+<div class="form-header">
+    <div class="icon-circle" style="background: linear-gradient(135deg, #17a2b8, #138496);">
+        <i class="bi bi-gear-fill"></i>
+    </div>
+    <h2>Customize Your Installation</h2>
+    <p>These settings can be changed later in the admin panel.</p>
+</div>
+
+<form method="POST" class="needs-validation" novalidate>
+    <!-- CSRF Token -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    
+    <!-- Site Name Field -->
+    <div class="form-group">
+        <label for="site_name" class="form-label">
+            <i class="bi bi-house-heart"></i>
+            Site Name
+        </label>
+        <input type="text" 
+               id="site_name" 
+               name="site_name" 
+               class="form-control" 
+               value="{{ current_config.get('site_name', 'MyBibliotheca') }}" 
+               placeholder="e.g., John's Library, Family Library"
+               tabindex="1">
+        <div class="form-text">This will appear as the title of your library</div>
+    </div>
+    
+    <!-- Timezone Field -->
+    <div class="form-group">
+        <label for="timezone" class="form-label">
+            <i class="bi bi-clock me-1"></i>
+            Timezone
+        </label>
+        <select id="timezone" 
+                name="timezone" 
+                class="form-control" 
+                tabindex="2">
+            {% for tz in timezones %}
+                <option value="{{ tz }}" 
+                        {% if tz == current_config.get('timezone', 'UTC') %}selected{% endif %}>
+                    {{ tz }}
+                </option>
+            {% endfor %}
+        </select>
+        <div class="form-text">Used for displaying dates and reading logs</div>
+    </div>
+    
+    <!-- Default Location Field -->
+    <div class="form-group">
+        <label for="location" class="form-label">
+            <i class="bi bi-geo-alt me-1"></i>
+            Default Location 
+            <span class="badge bg-secondary ms-1" style="font-size: 0.7rem;">Optional</span>
+        </label>
+        <input type="text" 
+               id="location" 
+               name="location" 
+               class="form-control" 
+               value="{{ current_config.get('location', '') }}" 
+               placeholder="e.g., Home Library, Study Room"
+               tabindex="3">
+        <div class="form-text">Set a default location for your books and reading logs</div>
+    </div>
+    
+    <!-- Location Auto-assign Checkbox -->
+    <div class="form-group">
+        <div class="form-check">
+            <input type="checkbox" 
+                   class="form-check-input" 
+                   id="location_set_as_default" 
+                   name="location_set_as_default"
+                   {% if current_config.get('location_set_as_default') %}checked{% endif %}
+                   tabindex="4">
+            <label class="form-check-label" for="location_set_as_default">
+                Auto-assign location to new books
+            </label>
+            <div class="form-text">
+                If enabled, this location will be automatically assigned to all books added to your library
             </div>
         </div>
     </div>
-</div>
+    
+    <!-- Navigation Buttons -->
+    <div class="navigation-buttons">
+        <a href="{{ url_for('onboarding.step', step_num=1) }}" 
+           class="btn btn-outline-secondary" 
+           tabindex="6">
+            <i class="bi bi-arrow-left me-2"></i>Back
+        </a>
+        <button type="submit" 
+                class="btn btn-primary" 
+                tabindex="5">
+            Continue to Data Options<i class="bi bi-arrow-right ms-2"></i>
+        </button>
+    </div>
+</form>
+{% endblock %}
 
+{% block scripts %}
 <script>
 // Auto-detect timezone
 document.addEventListener('DOMContentLoaded', function() {
     const timezoneSelect = document.getElementById('timezone');
-    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const currentValue = timezoneSelect.value;
     
-    // Try to select user's timezone
-    for (let option of timezoneSelect.options) {
-        if (option.value === userTimezone) {
-            option.selected = true;
-            break;
+    // Only auto-detect if no timezone is already set
+    if (!currentValue || currentValue === 'UTC') {
+        try {
+            const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (userTimezone) {
+                const option = timezoneSelect.querySelector(`option[value="${userTimezone}"]`);
+                if (option) {
+                    option.selected = true;
+                }
+            }
+        } catch (e) {
+            console.log('Timezone auto-detection not supported');
         }
     }
 });
-
-// Toggle location fields based on checkbox
-const enableLocationElement = document.getElementById('enable_location_features');
-if (enableLocationElement) {
-    enableLocationElement.addEventListener('change', function() {
-        const locationFields = document.querySelectorAll('#location, #location_set_as_default');
-        locationFields.forEach(field => {
-            field.disabled = !this.checked;
-            if (!this.checked) {
-                field.value = '';
-                field.checked = false;
-            }
-        });
-    });
-}
 </script>
 {% endblock %}

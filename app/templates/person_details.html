@@ -113,7 +113,17 @@
                 <div class="card">
                     <div class="card-header">
                         <h4 class="h5 mb-0">
-                            <i class="bi bi-{{ 'book' if contrib_type == 'authored' else 'mic' if contrib_type == 'narrated' else 'pencil' if contrib_type == 'edited' else 'journal' }}"></i>
+                            <i class="bi bi-{{ 
+                                'book' if contrib_type == 'authored' or contrib_type == 'co_authored' 
+                                else 'mic' if contrib_type == 'narrated' 
+                                else 'pencil' if contrib_type == 'edited' 
+                                else 'translate' if contrib_type == 'translated'
+                                else 'palette' if contrib_type == 'illustrated'
+                                else 'chat-quote' if contrib_type in ['gave_foreword', 'gave_introduction', 'gave_afterword']
+                                else 'collection' if contrib_type == 'compiled'
+                                else 'person-badge' if contrib_type == 'ghost_wrote'
+                                else 'journal' 
+                            }}"></i>
                             {{ contrib_type.replace('_', ' ').title() }} ({{ books | length }})
                         </h4>
                     </div>

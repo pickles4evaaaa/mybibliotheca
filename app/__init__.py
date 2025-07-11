@@ -637,8 +637,16 @@ def create_app():
         import os
         from flask import send_from_directory
         # Use the explicit static folder path since we disabled Flask's static handling
-        # Point to the volume-mounted static directory
-        static_dir = '/app/static'
+        
+        # Check if we're in Docker (production) or local development
+        docker_static_dir = '/app/static'
+        local_static_dir = os.path.join(os.path.dirname(__file__), 'static')
+        
+        if os.path.exists(docker_static_dir):
+            static_dir = docker_static_dir
+        else:
+            static_dir = local_static_dir
+            
         print(f"🔧 [STATIC] Serving {filename} from {static_dir}")
         return send_from_directory(static_dir, filename)
 

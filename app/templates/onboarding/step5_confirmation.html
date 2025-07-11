@@ -1,228 +1,599 @@
-<!-- onboarding/step5_confirmation.html -->
-{% extends "base.html" %}
+{% extends "onboarding/base_onboarding.html" %}
 
-{% block title %}Confirmation - Bibliotheca{% endblock %}
+{% block title %}Setup Confirmation - MyBibliotheca{% endblock %}
+
+{% block progress_width %}100%{% endblock %}
+
+{% block step_info %}Step 5 of 5: Confirmation{% endblock %}
+
+{% block extra_styles %}
+<style>
+/* Override container width for step 5 to be more responsive */
+.onboarding-container {
+    max-width: 900px;
+}
+
+@media (max-width: 992px) {
+    .onboarding-container {
+        max-width: 750px;
+    }
+}
+
+@media (max-width: 768px) {
+    .onboarding-container {
+        max-width: 600px;
+    }
+}
+
+@media (max-width: 576px) {
+    .onboarding-container {
+        max-width: 100%;
+        margin: 0 0.5rem;
+    }
+}
+
+/* Configuration sections layout */
+.config-sections-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+@media (min-width: 768px) {
+    .config-sections-container {
+        grid-template-columns: 1fr 1fr;
+    }
+    
+    .config-section.full-width {
+        grid-column: 1 / -1;
+    }
+}
+
+.config-section {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 1.5rem;
+    border-left: 4px solid #667eea;
+    height: fit-content;
+}
+
+.config-title {
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.1rem;
+}
+
+.config-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #e9ecef;
+    gap: 1rem;
+}
+
+.config-item:last-child {
+    border-bottom: none;
+}
+
+.config-label {
+    color: #666;
+    font-weight: 500;
+    flex-shrink: 0;
+    min-width: 120px;
+}
+
+.config-value {
+    color: #333;
+    font-weight: 600;
+    text-align: right;
+    word-break: break-word;
+}
+
+/* Mobile adjustments for config items */
+@media (max-width: 576px) {
+    .config-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+    
+    .config-label {
+        min-width: unset;
+    }
+    
+    .config-value {
+        text-align: left;
+    }
+}
+
+.final-notes {
+    background: linear-gradient(135deg, #f8f9ff 0%, #e3f2fd 50%, #f0f4ff 100%);
+    border: 1px solid #667eea;
+    border-radius: 16px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.final-notes::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
+}
+
+.final-notes h5 {
+    color: #4f46e5;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.final-notes ul {
+    margin-bottom: 0;
+    color: #4338ca;
+    padding-left: 1.25rem;
+}
+
+.final-notes li {
+    margin-bottom: 0.5rem;
+    line-height: 1.6;
+    font-weight: 500;
+}
+
+/* Navigation buttons responsive layout */
+.navigation-buttons {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+@media (max-width: 576px) {
+    .navigation-buttons {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .navigation-buttons .btn-outline-secondary,
+    .navigation-buttons .create-button {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+.create-button {
+    /* Modern gradient with more contemporary colors */
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+    border: none;
+    border-radius: 16px;
+    padding: 1.25rem 2.5rem;
+    color: white;
+    font-weight: 700;
+    font-size: 1.1rem;
+    letter-spacing: 0.025em;
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    text-decoration: none;
+    min-width: 220px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+}
+
+.create-button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.create-button:hover::before {
+    left: 100%;
+}
+
+.create-button:hover:not(:disabled) {
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.5);
+    color: white;
+    text-decoration: none;
+}
+
+.create-button:active:not(:disabled) {
+    transform: translateY(-1px) scale(1.01);
+    transition-duration: 0.1s;
+}
+
+.create-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 2px 10px rgba(102, 126, 234, 0.2);
+}
+
+.create-button i {
+    font-size: 1.3rem;
+    transition: transform 0.3s ease;
+}
+
+.create-button:hover:not(:disabled) i {
+    transform: scale(1.1);
+}
+
+/* Enhanced mobile responsiveness */
+@media (max-width: 768px) {
+    .create-button {
+        padding: 1rem 2rem;
+        font-size: 1rem;
+        min-width: 200px;
+        border-radius: 14px;
+    }
+}
+
+@media (max-width: 576px) {
+    .create-button {
+        padding: 1rem 1.5rem;
+        font-size: 0.95rem;
+        min-width: 180px;
+        border-radius: 12px;
+        width: 100%;
+    }
+}
+
+/* Loading state styling */
+.create-button.loading {
+    background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+    cursor: not-allowed;
+}
+
+.create-button.loading i {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Form header improvements */
+.form-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.form-header h2 {
+    font-size: 1.75rem;
+    margin-bottom: 0.5rem;
+}
+
+@media (min-width: 768px) {
+    .form-header h2 {
+        font-size: 2rem;
+    }
+}
+
+.icon-circle {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    margin: 0 auto 1rem auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (min-width: 768px) {
+    .icon-circle {
+        width: 80px;
+        height: 80px;
+    }
+    
+    .icon-circle i {
+        font-size: 2rem;
+    }
+}
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="container mt-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <!-- Progress Indicator -->
-            <div class="card mb-4">
-                <div class="card-body">
-                    <div class="progress mb-2">
-                        <div class="progress-bar" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
-                    </div>
-                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Confirmation</small>
-                </div>
-            </div>
-            
-            <div class="card shadow">
-                <div class="card-header bg-success text-white">
-                    <h3 class="mb-0">
-                        <i class="fas fa-check-double"></i> Step 5: Ready to Create Your Library
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <p class="lead">Please review your configuration before we set up your library.</p>
-                    
-                    <!-- Admin Account Summary -->
-                    <div class="card border-primary mb-3">
-                        <div class="card-header bg-primary text-white">
-                            <h6 class="mb-0"><i class="fas fa-user-shield"></i> Admin Account</h6>
-                        </div>
-                        <div class="card-body">
-                            <p class="mb-1"><strong>Username:</strong> {{ onboarding_data.admin.username }}</p>
-                            <p class="mb-0"><strong>Email:</strong> {{ onboarding_data.admin.email }}</p>
-                        </div>
-                    </div>
-                    
-                    <!-- Site Configuration Summary -->
-                    <div class="card border-info mb-3">
-                        <div class="card-header bg-info text-white">
-                            <h6 class="mb-0"><i class="fas fa-cog"></i> Site Configuration</h6>
-                        </div>
-                        <div class="card-body">
-                            {% set site_config = onboarding_data.site_config %}
-                            <p class="mb-1"><strong>Site Name:</strong> {{ site_config.site_name }}</p>
-                            <p class="mb-1"><strong>Time Zone:</strong> {{ site_config.timezone }}</p>
-                            {% if site_config.location %}
-                            <p class="mb-1"><strong>Default Location:</strong> {{ site_config.location }}</p>
-                            <p class="mb-0"><strong>Set as default for new books:</strong> {{ 'Yes' if site_config.location_set_as_default else 'No' }}</p>
-                            {% else %}
-                            <p class="mb-0"><em>No default location set</em></p>
-                            {% endif %}
-                        </div>
-                    </div>
-                    
-                    <!-- Data Configuration Summary -->
-                    <div class="card border-warning mb-4">
-                        <div class="card-header bg-warning text-dark">
-                            <h6 class="mb-0"><i class="fas fa-database"></i> Data Configuration</h6>
-                        </div>
-                        <div class="card-body">
-                            {% set data_options = onboarding_data.data_options %}
-                            {% if data_options.option == 'fresh' %}
-                                <p class="mb-0">
-                                    <i class="fas fa-plus-circle text-success"></i>
-                                    <strong>Starting Fresh:</strong> Empty library ready for new books
-                                </p>
-                            {% elif data_options.option == 'migrate' %}
-                                {% set db_analysis = data_options.database_analysis %}
-                                <p class="mb-1">
-                                    <i class="fas fa-database text-warning"></i>
-                                    <strong>Migrating Database:</strong> {{ db_analysis.name }}
-                                </p>
-                                <p class="mb-1">
-                                    <strong>Type:</strong> {{ 'Multi-user' if db_analysis.version == 'v2_multi_user' else 'Single-user' }}
-                                </p>
-                                <p class="mb-1">
-                                    <strong>Books to Import:</strong> {{ db_analysis.analysis.book_count }}
-                                </p>
-                                {% if db_analysis.analysis.user_count %}
-                                <p class="mb-1">
-                                    <strong>Users to Import:</strong> {{ db_analysis.analysis.user_count }}
-                                </p>
-                                {% endif %}
-                                {% if onboarding_data.migration_config and onboarding_data.migration_config.admin_user_mapping %}
-                                <p class="mb-0">
-                                    <strong>Admin Account Mapping:</strong> User ID {{ onboarding_data.migration_config.admin_user_mapping }}
-                                </p>
-                                {% endif %}
-                            {% elif data_options.option == 'import' %}
-                                <p class="mb-0">
-                                    <i class="fas fa-file-import text-info"></i>
-                                    <strong>Importing File:</strong> {{ data_options.import_file }}
-                                </p>
-                            {% endif %}
-                        </div>
-                    </div>
-                    
-                    <!-- Execution Confirmation -->
-                    <div class="alert alert-warning">
-                        <h5><i class="fas fa-exclamation-triangle"></i> Important Notes</h5>
-                        <ul class="mb-0">
-                            {% if data_options.option == 'migrate' %}
-                            <li>We'll create a complete backup of your existing database before migration</li>
-                            <li>Your original database will remain unchanged</li>
-                            <li>If something goes wrong, we can restore from the backup</li>
-                            {% endif %}
-                            <li>After setup, you'll be automatically logged in as the admin user</li>
-                            <li>You can modify these settings later in the admin panel</li>
-                        </ul>
-                    </div>
-                    
-                    <form method="POST" onsubmit="return confirmSetup()">
-                        <div class="d-flex justify-content-between mt-4">
-                            {% if onboarding_data.data_options.option in ['migrate', 'import'] %}
-                            <a href="{{ url_for('onboarding.step', step_num=4) }}" class="btn btn-outline-secondary">
-                                <i class="fas fa-arrow-left"></i> Back
-                            </a>
-                            {% else %}
-                            <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
-                                <i class="fas fa-arrow-left"></i> Back
-                            </a>
-                            {% endif %}
-                            <button type="submit" name="action" value="execute" class="btn btn-success btn-lg px-5">
-                                <i class="fas fa-rocket"></i> Create My Library!
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
+<div class="form-header">
+    <div class="icon-circle" style="background: linear-gradient(135deg, #667eea, #764ba2, #f093fb);">
+        <i class="bi bi-stars"></i>
+    </div>
+    <h2>Ready to Launch Your Library</h2>
+    <p>Review your configuration and launch your personalized book collection.</p>
+</div>
+
+<!-- Configuration Summary -->
+<div class="config-sections-container">
+    <div class="config-section">
+        <div class="config-title">
+            <i class="bi bi-person-gear"></i>
+            Administrator Account
         </div>
+        <div class="config-item">
+            <span class="config-label">Username:</span>
+            <span class="config-value">{{ onboarding_data.admin.username }}</span>
+        </div>
+        <div class="config-item">
+            <span class="config-label">Email:</span>
+            <span class="config-value">{{ onboarding_data.admin.email }}</span>
+        </div>
+    </div>
+
+    <div class="config-section">
+        <div class="config-title">
+            <i class="bi bi-gear"></i>
+            Site Configuration
+        </div>
+        <div class="config-item">
+            <span class="config-label">Site Name:</span>
+            <span class="config-value">{{ onboarding_data.site_config.site_name }}</span>
+        </div>
+        <div class="config-item">
+            <span class="config-label">Timezone:</span>
+            <span class="config-value">{{ onboarding_data.site_config.timezone }}</span>
+        </div>
+        {% if onboarding_data.site_config.location %}
+        <div class="config-item">
+            <span class="config-label">Default Location:</span>
+            <span class="config-value">{{ onboarding_data.site_config.location }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="config-section full-width">
+        <div class="config-title">
+            <i class="bi bi-database"></i>
+            Data Setup
+        </div>
+        <div class="config-item">
+            <span class="config-label">Option:</span>
+            <span class="config-value">
+                {% if onboarding_data.data_options.option == 'fresh' %}
+                    Fresh Start - Empty Library
+                {% elif onboarding_data.data_options.option == 'migrate' %}
+                    Database Migration
+                {% elif onboarding_data.data_options.option == 'import' %}
+                    Import Books from File
+                {% endif %}
+            </span>
+        </div>
+        
+        {% if onboarding_data.data_options.option == 'migrate' and onboarding_data.data_options.migration_source %}
+        <div class="config-item">
+            <span class="config-label">Source Database:</span>
+            <span class="config-value">{{ onboarding_data.data_options.migration_source | basename }}</span>
+        </div>
+        {% endif %}
+        
+        {% if onboarding_data.data_options.option == 'import' and onboarding_data.data_options.import_file %}
+        <div class="config-item">
+            <span class="config-label">Import File:</span>
+            <span class="config-value">{{ onboarding_data.data_options.import_file | basename }}</span>
+        </div>
+        {% endif %}
     </div>
 </div>
 
+<!-- Final Notes -->
+<div class="final-notes">
+    <h5>
+        <i class="bi bi-info-circle"></i>
+        Important Notes
+    </h5>
+    <ul>
+        <li>Your database will be created and configured based on these settings</li>
+        <li>After setup, you'll be automatically logged in as the admin user</li>
+        <li>You can modify these settings later in the admin panel</li>
+        {% if onboarding_data.data_options.option in ['migrate', 'import'] %}
+        <li>Data processing may take a few moments depending on the size of your collection</li>
+        {% endif %}
+    </ul>
+</div>
+
+<form method="POST" action="{{ url_for('onboarding.step', step_num=5) }}">
+    <!-- CSRF Token -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    
+    <div class="navigation-buttons">
+        {% if onboarding_data.data_options.option in ['migrate', 'import'] %}
+        <a href="{{ url_for('onboarding.step', step_num=4) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        {% else %}
+        <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        {% endif %}
+        <button type="submit" name="action" value="execute" class="create-button" id="create-library-btn"
+                onclick="return confirmSetupAndDisable(this)">
+            <i class="bi bi-stars"></i> Launch My Library
+        </button>
+    </div>
+</form>
 {% endblock %}
 
 {% block scripts %}
 <script>
-window.onboardingData = {
-    dataOption: {{ onboarding_data.data_options.option|tojson }},
-    bookCount: {{ (onboarding_data.data_options.database_analysis.analysis.book_count|default(0))|tojson }}
-};
-
-function confirmSetup() {
-    const dataOption = window.onboardingData.dataOption;
-    let message = 'Ready to create your library?\n\nThis will:\n';
+function confirmSetupAndDisable(button) {
+    console.log('🚨🚨🚨 confirmSetupAndDisable called 🚨🚨🚨');
     
-    if (dataOption === 'migrate') {
-        const bookCount = window.onboardingData.bookCount;
-        message += '• Create your admin account\n';
-        message += '• Set up your site configuration\n';
-        message += '• Create a backup of your existing database\n';
-        message += '• Import ' + bookCount + ' books from your database\n';
-        message += '• Set up all user accounts and relationships\n\n';
-        message += 'This process may take a few minutes.';
-    } else if (dataOption === 'import') {
-        message += '• Create your admin account\n';
-        message += '• Set up your site configuration\n';
-        message += '• Import books from your CSV file\n\n';
-        message += 'This process may take a few minutes.';
+    // Modern confirmation with better UX
+    const confirmed = confirm('🚀 Ready to create your library?\n\nThis will finalize the setup process and create your personal book collection.');
+    console.log('🚨 User confirmed:', confirmed);
+    
+    if (confirmed) {
+        console.log('🚨 User confirmed - setting up UI changes...');
+        
+        // Add loading class for visual feedback
+        button.classList.add('loading');
+        button.disabled = true;
+        
+        // Update button with animated loading state
+        button.innerHTML = '<i class="bi bi-hourglass-split"></i> Launching Your Library...';
+        console.log('🚨 Button disabled and text changed');
+        
+        // Add subtle haptic feedback if supported
+        if (navigator.vibrate) {
+            navigator.vibrate(50);
+        }
+        
+        // Show progress indicator
+        const progressText = document.createElement('div');
+        progressText.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(102, 126, 234, 0.9);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            font-weight: 600;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            animation: slideIn 0.3s ease-out;
+        `;
+        progressText.innerHTML = '<i class="bi bi-gear"></i> Setting up your library...';
+        document.body.appendChild(progressText);
+        
+        // Add CSS animation for progress indicator
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        console.log('🚨 About to allow form submission - returning true');
+        
+        // Add a small delay to ensure UI updates are visible
+        setTimeout(() => {
+            console.log('🚨🚨🚨 MANUALLY TRIGGERING FORM SUBMIT WITH ACTION FIELD 🚨🚨🚨');
+            const form = button.closest('form');
+            if (form) {
+                console.log('🚨 Form found, adding action field and triggering submit()');
+                console.log('🚨 Form action:', form.action);
+                console.log('🚨 Form method:', form.method);
+                console.log('🚨 Form elements count:', form.elements.length);
+                
+                // Create a hidden input for the action value since form.submit() bypasses button values
+                const actionInput = document.createElement('input');
+                actionInput.type = 'hidden';
+                actionInput.name = 'action';
+                actionInput.value = 'execute';
+                form.appendChild(actionInput);
+                
+                console.log('🚨 Added action=execute hidden input to form');
+                
+                // Log all form data before submission
+                const formData = new FormData(form);
+                console.log('🚨 Form data before manual submit:');
+                for (let [key, value] of formData.entries()) {
+                    console.log(`  ${key}: ${value}`);
+                }
+                
+                form.submit();
+            } else {
+                console.log('🚨 ERROR: Form not found!');
+            }
+        }, 100);
+        
+        // Return false to prevent the default form submission (we'll handle it manually)
+        return false;
     } else {
-        message += '• Create your admin account\n';
-        message += '• Set up your site configuration\n';
-        message += '• Create an empty library ready for new books\n\n';
-        message += 'You\'ll be ready to start adding books immediately!';
+        console.log('🚨 User cancelled - preventing form submission');
+        // Prevent form submission
+        return false;
     }
-    
-    return confirm(message);
 }
 
-// Add loading state when form is submitted
+// Legacy function for backward compatibility
+function confirmSetup() {
+    return confirmSetupAndDisable(document.querySelector('#create-library-btn'));
+}
+
+// Add event listener as backup
 document.addEventListener('DOMContentLoaded', function() {
-    const form = document.querySelector('form');
-    if (form) {
+    const form = document.querySelector('form[method="POST"]');
+    const button = document.querySelector('#create-library-btn');
+    
+    if (form && button) {
+        console.log('Form and button found, adding event handlers');
+        console.log('🔍 Form details:', {
+            action: form.action,
+            method: form.method,
+            target: form.target,
+            enctype: form.enctype
+        });
+        
+        button.addEventListener('click', function(e) {
+            console.log('🚨 Button clicked - DETAILED INFO:');
+            console.log('  - Event target:', e.target);
+            console.log('  - Event type:', e.type);
+            console.log('  - Default prevented:', e.defaultPrevented);
+            console.log('  - Button disabled:', button.disabled);
+            console.log('  - Button type:', button.type);
+            console.log('  - Button name:', button.name);
+            console.log('  - Button value:', button.value);
+            console.log('  - Form data:', new FormData(form));
+            console.log('  - CSRF token:', document.querySelector('input[name="csrf_token"]')?.value);
+        });
+        
         form.addEventListener('submit', function(e) {
-            if (confirmSetup()) {
-                const button = this.querySelector('button[type="submit"]');
-                if (button) {
-                    button.disabled = true;
-                    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Setting up your library...';
-                    
-                    // Show detailed progress indicator
-                    const progressDiv = document.createElement('div');
-                    progressDiv.className = 'alert alert-info mt-3';
-                    progressDiv.id = 'setup-progress';
-                    progressDiv.innerHTML = `
-                        <h6><i class="fas fa-hourglass-half"></i> Setup in Progress</h6>
-                        <div id="progress-steps">
-                            <p class="mb-2" id="step-1">✅ Creating admin account...</p>
-                            <p class="mb-2" id="step-2">⏳ Configuring site settings...</p>
-                            <p class="mb-2" id="step-3">⏳ Creating locations...</p>
-                            <p class="mb-2" id="step-4">⏳ Setting up custom fields...</p>
-                            <p class="mb-2" id="step-5">⏳ Importing your books...</p>
-                        </div>
-                        <div class="progress mt-2">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
-                                 role="progressbar" style="width: 20%" id="progress-bar"></div>
-                        </div>
-                        <small class="text-muted mt-1">This process may take several minutes depending on the size of your library.</small>
-                    `;
-                    this.appendChild(progressDiv);
-                    
-                    // Simulate progress steps (since we can't get real-time feedback from the backend)
-                    setTimeout(() => {
-                        document.getElementById('step-2').innerHTML = '✅ Configuring site settings...';
-                        document.getElementById('progress-bar').style.width = '40%';
-                    }, 2000);
-                    
-                    setTimeout(() => {
-                        document.getElementById('step-3').innerHTML = '✅ Creating locations...';
-                        document.getElementById('progress-bar').style.width = '60%';
-                    }, 4000);
-                    
-                    setTimeout(() => {
-                        document.getElementById('step-4').innerHTML = '✅ Setting up custom fields...';
-                        document.getElementById('progress-bar').style.width = '80%';
-                        document.getElementById('step-5').innerHTML = '⏳ Importing your books... (this may take a while)';
-                    }, 6000);
-                }
-            } else {
-                e.preventDefault();
+            console.log('🚨🚨🚨 FORM SUBMIT EVENT TRIGGERED! 🚨🚨🚨');
+            console.log('  - Event type:', e.type);
+            console.log('  - Event target:', e.target);
+            console.log('  - Default prevented:', e.defaultPrevented);
+            console.log('  - Form action:', form.action);
+            console.log('  - Form method:', form.method);
+            console.log('  - Form valid:', form.checkValidity());
+            console.log('  - Button action value:', button.value);
+            console.log('  - All form data:');
+            const formData = new FormData(form);
+            for (let [key, value] of formData.entries()) {
+                console.log(`    ${key}: ${value}`);
             }
         });
+        
+        // Add beforeunload listener to catch any navigation
+        window.addEventListener('beforeunload', function(e) {
+            console.log('🚨 Page is about to unload/navigate');
+        });
+        
+        // Add error listener
+        window.addEventListener('error', function(e) {
+            console.log('🚨 JavaScript error:', e.error);
+        });
+        
+    } else {
+        console.log('🚨 ERROR: Form or button not found!');
+        console.log('  - Form:', form);
+        console.log('  - Button:', button);
     }
 });
 </script>

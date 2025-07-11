@@ -12,6 +12,7 @@ from datetime import datetime
 
 from ..domain.models import Book, Category
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
+from ..infrastructure.kuzu_graph import get_graph_storage
 from .kuzu_book_service import KuzuBookService
 from .kuzu_category_service import KuzuCategoryService
 from .kuzu_person_service import KuzuPersonService
@@ -124,7 +125,52 @@ class KuzuServiceFacade:
             
             if success:
                 # Check if any other users have this book
-                # If not, we could delete the book entirely, but for safety we'll keep it
+                query = """
+                MATCH (u:User)-[owns:OWNS]->(b:Book {id: $book_id})
+                RETURN count(u) as owner_count
+                """
+                
+                results = self.graph_storage.query(query, {"book_id": book_id})
+                owner_count = 0
+                if results:
+                    # Use proper result key based on query structure
+                    result = results[0]
+                    if 'owner_count' in result:
+                        owner_count = result['owner_count']
+                    elif 'col_0' in result:
+                        owner_count = result['col_0'] 
+                    else:
+                        # Fallback: check all possible result keys
+                        for key, value in result.items():
+                            if isinstance(value, int):
+                                owner_count = value
+                                break
+                
+                print(f"🔍 [FACADE] Book {book_id} has {owner_count} remaining owners")
+                
+                if owner_count == 0:
+                    # No other users own this book, safe to delete the book node entirely
+                    print(f"🗑️ [FACADE] No other owners, deleting book node {book_id}")
+                    book_delete_success = self.book_service.delete_book_sync(book_id)
+                    if book_delete_success:
+                        print(f"✅ [FACADE] Deleted book node {book_id} from database")
+                        
+                        # Clean up any orphaned OWNS relationships that might reference this book
+                        print(f"🧹 [FACADE] Cleaning up orphaned relationships for book {book_id}")
+                        cleanup_query = """
+                        MATCH ()-[owns:OWNS]->(:Book {id: $book_id})
+                        DELETE owns
+                        """
+                        try:
+                            self.graph_storage.query(cleanup_query, {"book_id": book_id})
+                            print(f"✅ [FACADE] Cleaned up orphaned relationships for book {book_id}")
+                        except Exception as cleanup_error:
+                            print(f"⚠️ [FACADE] Error cleaning up relationships: {cleanup_error}")
+                    else:
+                        print(f"⚠️ [FACADE] Failed to delete book node {book_id}, but relationship removed")
+                else:
+                    print(f"✅ [FACADE] Book {book_id} kept (owned by {owner_count} other users)")
+                
                 print(f"✅ [FACADE] Removed book {book_id} from user {user_id} library")
             
             return success

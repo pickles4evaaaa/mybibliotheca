@@ -292,7 +292,7 @@ class KuzuCategoryService:
                 'color': category.color,
                 'icon': category.icon,
                 'aliases': category.aliases or [],
-                'updated_at': datetime.utcnow()
+                'updated_at': datetime.utcnow().isoformat()
             }
             
             # Update using Kuzu query

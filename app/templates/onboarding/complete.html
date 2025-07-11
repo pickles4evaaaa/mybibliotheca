@@ -1,95 +1,119 @@
-<!-- onboarding/complete.html -->
-{% extends "base.html" %}
+{% extends "onboarding/base_onboarding.html" %}
 
-{% block title %}Welcome to Bibliotheca!{% endblock %}
+{% block title %}Setup Complete - MyBibliotheca{% endblock %}
 
-{% block content %}
-<div class="container mt-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <div class="card shadow border-success">
-                <div class="card-header bg-success text-white">
-                    <h3 class="mb-0">
-                        <i class="fas fa-check-circle"></i> Welcome to Your Library!
-                    </h3>
-                </div>
-                <div class="card-body text-center">
-                    <div class="mb-4">
-                        <i class="fas fa-book-open fa-5x text-success mb-3"></i>
-                        <h2>Setup Complete!</h2>
-                        <p class="lead">Your Bibliotheca library is now ready to use.</p>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-4 mb-3">
-                            <div class="card bg-light">
-                                <div class="card-body">
-                                    <i class="fas fa-plus-circle fa-2x text-primary mb-2"></i>
-                                    <h5>Add Books</h5>
-                                    <p class="small text-muted">Start building your collection by adding books manually or through search.</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-4 mb-3">
-                            <div class="card bg-light">
-                                <div class="card-body">
-                                    <i class="fas fa-chart-line fa-2x text-info mb-2"></i>
-                                    <h5>Track Reading</h5>
-                                    <p class="small text-muted">Log your reading progress and maintain your reading history.</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-4 mb-3">
-                            <div class="card bg-light">
-                                <div class="card-body">
-                                    <i class="fas fa-cogs fa-2x text-warning mb-2"></i>
-                                    <h5>Customize</h5>
-                                    <p class="small text-muted">Adjust settings and configure your library to your preferences.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="mt-4">
-                        <a href="{{ url_for('main.index') }}" class="btn btn-primary btn-lg px-5 mr-3">
-                            <i class="fas fa-home"></i> Go to My Library
-                        </a>
-                        <a href="{{ url_for('main.index') }}#add-book" class="btn btn-outline-success btn-lg">
-                            <i class="fas fa-plus"></i> Add First Book
-                        </a>
-                    </div>
-                    
-                    <div class="mt-4 pt-3 border-top">
-                        <h5>Quick Tips:</h5>
-                        <div class="text-left">
-                            <ul class="list-unstyled">
-                                <li><i class="fas fa-lightbulb text-warning"></i> Use the search feature to quickly find and add books</li>
-                                <li><i class="fas fa-lightbulb text-warning"></i> Set reading goals and track your progress</li>
-                                <li><i class="fas fa-lightbulb text-warning"></i> Explore the admin panel to customize your experience</li>
-                                <li><i class="fas fa-lightbulb text-warning"></i> Import more books anytime through the admin panel</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+{% block card_content %}
+<!-- Success Header -->
+<div class="progress-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+    <h1>
+        <i class="bi bi-check-circle-fill"></i>
+        Welcome to MyBibliotheca!
+    </h1>
+    <div style="margin-top: 1rem; font-size: 1.1rem; opacity: 0.9;">
+        Your personal library is ready to use
     </div>
 </div>
 
+<!-- Main Content -->
+<div class="form-content">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); border-radius: 50%; margin: 0 auto 1.5rem; display: flex; align-items: center; justify-content: center;">
+            <i class="bi bi-book-fill" style="color: white; font-size: 2rem;"></i>
+        </div>
+        <h2 style="color: #333; margin-bottom: 1rem;">Setup Complete!</h2>
+        <p style="color: #666; font-size: 1.1rem; line-height: 1.6;">
+            Your MyBibliotheca installation has been successfully configured. 
+            {% if import_summary %}
+                We've imported <strong>{{ import_summary.total_books }}</strong> books into your library.
+            {% endif %}
+        </p>
+    </div>
+    
+    {% if import_summary %}
+    <!-- Import Summary -->
+    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 1.5rem; margin-bottom: 2rem;">
+        <h5 style="color: #166534; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-graph-up"></i>
+            Import Summary
+        </h5>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold; color: #166534;">{{ import_summary.total_books }}</div>
+                <div style="color: #166534; font-size: 0.9rem;">Books Imported</div>
+            </div>
+            {% if import_summary.authors %}
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold; color: #166534;">{{ import_summary.authors }}</div>
+                <div style="color: #166534; font-size: 0.9rem;">Authors</div>
+            </div>
+            {% endif %}
+            {% if import_summary.genres %}
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold; color: #166534;">{{ import_summary.genres }}</div>
+                <div style="color: #166534; font-size: 0.9rem;">Genres</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Action Buttons -->
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <a href="{{ url_for('main.library') }}" 
+           style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; border-radius: 12px; padding: 1rem 2rem; color: white; font-weight: 600; font-size: 1.1rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; margin-right: 1rem; margin-bottom: 1rem; transition: all 0.3s ease;">
+            <i class="bi bi-house"></i> Go to My Library
+        </a>
+        <a href="{{ url_for('main.library') }}#add-book" 
+           style="background: transparent; border: 2px solid #28a745; color: #28a745; border-radius: 12px; padding: 0.875rem 1.875rem; font-weight: 600; font-size: 1.1rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; transition: all 0.3s ease;">
+            <i class="bi bi-plus"></i> Add First Book
+        </a>
+    </div>
+    
+    <!-- Quick Tips -->
+    <div style="background: #f8f9fa; border-radius: 10px; padding: 1.5rem; border-left: 4px solid #667eea;">
+        <h5 style="color: #333; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-lightbulb"></i>
+            Quick Tips
+        </h5>
+        <div>
+            <ul style="margin: 0; padding-left: 1.25rem; color: #666;">
+                <li style="margin-bottom: 0.5rem;">
+                    <i class="bi bi-search" style="color: #ffc107; margin-right: 0.5rem;"></i>
+                    Use the search feature to quickly find and add books
+                </li>
+                <li style="margin-bottom: 0.5rem;">
+                    <i class="bi bi-target" style="color: #ffc107; margin-right: 0.5rem;"></i>
+                    Set reading goals and track your progress
+                </li>
+                <li style="margin-bottom: 0.5rem;">
+                    <i class="bi bi-gear" style="color: #ffc107; margin-right: 0.5rem;"></i>
+                    Explore the admin panel to customize your experience
+                </li>
+                <li>
+                    <i class="bi bi-people" style="color: #ffc107; margin-right: 0.5rem;"></i>
+                    Share your library with friends and family
+                </li>
+            </ul>
+        </div>
+    </div>
+    
+    <!-- Admin Info -->
+    <div style="text-align: center; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #e5e7eb;">
+        <small style="color: #6b7280; font-size: 0.875rem; display: flex; align-items: center; justify-content: center; gap: 0.25rem;">
+            <i class="bi bi-shield-check"></i>
+            You are logged in as <strong>{{ current_user.username }}</strong> (Administrator)
+        </small>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
-// Add celebration animation
-document.addEventListener('DOMContentLoaded', function() {
-    // Simple fade-in animation
-    const cards = document.querySelectorAll('.card');
-    cards.forEach((card, index) => {
-        card.style.opacity = '0';
-        card.style.transform = 'translateY(20px)';
-        setTimeout(() => {
-            card.style.transition = 'all 0.5s ease';
-            card.style.opacity = '1';
-            card.style.transform = 'translateY(0)';
-        }, index * 200);
-    });
-});
+// Auto-redirect after a delay (optional)
+/*
+setTimeout(function() {
+    window.location.href = "{{ url_for('main.library') }}";
+}, 10000); // Redirect after 10 seconds
+*/
 </script>
 {% endblock %}

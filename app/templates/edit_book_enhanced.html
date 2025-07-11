@@ -548,6 +548,28 @@
                                             </div>
                                         </div>
                                         
+                                        <!-- Translators -->
+                                        <div class="mb-4">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-translate me-1"></i> Translators
+                                            </label>
+                                            <div class="contributor-section" data-type="translated">
+                                                <div class="contributors-display mb-2">
+                                                    {% for translator in book.get_contributors_by_type('TRANSLATED') %}
+                                                    <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
+                                                        {{ translator.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing translator name..." data-type="translated">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
                                         <!-- Other Contributors -->
                                         <div class="mb-3">
                                             <label class="form-label fw-medium">

@@ -193,6 +193,17 @@ class KuzuUserService:
                         timezone: str = 'UTC', location: str = '') -> Optional[User]:
         """Create a new user (sync version for form validation and onboarding)."""
         try:
+            print(f"🚀 [USER_SERVICE] ============ CREATE_USER_SYNC CALLED ============")
+            print(f"🚀 [USER_SERVICE] Username: '{username}'")
+            print(f"🚀 [USER_SERVICE] Email: '{email}'")
+            print(f"🚀 [USER_SERVICE] Has password_hash: {bool(password_hash)}")
+            print(f"🚀 [USER_SERVICE] Display name: '{display_name}'")
+            print(f"🚀 [USER_SERVICE] Is admin: {is_admin}")
+            print(f"🚀 [USER_SERVICE] Is active: {is_active}")
+            print(f"🚀 [USER_SERVICE] Timezone: '{timezone}'")
+            print(f"🚀 [USER_SERVICE] Location: '{location}'")
+            logger.info(f"Creating user {username} with email {email}")
+            
             user_data = {
                 'username': username,
                 'email': email,
@@ -203,11 +214,16 @@ class KuzuUserService:
                 'timezone': timezone,
                 'bio': location  # Store location in bio field for now
             }
+            print(f"🚀 [USER_SERVICE] User data prepared: {user_data}")
             
             # Use run_async to call the async method
+            print(f"🚀 [USER_SERVICE] Calling kuzu_service.create_user via run_async...")
             created_user_data = run_async(self.kuzu_service.create_user(user_data))
+            print(f"🚀 [USER_SERVICE] kuzu_service.create_user returned: {created_user_data}")
+            
             if created_user_data:
-                return User(
+                print(f"✅ [USER_SERVICE] User data returned, creating User object...")
+                user = User(
                     id=created_user_data['id'],
                     username=created_user_data['username'],
                     email=created_user_data['email'],
@@ -218,9 +234,20 @@ class KuzuUserService:
                     is_active=created_user_data.get('is_active', True),
                     created_at=created_user_data.get('created_at') or datetime.utcnow()
                 )
-            return None
+                print(f"✅ [USER_SERVICE] User object created: {user}")
+                print(f"✅ [USER_SERVICE] User ID: {user.id}")
+                print(f"✅ [USER_SERVICE] ============ CREATE_USER_SYNC SUCCESS ============")
+                return user
+            else:
+                print(f"❌ [USER_SERVICE] kuzu_service.create_user returned None")
+                print(f"❌ [USER_SERVICE] ============ CREATE_USER_SYNC FAILED ============")
+                return None
         except Exception as e:
-            current_app.logger.error(f"Error creating user {username}: {e}")
+            print(f"❌ [USER_SERVICE] Exception in create_user_sync: {e}")
+            logger.error(f"Error creating user {username}: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"❌ [USER_SERVICE] ============ CREATE_USER_SYNC EXCEPTION ============")
             return None
 
     def get_user_count_sync(self) -> int:

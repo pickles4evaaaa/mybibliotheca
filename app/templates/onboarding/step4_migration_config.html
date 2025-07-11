@@ -1,115 +1,149 @@
-<!-- onboarding/step4_migration_config.html -->
-{% extends "base.html" %}
+{% extends "onboarding/base_onboarding.html" %}
 
-{% block title %}Migration Configuration - Bibliotheca{% endblock %}
+{% block title %}Migration Configuration - MyBibliotheca{% endblock %}
+
+{% block progress_width %}80%{% endblock %}
+
+{% block step_info %}Step 4 of 5: Migration Configuration{% endblock %}
 
 {% block content %}
-<div class="container mt-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <!-- Progress Indicator -->
-            <div class="card mb-4">
-                <div class="card-body">
-                    <div class="progress mb-2">
-                        <div class="progress-bar" role="progressbar" style="width: 80%" aria-valuenow="80" aria-valuemin="0" aria-valuemax="100"></div>
-                    </div>
-                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Migration Configuration</small>
-                </div>
+<div class="form-header">
+    <div class="icon-circle" style="background: linear-gradient(135deg, #17a2b8, #138496);">
+        <i class="bi bi-arrow-up-circle-fill"></i>
+    </div>
+    <h2>Configure Database Migration</h2>
+    <p>Review the source database and configure migration settings.</p>
+</div>
+
+{% if database_analysis %}
+<div style="background: #f8f9fa; border-radius: 10px; padding: 1.5rem; margin-bottom: 2rem; border-left: 4px solid #17a2b8;">
+    <div style="font-weight: 600; margin-bottom: 1rem; color: #333; display: flex; align-items: center; gap: 0.5rem;">
+        <i class="bi bi-database"></i>
+        Source Database Information
+    </div>
+    
+    {% if database_analysis.version %}
+    <div style="margin-bottom: 0.75rem;">
+        <strong>Database Version:</strong> 
+        <span class="badge bg-info">{{ database_analysis.version.value }}</span>
+    </div>
+    {% endif %}
+    
+    {% if database_analysis.book_count is defined %}
+    <div style="margin-bottom: 0.75rem;">
+        <strong>Books Found:</strong> {{ database_analysis.book_count }}
+    </div>
+    {% endif %}
+    
+    {% if database_analysis.user_count is defined and database_analysis.user_count > 1 %}
+    <div style="margin-bottom: 0.75rem;">
+        <strong>Users Found:</strong> {{ database_analysis.user_count }}
+    </div>
+    {% endif %}
+    
+    {% if database_analysis.issues %}
+    <div style="margin-top: 1rem;">
+        <div style="color: #dc3545; font-weight: 600; margin-bottom: 0.5rem;">
+            <i class="bi bi-exclamation-triangle"></i> Issues Detected:
+        </div>
+        <ul style="margin: 0; color: #dc3545;">
+            {% for issue in database_analysis.issues %}
+            <li>{{ issue }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<form method="POST">
+    <!-- CSRF Token -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    
+    {% if database_analysis.version.value == 'v2_multi_user' and database_analysis.users %}
+    <!-- User Mapping for V2 Databases -->
+    <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 1.5rem; margin-bottom: 2rem;">
+        <div style="font-weight: 600; margin-bottom: 1rem; color: #856404; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-person-gear"></i>
+            Admin User Mapping
+        </div>
+        <p style="color: #856404; margin-bottom: 1rem;">
+            This database contains multiple users. Please select which user should become the administrator of this installation.
+        </p>
+        
+        <div class="form-group">
+            <label class="form-label">
+                <i class="bi bi-person-check"></i>
+                Select Admin User
+            </label>
+            {% for user in database_analysis.users %}
+            <div style="border: 2px solid #e9ecef; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; cursor: pointer; transition: all 0.2s ease;" 
+                 onclick="this.querySelector('input').checked = true; updateSelection();">
+                <input type="radio" name="admin_user_mapping" value="{{ user.id }}" id="user_{{ user.id }}" style="margin-right: 0.5rem;" required>
+                <label for="user_{{ user.id }}" style="cursor: pointer; margin: 0;">
+                    <strong>{{ user.username }}</strong>
+                    {% if user.email %}
+                    <div style="color: #666; font-size: 0.9rem;">{{ user.email }}</div>
+                    {% endif %}
+                    {% if user.book_count is defined %}
+                    <div style="color: #666; font-size: 0.9rem;">{{ user.book_count }} books</div>
+                    {% endif %}
+                </label>
             </div>
-            
-            <div class="card shadow">
-                <div class="card-header bg-warning text-dark">
-                    <h3 class="mb-0">
-                        <i class="fas fa-cogs"></i> Step 4: Configure Migration
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <div class="alert alert-info">
-                        <h5><i class="fas fa-info-circle"></i> Database Analysis</h5>
-                        <p class="mb-1">
-                            <strong>Database:</strong> {{ database_analysis.name }}<br>
-                            <strong>Type:</strong> {{ 'Multi-user' if database_analysis.version == 'v2_multi_user' else 'Single-user' }}<br>
-                            <strong>Books:</strong> {{ database_analysis.analysis.book_count }}<br>
-                            {% if database_analysis.analysis.user_count %}
-                            <strong>Users:</strong> {{ database_analysis.analysis.user_count }}
-                            {% endif %}
-                        </p>
-                    </div>
-                    
-                    <form method="POST">
-                        {% if database_analysis.version == 'v2_multi_user' %}
-                        <!-- Multi-user database configuration -->
-                        <div class="card border-primary mb-4">
-                            <div class="card-header bg-primary text-white">
-                                <h5 class="mb-0">
-                                    <i class="fas fa-user-check"></i> User Account Mapping
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <p>Which user from the old database corresponds to your new admin account?</p>
-                                
-                                {% for user in database_analysis.analysis.users %}
-                                <div class="card mb-2 border-{{ 'warning' if user.is_admin else 'light' }}">
-                                    <div class="card-body py-2">
-                                        <div class="custom-control custom-radio">
-                                            <input type="radio" 
-                                                   id="user_{{ user.id }}" 
-                                                   name="admin_user_mapping" 
-                                                   value="{{ user.id }}" 
-                                                   class="custom-control-input"
-                                                   {% if user.is_admin and loop.first %}checked{% endif %}>
-                                            <label class="custom-control-label" for="user_{{ user.id }}">
-                                                <div class="d-flex justify-content-between align-items-center">
-                                                    <div>
-                                                        <strong>{{ user.username }}</strong>
-                                                        {% if user.is_admin %}
-                                                            <span class="badge badge-warning ml-1">
-                                                                <i class="fas fa-crown"></i> Admin
-                                                            </span>
-                                                        {% endif %}
-                                                        <br>
-                                                        <small class="text-muted">{{ user.email }}</small>
-                                                    </div>
-                                                </div>
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                {% endfor %}
-                                
-                                <div class="alert alert-info mt-3">
-                                    <h6><i class="fas fa-info-circle"></i> What Happens</h6>
-                                    <ul class="mb-0">
-                                        <li><strong>Selected User:</strong> Their books will be transferred to your admin account</li>
-                                        <li><strong>Other Users:</strong> Will be recreated with their original usernames and books</li>
-                                        <li><strong>Admin Privileges:</strong> Only you will have admin access in the new system</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        {% else %}
-                        <!-- Single-user database configuration -->
-                        <div class="alert alert-success">
-                            <h5><i class="fas fa-check-circle"></i> Simple Migration</h5>
-                            <p class="mb-0">
-                                All {{ database_analysis.analysis.book_count }} books from this single-user database 
-                                will be assigned to your admin account. No additional configuration needed.
-                            </p>
-                        </div>
-                        {% endif %}
-                        
-                        <div class="d-flex justify-content-between mt-4">
-                            <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
-                                <i class="fas fa-arrow-left"></i> Back
-                            </a>
-                            <button type="submit" class="btn btn-primary btn-lg px-4">
-                                <i class="fas fa-arrow-right"></i> Continue to Confirmation
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
+            {% endfor %}
         </div>
     </div>
-</div>
+    {% endif %}
+    
+    <!-- Migration Notes -->
+    <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: 1px solid #2196f3; border-radius: 10px; padding: 1.5rem; margin-bottom: 2rem;">
+        <h5 style="color: #1565c0; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-info-circle"></i>
+            Migration Process
+        </h5>
+        <ul style="margin: 0; color: #1565c0;">
+            <li>Your existing data will be imported into the new database structure</li>
+            <li>Books, authors, and reading progress will be preserved</li>
+            <li>The migration process may take a few minutes depending on library size</li>
+            <li>Your original database will not be modified</li>
+        </ul>
+    </div>
+    
+    <!-- Navigation Buttons -->
+    <div class="navigation-buttons">
+        <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        <button type="submit" class="btn btn-primary">
+            Continue to Confirmation <i class="bi bi-arrow-right"></i>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateSelection() {
+    // Remove selected styling from all options
+    document.querySelectorAll('[onclick*="updateSelection"]').forEach(option => {
+        option.style.borderColor = '#e9ecef';
+        option.style.backgroundColor = 'white';
+    });
+    
+    // Add selected styling to clicked option
+    const checkedInput = document.querySelector('input[name="admin_user_mapping"]:checked');
+    if (checkedInput) {
+        const parentDiv = checkedInput.closest('[onclick*="updateSelection"]');
+        if (parentDiv) {
+            parentDiv.style.borderColor = '#667eea';
+            parentDiv.style.backgroundColor = '#f0f2ff';
+        }
+    }
+}
+
+// Initialize selection styling
+document.addEventListener('DOMContentLoaded', function() {
+    updateSelection();
+});
+</script>
 {% endblock %}

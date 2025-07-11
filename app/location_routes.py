@@ -61,7 +61,6 @@ def add_location():
         
         try:
             location = location_service.create_location(
-                user_id=str(current_user.id),
                 name=name,
                 description=description if description else None,
                 location_type=location_type,

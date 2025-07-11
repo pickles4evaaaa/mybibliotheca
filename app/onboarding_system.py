@@ -914,6 +914,14 @@ def confirmation_step():
     """Step 5: Confirmation and execution."""
     logger.info(f"🔍 ONBOARDING DEBUG: confirmation_step called, method={request.method}")
     
+    # DEBUG: Log all form data for POST requests
+    if request.method == 'POST':
+        print(f"🔍 STEP5 DEBUG: POST request received")
+        print(f"🔍 STEP5 DEBUG: Form data: {dict(request.form)}")
+        print(f"🔍 STEP5 DEBUG: Action value: '{request.form.get('action', 'MISSING')}'")
+        print(f"🔍 STEP5 DEBUG: CSRF token: '{request.form.get('csrf_token', 'MISSING')}'")
+        logger.info(f"🔍 ONBOARDING DEBUG: POST form data: {dict(request.form)}")
+    
     onboarding_data = get_onboarding_data()
     
     logger.info(f"🔍 ONBOARDING DEBUG: onboarding_data: {onboarding_data}")
@@ -921,76 +929,126 @@ def confirmation_step():
     # Ensure we stay on step 5 even if there are errors
     set_onboarding_step(5)
     
-    if request.method == 'POST' and request.form.get('action') == 'execute':
-        try:
-            logger.info(f"🔍 ONBOARDING DEBUG: Executing onboarding with data: {onboarding_data}")
-            
-            # Validate that we have all required data before proceeding
-            if not onboarding_data.get('admin'):
-                logger.error("❌ Missing admin data during execution")
-                flash('Missing admin account information. Please start over.', 'error')
-                return redirect(url_for('onboarding.step', step_num=1))
-            
-            if not onboarding_data.get('site_config'):
-                logger.error("❌ Missing site config data during execution")
-                flash('Missing site configuration. Please complete site setup.', 'error')
-                return redirect(url_for('onboarding.step', step_num=2))
-            
-            if not onboarding_data.get('data_options'):
-                logger.error("❌ Missing data options during execution")
-                flash('Missing data configuration. Please complete data setup.', 'error')
-                return redirect(url_for('onboarding.step', step_num=3))
-            
-            # Check if this is an import setup or migration
-            data_options = onboarding_data.get('data_options', {})
-            
-            if data_options.get('option') == 'import':
-                # For imports, execute the basic setup first (user, location, custom fields)
-                # but handle the CSV import as a background job
-                success = execute_onboarding_setup_only(onboarding_data)
-                
-                if success:
-                    # Get the import task ID from session (set during setup)
-                    import_task_id = session.get('onboarding_import_task_id')
-                    
-                    if import_task_id:
-                        logger.info(f"🔍 ONBOARDING DEBUG: Redirecting to import progress with task_id: {import_task_id}")
-                        return redirect(url_for('onboarding.import_progress', task_id=import_task_id))
-                    else:
-                        # No import task, proceed to completion
-                        logger.info(f"🔍 ONBOARDING DEBUG: No import task, proceeding to completion")
-                        return handle_onboarding_completion(onboarding_data)
-                else:
-                    logger.error(f"🔍 ONBOARDING DEBUG: Setup failed")
-                    flash('Setup failed. Please check the error message and try again.', 'error')
-                    # Ensure session data is preserved
-                    update_onboarding_data(onboarding_data)
-                    set_onboarding_step(5)
-            else:
-                # For migrations or other setups, execute normally
-                success = execute_onboarding(onboarding_data)
-                
-                if success:
-                    return handle_onboarding_completion(onboarding_data)
-                else:
-                    logger.error(f"🔍 ONBOARDING DEBUG: Execution failed")
-                    flash('Setup failed. Please check the error message and try again.', 'error')
-                    # Ensure session data is preserved
-                    update_onboarding_data(onboarding_data)
-                    set_onboarding_step(5)
-                
-        except Exception as e:
-            logger.error(f"🔍 ONBOARDING DEBUG: Error executing onboarding: {e}")
-            import traceback
-            traceback.print_exc()
-            flash(f'Setup failed with error: {str(e)}', 'error')
-            # Ensure session data is preserved even on exception
+    if request.method == 'POST':
+        print(f"🚨🚨🚨 STEP5 DEBUG: POST REQUEST RECEIVED! 🚨🚨🚨")
+        print(f"🚨 STEP5 DEBUG: Form data: {dict(request.form)}")
+        action = request.form.get('action')
+        print(f"🔍 STEP5 DEBUG: Checking action '{action}' == 'execute': {action == 'execute'}")
+        
+        if action == 'execute':
             try:
-                update_onboarding_data(onboarding_data)
-                set_onboarding_step(5)
-            except Exception as session_error:
-                logger.error(f"❌ Could not preserve session data: {session_error}")
+                print(f"🔍 STEP5 DEBUG: Starting execution process")
+                print(f"🔍 STEP5 DEBUG: Received onboarding_data: {onboarding_data}")
+                logger.info(f"🔍 ONBOARDING DEBUG: Executing onboarding with data keys: {list(onboarding_data.keys())}")
+                
+                # Validate that we have all required data before proceeding
+                if not onboarding_data.get('admin'):
+                    print(f"❌ STEP5 DEBUG: Missing admin data during execution")
+                    logger.error("❌ Missing admin data during execution")
+                    flash('Missing admin account information. Please start over.', 'error')
+                    return redirect(url_for('onboarding.step', step_num=1))
+                
+                if not onboarding_data.get('site_config'):
+                    print(f"❌ STEP5 DEBUG: Missing site config data during execution")
+                    logger.error("❌ Missing site config data during execution")
+                    flash('Missing site configuration. Please complete site setup.', 'error')
+                    return redirect(url_for('onboarding.step', step_num=2))
+                
+                if not onboarding_data.get('data_options'):
+                    print(f"❌ STEP5 DEBUG: Missing data options during execution")
+                    logger.error("❌ Missing data options during execution")
+                    flash('Missing data configuration. Please complete data setup.', 'error')
+                    return redirect(url_for('onboarding.step', step_num=3))
+                
+                # Check if this is an import setup, migration, or fresh start
+                data_options = onboarding_data.get('data_options', {})
+                data_option = data_options.get('option', 'fresh')
+                
+                logger.info(f"🔍 ONBOARDING DEBUG: Data option selected: {data_option}")
+                
+                if data_option == 'import':
+                    # For imports, execute the basic setup first (user, location, custom fields)
+                    # but handle the CSV import as a background job
+                    print(f"🔍 STEP5 DEBUG: Import option - calling execute_onboarding_setup_only")
+                    logger.info(f"Import option selected - executing setup only")
+                    success = execute_onboarding_setup_only(onboarding_data)
+                    print(f"🔍 STEP5 DEBUG: execute_onboarding_setup_only returned: {success}")
+                    
+                    if success:
+                        # Get the import task ID from session (set during setup)
+                        import_task_id = session.get('onboarding_import_task_id')
+                        print(f"🔍 STEP5 DEBUG: Import task ID from session: {import_task_id}")
+                        
+                        if import_task_id:
+                            print(f"🔍 STEP5 DEBUG: Redirecting to import progress with task_id: {import_task_id}")
+                            logger.info(f"🔍 ONBOARDING DEBUG: Redirecting to import progress with task_id: {import_task_id}")
+                            return redirect(url_for('onboarding.import_progress', task_id=import_task_id))
+                        else:
+                            # No import task, proceed to completion
+                            print(f"🔍 STEP5 DEBUG: No import task, proceeding to completion")
+                            logger.info(f"🔍 ONBOARDING DEBUG: No import task, proceeding to completion")
+                            return handle_onboarding_completion(onboarding_data)
+                    else:
+                        print(f"❌ STEP5 DEBUG: Setup failed")
+                        logger.error(f"🔍 ONBOARDING DEBUG: Setup failed")
+                        flash('Setup failed. Please check the error message and try again.', 'error')
+                        # Ensure session data is preserved
+                        update_onboarding_data(onboarding_data)
+                        set_onboarding_step(5)
+                elif data_option == 'migrate':
+                    # For migrations, execute full migration
+                    print(f"🔍 STEP5 DEBUG: Migration option - calling execute_onboarding")
+                    logger.info(f"Migration option selected - executing full migration")
+                    success = execute_onboarding(onboarding_data)
+                    print(f"🔍 STEP5 DEBUG: execute_onboarding returned: {success}")
+                    
+                    if success:
+                        print(f"🔍 STEP5 DEBUG: Migration successful, proceeding to completion")
+                        return handle_onboarding_completion(onboarding_data)
+                    else:
+                        print(f"❌ STEP5 DEBUG: Migration failed")
+                        logger.error(f"🔍 ONBOARDING DEBUG: Migration failed")
+                        flash('Migration failed. Please check the error message and try again.', 'error')
+                        # Ensure session data is preserved
+                        update_onboarding_data(onboarding_data)
+                        set_onboarding_step(5)
+                else:
+                    # For fresh start or any other option, execute basic setup only
+                    print(f"🔍 STEP5 DEBUG: Fresh start option ('{data_option}') - calling execute_onboarding_setup_only")
+                    logger.info(f"🔍 ONBOARDING DEBUG: Fresh start - executing basic setup only")
+                    success = execute_onboarding_setup_only(onboarding_data)
+                    print(f"🔍 STEP5 DEBUG: execute_onboarding_setup_only returned: {success}")
+                    
+                    if success:
+                        print(f"🔍 STEP5 DEBUG: Fresh start setup completed, proceeding to completion")
+                        logger.info(f"🔍 ONBOARDING DEBUG: Fresh start setup completed, proceeding to completion")
+                        return handle_onboarding_completion(onboarding_data)
+                    else:
+                        print(f"❌ STEP5 DEBUG: Fresh start setup failed")
+                        logger.error(f"🔍 ONBOARDING DEBUG: Fresh start setup failed")
+                        flash('Setup failed. Please check the error message and try again.', 'error')
+                        # Ensure session data is preserved
+                        update_onboarding_data(onboarding_data)
+                        set_onboarding_step(5)
+                    
+            except Exception as e:
+                print(f"❌ STEP5 DEBUG: Exception during execution: {e}")
+                logger.error(f"🔍 ONBOARDING DEBUG: Error executing onboarding: {e}")
+                import traceback
+                traceback.print_exc()
+                flash(f'Setup failed with error: {str(e)}', 'error')
+                # Ensure session data is preserved even on exception
+                try:
+                    update_onboarding_data(onboarding_data)
+                    set_onboarding_step(5)
+                except Exception as session_error:
+                    print(f"❌ STEP5 DEBUG: Could not preserve session data: {session_error}")
+                    logger.error(f"❌ Could not preserve session data: {session_error}")
+        else:
+            print(f"🔍 STEP5 DEBUG: Action '{action}' does not match 'execute', rendering template")
+            logger.info(f"Non-execute action received: {action}")
     
+    print(f"🔍 STEP5 DEBUG: Rendering step 5 confirmation template")
     logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 5 confirmation template")
     
     return render_template('onboarding/step5_confirmation.html',
@@ -1002,22 +1060,21 @@ def confirmation_step():
 @onboarding_bp.route('/complete')
 @debug_route('ONBOARDING_COMPLETE')
 def complete():
-    """Onboarding completion page."""
+    """Show onboarding completion page."""
+    print(f"🎉 COMPLETION: Showing completion page")
+    logger.info(f"🔍 ONBOARDING DEBUG: Showing completion page")
+    
+    # Check if user is authenticated (they should be after successful setup)
+    from flask_login import current_user
     if not current_user.is_authenticated:
-        flash('Please complete the setup process.', 'error')
-        return redirect(url_for('onboarding.start'))
+        flash('Please log in to continue.', 'info')
+        return redirect(url_for('auth.login'))
     
-    # Clear all onboarding session data including backup
-    clear_onboarding_session()
-    session.pop('onboarding_backup', None)
-    session.modified = True
+    # Optional: Get any import summary data if available
+    import_summary = session.get('import_summary', None)
     
-    # Set a success message
-    flash('Welcome to Bibliotheca! Your setup is complete.', 'success')
-    
-    # Redirect to the main application
-    return redirect(url_for('main.library'))
-
+    return render_template('onboarding/complete.html',
+                         import_summary=import_summary)
 
 @onboarding_bp.route('/import-progress/<task_id>')
 @debug_route('ONBOARDING_IMPORT_PROGRESS')
@@ -1156,12 +1213,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 location_service = LocationService(storage.kuzu_conn)
                 
                 # Create the location
-                if not admin_user.id:
-                    logger.error("❌ Admin user has no ID - cannot create location")
-                    raise ValueError("Admin user has no ID")
-                
                 location = location_service.create_location(
-                    user_id=admin_user.id,
                     name=location_name,
                     description=f"Default location set during onboarding",
                     location_type="home",  # Default to home type
@@ -1308,46 +1360,91 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
 def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
     """Execute only the basic onboarding setup (user, location, custom fields) without CSV import."""
     try:
-        print(f"🚀 [SETUP] Starting onboarding setup")
+        print(f"🚀 [SETUP] ============ STARTING ONBOARDING SETUP ============")
         logger.info(f"🚀 Starting onboarding setup with data keys: {list(onboarding_data.keys())}")
+        
+        # Log full onboarding data for debugging (without passwords)
+        debug_data = onboarding_data.copy()
+        if 'admin' in debug_data and 'password' in debug_data['admin']:
+            debug_data['admin'] = debug_data['admin'].copy()
+            debug_data['admin']['password'] = '[REDACTED]'
+        print(f"🚀 [SETUP] Full onboarding data: {debug_data}")
+        logger.info(f"Full onboarding data (passwords redacted): {debug_data}")
         
         # Step 1: Create admin user
         admin_data = onboarding_data.get('admin', {})
         site_config = onboarding_data.get('site_config', {})
         
         if not admin_data:
+            print(f"❌ [SETUP] Missing admin data in execute_onboarding_setup_only")
             logger.error("❌ Missing admin data in execute_onboarding_setup_only")
             return False
         
-        print(f"🚀 [SETUP] Creating admin user: {admin_data.get('username')}")
-        logger.info(f"Creating admin user: {admin_data.get('username')}")
+        print(f"🚀 [SETUP] ============ STEP 1: CREATING ADMIN USER ============")
+        print(f"🚀 [SETUP] Admin data keys: {list(admin_data.keys())}")
+        print(f"🚀 [SETUP] Username: {admin_data.get('username')}")
+        print(f"🚀 [SETUP] Email: {admin_data.get('email')}")
+        print(f"🚀 [SETUP] Has password: {bool(admin_data.get('password'))}")
+        print(f"🚀 [SETUP] Site config: {site_config}")
+        logger.info(f"Creating admin user: {admin_data.get('username')} with email: {admin_data.get('email')}")
         
-        password_hash = generate_password_hash(admin_data['password'])
-        
-        admin_user = user_service.create_user_sync(
-            username=admin_data['username'],
-            email=admin_data['email'],
-            password_hash=password_hash,
-            is_admin=True,
-            is_active=True,
-            password_must_change=False,
-            timezone=site_config.get('timezone', 'UTC'),  # Set timezone from site config
-            display_name=admin_data.get('display_name', ''),
-            location=site_config.get('location', '')
-        )
-        
-        if not admin_user:
-            logger.error("❌ Failed to create admin user")
+        try:
+            password_hash = generate_password_hash(admin_data['password'])
+            print(f"🚀 [SETUP] Password hash generated successfully")
+        except Exception as hash_error:
+            print(f"❌ [SETUP] Failed to generate password hash: {hash_error}")
+            logger.error(f"Failed to generate password hash: {hash_error}")
             return False
         
-        print(f"✅ [SETUP] Admin user created: {admin_user.username}")
-        logger.info(f"✅ Admin user created: {admin_user.username}")
+        try:
+            print(f"🚀 [SETUP] Calling user_service.create_user_sync...")
+            admin_user = user_service.create_user_sync(
+                username=admin_data['username'],
+                email=admin_data['email'],
+                password_hash=password_hash,
+                is_admin=True,
+                is_active=True,
+                password_must_change=False,
+                timezone=site_config.get('timezone', 'UTC'),  # Set timezone from site config
+                display_name=admin_data.get('display_name', ''),
+                location=site_config.get('location', '')
+            )
+            print(f"🚀 [SETUP] user_service.create_user_sync returned: {admin_user}")
+        except Exception as user_create_error:
+            print(f"❌ [SETUP] Exception creating admin user: {user_create_error}")
+            logger.error(f"Exception creating admin user: {user_create_error}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+        if not admin_user:
+            print(f"❌ [SETUP] Admin user creation returned None or False")
+            logger.error("❌ Failed to create admin user - service returned None")
+            return False
+        
+        print(f"✅ [SETUP] Admin user created successfully!")
+        print(f"✅ [SETUP] User ID: {getattr(admin_user, 'id', 'NO_ID')}")
+        print(f"✅ [SETUP] Username: {getattr(admin_user, 'username', 'NO_USERNAME')}")
+        print(f"✅ [SETUP] Email: {getattr(admin_user, 'email', 'NO_EMAIL')}")
+        print(f"✅ [SETUP] Is Admin: {getattr(admin_user, 'is_admin', 'NO_ADMIN_FLAG')}")
+        logger.info(f"✅ Admin user created: {admin_user.username} (ID: {admin_user.id})")
         
         # Log in the user immediately after creation
-        login_user(admin_user)
-        print(f"✅ [SETUP] Admin user logged in: {admin_user.username}")
-        logger.info(f"✅ Admin user created and logged in: {admin_user.username}")
+        try:
+            print(f"🚀 [SETUP] Attempting to log in admin user...")
+            login_user(admin_user)
+            print(f"✅ [SETUP] Admin user logged in successfully!")
+            logger.info(f"✅ Admin user logged in: {admin_user.username}")
+            
+            # Verify login worked
+            from flask_login import current_user
+            print(f"✅ [SETUP] Current user after login: authenticated={current_user.is_authenticated}, id={getattr(current_user, 'id', 'NO_ID')}")
+        except Exception as login_error:
+            print(f"❌ [SETUP] Failed to log in admin user: {login_error}")
+            logger.error(f"Failed to log in admin user: {login_error}")
+            # Don't return False here - continue with setup even if login fails
         
+        print(f"🚀 [SETUP] ============ STEP 2: CREATING LOCATION ============")
         # Step 2: Apply site configuration and create location
         site_config = onboarding_data.get('site_config', {})
         
@@ -1355,55 +1452,81 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         location_name = site_config.get('location', '').strip()
         if location_name:
             try:
-                print(f"🏠 [SETUP] Creating location: {location_name}")
+                print(f"🏠 [SETUP] Location name specified: '{location_name}'")
+                print(f"🏠 [SETUP] Site config: {site_config}")
                 logger.info(f"Creating location: {location_name}")
                 
                 # Initialize location service with Kuzu connection
+                print(f"🏠 [SETUP] Getting graph storage...")
                 storage = get_graph_storage()
+                print(f"🏠 [SETUP] Graph storage obtained: {storage}")
+                
+                print(f"🏠 [SETUP] Creating LocationService...")
                 location_service = LocationService(storage.kuzu_conn)
+                print(f"🏠 [SETUP] LocationService created: {location_service}")
                 
                 # Check if admin user has an ID
-                if not admin_user.id:
+                admin_user_id = getattr(admin_user, 'id', None)
+                print(f"🏠 [SETUP] Admin user ID for location creation: {admin_user_id}")
+                if not admin_user_id:
                     print(f"❌ [SETUP] Admin user has no ID for location creation")
                     logger.error(f"❌ Admin user has no ID for location creation")
                     raise Exception("Admin user has no ID")
                 
                 # Create the location
+                print(f"🏠 [SETUP] Calling location_service.create_location...")
                 location = location_service.create_location(
-                    user_id=admin_user.id,
                     name=location_name,
                     description=f"Default location set during onboarding",
                     location_type="home",  # Default to home type
                     is_default=site_config.get('location_set_as_default', True)
                 )
+                print(f"🏠 [SETUP] create_location returned: {location}")
                 
-                print(f"✅ [SETUP] Created location: {location.name} (ID: {location.id})")
-                logger.info(f"✅ Created location: {location.name} (ID: {location.id})")
+                if location:
+                    print(f"✅ [SETUP] Created location: {location.name} (ID: {location.id})")
+                    logger.info(f"✅ Created location: {location.name} (ID: {location.id})")
+                else:
+                    print(f"❌ [SETUP] Location creation returned None")
+                    logger.error(f"❌ Location creation returned None")
                 
             except Exception as e:
                 print(f"❌ [SETUP] Failed to create location '{location_name}': {e}")
                 logger.error(f"❌ Failed to create location '{location_name}': {e}")
+                import traceback
+                traceback.print_exc()
                 # Don't fail the entire onboarding if location creation fails
         else:
-            print(f"🏠 [SETUP] No location specified, skipping location creation")
+            print(f"🏠 [SETUP] No location specified (location='{location_name}'), skipping location creation")
             logger.info("No location specified, skipping location creation")
         
+        print(f"🚀 [SETUP] ============ STEP 3: CREATING CUSTOM FIELDS ============")
         # Step 3: Create custom metadata fields for import
         import_config = onboarding_data.get('import_config', {})
         custom_fields = import_config.get('custom_fields', {})
         
+        print(f"🏷️ [SETUP] Import config: {import_config}")
+        print(f"🏷️ [SETUP] Custom fields to create: {len(custom_fields)} fields")
+        print(f"🏷️ [SETUP] Custom fields: {custom_fields}")
+        
         # Create custom metadata fields first
         if custom_fields:
             try:
-                print(f"🏷️ [SETUP] Creating {len(custom_fields)} custom fields")
+                print(f"🏷️ [SETUP] Starting creation of {len(custom_fields)} custom fields")
                 logger.info(f"Creating {len(custom_fields)} custom fields")
                 
+                print(f"🏷️ [SETUP] Importing custom field service...")
                 from .services import custom_field_service
                 from .domain.models import CustomFieldDefinition, CustomFieldType
+                print(f"🏷️ [SETUP] Imports successful")
                 
                 for csv_field, field_config in custom_fields.items():
+                    print(f"🏷️ [SETUP] Processing custom field: {csv_field} -> {field_config}")
+                    
                     field_name = field_config['name']
                     field_type_str = field_config['type']
+                    
+                    print(f"🏷️ [SETUP] Field name: {field_name}, type: {field_type_str}")
                     
                     # Convert string type to CustomFieldType enum
                     field_type_map = {
@@ -1417,77 +1540,121 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                         'list': CustomFieldType.LIST
                     }
                     field_type = field_type_map.get(field_type_str, CustomFieldType.TEXT)
+                    print(f"🏷️ [SETUP] Mapped field type: {field_type_str} -> {field_type}")
                     
                     # Check if admin user has an ID
-                    if not admin_user.id:
+                    admin_user_id = getattr(admin_user, 'id', None)
+                    print(f"🏷️ [SETUP] Admin user ID for custom field creation: {admin_user_id}")
+                    if not admin_user_id:
                         print(f"❌ [SETUP] Admin user has no ID for custom field creation")
                         logger.error(f"❌ Admin user has no ID for custom field creation")
                         continue  # Skip this custom field
                     
-                    # Create CustomFieldDefinition object
-                    field_definition = CustomFieldDefinition(
-                        name=field_name,
-                        display_name=csv_field,  # Use original CSV header as display name
-                        field_type=field_type,
-                        description=f"Auto-created from CSV import: {csv_field}",
-                        created_by_user_id=admin_user.id,
-                        is_shareable=False,
-                        is_global=False
-                    )
+                    try:
+                        print(f"🏷️ [SETUP] Creating CustomFieldDefinition object...")
+                        # Create CustomFieldDefinition object
+                        field_definition = CustomFieldDefinition(
+                            name=field_name,
+                            display_name=csv_field,  # Use original CSV header as display name
+                            field_type=field_type,
+                            description=f"Auto-created from CSV import: {csv_field}",
+                            created_by_user_id=admin_user_id,  # Use the checked ID
+                            is_shareable=False,
+                            is_global=False
+                        )
+                        print(f"🏷️ [SETUP] CustomFieldDefinition created: {field_definition}")
+                        
+                        # Create the custom field
+                        print(f"🏷️ [SETUP] Preparing field data for service...")
+                        field_data = {
+                            'name': field_definition.name,
+                            'display_name': field_definition.display_name,
+                            'field_type': field_definition.field_type.value if hasattr(field_definition.field_type, 'value') else str(field_definition.field_type),
+                            'description': field_definition.description,
+                            'is_global': field_definition.is_global,
+                            'is_shareable': field_definition.is_shareable
+                        }
+                        print(f"🏷️ [SETUP] Field data: {field_data}")
+                        
+                        print(f"🏷️ [SETUP] Calling custom_field_service.create_field_sync...")
+                        custom_field = custom_field_service.create_field_sync(admin_user_id, field_data)  # Use the checked ID
+                        print(f"🏷️ [SETUP] Custom field service returned: {custom_field}")
+                        
+                        if custom_field:
+                            print(f"✅ [SETUP] Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
+                            logger.info(f"✅ Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
+                        else:
+                            print(f"❌ [SETUP] Custom field creation returned None for: {field_name}")
+                            logger.error(f"❌ Custom field creation returned None for: {field_name}")
                     
-                    # Create the custom field
-                    field_data = {
-                        'name': field_definition.name,
-                        'display_name': field_definition.display_name,
-                        'field_type': field_definition.field_type.value if hasattr(field_definition.field_type, 'value') else str(field_definition.field_type),
-                        'description': field_definition.description,
-                        'is_global': field_definition.is_global,
-                        'is_shareable': field_definition.is_shareable
-                    }
-                    custom_field = custom_field_service.create_field_sync(admin_user.id, field_data)
-                    
-                    print(f"✅ [SETUP] Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
-                    logger.info(f"✅ Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
+                    except Exception as field_error:
+                        print(f"❌ [SETUP] Exception creating custom field {field_name}: {field_error}")
+                        logger.error(f"❌ Exception creating custom field {field_name}: {field_error}")
+                        import traceback
+                        traceback.print_exc()
+                        continue  # Continue with next field
                     
             except Exception as e:
                 print(f"❌ [SETUP] Failed to create custom metadata fields: {e}")
                 logger.error(f"❌ Failed to create custom metadata fields: {e}")
+                import traceback
+                traceback.print_exc()
                 # Continue even if custom fields fail
         else:
-            print(f"🏷️ [SETUP] No custom fields to create")
+            print(f"🏷️ [SETUP] No custom fields to create (custom_fields is empty)")
             logger.info("No custom fields to create")
         
-        # Step 4: Start the CSV import as a background job
+        print(f"🚀 [SETUP] ============ STEP 4: CSV IMPORT JOB ============")
+        # Step 4: Start the CSV import as a background job (only if import option is selected)
         data_options = onboarding_data.get('data_options', {})
-        if data_options.get('option') == 'import':
-            print(f"📂 [SETUP] Starting CSV import job")
+        data_option = data_options.get('option', 'unknown')
+        print(f"📂 [SETUP] Data option: {data_option}")
+        print(f"📂 [SETUP] Data options: {data_options}")
+        
+        if data_option == 'import':
+            print(f"📂 [SETUP] Import option selected, starting CSV import job")
             logger.info("Starting CSV import job")
             
-            if not admin_user.id:
-                print(f"❌ [SETUP] Admin user has no ID")
+            admin_user_id = getattr(admin_user, 'id', None)
+            print(f"📂 [SETUP] Admin user ID for import: {admin_user_id}")
+            if not admin_user_id:
+                print(f"❌ [SETUP] Admin user has no ID for import job")
                 logger.error("❌ Admin user has no ID")
                 return False
             
-            import_task_id = start_onboarding_import_job(admin_user.id, import_config)
-            if not import_task_id:
-                print(f"❌ [SETUP] Failed to start CSV import job")
-                logger.error("❌ Failed to start CSV import job")
+            try:
+                print(f"📂 [SETUP] Calling start_onboarding_import_job...")
+                print(f"📂 [SETUP] Import config: {import_config}")
+                import_task_id = start_onboarding_import_job(admin_user_id, import_config)
+                print(f"📂 [SETUP] start_onboarding_import_job returned: {import_task_id}")
+                
+                if not import_task_id:
+                    print(f"❌ [SETUP] Failed to start CSV import job - returned None")
+                    logger.error("❌ Failed to start CSV import job")
+                    return False
+                else:
+                    print(f"✅ [SETUP] CSV import job started with ID: {import_task_id}")
+                    logger.info(f"✅ CSV import job started with ID: {import_task_id}")
+                    # Store the task ID for progress tracking
+                    session['onboarding_import_task_id'] = import_task_id
+                    session.modified = True
+                    print(f"✅ [SETUP] Task ID stored in session")
+            except Exception as import_error:
+                print(f"❌ [SETUP] Exception starting CSV import job: {import_error}")
+                logger.error(f"Exception starting CSV import job: {import_error}")
+                import traceback
+                traceback.print_exc()
                 return False
-            else:
-                print(f"✅ [SETUP] CSV import job started with ID: {import_task_id}")
-                logger.info(f"✅ CSV import job started with ID: {import_task_id}")
-                # Store the task ID for progress tracking
-                session['onboarding_import_task_id'] = import_task_id
-                session.modified = True
         else:
-            print(f"📂 [SETUP] No import selected, skipping CSV import")
+            print(f"📂 [SETUP] No import selected (option='{data_option}'), skipping CSV import")
             logger.info("No import selected, skipping CSV import")
         
-        print(f"🎉 [SETUP] Onboarding setup completed successfully")
+        print(f"🎉 [SETUP] ============ SETUP COMPLETED SUCCESSFULLY ============")
         logger.info("🎉 Onboarding setup completed successfully")
         return True
         
     except Exception as e:
+        print(f"❌ [SETUP] ============ SETUP FAILED WITH EXCEPTION ============")
         print(f"❌ [SETUP] Error executing onboarding setup: {e}")
         logger.error(f"Error executing onboarding setup: {e}")
         import traceback
@@ -1498,36 +1665,67 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
 def handle_onboarding_completion(onboarding_data: Dict):
     """Handle the completion of onboarding (login user and redirect)."""
     try:
-        print(f"🎉 [COMPLETION] Starting onboarding completion process")
+        print(f"🎉 [COMPLETION] ============ STARTING COMPLETION PROCESS ============")
         logger.info(f"🔍 ONBOARDING DEBUG: Starting completion process")
         
-        # Get the created admin user and log them in first
+        # Check if the user is already logged in from the setup process
+        from flask_login import current_user
+        print(f"🎉 [COMPLETION] Current user status: authenticated={current_user.is_authenticated}")
+        if hasattr(current_user, 'id'):
+            print(f"🎉 [COMPLETION] Current user ID: {current_user.id}")
+            print(f"🎉 [COMPLETION] Current user username: {getattr(current_user, 'username', 'NO_USERNAME')}")
+        
+        if current_user.is_authenticated:
+            print(f"🎉 [COMPLETION] User already logged in from setup process!")
+            logger.info(f"User already logged in: {getattr(current_user, 'username', 'UNKNOWN')}")
+            
+            # Clear onboarding session and redirect
+            print(f"🎉 [COMPLETION] Clearing onboarding session")
+            clear_onboarding_session()
+            logger.info(f"🔍 ONBOARDING DEBUG: Onboarding session cleared")
+            
+            print(f"🎉 [COMPLETION] Success! Redirecting to main index")
+            logger.info(f"🔍 ONBOARDING DEBUG: Success! Redirecting to main index")
+            flash('🎉 Welcome to Bibliotheca! Your library is ready.', 'success')
+            
+            return redirect(url_for('main.index'))
+        
+        # If not logged in, try to find and log in the user
+        print(f"🎉 [COMPLETION] User not logged in, attempting to find and log in admin user")
+        
+        # Get the created admin user and log them in
         admin_data = onboarding_data.get('admin', {})
-        print(f"🎉 [COMPLETION] Looking for admin user: {admin_data.get('username')}")
+        admin_username = admin_data.get('username', 'UNKNOWN')
+        print(f"🎉 [COMPLETION] Looking for admin user: {admin_username}")
+        print(f"🎉 [COMPLETION] Admin data: {admin_data}")
         
         # Add debugging: let's see what users actually exist
         try:
+            print(f"🔍 [COMPLETION DEBUG] Checking database for users...")
             from .kuzu_integration import KuzuIntegrationService
             kuzu_service = KuzuIntegrationService()
             kuzu_service.initialize()
             if kuzu_service.db is not None:
                 all_users = kuzu_service.db.query("MATCH (u:User) RETURN u.username, u.id, u.email LIMIT 10")
                 print(f"🔍 [COMPLETION DEBUG] All users in database: {all_users}")
+                logger.info(f"All users in database: {all_users}")
             else:
                 print(f"🔍 [COMPLETION DEBUG] Database connection is None")
+                logger.warning("Database connection is None during completion")
         except Exception as debug_error:
             print(f"🔍 [COMPLETION DEBUG] Could not query users: {debug_error}")
+            logger.error(f"Could not query users during completion: {debug_error}")
         
-        admin_user = user_service.get_user_by_username_sync(admin_data['username'])
+        print(f"🔍 [COMPLETION] Calling user_service.get_user_by_username_sync('{admin_username}')...")
+        admin_user = user_service.get_user_by_username_sync(admin_username)
+        print(f"🔍 [COMPLETION] user_service returned: {admin_user}")
+        
         if not admin_user:
-            print(f"❌ [COMPLETION] Could not find admin user: {admin_data.get('username')}")
-            logger.error(f"🔍 ONBOARDING DEBUG: Could not find admin user: {admin_data.get('username')}")
+            print(f"❌ [COMPLETION] Could not find admin user: {admin_username}")
+            logger.error(f"🔍 ONBOARDING DEBUG: Could not find admin user: {admin_username}")
             # Don't clear session - stay on step 5 with error
-            flash('Setup failed: Could not create admin user. Please try again.', 'error')
-            return render_template('onboarding/step5_confirmation.html',
-                                   step=5, 
-                                   onboarding_data=onboarding_data,
-                                   setup_error=True)
+            flash('Setup completed but login failed. Please try logging in manually.', 'warning')
+            return redirect(url_for('auth.login'))
         
         print(f"🎉 [COMPLETION] Found admin user, logging in: {admin_user.username}")
         login_user(admin_user)
@@ -1537,28 +1735,12 @@ def handle_onboarding_completion(onboarding_data: Dict):
         from flask_login import current_user
         print(f"🎉 [COMPLETION] Current user after login: {current_user.is_authenticated}, ID: {getattr(current_user, 'id', 'NO_ID')}")
         
-        # Check user count to verify user was created
-        # Add retry logic in case of database timing issues
-        import time
-        max_retries = 3
-        for attempt in range(max_retries):
-            final_user_count = user_service.get_user_count_sync()
-            print(f"🎉 [COMPLETION] User count check attempt {attempt + 1}: {final_user_count}")
-            
-            if final_user_count is not None and final_user_count > 0:
-                print(f"🎉 [COMPLETION] User count confirmed: {final_user_count}")
-                break
-            elif attempt < max_retries - 1:
-                print(f"🎉 [COMPLETION] User count still 0, retrying in 0.5s...")
-                time.sleep(0.5)
-            else:
-                print(f"❌ [COMPLETION] User count still 0 after {max_retries} attempts!")
-                # Don't clear session if verification fails
-                flash('Setup warning: User creation could not be verified. Please check if you can log in.', 'warning')
-                return render_template('onboarding/step5_confirmation.html',
-                                       step=5, 
-                                       onboarding_data=onboarding_data,
-                                       setup_warning=True)
+        # Simple verification - just check if we're authenticated
+        if not current_user.is_authenticated:
+            print(f"❌ [COMPLETION] Login verification failed - user not authenticated")
+            logger.error("Login verification failed - user not authenticated")
+            flash('Setup completed but login failed. Please log in manually.', 'warning')
+            return redirect(url_for('auth.login'))
         
         # Only clear onboarding session after successful verification
         print(f"🎉 [COMPLETION] Clearing onboarding session")
@@ -1567,7 +1749,7 @@ def handle_onboarding_completion(onboarding_data: Dict):
         
         print(f"🎉 [COMPLETION] Success! Redirecting to main index")
         logger.info(f"🔍 ONBOARDING DEBUG: Success! Redirecting to main index")
-        flash('Welcome to Bibliotheca! Your library is ready.', 'success')
+        flash('🎉 Welcome to Bibliotheca! Your library is ready.', 'success')
         
         # Instead of redirecting to library, redirect to index first to avoid potential route issues
         # The user can navigate to library from there
@@ -1576,18 +1758,26 @@ def handle_onboarding_completion(onboarding_data: Dict):
     except Exception as e:
         print(f"❌ [COMPLETION] Error handling onboarding completion: {e}")
         logger.error(f"Error handling onboarding completion: {e}")
-        flash(f'Setup completed but login failed: {e}', 'warning')
+        import traceback
+        traceback.print_exc()
+        flash(f'Setup completed but login failed: {e}. Please log in manually.', 'warning')
         return redirect(url_for('auth.login'))
 
 
 def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[str]:
     """Start a background import job for onboarding using the proven import system."""
     try:
+        print(f"🚀 [IMPORT_JOB] ============ STARTING IMPORT JOB ============")
+        print(f"🚀 [IMPORT_JOB] User ID: {user_id}")
+        print(f"🚀 [IMPORT_JOB] Import config: {import_config}")
+        logger.info(f"🚀 Starting simplified onboarding import job for user {user_id}")
+        
         # Import the proven import functions from routes
         from flask import current_app
         
         # Create a unique task ID
         task_id = str(uuid.uuid4())
+        print(f"🚀 [IMPORT_JOB] Generated task ID: {task_id}")
         
         logger.info(f"🚀 Starting simplified onboarding import job {task_id} for user {user_id}")
         
@@ -1610,22 +1800,32 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             'error_messages': [],
             'recent_activity': []
         }
+        print(f"🚀 [IMPORT_JOB] Created job data: {job_data}")
         
         # Count total rows in the CSV
         try:
+            print(f"🚀 [IMPORT_JOB] Counting CSV rows...")
             import csv
             csv_file_path = import_config.get('csv_file_path')
+            print(f"🚀 [IMPORT_JOB] CSV file path: {csv_file_path}")
             if csv_file_path:
                 with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
                     reader = csv.DictReader(csvfile)
                     job_data['total'] = sum(1 for _ in reader)
+                    print(f"🚀 [IMPORT_JOB] CSV row count: {job_data['total']}")
         except Exception as e:
+            print(f"⚠️ [IMPORT_JOB] Could not count CSV rows: {e}")
             logger.warning(f"⚠️ Could not count CSV rows: {e}")
             job_data['total'] = 0
         
         # Store job data using the same proven method as post-onboarding import
+        print(f"🚀 [IMPORT_JOB] Storing job in Kuzu...")
         kuzu_success = store_job_in_kuzu(task_id, job_data)
+        print(f"🚀 [IMPORT_JOB] Kuzu storage result: {kuzu_success}")
+        
+        print(f"🚀 [IMPORT_JOB] Storing job in memory...")
         import_jobs[task_id] = job_data
+        print(f"🚀 [IMPORT_JOB] Memory storage complete")
         
         logger.info(f"🏗️ Created onboarding import job {task_id} for user {user_id}")
         logger.info(f"📊 Kuzu storage: {'✅' if kuzu_success else '❌'}")
@@ -1633,13 +1833,18 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         
         # Auto-create custom fields (same as post-onboarding)
         field_mappings = import_config.get('field_mappings', {})
+        print(f"🚀 [IMPORT_JOB] Auto-creating custom fields for mappings: {field_mappings}")
         auto_create_custom_fields(field_mappings, user_id)
+        print(f"🚀 [IMPORT_JOB] Custom fields auto-creation complete")
         
         # Start the import using the proven working import system
         def run_import():
             try:
+                print(f"🚀 [IMPORT_JOB] Starting background import thread for task {task_id}")
                 start_import_job(task_id)
+                print(f"✅ [IMPORT_JOB] Background import completed for task {task_id}")
             except Exception as e:
+                print(f"❌ [IMPORT_JOB] Background import failed for task {task_id}: {e}")
                 if task_id in import_jobs:
                     import_jobs[task_id]['status'] = 'failed'
                     if 'error_messages' not in import_jobs[task_id]:
@@ -1647,15 +1852,24 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     import_jobs[task_id]['error_messages'].append(str(e))
                 logger.error(f"Onboarding import job {task_id} failed: {e}")
         
+        print(f"🚀 [IMPORT_JOB] Creating background thread...")
         import threading
         thread = threading.Thread(target=run_import)
         thread.daemon = True
+        print(f"🚀 [IMPORT_JOB] Starting background thread...")
         thread.start()
+        print(f"✅ [IMPORT_JOB] Background thread started successfully")
         
+        print(f"✅ [IMPORT_JOB] ============ IMPORT JOB SETUP COMPLETE ============")
+        print(f"✅ [IMPORT_JOB] Returning task ID: {task_id}")
+        logger.info(f"✅ Onboarding import job {task_id} started successfully")
         return task_id
         
     except Exception as e:
+        print(f"❌ [IMPORT_JOB] Failed to start onboarding import job: {e}")
         logger.error(f"❌ Failed to start onboarding import job: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # Removed complex onboarding-specific import functions.
@@ -1710,6 +1924,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                 job['status'] = 'failed'
                 if 'error_messages' not in job:
                     job['error_messages'] = []
+               
                 job['error_messages'].append(str(e))
                 update_job_in_kuzu(task_id, {'status': 'failed', 'error_messages': job['error_messages']})
         except:

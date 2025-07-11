@@ -160,7 +160,7 @@ class KuzuGraphDB:
             if force_reset:
                 logger.info("🗑️ Dropping existing tables due to forced reset...")
                 print("🗑️ Dropping existing tables due to forced reset...")
-                drop_tables = ["OWNS", "WRITTEN_BY", "CONTRIBUTED", "AUTHORED", "PUBLISHED_BY", "PUBLISHED", "CATEGORIZED_AS", "PART_OF_SERIES", "IN_SERIES", "LOGGED", "PARENT_CATEGORY", "LOCATED_AT", "STORED_AT", "HAS_CUSTOM_FIELD",
+                drop_tables = ["OWNS", "WRITTEN_BY", "CONTRIBUTED", "AUTHORED", "PUBLISHED_BY", "PUBLISHED", "CATEGORIZED_AS", "PART_OF_SERIES", "IN_SERIES", "LOGGED", "PARENT_CATEGORY", "STORED_AT", "HAS_CUSTOM_FIELD",
                               "Book", "User", "Author", "Person", "Publisher", "Category", "Series", "ReadingLog", 
                               "Location", "ImportMapping", "ImportJob", "CustomFieldDefinition", "ImportTask"]
                 
@@ -349,7 +349,6 @@ class KuzuGraphDB:
                 """
                 CREATE NODE TABLE Location(
                     id STRING,
-                    user_id STRING,
                     name STRING,
                     description STRING,
                     location_type STRING,
@@ -561,13 +560,6 @@ class KuzuGraphDB:
                 """
                 CREATE REL TABLE PARENT_CATEGORY(
                     FROM Category TO Category,
-                    created_at TIMESTAMP
-                )
-                """,
-                """
-                CREATE REL TABLE LOCATED_AT(
-                    FROM User TO Location,
-                    is_primary BOOLEAN,
                     created_at TIMESTAMP
                 )
                 """,
@@ -1006,6 +998,7 @@ class KuzuGraphStorage:
                 except Exception:
                     pass
             serialized_updates = self._serialize_datetime_values(updates)
+            # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
             serialized_updates['updated_at'] = datetime.utcnow()
             
             print(f"🔧 [UPDATE_NODE] Serialized updates: {serialized_updates}")
@@ -1164,14 +1157,14 @@ class KuzuGraphStorage:
             
             # Ensure created_at is set as datetime object
             if 'created_at' not in processed_props:
-                processed_props['created_at'] = datetime.utcnow()
+                processed_props['created_at'] = datetime.utcnow().isoformat()
             elif isinstance(processed_props['created_at'], str):
                 try:
                     if processed_props['created_at'].endswith('Z'):
                         processed_props['created_at'] = processed_props['created_at'][:-1] + '+00:00'
-                    processed_props['created_at'] = datetime.fromisoformat(processed_props['created_at'])
+                    processed_props['created_at'] = datetime.fromisoformat(processed_props['created_at']).isoformat()
                 except (ValueError, TypeError):
-                    processed_props['created_at'] = datetime.utcnow()
+                    processed_props['created_at'] = datetime.utcnow().isoformat()
             
             # Build properties clause
             if processed_props:
@@ -1375,7 +1368,7 @@ class KuzuGraphStorage:
                         'book_id': book_id,
                         'field_name': field_name,
                         'field_value': field_value,
-                        'created_at': datetime.utcnow()
+                        'created_at': datetime.utcnow().isoformat()
                     }
                     
                     success = self.create_relationship(

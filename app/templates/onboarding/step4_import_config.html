@@ -1,246 +1,331 @@
-<!-- onboarding/step4_import_config.html -->
-{% extends "base.html" %}
+{% extends "onboarding/base_onboarding.html" %}
 
-{% block title %}Import Configuration - Bibliotheca{% endblock %}
+{% block title %}Import Configuration - MyBibliotheca{% endblock %}
 
-{% block content %}
-<div class="container mt-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <!-- Progress Indicator -->
-            <div class="card mb-4">
-                <div class="card-body">
-                    <div class="progress mb-2">
-                        <div class="progress-bar" role="progressbar" style="width: 80%" aria-valuenow="80" aria-valuemin="0" aria-valuemax="100"></div>
-                    </div>
-                    <small class="text-muted">Step {{ step }} of {{ total_steps }}: Import Configuration</small>
-                </div>
-            </div>
-            
-            <div class="card shadow">
-                <div class="card-header bg-info text-white">
-                    <h3 class="mb-0">
-                        <i class="fas fa-file-import"></i> Step 4: Configure Import Settings
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <div class="alert alert-info">
-                        <h5><i class="fas fa-info-circle"></i> Import Configuration</h5>
-                        <p class="mb-1">
-                            Configure how your CSV file will be imported into your library. 
-                            We'll map the columns in your file to the appropriate fields in Bibliotheca.
-                        </p>
-                    </div>
-                    
-                    <form method="POST" id="importConfigForm">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                        
-                        <!-- Debug info (remove in production) -->
-                        {% if config.DEBUG %}
-                        <div class="alert alert-light" style="font-size: 0.8em;">
-                            <strong>Debug:</strong> CSRF Token: {{ csrf_token()[:10] if csrf_token() else 'None' }}...<br>
-                            <small id="csrf-status">Token loaded at: <span id="csrf-timestamp"></span></small>
-                        </div>
-                        {% endif %}
-                        
-                        <!-- CSRF Token Warning -->
-                        <div class="alert alert-warning csrf-warning" style="display: none;">
-                            <i class="fas fa-exclamation-triangle"></i> 
-                            <strong>Security Token Aging</strong><br>
-                            Your security token has been active for a while. Consider refreshing it before submitting the form to avoid errors.
-                            <button type="button" class="btn btn-sm btn-outline-warning ml-2" onclick="refreshCSRFToken()">
-                                <i class="fas fa-sync"></i> Refresh Now
-                            </button>
-                        </div>
-                        
-                        <!-- Field Mapping Section -->
-                        <div class="card border-primary mb-4">
-                            <div class="card-header bg-primary text-white">
-                                <h5 class="mb-0">
-                                    <i class="fas fa-exchange-alt"></i> Field Mapping
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <p>Map the columns from your CSV file to the corresponding fields in Bibliotheca:</p>
-                                
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <h6>CSV Columns Detected:</h6>
-                                        <ul class="list-group list-group-flush">
-                                            {% for header in csv_headers %}
-                                            <li class="list-group-item">{{ header }}</li>
-                                            {% endfor %}
-                                        </ul>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <h6>Available Fields:</h6>
-                                        {% for header in csv_headers %}
-                                        <div class="form-group mb-3">
-                                            <label for="field_{{ header|replace(' ', '_')|replace('/', '_')|replace('-', '_')|replace('?', '') }}">Map "{{ header }}" to:</label>
-                                            <select class="form-control field-mapping-select" id="field_{{ header|replace(' ', '_')|replace('/', '_')|replace('-', '_')|replace('?', '') }}" name="field_{{ header }}" data-header="{{ header }}">
-                                                <option value="">-- Skip this column --</option>
-                                                <optgroup label="Standard Fields">
-                                                    {% for field in available_fields %}
-                                                    <option value="{{ field }}" 
-                                                        {% if (header.lower() == 'title' and field == 'title') or
-                                                           (header.lower() in ['author', 'authors'] and field == 'author') or
-                                                           (header.lower() in ['additional authors', 'contributors'] and field == 'additional_author') or
-                                                           (header.lower() in ['isbn', 'isbn13', 'isbn/uid'] and field == 'isbn') or
-                                                           (header.lower() in ['summary', 'description', 'review'] and field == 'description') or
-                                                           (header.lower() in ['publication year', 'published_date', 'year published'] and field == 'published_date') or
-                                                           (header.lower() in ['publisher'] and field == 'publisher') or
-                                                           (header.lower() in ['number of pages', 'page count'] and field == 'page_count') or
-                                                           (header.lower() in ['my rating', 'star rating', 'rating'] and field == 'rating') or
-                                                           (header.lower() in ['read status', 'exclusive shelf', 'bookshelves'] and field == 'reading_status') or
-                                                           (header.lower() in ['date read', 'last date read'] and field == 'date_read') or
-                                                           (header.lower() in ['date added'] and field == 'date_added') or
-                                                           (header.lower() in ['notes', 'my review', 'private notes'] and field == 'notes') or
-                                                           (header.lower() in ['tags', 'categories'] and field == 'categories' and header.lower() not in ['moods', 'pace', 'character- or plot-driven?', 'content warnings', 'diverse characters?', 'flawed characters?']) or
-                                                           (header.lower() in ['format', 'binding'] and field == 'media_type') %}selected{% endif %}>
-                                                        {{ field|replace('_', ' ')|title }}
-                                                    </option>
-                                                    {% endfor %}
-                                                </optgroup>
-                                                <optgroup label="Custom Metadata">
-                                                    <option value="custom_metadata:{{ header }}" data-custom="true">
-                                                        Create Custom Field: "{{ header }}"
-                                                    </option>
-                                                </optgroup>
-                                            </select>
-                                            
-                                            <!-- Custom metadata type selector (initially hidden) -->
-                                            <div class="custom-metadata-options mt-2" style="display: none;">
-                                                <div class="alert alert-info alert-sm">
-                                                    <i class="fas fa-plus"></i> <strong>Creating Custom Field</strong><br>
-                                                    <small>This will create a new custom metadata field that you can use for all your books.</small>
-                                                </div>
-                                                <label>Custom Field Type:</label>
-                                                <select class="form-control form-control-sm" name="custom_type_{{ header }}">
-                                                    <option value="string">Text</option>
-                                                    <option value="integer">Number</option>
-                                                    <option value="date">Date</option>
-                                                    <option value="boolean">Yes/No</option>
-                                                    <option value="decimal">Decimal (Number)</option>
-                                                    <option value="textarea">Long Text</option>
-                                                    <option value="tags">Tags</option>
-                                                    <option value="list">List (comma-separated)</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Import Options -->
-                        <div class="card border-secondary mb-4">
-                            <div class="card-header bg-secondary text-white">
-                                <h5 class="mb-0">
-                                    <i class="fas fa-cog"></i> Import Options
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" value="1" id="skip_duplicates" name="skip_duplicates" checked>
-                                    <label class="form-check-label" for="skip_duplicates">
-                                        Skip duplicate books (based on ISBN or Title/Author)
-                                    </label>
-                                </div>
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" value="1" id="auto_fetch_metadata" name="auto_fetch_metadata" checked>
-                                    <label class="form-check-label" for="auto_fetch_metadata">
-                                        Automatically fetch additional metadata for imported books
-                                    </label>
-                                </div>
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" value="1" id="create_collections" name="create_collections">
-                                    <label class="form-check-label" for="create_collections">
-                                        Create collections from category/shelf data
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Custom Fields Summary -->
-                        <div class="alert alert-success custom-fields-summary" style="display: none;">
-                            <h6><i class="fas fa-magic"></i> Custom Fields Will Be Created</h6>
-                            <p class="mb-0">The following custom metadata fields will be automatically created for your library:</p>
-                            <ul class="custom-fields-list mb-0 mt-2"></ul>
-                        </div>
-                        
-                        <!-- Action Buttons -->
-                        <div class="d-flex justify-content-between mt-4">
-                            <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-secondary">
-                                <i class="fas fa-arrow-left"></i> Back
-                            </a>
-                            <div>
-                                <button type="button" class="btn btn-outline-info mr-2" onclick="refreshCSRFToken().then(() => { if (window.location.hash !== '#refreshed') { window.location.hash = '#refreshed'; window.location.reload(); } })">
-                                    <i class="fas fa-sync"></i> Refresh Token
-                                </button>
-                                <button type="submit" class="btn btn-primary">
-                                    Continue <i class="fas fa-arrow-right"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+{% block progress_width %}80%{% endblock %}
 
-<style>
-.card {
-    transition: box-shadow 0.15s ease-in-out;
+{% block step_info %}Step 4 of 5: Import Configuration{% endblock %}
+
+{% block extra_styles %}
+.mapping-section {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    border-left: 4px solid #667eea;
 }
 
-.card:hover {
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+.mapping-row {
+    display: grid;
+    grid-template-columns: 2fr 3fr;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #e9ecef;
 }
 
-.form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+@media (max-width: 768px) {
+    .mapping-row {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+        text-align: left;
+    }
+    
+    .csv-column {
+        margin-bottom: 0.5rem;
+    }
 }
 
-.btn {
-    transition: all 0.15s ease-in-out;
+.mapping-row:last-child {
+    border-bottom: none;
 }
 
-.btn:hover {
-    transform: translateY(-1px);
+.csv-column {
+    font-weight: 600;
+    color: #333;
+    font-family: monospace;
+    background: #e9ecef;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.field-mapping-select {
+    padding: 0.5rem;
+    border: 2px solid #e9ecef;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: white;
+}
+
+.field-mapping-select:focus {
+    border-color: #667eea;
+    outline: none;
 }
 
 .custom-metadata-options {
-    padding: 10px;
-    background-color: #f8f9fa;
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 6px;
+    display: none;
+}
+
+.custom-metadata-options label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #856404;
+    margin-bottom: 0.25rem;
+    display: block;
+}
+
+.custom-metadata-options select {
+    width: 100%;
+    padding: 0.375rem;
+    border: 1px solid #ffeaa7;
     border-radius: 4px;
-    border-left: 3px solid #007bff;
-    margin-top: 8px;
+    font-size: 0.85rem;
 }
 
-.custom-metadata-options .alert-sm {
-    padding: 8px 12px;
-    margin-bottom: 8px;
-    font-size: 0.875rem;
+.preview-section {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
 }
 
-.field-mapping-select.custom-selected {
-    border-color: #007bff;
-    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+.preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.85rem;
 }
-</style>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Update timestamp display
-    const timestampElement = document.getElementById('csrf-timestamp');
-    if (timestampElement) {
-        timestampElement.textContent = new Date().toLocaleTimeString();
-    }
+.preview-table th,
+.preview-table td {
+    padding: 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.preview-table th {
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #333;
+}
+
+.import-options {
+    background: #e3f2fd;
+    border: 1px solid #bbdefb;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.form-check {
+    margin-bottom: 0.75rem;
+}
+
+.form-check-input {
+    margin-right: 0.5rem;
+}
+
+.custom-fields-summary {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+    display: none;
+}
+
+.custom-fields-summary h6 {
+    color: #166534;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.custom-fields-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.custom-fields-list li {
+    padding: 0.25rem 0;
+    color: #166534;
+    font-size: 0.9rem;
+}
+{% endblock %}
+
+{% block content %}
+<div class="form-header">
+    <div class="icon-circle" style="background: linear-gradient(135deg, #28a745, #20c997);">
+        <i class="bi bi-file-earmark-spreadsheet"></i>
+    </div>
+    <h2>Configure Import Settings</h2>
+    <p>Map your CSV columns to book fields and configure import options.</p>
+</div>
+
+<form method="POST" id="importConfigForm">
+    <!-- CSRF Token -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     
-    // Handle custom metadata field visibility
+    <!-- Column Mapping -->
+    {% if csv_headers %}
+    <div class="mapping-section">
+        <div style="font-weight: 600; margin-bottom: 1rem; color: #333; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-arrow-left-right"></i>
+            Column Mapping
+        </div>
+        <p style="color: #666; margin-bottom: 1.5rem; font-size: 0.9rem;">
+            Map the columns from your CSV file to the corresponding book fields in MyBibliotheca.
+        </p>
+        
+        {% for header in csv_headers %}
+        <div class="mapping-row">
+            <div class="csv-column">{{ header }}</div>
+            <div>
+                <select name="field_mapping_{{ loop.index0 }}" class="field-mapping-select" data-column="{{ header }}">
+                    <option value="">-- Skip this column --</option>
+                    <option value="title" {% if 'title' in header.lower() %}selected{% endif %}>Title</option>
+                    <option value="author" {% if 'author' in header.lower() %}selected{% endif %}>Author</option>
+                    <option value="isbn" {% if 'isbn' in header.lower() %}selected{% endif %}>ISBN</option>
+                    <option value="description" {% if 'description' in header.lower() or 'summary' in header.lower() %}selected{% endif %}>Description</option>
+                    <option value="genre" {% if 'genre' in header.lower() or 'category' in header.lower() %}selected{% endif %}>Genre</option>
+                    <option value="publisher" {% if 'publisher' in header.lower() %}selected{% endif %}>Publisher</option>
+                    <option value="published_date" {% if 'date' in header.lower() or 'year' in header.lower() %}selected{% endif %}>Published Date</option>
+                    <option value="page_count" {% if 'page' in header.lower() %}selected{% endif %}>Page Count</option>
+                    <option value="language" {% if 'language' in header.lower() or 'lang' in header.lower() %}selected{% endif %}>Language</option>
+                    <option value="rating" {% if 'rating' in header.lower() or 'stars' in header.lower() %}selected{% endif %}>Rating</option>
+                    <option value="read_status" {% if 'status' in header.lower() or 'read' in header.lower() %}selected{% endif %}>Read Status</option>
+                    <option value="date_read" {% if 'read' in header.lower() and 'date' in header.lower() %}selected{% endif %}>Date Read</option>
+                    <option value="custom_metadata:{{ header }}">Custom Field: {{ header }}</option>
+                </select>
+                
+                <!-- Custom metadata options -->
+                <div class="custom-metadata-options">
+                    <label for="custom_type_{{ loop.index0 }}">Field Type:</label>
+                    <select name="custom_type_{{ loop.index0 }}" id="custom_type_{{ loop.index0 }}">
+                        <option value="text">Text</option>
+                        <option value="number">Number</option>
+                        <option value="date">Date</option>
+                        <option value="boolean">Yes/No</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Data Preview -->
+    {% if sample_data %}
+    <div class="preview-section">
+        <h5 style="color: #166534; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-eye"></i>
+            Data Preview (First 3 rows)
+        </h5>
+        <div style="overflow-x: auto;">
+            <table class="preview-table">
+                <thead>
+                    <tr>
+                        {% for header in csv_headers %}
+                        <th>{{ header }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in sample_data[:3] %}
+                    <tr>
+                        {% for cell in row %}
+                        <td>{{ cell[:50] + ('...' if cell|length > 50 else '') if cell else '' }}</td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Import Options -->
+    <div class="import-options">
+        <h5 style="color: #1565c0; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="bi bi-gear"></i>
+            Import Options
+        </h5>
+        
+        <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="skip_duplicates" name="skip_duplicates" checked>
+            <label class="form-check-label" for="skip_duplicates">
+                Skip duplicate books (based on title and author)
+            </label>
+        </div>
+        
+        <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="create_collections" name="create_collections">
+            <label class="form-check-label" for="create_collections">
+                Create collections from category/shelf data
+            </label>
+        </div>
+    </div>
+    
+    <!-- Custom Fields Summary -->
+    <div class="custom-fields-summary">
+        <h6>
+            <i class="bi bi-magic"></i>
+            Custom Fields Will Be Created
+        </h6>
+        <p style="margin-bottom: 1rem; color: #166534;">
+            The following custom metadata fields will be automatically created for your library:
+        </p>
+        <ul class="custom-fields-list"></ul>
+    </div>
+    
+    <!-- Navigation Buttons -->
+    <div class="navigation-buttons">
+        <a href="{{ url_for('onboarding.step', step_num=3) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        <button type="submit" class="btn btn-primary">
+            Continue <i class="bi bi-arrow-right"></i>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateCustomFieldsSummary() {
+    const customFields = [];
+    const fieldSelects = document.querySelectorAll('.field-mapping-select');
+    
+    fieldSelects.forEach(function(select, index) {
+        if (select.value.startsWith('custom_metadata:')) {
+            const fieldName = select.value.replace('custom_metadata:', '');
+            const typeSelect = document.querySelector(`select[name="custom_type_${index}"]`);
+            const fieldType = typeSelect ? typeSelect.value : 'text';
+            customFields.push(`${fieldName} (${fieldType})`);
+        }
+    });
+    
+    const summary = document.querySelector('.custom-fields-summary');
+    const list = document.querySelector('.custom-fields-list');
+    
+    if (customFields.length > 0) {
+        list.innerHTML = customFields.map(field => `<li>• ${field}</li>`).join('');
+        summary.style.display = 'block';
+    } else {
+        summary.style.display = 'none';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
     const fieldSelects = document.querySelectorAll('.field-mapping-select');
     
     fieldSelects.forEach(function(select) {
@@ -270,171 +355,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // Add form submission handler to refresh CSRF token if needed
-    const form = document.getElementById('importConfigForm');
-    if (form) {
-        let retryCount = 0;
-        
-        form.addEventListener('submit', function(e) {
-            const csrfInput = form.querySelector('input[name="csrf_token"]');
-            if (csrfInput) {
-                console.log('Form submitting with CSRF token:', csrfInput.value.substring(0, 10) + '...');
-                
-                // Store form data in case we need to retry
-                const formData = new FormData(form);
-                window.onboardingFormData = formData;
-            }
-        });
-        
-        // Add error handler for potential CSRF failures
-        window.addEventListener('beforeunload', function() {
-            // Clear any stored form data when leaving the page
-            delete window.onboardingFormData;
-        });
-        
-        // Add a periodic CSRF token refresh (every 10 minutes)
-        setInterval(function() {
-            refreshCSRFToken().then(success => {
-                if (success) {
-                    console.log('CSRF token refreshed via background request');
-                } else {
-                    console.warn('Failed to refresh CSRF token in background');
-                }
-            });
-        }, 10 * 60 * 1000); // 10 minutes
-        
-        // Show warning after 30 minutes
-        setTimeout(function() {
-            const warningElement = document.querySelector('.csrf-warning');
-            if (warningElement) {
-                warningElement.style.display = 'block';
-            }
-        }, 30 * 60 * 1000); // 30 minutes
-    }
-    
-    // Auto-suggest custom metadata for unmapped fields
-    fieldSelects.forEach(function(select) {
-        const header = select.dataset.header;
-        
-        // If no standard field is selected and this doesn't look like a standard field
-        if (select.value === '' && !isStandardField(header)) {
-            // Auto-select custom metadata option
-            const customOption = select.querySelector(`option[value="custom_metadata:${header}"]`);
-            if (customOption) {
-                select.value = customOption.value;
-                select.classList.add('custom-selected');
-                // Trigger change event to show custom metadata options
-                select.dispatchEvent(new Event('change'));
-                console.log(`Auto-selected custom metadata for non-standard field: ${header}`);
-            }
-        }
-    });
-    
-    function isStandardField(header) {
-        const standardFields = [
-            'title', 'author', 'authors', 'additional authors', 'contributors',
-            'isbn', 'isbn13', 'isbn/uid', 'summary', 'description', 'review',
-            'publication year', 'published_date', 'year published', 'publisher',
-            'number of pages', 'page count', 'my rating', 'star rating', 'rating',
-            'read status', 'exclusive shelf', 'bookshelves', 'date read', 
-            'last date read', 'date added', 'notes', 'my review', 'private notes',
-            'tags', 'categories', 'format', 'binding', 'book id',
-            'average rating', 'owned copies', 'read count', 'dates read'
-        ];
-        
-        // Explicitly exclude StoryGraph-specific fields that should be custom
-        const customOnlyFields = [
-            'moods', 'pace', 'character- or plot-driven?', 'content warnings',
-            'diverse characters?', 'flawed characters?', 'owned?'
-        ];
-        
-        const headerLower = header.toLowerCase();
-        
-        // If it's in the custom-only list, it's not a standard field
-        if (customOnlyFields.some(field => headerLower === field || headerLower.includes(field))) {
-            return false;
-        }
-        
-        return standardFields.some(field => {
-            // Exact match or contains match
-            return headerLower === field || 
-                   headerLower.includes(field) || 
-                   field.includes(headerLower);
-        });
-    }
-    
-    function updateCustomFieldsSummary() {
-        const customFields = [];
-        const summary = document.querySelector('.custom-fields-summary');
-        const list = document.querySelector('.custom-fields-list');
-        
-        fieldSelects.forEach(function(select) {
-            if (select.value.startsWith('custom_metadata:')) {
-                const header = select.dataset.header;
-                const typeSelect = select.parentNode.querySelector(`select[name="custom_type_${header}"]`);
-                const type = typeSelect ? typeSelect.value : 'string';
-                customFields.push({
-                    name: header,
-                    type: type
-                });
-            }
-        });
-        
-        if (customFields.length > 0) {
-            list.innerHTML = customFields.map(field => 
-                `<li><strong>${field.name}</strong> (${field.type})</li>`
-            ).join('');
-            summary.style.display = 'block';
-        } else {
-            summary.style.display = 'none';
-        }
-    }
-    
-    // Initial update
+    // Initial summary update
     updateCustomFieldsSummary();
 });
-
-// Function to refresh the page - useful if CSRF token expires
-function refreshPage() {
-    console.log('Refreshing page to get new CSRF token...');
-    window.location.reload();
-}
-
-// Function to get a fresh CSRF token
-function refreshCSRFToken() {
-    return fetch(window.location.href, {
-        method: 'GET',
-        credentials: 'same-origin'
-    }).then(response => {
-        if (response.ok) {
-            return response.text();
-        }
-        throw new Error('Failed to refresh CSRF token');
-    }).then(html => {
-        // Parse the HTML to extract the new CSRF token
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const newTokenInput = doc.querySelector('input[name="csrf_token"]');
-        if (newTokenInput) {
-            const currentTokenInput = document.querySelector('input[name="csrf_token"]');
-            if (currentTokenInput) {
-                currentTokenInput.value = newTokenInput.value;
-                console.log('CSRF token refreshed successfully');
-                
-                // Update timestamp display
-                const timestampElement = document.getElementById('csrf-timestamp');
-                if (timestampElement) {
-                    timestampElement.textContent = new Date().toLocaleTimeString();
-                }
-                
-                return true;
-            }
-        }
-        throw new Error('Could not find CSRF token in response');
-    }).catch(err => {
-        console.error('Failed to refresh CSRF token:', err);
-        return false;
-    });
-}
 </script>
 {% endblock %}

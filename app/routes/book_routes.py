@@ -702,8 +702,8 @@ def edit_book(uid):
                                 'id': str(uuid.uuid4()),
                                 'name': person_name,
                                 'normalized_name': normalized_name,
-                                'created_at': datetime.now(),
-                                'updated_at': datetime.now()
+                                'created_at': datetime.now().isoformat(),
+                                'updated_at': datetime.now().isoformat()
                             }
                             
                             created_person = person_repo.create(person_dict)
@@ -745,9 +745,17 @@ def edit_book(uid):
                 # Map contribution type
                 contrib_type_map = {
                     'authored': ContributionType.AUTHORED,
-                    'narrated': ContributionType.NARRATED,
                     'edited': ContributionType.EDITED,
-                    'contributed': ContributionType.CONTRIBUTED
+                    'translated': ContributionType.TRANSLATED,
+                    'illustrated': ContributionType.ILLUSTRATED,
+                    'narrated': ContributionType.NARRATED,
+                    'gave_foreword': ContributionType.GAVE_FOREWORD,
+                    'gave_introduction': ContributionType.GAVE_INTRODUCTION,
+                    'gave_afterword': ContributionType.GAVE_AFTERWORD,
+                    'compiled': ContributionType.COMPILED,
+                    'contributed': ContributionType.CONTRIBUTED,
+                    'co_authored': ContributionType.CO_AUTHORED,
+                    'ghost_wrote': ContributionType.GHOST_WROTE
                 }
                 
                 contrib_type = contrib_type_map.get(contrib.get('type', 'authored'), ContributionType.AUTHORED)
@@ -781,7 +789,21 @@ def edit_book(uid):
             'openlibrary_id': request.form.get('openlibrary_id', '').strip() or None,
             'average_rating': float(avg_rating_str) if (avg_rating_str := request.form.get('average_rating', '').strip()) else None,
             'rating_count': int(rating_count_str) if (rating_count_str := request.form.get('rating_count', '').strip()) else None,
+            # User-specific fields
+            'reading_status': request.form.get('reading_status', '').strip() or None,
+            'ownership_status': request.form.get('ownership_status', '').strip() or None,
+            'media_type': request.form.get('media_type', '').strip() or None,
+            'personal_notes': request.form.get('personal_notes', '').strip() or None,
+            'review': request.form.get('review', '').strip() or None,
         }
+        
+        # Handle user rating
+        user_rating = request.form.get('user_rating', '').strip()
+        if user_rating:
+            try:
+                update_data['user_rating'] = float(user_rating)
+            except ValueError:
+                pass  # Invalid rating, skip it
         
         # Remove None values except for specific fields that can be null
         filtered_data = {}
@@ -790,6 +812,35 @@ def edit_book(uid):
                 filtered_data[k] = v
         
         success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
+        
+        # Handle location update separately
+        location_id = request.form.get('location_id', '').strip()
+        print(f"🔍 [EDIT_BOOK] location_id from form: '{location_id}' (type: {type(location_id)})")
+        if location_id is not None:  # Allow empty string to clear location
+            print(f"🔍 [EDIT_BOOK] Proceeding with location update...")
+            # Use the location service to update the book location
+            try:
+                from app.location_service import LocationService
+                from app.infrastructure.kuzu_graph import get_kuzu_connection
+                
+                db = get_kuzu_connection()
+                connection = db.connect()
+                location_service = LocationService(connection)
+                
+                # Convert empty string to None for clearing location
+                location_success = location_service.set_book_location(
+                    uid, 
+                    location_id if location_id else None, 
+                    str(current_user.id)
+                )
+                print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
+                if not location_success:
+                    print(f"⚠️ Failed to update location for book {uid}")
+            except Exception as e:
+                print(f"❌ [EDIT_BOOK] Error updating location: {e}")
+        else:
+            print(f"🔍 [EDIT_BOOK] Skipping location update (location_id is None)")
+        
         if success:
             flash('Book updated successfully.', 'success')
         else:
@@ -1236,14 +1287,26 @@ def update_book_details(uid):
         print(f"🔍 [EDIT_BOOK] location_id from form: '{location_id}' (type: {type(location_id)})")
         if location_id is not None:  # Allow empty string to clear location
             print(f"🔍 [EDIT_BOOK] Proceeding with location update...")
-            # Use the facade for location updates - this functionality is now part of the relationship service
-            from app.services.kuzu_service_facade import KuzuServiceFacade
-            facade = KuzuServiceFacade()
-            # For now, we'll use the update_book method which handles location updates
-            location_success = facade.update_book_sync(uid, str(current_user.id), location_id=location_id if location_id.strip() else None)
-            print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
-            if not location_success:
-                print(f"⚠️ Failed to update location for book {uid}")
+            # Use the location service to update the book location
+            try:
+                from app.location_service import LocationService
+                from app.infrastructure.kuzu_graph import get_kuzu_connection
+                
+                db = get_kuzu_connection()
+                connection = db.connect()
+                location_service = LocationService(connection)
+                
+                # Convert empty string to None for clearing location
+                location_success = location_service.set_book_location(
+                    uid, 
+                    location_id if location_id.strip() else None, 
+                    str(current_user.id)
+                )
+                print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
+                if not location_success:
+                    print(f"⚠️ Failed to update location for book {uid}")
+            except Exception as e:
+                print(f"❌ [EDIT_BOOK] Error updating location: {e}")
         else:
             print(f"🔍 [EDIT_BOOK] Skipping location update (location_id is None)")
         
@@ -2781,11 +2844,16 @@ def add_book_manual():
                 print(f"⚠️ [MANUAL] Invalid media type: {media_type}")
         
         print(f"📚 [MANUAL] Adding book to user library with reading status: {reading_status_enum}")
+        
+        # Extract the first location ID for the simplified book service
+        location_id = final_locations[0] if final_locations else None
+        print(f"📍 [MANUAL] Using location_id: {location_id}")
+        
         result = book_service.add_book_to_user_library_sync(
             user_id=current_user.id,
             book_id=existing_book.id,
             reading_status=reading_status_enum,
-            locations=final_locations,
+            location_id=location_id,
             custom_metadata=custom_metadata if custom_metadata else None
         )
         print(f"📚 [MANUAL] Add to library result: {result}")

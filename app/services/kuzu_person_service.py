@@ -194,31 +194,89 @@ class KuzuPersonService:
     async def get_books_by_person(self, person_id: str) -> List[Dict[str, Any]]:
         """Get all books associated with a person (as author, illustrator, etc.)."""
         try:
+            print(f"🔍 [GET_BOOKS_BY_PERSON] Getting books for person_id: {person_id}")
+            
             query = """
-            MATCH (p:Person {id: $person_id})<-[r:AUTHORED]-(b:Book)
-            RETURN b, type(r) as relationship_type
+            MATCH (p:Person {id: $person_id})-[r:AUTHORED]->(b:Book)
+            RETURN b, 'AUTHORED' as relationship_type
             ORDER BY b.title ASC
             """
             
+            print(f"🔍 [GET_BOOKS_BY_PERSON] Executing query: {query}")
             results = self.graph_storage.query(query, {"person_id": person_id})
+            print(f"🔍 [GET_BOOKS_BY_PERSON] Raw results: {results}")
             
             books = []
             for result in results:
+                print(f"🔍 [GET_BOOKS_BY_PERSON] Processing result: {result}")
                 if 'col_0' in result:
                     book_data = dict(result['col_0'])
                     # Add the relationship type
-                    book_data['relationship_type'] = result.get('col_1', 'AUTHORED')
+                    book_data['relationship_type'] = result.get('col_1', 'authored')
                     # Ensure uid is available as alias for id
                     if 'id' in book_data:
                         book_data['uid'] = book_data['id']
                     books.append(book_data)
+                    print(f"✅ [GET_BOOKS_BY_PERSON] Added book: {book_data.get('title', 'Unknown')} (role: {book_data.get('relationship_type', 'unknown')})")
             
+            print(f"📊 [GET_BOOKS_BY_PERSON] Found {len(books)} books for person {person_id}")
             return books
             
         except Exception as e:
             print(f"❌ [GET_BOOKS_BY_PERSON] Error getting books by person {person_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
+    async def get_books_by_person_for_user(self, person_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Get books associated with a person, filtered by user's library and organized by contribution type."""
+        try:
+            print(f"🔍 [GET_BOOKS_BY_PERSON_FOR_USER] Getting books for person_id: {person_id}, user_id: {user_id}")
+            
+            # Query that joins person-book relationships with user-book relationships
+            query = """
+            MATCH (p:Person {id: $person_id})-[pr]->(b:Book)<-[ur:OWNS]-(u:User {id: $user_id})
+            WHERE type(pr) IN ['AUTHORED', 'EDITED', 'TRANSLATED', 'ILLUSTRATED', 'NARRATED']
+            RETURN b, type(pr) as relationship_type, ur
+            ORDER BY b.title ASC
+            """
+            
+            print(f"🔍 [GET_BOOKS_BY_PERSON_FOR_USER] Executing query: {query}")
+            results = self.graph_storage.query(query, {"person_id": person_id, "user_id": user_id})
+            print(f"🔍 [GET_BOOKS_BY_PERSON_FOR_USER] Raw results: {results}")
+            
+            books_by_type = {}
+            for result in results:
+                print(f"🔍 [GET_BOOKS_BY_PERSON_FOR_USER] Processing result: {result}")
+                if 'col_0' in result:
+                    book_data = dict(result['col_0'])
+                    relationship_type = result.get('col_1', 'authored')
+                    user_relationship = result.get('col_2', {})
+                    
+                    # Add user relationship data to book
+                    if isinstance(user_relationship, dict):
+                        book_data.update(user_relationship)
+                    
+                    # Add the relationship type
+                    book_data['relationship_type'] = relationship_type
+                    # Ensure uid is available as alias for id
+                    if 'id' in book_data:
+                        book_data['uid'] = book_data['id']
+                    
+                    # Organize by contribution type
+                    if relationship_type not in books_by_type:
+                        books_by_type[relationship_type] = []
+                    books_by_type[relationship_type].append(book_data)
+                    print(f"✅ [GET_BOOKS_BY_PERSON_FOR_USER] Added book: {book_data.get('title', 'Unknown')} (role: {relationship_type})")
+            
+            print(f"✅ [GET_BOOKS_BY_PERSON_FOR_USER] Found {sum(len(books) for books in books_by_type.values())} books for person {person_id}, user {user_id}")
+            return books_by_type
+            
+        except Exception as e:
+            print(f"❌ [GET_BOOKS_BY_PERSON_FOR_USER] Error getting books for person {person_id}, user {user_id}: {e}")
+            traceback.print_exc()
+            return {}
+
     # Sync wrappers for backward compatibility
     def list_all_persons_sync(self) -> List[Dict[str, Any]]:
         """Get all persons (sync version)."""

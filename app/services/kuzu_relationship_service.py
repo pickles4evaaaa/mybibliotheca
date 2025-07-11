@@ -15,6 +15,7 @@ from ..infrastructure.kuzu_repositories import KuzuUserRepository
 from ..infrastructure.kuzu_graph import get_graph_storage
 from .kuzu_async_helper import run_async
 from .kuzu_book_service import KuzuBookService
+from ..debug_system import debug_log
 
 
 class KuzuRelationshipService:
@@ -41,13 +42,29 @@ class KuzuRelationshipService:
         setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
         
-        # Add location information
+        # Add location information with proper name lookup
         location_id = relationship_data.get('location_id')
         if location_id:
             # Set location_id for backward compatibility
             setattr(book, 'location_id', location_id)
-            # Set locations list for template compatibility
-            setattr(book, 'locations', [{'id': location_id, 'name': location_id}])
+            
+            # Look up the actual location name
+            location_name = location_id  # Default fallback
+            try:
+                # Get the proper connection for LocationService
+                from app.location_routes import get_location_service
+                location_service = get_location_service()
+                location = location_service.get_location(location_id)
+                if location:
+                    location_name = location.name
+                    debug_log(f"Resolved location {location_id} to name '{location_name}'", "RELATIONSHIP")
+                else:
+                    debug_log(f"Location {location_id} not found, using ID as name", "RELATIONSHIP")
+            except Exception as e:
+                debug_log(f"Error resolving location name for {location_id}: {e}", "RELATIONSHIP")
+            
+            # Set locations list for template compatibility with proper name
+            setattr(book, 'locations', [{'id': location_id, 'name': location_name}])
         else:
             setattr(book, 'location_id', None)
             setattr(book, 'locations', [])
@@ -200,8 +217,6 @@ class KuzuRelationshipService:
 
             # Create OWNS relationship with custom metadata
             rel_data = {
-                'user_id': str(user_id),
-                'book_id': str(book_id),
                 'reading_status': reading_status_enum.value if hasattr(reading_status_enum, 'value') else str(reading_status_enum),
                 'ownership_status': ownership_status_enum.value if hasattr(ownership_status_enum, 'value') else str(ownership_status_enum),
                 'date_added': datetime.utcnow().isoformat()
@@ -209,9 +224,9 @@ class KuzuRelationshipService:
             
             # Add locations if provided
             if locations:
-                rel_data['locations'] = json.dumps(locations)  # Store as JSON string
+                # Use the first location as location_id (OWNS schema has location_id, not locations)
                 if len(locations) > 0:
-                    rel_data['primary_location_id'] = locations[0]
+                    rel_data['location_id'] = locations[0]
             
             # Add custom metadata as JSON
             if custom_metadata:
@@ -239,10 +254,11 @@ class KuzuRelationshipService:
         try:
             print(f"🔗 [UPDATE_RELATIONSHIP] Updating user {user_id} - book {book_id} with: {updates}")
             
-            # Get the current relationship
+            # Get the current relationship - check if any OWNS relationship exists
             query = """
             MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
             RETURN owns
+            LIMIT 1
             """
             
             results = self.graph_storage.query(query, {
@@ -250,33 +266,77 @@ class KuzuRelationshipService:
                 "book_id": book_id
             })
             
-            if not results or 'col_0' not in results[0]:
+            print(f"🔍 [UPDATE_RELATIONSHIP] Query returned {len(results) if results else 0} results")
+            if results:
+                print(f"🔍 [UPDATE_RELATIONSHIP] First result keys: {list(results[0].keys()) if results[0] else 'No keys'}")
+                print(f"🔍 [UPDATE_RELATIONSHIP] First result content: {results[0]}")
+            
+            if not results or 'result' not in results[0]:
                 print(f"❌ [UPDATE_RELATIONSHIP] No relationship found between user {user_id} and book {book_id}")
-                return False
+                # Try to create the relationship first with the updates included
+                print(f"🔗 [UPDATE_RELATIONSHIP] Attempting to create relationship with updates")
+                
+                # Extract base properties for relationship creation
+                reading_status = updates.get('reading_status', 'library_only')
+                ownership_status = updates.get('ownership_status', 'owned')
+                custom_metadata = updates.get('custom_metadata')
+                
+                # Handle location updates - convert location_id to locations list
+                locations = []
+                if 'location_id' in updates and updates['location_id']:
+                    locations = [updates['location_id']]
+                elif 'locations' in updates and updates['locations']:
+                    locations = updates['locations']
+                
+                success = self.add_book_to_user_library_sync(
+                    user_id=user_id,
+                    book_id=book_id,
+                    reading_status=reading_status,
+                    ownership_status=ownership_status,
+                    locations=locations,
+                    custom_metadata=custom_metadata
+                )
+                
+                if not success:
+                    print(f"❌ [UPDATE_RELATIONSHIP] Failed to create relationship")
+                    return False
+                
+                print(f"✅ [UPDATE_RELATIONSHIP] Created relationship with updates included")
+                return True
             
-            current_rel = results[0]['col_0']
-            
-            # Merge updates with current data
-            updated_rel = {**current_rel, **updates}
+            current_rel = results[0]['result']
             
             # Handle custom metadata specially
-            if 'custom_metadata' in updates:
-                if isinstance(updates['custom_metadata'], dict):
-                    updated_rel['custom_metadata'] = json.dumps(updates['custom_metadata'])
+            processed_updates = {}
+            for key, value in updates.items():
+                if key == 'custom_metadata' and isinstance(value, dict):
+                    processed_updates[key] = json.dumps(value)
                 else:
-                    updated_rel['custom_metadata'] = updates['custom_metadata']
+                    processed_updates[key] = value
             
-            # Update the relationship
-            update_query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
-            SET owns = $rel_data
+            # Always update the updated_at timestamp
+            # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
+            processed_updates['updated_at'] = datetime.utcnow()
+            
+            # Build dynamic SET clause for only the fields being updated
+            set_clauses = []
+            params = {"user_id": user_id, "book_id": book_id}
+            
+            for key, value in processed_updates.items():
+                param_name = f"new_{key}"
+                set_clauses.append(f"owns.{key} = ${param_name}")
+                params[param_name] = value
+            
+            # Update the relationship with individual property updates
+            update_query = f"""
+            MATCH (u:User {{id: $user_id}})-[owns:OWNS]->(b:Book {{id: $book_id}})
+            SET {', '.join(set_clauses)}
             """
             
-            self.graph_storage.query(update_query, {
-                "user_id": user_id,
-                "book_id": book_id,
-                "rel_data": updated_rel
-            })
+            print(f"🔧 [UPDATE_RELATIONSHIP] Executing query: {update_query}")
+            print(f"🔧 [UPDATE_RELATIONSHIP] With params: {params}")
+            
+            self.graph_storage.query(update_query, params)
             
             print(f"✅ [UPDATE_RELATIONSHIP] Successfully updated relationship")
             return True

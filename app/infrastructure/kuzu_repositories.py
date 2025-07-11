@@ -45,7 +45,7 @@ class KuzuUserRepository:
                 'timezone': getattr(user, 'timezone', 'UTC'),
                 'is_admin': getattr(user, 'is_admin', False),
                 'is_active': getattr(user, 'is_active', True),
-                'created_at': getattr(user, 'created_at', datetime.utcnow())
+                'created_at': getattr(user, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(user, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             success = self.db.create_node('User', user_data)
@@ -230,7 +230,7 @@ class KuzuPersonRepository:
                 'openlibrary_id': openlibrary_id,
                 'image_url': image_url,
                 'created_at': created_at,
-                'updated_at': datetime.utcnow()
+                'updated_at': datetime.utcnow().isoformat()
             }
             
             success = self.db.create_node('Person', person_data)
@@ -442,7 +442,7 @@ class KuzuBookRepository:
                 'series_volume': getattr(book, 'series_volume', None),
                 'series_order': getattr(book, 'series_order', None),
                 'custom_metadata': getattr(book, 'custom_metadata', None),
-                'created_at': getattr(book, 'created_at', datetime.utcnow())
+                'created_at': getattr(book, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             # Create the book node first
@@ -511,8 +511,16 @@ class KuzuBookRepository:
             rel_type_map = {
                 'AUTHORED': 'AUTHORED',
                 'EDITED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'TRANSLATED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'ILLUSTRATED': 'AUTHORED',  # Use AUTHORED relationship with role property
                 'NARRATED': 'AUTHORED',  # Use AUTHORED relationship with role property
-                'CONTRIBUTED': 'AUTHORED'  # Use AUTHORED relationship with role property
+                'GAVE_FOREWORD': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'GAVE_INTRODUCTION': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'GAVE_AFTERWORD': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'COMPILED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'CONTRIBUTED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'CO_AUTHORED': 'AUTHORED',  # Use AUTHORED relationship with role property
+                'GHOST_WROTE': 'AUTHORED'  # Use AUTHORED relationship with role property
             }
             
             rel_type = rel_type_map.get(contribution_str, 'AUTHORED')
@@ -629,8 +637,8 @@ class KuzuBookRepository:
                 'website': website,
                 'openlibrary_id': openlibrary_id,
                 'image_url': image_url,
-                'created_at': getattr(person, 'created_at', datetime.utcnow()),
-                'updated_at': datetime.utcnow()
+                'created_at': getattr(person, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(person, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
+                'updated_at': datetime.utcnow().isoformat()
             }
             # Filter out fields that don't exist in the current schema
             # birth_place and website are not in the current schema, but openlibrary_id and image_url are
@@ -767,8 +775,8 @@ class KuzuBookRepository:
                 'icon': '',
                 'book_count': 0,
                 'user_book_count': 0,
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow()
+                'created_at': datetime.utcnow().isoformat(),
+                'updated_at': datetime.utcnow().isoformat()
             }
             # Note: parent_id and aliases are not included as they need special handling
             
@@ -843,7 +851,7 @@ class KuzuBookRepository:
                 'name': publisher_name,
                 'country': publisher_country or '',
                 'founded_year': publisher_founded,
-                'created_at': datetime.utcnow()
+                'created_at': datetime.utcnow().isoformat()
             }
             # Note: Filtering out updated_at as it doesn't exist in DB schema
             
@@ -1199,7 +1207,7 @@ class KuzuUserBookRepository:
                 'reading_status': str(reading_status),
                 'ownership_status': str(ownership_status),
                 'media_type': str(media_type),
-                'date_added': datetime.utcnow(),  # Always use current time as datetime
+                'date_added': datetime.utcnow().isoformat(),  # Always use current time as ISO string
                 'source': str('manual'),
                 'personal_notes': str(notes or ''),
                 'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
@@ -1508,24 +1516,18 @@ class KuzuLocationRepository:
             
             location_data = {
                 'id': getattr(location, 'id', str(uuid.uuid4())),
+                'user_id': user_id,  # Store user_id as property
                 'name': getattr(location, 'name', ''),
                 'description': getattr(location, 'description', ''),
                 'location_type': getattr(location, 'location_type', 'room'),
                 'is_default': getattr(location, 'is_default', False),
-                'created_at': getattr(location, 'created_at', datetime.utcnow())
+                'created_at': getattr(location, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(location, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             success = self.db.create_node('Location', location_data)
             if success:
-                # Create LOCATED_AT relationship with user
-                rel_success = self.db.create_relationship(
-                    'User', user_id, 'LOCATED_AT', 'Location', location_data['id'],
-                    {'is_primary': getattr(location, 'is_default', False)}
-                )
-                
-                if rel_success:
-                    logger.info(f"✅ Created location: {getattr(location, 'name', 'unknown')}")
-                    return location
+                logger.info(f"✅ Created location: {getattr(location, 'name', 'unknown')}")
+                return location
             
             return None
             
@@ -1537,7 +1539,7 @@ class KuzuLocationRepository:
         """Get all locations for a user."""
         try:
             query = """
-            MATCH (u:User {id: $user_id})-[:LOCATED_AT]->(l:Location)
+            MATCH (l:Location {user_id: $user_id})
             RETURN l
             """
             
@@ -1561,7 +1563,7 @@ class KuzuLocationRepository:
         """Get the default location for a user."""
         try:
             query = """
-            MATCH (u:User {id: $user_id})-[:LOCATED_AT {is_primary: true}]->(l:Location)
+            MATCH (l:Location {user_id: $user_id, is_default: true})
             RETURN l
             LIMIT 1
             """
@@ -1626,8 +1628,8 @@ class KuzuCategoryRepository:
                 'icon': getattr(category, 'icon', ''),
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
-                'created_at': getattr(category, 'created_at', datetime.utcnow()),
-                'updated_at': getattr(category, 'updated_at', datetime.utcnow())
+                'created_at': getattr(category, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(category, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
+                'updated_at': getattr(category, 'updated_at', datetime.utcnow()).isoformat() if hasattr(getattr(category, 'updated_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             # Note: parent_id and aliases need special handling
             
@@ -1740,7 +1742,7 @@ class KuzuCustomFieldRepository:
                 'is_global': getattr(field_def, 'is_global', False),
                 'default_value': getattr(field_def, 'default_value', ''),
                 'usage_count': getattr(field_def, 'usage_count', 0),
-                'created_at': getattr(field_def, 'created_at', datetime.utcnow())
+                'created_at': getattr(field_def, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(field_def, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             # Convert enum to string if needed
@@ -1800,7 +1802,7 @@ class KuzuCustomFieldRepository:
                 'display_name': getattr(field_def, 'display_name', ''),
                 'description': getattr(field_def, 'description', ''),
                 'is_shareable': getattr(field_def, 'is_shareable', False),
-                'updated_at': datetime.utcnow()
+                'updated_at': datetime.utcnow().isoformat()
             }
             
             success = self.db.update_node('CustomField', field_id, field_data)
@@ -1938,7 +1940,7 @@ class KuzuImportMappingRepository:
                 'field_mappings': getattr(template, 'field_mappings', ''),
                 'sample_headers': getattr(template, 'sample_headers', ''),
                 'usage_count': getattr(template, 'usage_count', 0),
-                'created_at': getattr(template, 'created_at', datetime.utcnow())
+                'created_at': getattr(template, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(template, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             success = self.db.create_node('ImportMapping', template_data)
@@ -1993,7 +1995,7 @@ class KuzuImportMappingRepository:
                 'name': getattr(template, 'name', ''),
                 'description': getattr(template, 'description', ''),
                 'field_mappings': getattr(template, 'field_mappings', ''),
-                'updated_at': datetime.utcnow()
+                'updated_at': datetime.utcnow().isoformat()
             }
             
             success = self.db.update_node('ImportMapping', template_id, template_data)
@@ -2082,7 +2084,7 @@ class KuzuImportMappingRepository:
             """
             self.db.query(query, {
                 "template_id": template_id,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.utcnow().isoformat()
             })
         except Exception as e:
             logger.warning(f"Could not increment usage count for template {template_id}: {e}")

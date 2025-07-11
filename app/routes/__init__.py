@@ -60,9 +60,73 @@ def add_book():
 
 @main_bp.route('/bulk_delete_books', methods=['POST'])
 def bulk_delete_books():
-    """Compatibility route for main.bulk_delete_books - redirect to book.bulk_delete_books"""
-    from flask import redirect, url_for
-    return redirect(url_for('book.bulk_delete_books'))
+    """Delete multiple books selected from the library view."""
+    from flask import request, flash, redirect, url_for
+    from flask_login import current_user, login_required
+    from app.services.kuzu_service_facade import KuzuServiceFacade
+    
+    # Check authentication
+    if not current_user.is_authenticated:
+        return redirect(url_for('auth.login'))
+    
+    print(f"Bulk delete route called by user {current_user.id}")
+    print(f"Request method: {request.method}")
+    print(f"Request form keys: {list(request.form.keys())}")
+    print(f"Full form data: {dict(request.form)}")
+    
+    # Initialize service
+    book_service = KuzuServiceFacade()
+    
+    # Try both possible field names
+    selected_uids = request.form.getlist('selected_books')
+    if not selected_uids:
+        selected_uids = request.form.getlist('book_ids')
+    
+    # If still empty, try getting as single values
+    if not selected_uids:
+        single_value = request.form.get('selected_books') or request.form.get('book_ids')
+        if single_value:
+            # Split by comma or newline if multiple values in single field
+            selected_uids = [uid.strip() for uid in single_value.replace(',', '\n').split('\n') if uid.strip()]
+    
+    # Filter out empty strings
+    selected_uids = [uid for uid in selected_uids if uid and uid.strip()]
+    
+    print(f"Selected UIDs after filtering: {selected_uids}")
+    
+    if not selected_uids:
+        print("No books selected for deletion")
+        flash('No books selected for deletion.', 'warning')
+        return redirect(url_for('main.library'))
+    
+    deleted_count = 0
+    failed_count = 0
+    
+    for uid in selected_uids:
+        try:
+            print(f"Attempting to delete book {uid} for user {current_user.id}")
+            # Use the regular delete_book_sync method which handles global deletion
+            # if no other users have the book
+            success = book_service.delete_book_sync(uid, str(current_user.id))
+            print(f"Delete result for {uid}: {success}")
+            if success:
+                deleted_count += 1
+            else:
+                failed_count += 1
+        except Exception as e:
+            print(f"Error deleting book {uid}: {e}")
+            import traceback
+            traceback.print_exc()
+            failed_count += 1
+    
+    print(f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed")
+    
+    if deleted_count > 0:
+        flash(f'Successfully deleted {deleted_count} book(s) from your library.', 'success')
+    if failed_count > 0:
+        flash(f'Failed to delete {failed_count} book(s).', 'error')
+    
+    return redirect(url_for('main.library'))
 
 @main_bp.route('/view_book_enhanced/<uid>')
 def view_book_enhanced(uid):
