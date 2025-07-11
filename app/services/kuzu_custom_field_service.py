@@ -630,7 +630,7 @@ class KuzuCustomFieldService:
                 query = """
                 MATCH (f:CustomField) 
                 WHERE f.created_by_user_id = $user_id OR f.is_global = true
-                RETURN f
+                RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
                 ORDER BY f.created_at DESC
                 """
                 params = {"user_id": user_id}
@@ -639,7 +639,7 @@ class KuzuCustomFieldService:
                 query = """
                 MATCH (f:CustomField) 
                 WHERE f.is_global = true
-                RETURN f
+                RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
                 ORDER BY f.created_at DESC
                 """
                 params = {}
@@ -648,7 +648,7 @@ class KuzuCustomFieldService:
                 query = """
                 MATCH (f:CustomField) 
                 WHERE f.created_by_user_id = $user_id AND f.is_global = false
-                RETURN f
+                RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
                 ORDER BY f.created_at DESC
                 """
                 params = {"user_id": user_id}
@@ -657,19 +657,18 @@ class KuzuCustomFieldService:
             
             fields = []
             for result in results:
-                # Try both 'field' and 'f' and also check col_0 for compatibility
-                field_data = result.get('field') or result.get('f') or result.get('col_0')
-                
-                if field_data:
-                    fields.append({
-                        'id': field_data.get('id'),
-                        'name': field_data.get('name'),
-                        'display_name': field_data.get('display_name'),
-                        'field_type': field_data.get('field_type', 'text'),
-                        'description': field_data.get('description', ''),
-                        'is_global': field_data.get('is_global', False),
-                        'created_at': field_data.get('created_at')
-                    })
+                # KuzuDB returns column-based results (col_0, col_1, etc.) instead of named columns
+                # Based on the query: f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
+                # Mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, col_4=description, col_5=is_global, col_6=created_at
+                fields.append({
+                    'id': result.get('col_0'),
+                    'name': result.get('col_1'),
+                    'display_name': result.get('col_2'),
+                    'field_type': result.get('col_3', 'text'),
+                    'description': result.get('col_4', ''),
+                    'is_global': result.get('col_5', False),
+                    'created_at': result.get('col_6')
+                })
             
             print(f"📝 [CUSTOM_FIELDS] Found {len(fields)} available fields")
             return fields

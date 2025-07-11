@@ -1190,10 +1190,17 @@ def view_book_enhanced(uid):
     global_metadata_display = []
     personal_metadata_display = []  # Initialize as empty list
     
+    # Get available custom fields for edit mode
+    personal_fields = []
+    global_fields = []
+    current_metadata = {}
+    
     try:
         debug_log(f"🔍 [VIEW] Processing custom metadata", "BOOK_VIEW")
         # Get custom metadata using the custom field service
         custom_metadata = custom_field_service.get_custom_metadata_sync(uid, str(current_user.id))
+        current_metadata = custom_metadata or {}
+        
         if custom_metadata:
             debug_log(f"✅ [VIEW] Personal metadata found: {custom_metadata}", "BOOK_VIEW")
             personal_metadata_display = custom_field_service.get_custom_metadata_for_display(
@@ -1202,6 +1209,12 @@ def view_book_enhanced(uid):
             debug_log(f"✅ [VIEW] Converted to {len(personal_metadata_display)} display items", "BOOK_VIEW")
         else:
             debug_log(f"ℹ️ [VIEW] No personal metadata found", "BOOK_VIEW")
+            
+        # Get available custom fields for the edit mode
+        personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False) or []
+        global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True) or []
+        debug_log(f"✅ [VIEW] Found {len(personal_fields)} personal fields and {len(global_fields)} global fields", "BOOK_VIEW")
+        
     except Exception as e:
         current_app.logger.error(f"Error loading custom metadata for display: {e}")
         debug_log(f"❌ [VIEW] Error loading custom metadata for display: {e}", "BOOK_VIEW")
@@ -1229,7 +1242,10 @@ def view_book_enhanced(uid):
         'book_categories': book_categories,
         'global_metadata_display': global_metadata_display,
         'personal_metadata_display': personal_metadata_display,
-        'user_locations': user_locations
+        'user_locations': user_locations,
+        'personal_fields': personal_fields,
+        'global_fields': global_fields,
+        'current_metadata': current_metadata
     }
     
     debug_template_data('view_book_enhanced.html', template_data, "VIEW")
@@ -1241,7 +1257,10 @@ def view_book_enhanced(uid):
         book_categories=book_categories,
         global_metadata_display=global_metadata_display,
         personal_metadata_display=personal_metadata_display,
-        user_locations=user_locations
+        user_locations=user_locations,
+        personal_fields=personal_fields,
+        global_fields=global_fields,
+        current_metadata=current_metadata
     )
 
 

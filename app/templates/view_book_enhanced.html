@@ -1166,22 +1166,165 @@
                             
                             <!-- Edit Mode (Hidden by default) -->
                             <div class="custom-fields-edit-mode" style="display: none;">
-                                <form method="post" action="{{ url_for('book.edit_book', uid=book.uid) }}" id="custom-fields-form">
+                                <form method="post" action="{{ url_for('book.edit_book_custom_metadata', uid=book.uid) }}" id="custom-fields-form">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                     
-                                    <div class="mb-3">
-                                        <p class="text-muted">
-                                            <i class="bi bi-info-circle me-1"></i>
-                                            Custom field editing is available through the main edit mode. 
-                                            Click the pencil icon at the top of the page to edit all book details.
-                                        </p>
-                                    </div>
-                                    
-                                    <div class="d-grid">
-                                        <a href="{{ url_for('book.user_profile', user_id=current_user.id) }}" class="btn btn-outline-primary">
-                                            <i class="bi bi-gear me-1"></i>Manage Custom Field Definitions
-                                        </a>
-                                    </div>
+                                    {% if personal_fields or global_fields %}
+                                        <!-- Personal Custom Fields -->
+                                        {% if personal_fields %}
+                                        <div class="mb-4">
+                                            <h6 class="text-success fw-bold border-bottom pb-2">
+                                                <i class="bi bi-person me-1"></i>Your Personal Custom Fields
+                                            </h6>
+                                            <div class="row">
+                                                {% for field in personal_fields %}
+                                                <div class="col-md-6 mb-3">
+                                                    <div class="custom-field-group">
+                                                        <label for="personal_{{ field.name }}" class="form-label">
+                                                            {{ field.display_name }}
+                                                            {% if field.description %}
+                                                                <i class="bi bi-info-circle text-muted" title="{{ field.description }}" data-bs-toggle="tooltip"></i>
+                                                            {% endif %}
+                                                        </label>
+                                                        
+                                                        {% set current_value = current_metadata.get(field.name, '') %}
+                                                        {% set input_name = 'personal_' + field.name %}
+                                                        
+                                                        {% if field.field_type.value == 'text' %}
+                                                            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+                                                        
+                                                        {% elif field.field_type.value == 'textarea' %}
+                                                            <textarea class="form-control" id="{{ input_name }}" name="{{ input_name }}" rows="3"
+                                                                      placeholder="{{ field.placeholder_text or '' }}">{{ current_value }}</textarea>
+                                                        
+                                                        {% elif field.field_type.value == 'number' %}
+                                                            <input type="number" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}" step="any" placeholder="{{ field.placeholder_text or '' }}">
+                                                        
+                                                        {% elif field.field_type.value == 'boolean' %}
+                                                            <div class="form-check">
+                                                                <input class="form-check-input" type="checkbox" id="{{ input_name }}" name="{{ input_name }}"
+                                                                       {% if current_value %}checked{% endif %}>
+                                                                <label class="form-check-label" for="{{ input_name }}">
+                                                                    {{ field.help_text or 'Yes' }}
+                                                                </label>
+                                                            </div>
+                                                        
+                                                        {% elif field.field_type.value == 'date' %}
+                                                            <input type="date" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}">
+                                                        
+                                                        {% elif field.field_type.value in ['rating_5', 'rating_10'] %}
+                                                            {% set max_rating = 5 if field.field_type.value == 'rating_5' else 10 %}
+                                                            <select class="form-select" id="{{ input_name }}" name="{{ input_name }}">
+                                                                <option value="">No rating</option>
+                                                                {% for i in range(1, max_rating + 1) %}
+                                                                    <option value="{{ i }}" {% if current_value == i %}selected{% endif %}>
+                                                                        {{ i }}/{{ max_rating }}
+                                                                    </option>
+                                                                {% endfor %}
+                                                            </select>
+                                                        
+                                                        {% else %}
+                                                            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        <!-- Global Custom Fields -->
+                                        {% if global_fields %}
+                                        <div class="mb-4">
+                                            <h6 class="text-primary fw-bold border-bottom pb-2">
+                                                <i class="bi bi-globe me-1"></i>Community Custom Fields
+                                            </h6>
+                                            <div class="row">
+                                                {% for field in global_fields %}
+                                                <div class="col-md-6 mb-3">
+                                                    <div class="custom-field-group">
+                                                        <label for="global_{{ field.name }}" class="form-label">
+                                                            {{ field.display_name }}
+                                                            {% if field.description %}
+                                                                <i class="bi bi-info-circle text-muted" title="{{ field.description }}" data-bs-toggle="tooltip"></i>
+                                                            {% endif %}
+                                                        </label>
+                                                        
+                                                        {% set current_value = current_metadata.get(field.name, '') %}
+                                                        {% set input_name = 'global_' + field.name %}
+                                                        
+                                                        {% if field.field_type.value == 'text' %}
+                                                            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+                                                        
+                                                        {% elif field.field_type.value == 'textarea' %}
+                                                            <textarea class="form-control" id="{{ input_name }}" name="{{ input_name }}" rows="3"
+                                                                      placeholder="{{ field.placeholder_text or '' }}">{{ current_value }}</textarea>
+                                                        
+                                                        {% elif field.field_type.value == 'number' %}
+                                                            <input type="number" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}" step="any" placeholder="{{ field.placeholder_text or '' }}">
+                                                        
+                                                        {% elif field.field_type.value == 'boolean' %}
+                                                            <div class="form-check">
+                                                                <input class="form-check-input" type="checkbox" id="{{ input_name }}" name="{{ input_name }}"
+                                                                       {% if current_value %}checked{% endif %}>
+                                                                <label class="form-check-label" for="{{ input_name }}">
+                                                                    {{ field.help_text or 'Yes' }}
+                                                                </label>
+                                                            </div>
+                                                        
+                                                        {% elif field.field_type.value == 'date' %}
+                                                            <input type="date" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}">
+                                                        
+                                                        {% elif field.field_type.value in ['rating_5', 'rating_10'] %}
+                                                            {% set max_rating = 5 if field.field_type.value == 'rating_5' else 10 %}
+                                                            <select class="form-select" id="{{ input_name }}" name="{{ input_name }}">
+                                                                <option value="">No rating</option>
+                                                                {% for i in range(1, max_rating + 1) %}
+                                                                    <option value="{{ i }}" {% if current_value == i %}selected{% endif %}>
+                                                                        {{ i }}/{{ max_rating }}
+                                                                    </option>
+                                                                {% endfor %}
+                                                            </select>
+                                                        
+                                                        {% else %}
+                                                            <input type="text" class="form-control" id="{{ input_name }}" name="{{ input_name }}" 
+                                                                   value="{{ current_value }}" placeholder="{{ field.placeholder_text or '' }}">
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        <!-- Save/Cancel Buttons -->
+                                        <div class="d-flex gap-2">
+                                            <button type="submit" class="btn btn-primary">
+                                                <i class="bi bi-check-lg me-1"></i>Save Custom Fields
+                                            </button>
+                                            <button type="button" class="btn btn-secondary" id="cancelCustomFieldsEdit">
+                                                <i class="bi bi-x-lg me-1"></i>Cancel
+                                            </button>
+                                        </div>
+                                        
+                                    {% else %}
+                                        <div class="text-center py-4">
+                                            <i class="bi bi-info-circle text-muted me-2"></i>
+                                            <span class="text-muted">No custom fields available. Create some custom fields first.</span>
+                                        </div>
+                                        <div class="text-center">
+                                            <a href="{{ url_for('metadata.create_field') }}" class="btn btn-outline-primary">
+                                                <i class="bi bi-plus-circle me-1"></i>Create Custom Field
+                                            </a>
+                                        </div>
+                                    {% endif %}
                                 </form>
                             </div>
                         </div>
@@ -1561,6 +1704,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 editCustomFieldsToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
                 editCustomFieldsToggle.className = 'btn btn-sm btn-outline-secondary';
             }
+        });
+    }
+    
+    // Custom Fields cancel button
+    const cancelCustomFieldsBtn = document.getElementById('cancelCustomFieldsEdit');
+    if (cancelCustomFieldsBtn && customFieldsViewMode && customFieldsEditMode) {
+        cancelCustomFieldsBtn.addEventListener('click', function() {
+            // Switch to view mode
+            customFieldsEditMode.style.display = 'none';
+            customFieldsViewMode.style.display = 'block';
+            editCustomFieldsToggle.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit Custom Fields';
+            editCustomFieldsToggle.className = 'btn btn-sm btn-outline-primary';
         });
     }
     
