@@ -38,6 +38,7 @@ class KuzuRelationshipService:
         setattr(book, 'finish_date', relationship_data.get('finish_date'))
         setattr(book, 'user_rating', relationship_data.get('user_rating'))
         setattr(book, 'personal_notes', relationship_data.get('personal_notes'))
+        setattr(book, 'review', relationship_data.get('user_review'))  # Map user_review back to review
         setattr(book, 'date_added', relationship_data.get('date_added'))
         setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
