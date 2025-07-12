@@ -1053,10 +1053,29 @@
                                         </div>
                                     </div>
 
+                                    <!-- Your Rating -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="personal-user-rating" class="form-label fw-medium">
+                                                    <i class="bi bi-star-fill me-1"></i>Your Rating
+                                                </label>
+                                                <select class="form-select" id="personal-user-rating" name="user_rating">
+                                                    <option value="">No rating</option>
+                                                    <option value="1" {% if book.user_rating == 1 %}selected{% endif %}>⭐ Poor (1 star)</option>
+                                                    <option value="2" {% if book.user_rating == 2 %}selected{% endif %}>⭐⭐ Fair (2 stars)</option>
+                                                    <option value="3" {% if book.user_rating == 3 %}selected{% endif %}>⭐⭐⭐ Good (3 stars)</option>
+                                                    <option value="4" {% if book.user_rating == 4 %}selected{% endif %}>⭐⭐⭐⭐ Very Good (4 stars)</option>
+                                                    <option value="5" {% if book.user_rating == 5 %}selected{% endif %}>⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     
                                     <div class="d-grid">
                                         <button type="submit" class="btn btn-info">
-                                            <i class="bi bi-save me-1"></i>Save Personal Notes
+                                            <i class="bi bi-save me-1"></i>Save Personal Data
                                         </button>
                                     </div>
                                 </form>

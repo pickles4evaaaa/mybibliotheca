@@ -471,8 +471,7 @@ def library():
                     for key, value in data.items():
                         setattr(self, key, value)
                     # Ensure common attributes have defaults
-                    if not hasattr(self, 'authors'):
-                        self.authors = []
+                    # Note: authors property is derived from contributors, don't set directly
                     if not hasattr(self, 'contributors'):
                         self.contributors = []
                     if not hasattr(self, 'categories'):
@@ -597,12 +596,125 @@ def public_library():
 @book_bp.route('/book/<uid>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_book(uid):
-    # Get book through service layer
-    user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
-    if not user_book:
-        abort(404)
+    try:
+        # Get book through service layer
+        user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
+        if not user_book:
+            abort(404)
         
-    if request.method == 'POST':
+        if request.method == 'POST':
+            is_personal_data_only = False  # Initialize variable
+            try:
+                # Add debugging for the incoming request
+                print(f"🔍 [EDIT_BOOK] Processing POST request for book {uid}")
+                print(f"🔍 [EDIT_BOOK] Form data keys: {list(request.form.keys())}")
+                print(f"🔍 [EDIT_BOOK] Request content type: {request.content_type}")
+                print(f"🔍 [EDIT_BOOK] Request content length: {request.content_length}")
+                
+                # Check for CSRF token
+                csrf_token = request.form.get('csrf_token')
+                print(f"🔍 [EDIT_BOOK] CSRF token present: {bool(csrf_token)}")
+                if csrf_token:
+                    print(f"🔍 [EDIT_BOOK] CSRF token (first 10 chars): {csrf_token[:10]}")
+                    
+                # Check if this is a personal data only submission (notes, review, rating, etc.)
+                form_keys = set(request.form.keys())
+                # Expanded set of user-specific fields that can be updated independently
+                personal_data_keys = {
+                    'csrf_token', 'personal_notes', 'review', 'user_rating', 
+                    'reading_status', 'ownership_status', 'media_type'
+                }
+                is_personal_data_only = form_keys.issubset(personal_data_keys)
+                print(f"🔍 [EDIT_BOOK] Is personal data only submission: {is_personal_data_only}")
+                print(f"🔍 [EDIT_BOOK] Form keys: {form_keys}")
+                print(f"🔍 [EDIT_BOOK] Personal data keys: {personal_data_keys}")
+                
+            except Exception as debug_error:
+                print(f"❌ [EDIT_BOOK] Debug error: {debug_error}")
+                # Continue processing despite debug errors
+            
+            # Handle personal data only submission (notes, review, rating, status, etc.)
+            if is_personal_data_only:
+                print(f"🔍 [EDIT_BOOK] Handling personal data only submission")
+                
+                # Extract all user-specific fields from the form
+                update_data = {}
+                
+                # Personal notes and review
+                personal_notes = request.form.get('personal_notes', '').strip() or None
+                if 'personal_notes' in request.form:
+                    update_data['personal_notes'] = personal_notes
+                    
+                review = request.form.get('review', '').strip() or None
+                if 'review' in request.form:
+                    update_data['review'] = review
+                
+                # User rating
+                user_rating = request.form.get('user_rating', '').strip()
+                if 'user_rating' in request.form:
+                    if user_rating:
+                        try:
+                            update_data['user_rating'] = float(user_rating)
+                        except ValueError:
+                            print(f"⚠️ [EDIT_BOOK] Invalid user rating: {user_rating}")
+                    else:
+                        update_data['user_rating'] = None  # Clear rating
+                
+                # Reading status
+                reading_status = request.form.get('reading_status', '').strip()
+                if 'reading_status' in request.form and reading_status:
+                    update_data['reading_status'] = reading_status
+                
+                # Ownership status
+                ownership_status = request.form.get('ownership_status', '').strip()
+                if 'ownership_status' in request.form and ownership_status:
+                    update_data['ownership_status'] = ownership_status
+                
+                # Media type
+                media_type = request.form.get('media_type', '').strip()
+                if 'media_type' in request.form and media_type:
+                    update_data['media_type'] = media_type
+                
+                print(f"🔍 [EDIT_BOOK] Personal data update fields: {list(update_data.keys())}")
+                
+                try:
+                    success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
+                    print(f"🔍 [EDIT_BOOK] Personal data update result: {success}")
+                    
+                    if success:
+                        # Create appropriate success message based on what was updated
+                        updated_fields = []
+                        if 'personal_notes' in update_data:
+                            updated_fields.append('personal notes')
+                        if 'review' in update_data:
+                            updated_fields.append('review')
+                        if 'user_rating' in update_data:
+                            updated_fields.append('rating')
+                        if 'reading_status' in update_data:
+                            updated_fields.append('reading status')
+                        if 'ownership_status' in update_data:
+                            updated_fields.append('ownership status')
+                        if 'media_type' in update_data:
+                            updated_fields.append('media type')
+                        
+                        if updated_fields:
+                            flash(f"Updated {', '.join(updated_fields)} successfully.", 'success')
+                        else:
+                            flash('Personal data updated successfully.', 'success')
+                    else:
+                        flash('Failed to update personal data.', 'error')
+                    return redirect(url_for('book.view_book_enhanced', uid=uid))
+                    
+                except Exception as e:
+                    print(f"❌ [EDIT_BOOK] Exception during personal data update: {type(e).__name__}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    flash(f'Error updating personal data: {str(e)}', 'error')
+                    return redirect(url_for('book.view_book_enhanced', uid=uid))
+            
+            # Handle full form submission (if not personal data only)
+            print(f"🔍 [EDIT_BOOK] Handling full form submission")
+        
         new_isbn13 = request.form.get('isbn13', '').strip() or None
         new_isbn10 = request.form.get('isbn10', '').strip() or None
         
@@ -811,7 +923,16 @@ def edit_book(uid):
             if k in ['contributors', 'raw_categories', 'series', 'series_volume', 'series_order', 'publisher', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count'] or v is not None:
                 filtered_data[k] = v
         
-        success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
+        try:
+            print(f"🔍 [EDIT_BOOK] Calling book_service.update_book_sync with filtered_data: {filtered_data}")
+            success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
+            print(f"🔍 [EDIT_BOOK] Book update result: {success}")
+        except Exception as e:
+            print(f"❌ [EDIT_BOOK] Exception during book update: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            flash(f'Error updating book: {str(e)}', 'error')
+            return redirect(url_for('book.view_book_enhanced', uid=uid))
         
         # Handle location update separately
         location_id = request.form.get('location_id', '').strip()
@@ -846,61 +967,68 @@ def edit_book(uid):
         else:
             flash('Failed to update book.', 'error')
         return redirect(url_for('book.view_book_enhanced', uid=uid))
-        
-    # Get book categories for editing
-    book_categories = []
-    try:
-        book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
-        if book_id:
-            book_categories = book_service.get_book_categories_sync(book_id)
-    except Exception as e:
-        print(f"❌ [EDIT] Error loading book categories: {e}")
     
-    # Convert dictionary to object-like structure for template compatibility
-    if isinstance(user_book, dict):
-        class BookObj:
-            def __init__(self, data):
-                for key, value in data.items():
-                    setattr(self, key, value)
-                # Ensure common attributes have defaults
-                if not hasattr(self, 'authors'):
-                    self.authors = []
-                if not hasattr(self, 'contributors'):
-                    self.contributors = []
-                if not hasattr(self, 'categories'):
-                    self.categories = []
-                if not hasattr(self, 'publisher'):
-                    self.publisher = None
-                # Handle ownership data
-                ownership = data.get('ownership', {})
-                for key, value in ownership.items():
-                    setattr(self, key, value)
+        # GET request handling
+        # Get book categories for editing
+        book_categories = []
+        try:
+            book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+            if book_id:
+                book_categories = book_service.get_book_categories_sync(book_id)
+        except Exception as e:
+            print(f"❌ [EDIT] Error loading book categories: {e}")
+        
+        # Convert dictionary to object-like structure for template compatibility
+        if isinstance(user_book, dict):
+            class BookObj:
+                def __init__(self, data):
+                    for key, value in data.items():
+                        setattr(self, key, value)
+                    # Ensure common attributes have defaults
+                    # Note: authors property is derived from contributors, don't set directly
+                    if not hasattr(self, 'contributors'):
+                        self.contributors = []
+                    if not hasattr(self, 'categories'):
+                        self.categories = []
+                    if not hasattr(self, 'publisher'):
+                        self.publisher = None
+                    # Handle ownership data
+                    ownership = data.get('ownership', {})
+                    for key, value in ownership.items():
+                        setattr(self, key, value)
+                
+                def get_contributors_by_type(self, contribution_type):
+                    """Get contributors filtered by type."""
+                    if not hasattr(self, 'contributors') or not self.contributors:
+                        return []
+                    
+                    # Handle both string and enum contribution types
+                    type_str = contribution_type.upper() if isinstance(contribution_type, str) else str(contribution_type).upper()
+                    
+                    filtered = []
+                    for contributor in self.contributors:
+                        if isinstance(contributor, dict):
+                            role = contributor.get('role', '').upper()
+                            if role == type_str or role == type_str.replace('ED', ''):  # Handle past tense
+                                filtered.append(contributor)
+                        else:
+                            # Handle object-like contributors
+                            role = getattr(contributor, 'role', '').upper()
+                            if role == type_str or role == type_str.replace('ED', ''):
+                                filtered.append(contributor)
+                    
+                    return filtered
             
-            def get_contributors_by_type(self, contribution_type):
-                """Get contributors filtered by type."""
-                if not hasattr(self, 'contributors') or not self.contributors:
-                    return []
-                
-                # Handle both string and enum contribution types
-                type_str = contribution_type.upper() if isinstance(contribution_type, str) else str(contribution_type).upper()
-                
-                filtered = []
-                for contributor in self.contributors:
-                    if isinstance(contributor, dict):
-                        role = contributor.get('role', '').upper()
-                        if role == type_str or role == type_str.replace('ED', ''):  # Handle past tense
-                            filtered.append(contributor)
-                    else:
-                        # Handle object-like contributors
-                        role = getattr(contributor, 'role', '').upper()
-                        if role == type_str or role == type_str.replace('ED', ''):
-                            filtered.append(contributor)
-                
-                return filtered
+            user_book = BookObj(user_book)
         
-        user_book = BookObj(user_book)
-    
-    return render_template('edit_book_enhanced.html', book=user_book, book_categories=book_categories)
+        return render_template('edit_book_enhanced.html', book=user_book, book_categories=book_categories)
+
+    except Exception as e:
+        print(f"❌ [EDIT_BOOK] Uncaught exception in edit_book: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        flash(f'Error processing request: {str(e)}', 'error')
+        return redirect(url_for('book.view_book_enhanced', uid=uid))
 
 
 @book_bp.route('/book/<uid>/enhanced')
@@ -935,8 +1063,7 @@ def view_book_enhanced(uid):
                 for key, value in data.items():
                     setattr(self, key, value)
                 # Ensure common attributes have defaults
-                if not hasattr(self, 'authors'):
-                    self.authors = []
+                # Note: authors property is derived from contributors, don't set directly
                 if not hasattr(self, 'contributors'):
                     self.contributors = []
                 if not hasattr(self, 'categories'):
@@ -1106,7 +1233,7 @@ def view_book_enhanced(uid):
     try:
         book_id = getattr(user_book, 'id', None)
         debug_log(f"🔍 [VIEW] Getting authors for book ID: {book_id}", "BOOK_VIEW")
-        if book_id and ((hasattr(user_book, 'contributors') and not user_book.contributors) or (hasattr(user_book, 'authors') and not user_book.authors)):
+        if book_id and (hasattr(user_book, 'contributors') and not user_book.contributors):
             # Fetch authors from database using the same pattern as categories
             from app.infrastructure.kuzu_graph import get_kuzu_connection
             from app.domain.models import BookContribution, Person, ContributionType
@@ -1144,28 +1271,18 @@ def view_book_enhanced(uid):
             # Update the book object with the fetched contributors
             user_book.contributors = contributors
             
-            # Map contributors to authors property for template compatibility
-            authors_list = []
-            for contribution in contributors:
-                if hasattr(contribution, 'person') and contribution.person:
-                    authors_list.append(contribution.person)
-            
-            # Use setattr to ensure compatibility
-            setattr(user_book, 'authors', authors_list)
+            # Authors property is automatically derived from contributors
+            # No need to set it manually since it's a read-only property
                     
             debug_log(f"✅ [VIEW] Found and populated {len(contributors)} authors as contributors", "BOOK_VIEW")
-            debug_log(f"✅ [VIEW] Mapped to {len(authors_list)} authors for template", "BOOK_VIEW")
+            debug_log(f"✅ [VIEW] Authors will be derived automatically from contributors", "BOOK_VIEW")
         else:
             debug_log(f"ℹ️ [VIEW] Book already has contributors or no book ID", "BOOK_VIEW")
             
-            # Even if contributors exist, make sure authors are properly mapped
-            if hasattr(user_book, 'contributors') and user_book.contributors and (not hasattr(user_book, 'authors') or not user_book.authors):
-                authors_list = []
-                for contribution in user_book.contributors:
-                    if hasattr(contribution, 'person') and contribution.person:
-                        authors_list.append(contribution.person)
-                setattr(user_book, 'authors', authors_list)
-                debug_log(f"✅ [VIEW] Mapped existing {len(user_book.contributors)} contributors to {len(authors_list)} authors", "BOOK_VIEW")
+            # Even if contributors exist, make sure they have the proper structure
+            # Authors property is automatically derived from contributors
+            if hasattr(user_book, 'contributors') and user_book.contributors:
+                debug_log(f"✅ [VIEW] Using existing {len(user_book.contributors)} contributors for authors", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading book authors: {e}")
         debug_log(f"❌ [VIEW] Error loading book authors: {e}", "BOOK_VIEW")
@@ -1202,13 +1319,34 @@ def view_book_enhanced(uid):
         current_metadata = custom_metadata or {}
         
         if custom_metadata:
-            debug_log(f"✅ [VIEW] Personal metadata found: {custom_metadata}", "BOOK_VIEW")
+            debug_log(f"✅ [VIEW] Combined metadata found: {custom_metadata}", "BOOK_VIEW")
+            
+            # Separate global and personal metadata for display
+            global_metadata = {}
+            personal_metadata = {}
+            
+            # Separate fields based on their definitions
+            for field_name, field_value in custom_metadata.items():
+                if field_value is not None and field_value != '':
+                    field_def = custom_field_service._get_field_definition(field_name)
+                    if field_def and field_def.get('is_global', False):
+                        global_metadata[field_name] = field_value
+                        debug_log(f"🌍 [VIEW] Field '{field_name}' classified as GLOBAL", "BOOK_VIEW")
+                    else:
+                        personal_metadata[field_name] = field_value
+                        debug_log(f"👤 [VIEW] Field '{field_name}' classified as PERSONAL", "BOOK_VIEW")
+            
+            # Convert to display format separately
+            global_metadata_display = custom_field_service.get_custom_metadata_for_display(
+                global_metadata
+            ) or []
             personal_metadata_display = custom_field_service.get_custom_metadata_for_display(
-                custom_metadata
-            ) or []  # Ensure it's always a list, not None
-            debug_log(f"✅ [VIEW] Converted to {len(personal_metadata_display)} display items", "BOOK_VIEW")
+                personal_metadata
+            ) or []
+            
+            debug_log(f"✅ [VIEW] Converted to {len(global_metadata_display)} global and {len(personal_metadata_display)} personal display items", "BOOK_VIEW")
         else:
-            debug_log(f"ℹ️ [VIEW] No personal metadata found", "BOOK_VIEW")
+            debug_log(f"ℹ️ [VIEW] No metadata found", "BOOK_VIEW")
             
         # Get available custom fields for the edit mode
         personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False) or []

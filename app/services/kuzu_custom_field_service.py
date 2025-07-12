@@ -68,42 +68,96 @@ class KuzuCustomFieldService:
                 else:
                     raise e
                 
+            # Create GlobalMetadata node table for storing global custom field data
+            create_global_meta_query = """
+            CREATE NODE TABLE GlobalMetadata (
+                book_id STRING,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                PRIMARY KEY (book_id)
+            )
+            """
+            try:
+                self.graph_storage.query(create_global_meta_query)
+                print("📝 [CUSTOM_FIELDS] Created GlobalMetadata table")
+            except Exception as e:
+                if "already exists" in str(e):
+                    print("📝 [CUSTOM_FIELDS] GlobalMetadata table already exists")
+                else:
+                    raise e
+                
+            # Create HAS_GLOBAL_METADATA relationship for global custom fields
+            create_global_rel_query = """
+            CREATE REL TABLE HAS_GLOBAL_METADATA (
+                FROM Book TO GlobalMetadata,
+                global_custom_fields STRING,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+            """
+            try:
+                self.graph_storage.query(create_global_rel_query)
+                print("📝 [CUSTOM_FIELDS] Created HAS_GLOBAL_METADATA relationship")
+            except Exception as e:
+                if "already exists" in str(e):
+                    print("📝 [CUSTOM_FIELDS] HAS_GLOBAL_METADATA relationship already exists")
+                else:
+                    raise e
+                
         except Exception as e:
             print(f"❌ [CUSTOM_FIELDS] Error ensuring tables: {e}")
             # Tables might already exist, continue
     
     def get_custom_metadata_for_display(self, custom_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Convert custom metadata to display format."""
+        print(f"🔍 [CUSTOM_FIELDS] DEBUG: get_custom_metadata_for_display called with: {custom_metadata}")
+        
         if not custom_metadata:
+            print(f"🔍 [CUSTOM_FIELDS] DEBUG: No custom metadata provided, returning empty list")
             return []
         
         display_items = []
         for key, value in custom_metadata.items():
+            print(f"🔍 [CUSTOM_FIELDS] DEBUG: Processing field '{key}' with value '{value}' (type: {type(value)})")
+            
             if value is not None and value != '':
                 # Try to get field definition for better display
                 field_def = self._get_field_definition(key)
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Field definition for '{key}': {field_def}")
+                
                 display_name = field_def.get('display_name', key.replace('_', ' ').title()) if field_def else key.replace('_', ' ').title()
                 field_type = field_def.get('field_type', 'text') if field_def else 'text'
                 
-                display_items.append({
+                display_item = {
                     'field_name': key,
                     'display_name': display_name,
                     'value': str(value),
+                    'display_value': str(value),
                     'field_type': field_type
-                })
+                }
+                
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Created display item: {display_item}")
+                display_items.append(display_item)
+            else:
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Skipping field '{key}' - empty or None value")
         
+        print(f"🔍 [CUSTOM_FIELDS] DEBUG: Final display items: {display_items}")
         return display_items
     
     def _get_field_definition(self, field_name: str) -> Optional[Dict[str, Any]]:
         """Get field definition by name."""
+        print(f"🔍 [CUSTOM_FIELDS] DEBUG: _get_field_definition called for field: {field_name}")
+        
         try:
             query = "MATCH (f:CustomField) WHERE f.name = $name RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at"
             results = self.graph_storage.query(query, {"name": field_name})
             
+            print(f"🔍 [CUSTOM_FIELDS] DEBUG: Field definition query results: {results}")
+            
             if results and len(results) > 0:
                 result = results[0]
                 # KuzuDB returns column-based results: col_0=id, col_1=name, col_2=display_name, etc.
-                return {
+                field_definition = {
                     'id': result.get('col_0'),
                     'name': result.get('col_1'), 
                     'display_name': result.get('col_2'),
@@ -112,6 +166,10 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5'),
                     'created_at': result.get('col_6')
                 }
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Parsed field definition: {field_definition}")
+                return field_definition
+            
+            print(f"🔍 [CUSTOM_FIELDS] DEBUG: No field definition found for '{field_name}'")
             return None
             
         except Exception as e:
@@ -294,28 +352,81 @@ class KuzuCustomFieldService:
             
             print(f"📝 [CUSTOM_FIELDS] SUMMARY: {len(global_metadata)} global fields, {len(personal_metadata)} personal fields")
             
-            # Save global metadata to Book node properties
+            # Save global metadata to a global metadata relationship instead of Book properties
             if global_metadata:
-                print(f"📝 [CUSTOM_FIELDS] Saving {len(global_metadata)} global fields to Book node")
+                print(f"📝 [CUSTOM_FIELDS] Saving {len(global_metadata)} global fields to HAS_GLOBAL_METADATA relationship")
                 
-                # Build dynamic SET clause for global fields
-                set_clauses = []
-                params = {"book_id": book_id, "updated_at": datetime.utcnow()}
+                # Check if HAS_GLOBAL_METADATA relationship exists for this book
+                check_global_query = """
+                MATCH (b:Book {id: $book_id})-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                RETURN r.global_custom_fields
+                """
                 
-                for field_name, field_value in global_metadata.items():
-                    # Use the field name directly as a property on the Book node
-                    param_name = f"global_{field_name}"
-                    set_clauses.append(f"b.{field_name} = ${param_name}")
-                    params[param_name] = str(field_value)
+                existing_global_results = self.graph_storage.query(check_global_query, {
+                    "book_id": book_id
+                })
                 
-                if set_clauses:
-                    update_book_query = f"""
-                    MATCH (b:Book {{id: $book_id}})
-                    SET {', '.join(set_clauses)}, b.updated_at = $updated_at
+                # Get existing global metadata and merge
+                existing_global_metadata = {}
+                if existing_global_results and len(existing_global_results) > 0:
+                    result = existing_global_results[0]
+                    # Try multiple ways to access the data
+                    metadata_json = (result.get('col_0') or 
+                                   result.get('r.global_custom_fields') or 
+                                   result.get('global_custom_fields') or
+                                   result.get('result'))
+                    
+                    if metadata_json:
+                        try:
+                            if isinstance(metadata_json, str):
+                                existing_global_metadata = json.loads(metadata_json)
+                            elif isinstance(metadata_json, dict):
+                                existing_global_metadata = metadata_json
+                        except (json.JSONDecodeError, TypeError) as e:
+                            print(f"❌ [CUSTOM_FIELDS] Error parsing existing global metadata JSON: {e}")
+                            existing_global_metadata = {}
+                
+                # Merge new global metadata with existing
+                merged_global_metadata = existing_global_metadata.copy()
+                merged_global_metadata.update(global_metadata)
+                
+                current_time = datetime.utcnow()
+                
+                if existing_global_results and len(existing_global_results) > 0:
+                    # Update existing global metadata
+                    update_global_query = """
+                    MATCH (b:Book {id: $book_id})-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                    SET r.global_custom_fields = $global_custom_fields, r.updated_at = $updated_at
                     """
                     
-                    self.graph_storage.query(update_book_query, params)
-                    print(f"✅ [CUSTOM_FIELDS] Saved {len(global_metadata)} global fields to Book node")
+                    self.graph_storage.query(update_global_query, {
+                        "book_id": book_id,
+                        "global_custom_fields": json.dumps(merged_global_metadata),
+                        "updated_at": current_time
+                    })
+                    print(f"✅ [CUSTOM_FIELDS] Updated existing global metadata")
+                else:
+                    # Create new global metadata relationship
+                    # First ensure GlobalMetadata node exists
+                    create_global_query = """
+                    MERGE (gm:GlobalMetadata {book_id: $book_id})
+                    WITH gm
+                    MATCH (b:Book {id: $book_id})
+                    MERGE (b)-[r:HAS_GLOBAL_METADATA]->(gm)
+                    SET r.global_custom_fields = $global_custom_fields,
+                        r.created_at = $created_at,
+                        r.updated_at = $updated_at
+                    """
+                    
+                    self.graph_storage.query(create_global_query, {
+                        "book_id": book_id,
+                        "global_custom_fields": json.dumps(merged_global_metadata),
+                        "created_at": current_time,
+                        "updated_at": current_time
+                    })
+                    print(f"✅ [CUSTOM_FIELDS] Created new global metadata relationship")
+                
+                print(f"✅ [CUSTOM_FIELDS] Saved {len(global_metadata)} global fields to HAS_GLOBAL_METADATA")
             
             # Save personal metadata to HAS_PERSONAL_METADATA relationship
             if personal_metadata:
@@ -341,7 +452,7 @@ class KuzuCustomFieldService:
                 # Check if HAS_PERSONAL_METADATA relationship exists
                 check_query = """
                 MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book {id: $book_id})
-                RETURN r.personal_custom_fields AS existing_metadata
+                RETURN r.personal_custom_fields
                 """
                 
                 existing_results = self.graph_storage.query(check_query, {
@@ -361,10 +472,11 @@ class KuzuCustomFieldService:
                 existing_personal_metadata = {}
                 if existing_results and len(existing_results) > 0:
                     result = existing_results[0]
-                    # Try column-based first (KuzuDB behavior)
-                    metadata_json = result.get('col_0')
-                    if not metadata_json:
-                        metadata_json = result.get('existing_metadata')  # Fallback to named
+                    # Try multiple ways to access the data
+                    metadata_json = (result.get('col_0') or 
+                                   result.get('r.personal_custom_fields') or 
+                                   result.get('personal_custom_fields') or
+                                   result.get('result'))
                     
                     if metadata_json:
                         try:
@@ -450,43 +562,45 @@ class KuzuCustomFieldService:
         try:
             custom_metadata = {}
             
-            # Get global custom fields from Book node properties
-            # First, get all global field definitions to know which properties to look for
-            global_fields_query = """
-            MATCH (f:CustomField) 
-            WHERE f.is_global = true
-            RETURN f.name AS field_name
+            # Get global custom fields from HAS_GLOBAL_METADATA relationship
+            global_query = """
+            MATCH (b:Book {id: $book_id})-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+            RETURN r.global_custom_fields
             """
             
-            global_field_results = self.graph_storage.query(global_fields_query)
-            global_field_names = [result.get('col_0') for result in global_field_results if result.get('col_0')]
+            global_results = self.graph_storage.query(global_query, {"book_id": book_id})
             
-            if global_field_names:
-                print(f"📝 [CUSTOM_FIELDS] Looking for {len(global_field_names)} global fields on Book node")
+            if global_results and len(global_results) > 0:
+                result = global_results[0]
+                # KuzuDB returns results with column-based keys, but we need to handle both cases
+                metadata_json = (result.get('col_0') or 
+                               result.get('r.global_custom_fields') or 
+                               result.get('global_custom_fields') or
+                               result.get('result'))
                 
-                # Build dynamic query to get global field values from Book properties
-                book_properties = ', '.join([f"b.{field_name} AS {field_name}" for field_name in global_field_names])
-                book_query = f"""
-                MATCH (b:Book {{id: $book_id}})
-                RETURN {book_properties}
-                """
-                
-                book_results = self.graph_storage.query(book_query, {"book_id": book_id})
-                
-                if book_results and len(book_results) > 0:
-                    result = book_results[0]
-                    # KuzuDB returns results as col_0, col_1, etc.
-                    for i, field_name in enumerate(global_field_names):
-                        col_key = f'col_{i}'
-                        field_value = result.get(col_key)
-                        if field_value is not None and field_value != '':
-                            custom_metadata[field_name] = field_value
-                            print(f"📝 [CUSTOM_FIELDS] Found global field: {field_name} = {field_value}")
+                print(f"📝 [CUSTOM_FIELDS] Found global metadata: {metadata_json}")
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: global metadata_json type = {type(metadata_json)}")
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: global metadata_json value = {repr(metadata_json)}")
+                if metadata_json:
+                    try:
+                        global_metadata = {}
+                        if isinstance(metadata_json, str):
+                            global_metadata = json.loads(metadata_json)
+                        elif isinstance(metadata_json, dict):
+                            global_metadata = metadata_json
+                        
+                        # Merge global metadata into the result
+                        custom_metadata.update(global_metadata)
+                        print(f"📝 [CUSTOM_FIELDS] Loaded {len(global_metadata)} global custom fields")
+                    except (json.JSONDecodeError, TypeError) as e:
+                        print(f"❌ [CUSTOM_FIELDS] Error parsing global custom metadata JSON: {e}")
+            else:
+                print(f"📝 [CUSTOM_FIELDS] No global custom metadata found")
             
             # Get personal custom fields from HAS_PERSONAL_METADATA relationship
             personal_query = """
             MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book {id: $book_id})
-            RETURN r.personal_custom_fields AS personal_custom_fields
+            RETURN r.personal_custom_fields
             """
             
             print(f"📝 [CUSTOM_FIELDS] Checking HAS_PERSONAL_METADATA relationship for personal fields...")
@@ -504,7 +618,7 @@ class KuzuCustomFieldService:
             
             print(f"🔍 [CUSTOM_FIELDS] DEBUG: exists_results = {exists_results}")
             if exists_results and len(exists_results) > 0:
-                rel_count = exists_results[0].get('col_0', 0)
+                rel_count = exists_results[0].get('col_0') or exists_results[0].get('rel_count') or exists_results[0].get('result') or 0
                 print(f"🔍 [CUSTOM_FIELDS] DEBUG: Found {rel_count} HAS_PERSONAL_METADATA relationships")
             
             personal_results = self.graph_storage.query(personal_query, {
@@ -523,11 +637,15 @@ class KuzuCustomFieldService:
             if personal_results and len(personal_results) > 0:
                 # KuzuDB returns column-based results - personal_custom_fields is col_0
                 result = personal_results[0]
-                metadata_json = result.get('col_0')  # Try column-based first
-                if not metadata_json:
-                    metadata_json = result.get('personal_custom_fields')  # Fallback to named
+                # Try multiple ways to access the data
+                metadata_json = (result.get('col_0') or 
+                               result.get('r.personal_custom_fields') or 
+                               result.get('personal_custom_fields') or
+                               result.get('result'))
                 
                 print(f"📝 [CUSTOM_FIELDS] Found personal metadata: {metadata_json}")
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: metadata_json type = {type(metadata_json)}")
+                print(f"🔍 [CUSTOM_FIELDS] DEBUG: metadata_json value = {repr(metadata_json)}")
                 if metadata_json:
                     try:
                         personal_metadata = {}
