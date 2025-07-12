@@ -604,6 +604,8 @@ def edit_book(uid):
         
         if request.method == 'POST':
             is_personal_data_only = False  # Initialize variable
+            is_book_metadata_only = False  # Initialize variable
+            is_mixed_form = False  # Initialize variable
             try:
                 # Add debugging for the incoming request
                 print(f"🔍 [EDIT_BOOK] Processing POST request for book {uid}")
@@ -617,25 +619,84 @@ def edit_book(uid):
                 if csrf_token:
                     print(f"🔍 [EDIT_BOOK] CSRF token (first 10 chars): {csrf_token[:10]}")
                     
-                # Check if this is a personal data only submission (notes, review, rating, etc.)
+                # Check what type of form submission this is
                 form_keys = set(request.form.keys())
+                
                 # Expanded set of user-specific fields that can be updated independently
                 personal_data_keys = {
                     'csrf_token', 'personal_notes', 'review', 'user_rating', 
                     'reading_status', 'ownership_status', 'media_type'
                 }
+                
+                # Set of book metadata fields that can be updated independently  
+                book_metadata_keys = {
+                    'csrf_token', 'publisher', 'isbn13', 'isbn10', 'published_date', 
+                    'language', 'asin', 'google_books_id', 'openlibrary_id', 
+                    'average_rating', 'rating_count'
+                }
+                
+                # Set of mixed form fields (combination of book metadata and user data)
+                mixed_form_keys = book_metadata_keys.union(personal_data_keys)
+                
                 is_personal_data_only = form_keys.issubset(personal_data_keys)
+                is_book_metadata_only = form_keys.issubset(book_metadata_keys)
+                is_mixed_form = form_keys.issubset(mixed_form_keys) and not is_personal_data_only and not is_book_metadata_only
+                
                 print(f"🔍 [EDIT_BOOK] Is personal data only submission: {is_personal_data_only}")
+                print(f"🔍 [EDIT_BOOK] Is book metadata only submission: {is_book_metadata_only}")
+                print(f"🔍 [EDIT_BOOK] Is mixed form submission: {is_mixed_form}")
                 print(f"🔍 [EDIT_BOOK] Form keys: {form_keys}")
                 print(f"🔍 [EDIT_BOOK] Personal data keys: {personal_data_keys}")
+                print(f"🔍 [EDIT_BOOK] Book metadata keys: {book_metadata_keys}")
+                print(f"🔍 [EDIT_BOOK] Mixed form keys: {mixed_form_keys}")
+                
+                # Check which fields are actually present for each category
+                personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
+                book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
+                unknown_fields = form_keys - mixed_form_keys
+                
+                print(f"🔍 [EDIT_BOOK] Personal fields present: {personal_fields_present}")
+                print(f"🔍 [EDIT_BOOK] Book fields present: {book_fields_present}")
+                print(f"🔍 [EDIT_BOOK] Unknown fields: {unknown_fields}")
                 
             except Exception as debug_error:
                 print(f"❌ [EDIT_BOOK] Debug error: {debug_error}")
                 # Continue processing despite debug errors
+                
+            # Initialize variables outside try block to avoid scope issues
+            personal_fields_present = set()
+            book_fields_present = set()
+            try:
+                # Re-analyze form if debug failed
+                form_keys = set(request.form.keys())
+                personal_data_keys = {
+                    'csrf_token', 'personal_notes', 'review', 'user_rating', 
+                    'reading_status', 'ownership_status', 'media_type'
+                }
+                book_metadata_keys = {
+                    'csrf_token', 'publisher', 'isbn13', 'isbn10', 'published_date', 
+                    'language', 'asin', 'google_books_id', 'openlibrary_id', 
+                    'average_rating', 'rating_count'
+                }
+                personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
+                book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
+            except:
+                pass
+                
+            # Improved detection logic - handle mixed forms with unknown fields
+            has_personal_fields = len(personal_fields_present) > 0
+            has_book_fields = len(book_fields_present) > 0
+            has_only_personal = has_personal_fields and not has_book_fields
+            has_only_book = has_book_fields and not has_personal_fields
+            has_mixed = has_personal_fields and has_book_fields
             
             # Handle personal data only submission (notes, review, rating, status, etc.)
-            if is_personal_data_only:
+            if has_only_personal:
                 print(f"🔍 [EDIT_BOOK] Handling personal data only submission")
+                
+                # Debug all form fields
+                for key, value in request.form.items():
+                    print(f"🔍 [EDIT_BOOK] Form field '{key}': '{value}'")
                 
                 # Extract all user-specific fields from the form
                 update_data = {}
@@ -648,6 +709,9 @@ def edit_book(uid):
                 review = request.form.get('review', '').strip() or None
                 if 'review' in request.form:
                     update_data['review'] = review
+                
+                print(f"🔍 [EDIT_BOOK] Review field - raw value: '{request.form.get('review', '')}', processed: '{review}'")
+                print(f"🔍 [EDIT_BOOK] Personal notes field - raw value: '{request.form.get('personal_notes', '')}', processed: '{personal_notes}'")
                 
                 # User rating
                 user_rating = request.form.get('user_rating', '').strip()
@@ -676,6 +740,7 @@ def edit_book(uid):
                     update_data['media_type'] = media_type
                 
                 print(f"🔍 [EDIT_BOOK] Personal data update fields: {list(update_data.keys())}")
+                print(f"🔍 [EDIT_BOOK] Update data values: {update_data}")
                 
                 try:
                     success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
@@ -712,7 +777,217 @@ def edit_book(uid):
                     flash(f'Error updating personal data: {str(e)}', 'error')
                     return redirect(url_for('book.view_book_enhanced', uid=uid))
             
-            # Handle full form submission (if not personal data only)
+            # Handle book metadata only submission (publisher, rating, etc.)
+            elif has_only_book:
+                print(f"🔍 [EDIT_BOOK] Handling book metadata only submission")
+                
+                # Debug all form fields
+                for key, value in request.form.items():
+                    print(f"🔍 [EDIT_BOOK] Form field '{key}': '{value}'")
+                
+                # Extract book metadata fields from the form
+                update_data = {}
+                
+                # Publisher
+                publisher = request.form.get('publisher', '').strip() or None
+                if 'publisher' in request.form:
+                    update_data['publisher'] = publisher
+                
+                # ISBN fields
+                isbn13 = request.form.get('isbn13', '').strip() or None
+                if 'isbn13' in request.form:
+                    update_data['isbn13'] = isbn13
+                    
+                isbn10 = request.form.get('isbn10', '').strip() or None
+                if 'isbn10' in request.form:
+                    update_data['isbn10'] = isbn10
+                
+                # Published date
+                published_date_str = request.form.get('published_date', '').strip()
+                if 'published_date' in request.form and published_date_str:
+                    update_data['published_date'] = _convert_published_date_to_date(published_date_str)
+                
+                # Language
+                language = request.form.get('language', '').strip() or None
+                if 'language' in request.form:
+                    update_data['language'] = language
+                
+                # External IDs
+                asin = request.form.get('asin', '').strip() or None
+                if 'asin' in request.form:
+                    update_data['asin'] = asin
+                    
+                google_books_id = request.form.get('google_books_id', '').strip() or None
+                if 'google_books_id' in request.form:
+                    update_data['google_books_id'] = google_books_id
+                    
+                openlibrary_id = request.form.get('openlibrary_id', '').strip() or None
+                if 'openlibrary_id' in request.form:
+                    update_data['openlibrary_id'] = openlibrary_id
+                
+                # Rating fields
+                average_rating = request.form.get('average_rating', '').strip()
+                if 'average_rating' in request.form:
+                    if average_rating:
+                        try:
+                            update_data['average_rating'] = float(average_rating)
+                        except ValueError:
+                            print(f"⚠️ [EDIT_BOOK] Invalid average rating: {average_rating}")
+                    else:
+                        update_data['average_rating'] = None
+                
+                rating_count = request.form.get('rating_count', '').strip()
+                if 'rating_count' in request.form:
+                    if rating_count:
+                        try:
+                            update_data['rating_count'] = int(rating_count)
+                        except ValueError:
+                            print(f"⚠️ [EDIT_BOOK] Invalid rating count: {rating_count}")
+                    else:
+                        update_data['rating_count'] = None
+                
+                print(f"🔍 [EDIT_BOOK] Book metadata update fields: {list(update_data.keys())}")
+                
+                try:
+                    success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
+                    print(f"🔍 [EDIT_BOOK] Book metadata update result: {success}")
+                    
+                    if success:
+                        # Create appropriate success message based on what was updated
+                        updated_fields = []
+                        if 'publisher' in update_data:
+                            updated_fields.append('publisher')
+                        if 'average_rating' in update_data:
+                            updated_fields.append('average rating')
+                        if 'rating_count' in update_data:
+                            updated_fields.append('rating count')
+                        if 'isbn13' in update_data:
+                            updated_fields.append('ISBN-13')
+                        if 'isbn10' in update_data:
+                            updated_fields.append('ISBN-10')
+                        if 'published_date' in update_data:
+                            updated_fields.append('published date')
+                        if 'language' in update_data:
+                            updated_fields.append('language')
+                        if 'asin' in update_data:
+                            updated_fields.append('ASIN')
+                        if 'google_books_id' in update_data:
+                            updated_fields.append('Google Books ID')
+                        if 'openlibrary_id' in update_data:
+                            updated_fields.append('OpenLibrary ID')
+                        
+                        if updated_fields:
+                            flash(f"Updated {', '.join(updated_fields)} successfully.", 'success')
+                        else:
+                            flash('Book metadata updated successfully.', 'success')
+                    else:
+                        flash('Failed to update book metadata.', 'error')
+                    return redirect(url_for('book.view_book_enhanced', uid=uid))
+                    
+                except Exception as e:
+                    print(f"❌ [EDIT_BOOK] Exception during book metadata update: {type(e).__name__}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    flash(f'Error updating book metadata: {str(e)}', 'error')
+                    return redirect(url_for('book.view_book_enhanced', uid=uid))
+            
+            # Handle mixed form submission (both book metadata and personal data)
+            elif has_mixed:
+                print(f"🔍 [EDIT_BOOK] Handling mixed form submission")
+                
+                # Debug all form fields
+                for key, value in request.form.items():
+                    print(f"🔍 [EDIT_BOOK] Form field '{key}': '{value}'")
+                
+                # Split fields into book metadata and personal data
+                book_update_data = {}
+                personal_update_data = {}
+                
+                # Process book metadata fields
+                for field in ['publisher', 'isbn13', 'isbn10', 'published_date', 'language', 
+                             'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count']:
+                    if field in request.form:
+                        value = request.form.get(field, '').strip() or None
+                        if field == 'published_date' and value:
+                            book_update_data[field] = _convert_published_date_to_date(value)
+                        elif field in ['average_rating'] and value:
+                            try:
+                                book_update_data[field] = float(value)
+                            except ValueError:
+                                print(f"⚠️ [EDIT_BOOK] Invalid {field}: {value}")
+                        elif field in ['rating_count'] and value:
+                            try:
+                                book_update_data[field] = int(value)
+                            except ValueError:
+                                print(f"⚠️ [EDIT_BOOK] Invalid {field}: {value}")
+                        else:
+                            book_update_data[field] = value
+                
+                # Process personal data fields
+                for field in ['personal_notes', 'review', 'user_rating', 'reading_status', 
+                             'ownership_status', 'media_type']:
+                    if field in request.form:
+                        value = request.form.get(field, '').strip() or None
+                        if field == 'user_rating' and value:
+                            try:
+                                personal_update_data[field] = float(value)
+                            except ValueError:
+                                print(f"⚠️ [EDIT_BOOK] Invalid {field}: {value}")
+                        else:
+                            personal_update_data[field] = value
+                
+                print(f"🔍 [EDIT_BOOK] Book metadata update fields: {list(book_update_data.keys())}")
+                print(f"🔍 [EDIT_BOOK] Personal data update fields: {list(personal_update_data.keys())}")
+                
+                try:
+                    # Update book metadata if any book fields present
+                    book_success = True
+                    if book_update_data:
+                        book_success = book_service.update_book_sync(uid, str(current_user.id), **book_update_data)
+                        print(f"🔍 [EDIT_BOOK] Book metadata update result: {book_success}")
+                    
+                    # Update personal data if any personal fields present  
+                    personal_success = True
+                    if personal_update_data:
+                        personal_success = book_service.update_book_sync(uid, str(current_user.id), **personal_update_data)
+                        print(f"🔍 [EDIT_BOOK] Personal data update result: {personal_success}")
+                    
+                    if book_success and personal_success:
+                        # Create appropriate success message
+                        updated_fields = []
+                        
+                        # Add book field names
+                        if 'publisher' in book_update_data:
+                            updated_fields.append('publisher')
+                        if 'average_rating' in book_update_data:
+                            updated_fields.append('average rating')
+                        if 'rating_count' in book_update_data:
+                            updated_fields.append('rating count')
+                        
+                        # Add personal field names
+                        if 'review' in personal_update_data:
+                            updated_fields.append('review')
+                        if 'user_rating' in personal_update_data:
+                            updated_fields.append('your rating')
+                        if 'personal_notes' in personal_update_data:
+                            updated_fields.append('personal notes')
+                        
+                        if updated_fields:
+                            flash(f"Updated {', '.join(updated_fields)} successfully.", 'success')
+                        else:
+                            flash('Data updated successfully.', 'success')
+                    else:
+                        flash('Failed to update some data.', 'error')
+                    return redirect(url_for('book.view_book_enhanced', uid=uid))
+                    
+                except Exception as e:
+                    print(f"❌ [EDIT_BOOK] Exception during mixed form update: {type(e).__name__}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    flash(f'Error updating data: {str(e)}', 'error')
+                    return redirect(url_for('book.view_book_enhanced', uid=uid))
+            
+            # Handle full form submission (if not personal data only, book metadata only, or mixed form)
             print(f"🔍 [EDIT_BOOK] Handling full form submission")
         
         new_isbn13 = request.form.get('isbn13', '').strip() or None

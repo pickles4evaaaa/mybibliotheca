@@ -18,6 +18,7 @@ from .kuzu_category_service import KuzuCategoryService
 from .kuzu_person_service import KuzuPersonService
 from .kuzu_relationship_service import KuzuRelationshipService
 from .kuzu_search_service import KuzuSearchService
+from .kuzu_custom_field_service import KuzuCustomFieldService
 from .kuzu_async_helper import run_async
 
 
@@ -36,6 +37,7 @@ class KuzuServiceFacade:
         self.person_service = KuzuPersonService()
         self.relationship_service = KuzuRelationshipService()
         self.search_service = KuzuSearchService()
+        self.custom_field_service = KuzuCustomFieldService()
         
         # Keep reference to book repository for compatibility
         self.book_repo = KuzuBookRepository()
@@ -72,45 +74,84 @@ class KuzuServiceFacade:
         print(f"🔄 [FACADE] update_book_sync called with book_id={book_id}, user_id={user_id}")
         print(f"🔄 [FACADE] kwargs: {kwargs}")
         
-        # Filter out location-related fields and relationship fields
-        location_fields = {'location_id', 'primary_location_id', 'locations'}
-        relationship_fields = {'reading_status', 'ownership_status', 'user_rating', 
-                              'personal_notes', 'start_date', 'finish_date', 'custom_metadata'}
+        # Separate different types of updates based on correct architecture:
+        # 1. Book metadata (global) - goes to Book table
+        # 2. Personal standard fields (personal) - goes to OWNS relationship
+        # 3. Custom metadata (custom) - goes to custom metadata system
         
+        # Personal standard fields that go to OWNS relationship
+        owns_relationship_fields = {'reading_status', 'ownership_status', 'user_rating', 
+                                   'personal_notes', 'review', 'start_date', 'finish_date', 'media_type'}
+        
+        # Custom metadata fields
+        custom_metadata_fields = {'custom_metadata'}
+        
+        # Location fields (handled separately)
+        location_fields = {'location_id', 'primary_location_id', 'locations'}
+        
+        # Split the updates
         book_updates = {k: v for k, v in kwargs.items() 
-                       if k not in location_fields and k not in relationship_fields}
-        relationship_updates = {k: v for k, v in kwargs.items() 
-                               if k in relationship_fields}
+                       if k not in owns_relationship_fields and k not in custom_metadata_fields and k not in location_fields}
+        owns_updates = {k: v for k, v in kwargs.items() 
+                       if k in owns_relationship_fields}
+        custom_metadata_updates = {k: v for k, v in kwargs.items() 
+                                 if k in custom_metadata_fields}
         location_updates = {k: v for k, v in kwargs.items() 
                            if k in location_fields}
         
+        print(f"🔄 [FACADE] Book updates: {book_updates}")
+        print(f"🔄 [FACADE] OWNS relationship updates: {owns_updates}")
+        print(f"🔄 [FACADE] Custom metadata updates: {custom_metadata_updates}")
         if location_updates:
             print(f"🔄 [FACADE] Location updates: {location_updates}")
         
-        print(f"🔄 [FACADE] Book updates: {book_updates}")
-        print(f"🔄 [FACADE] Relationship updates: {relationship_updates}")
-        
-        # Update book if there are book-specific updates
+        # Update book metadata (global fields)
         updated_book = None
         if book_updates:
             updated_book = self.book_service.update_book_sync(book_id, book_updates)
         
-        # Update relationship if there are relationship-specific updates or location updates
-        if relationship_updates or location_updates:
-            # Merge relationship and location updates
-            all_relationship_updates = {**relationship_updates, **location_updates}
+        # Update OWNS relationship for personal standard fields
+        if owns_updates:
+            # Map 'review' to 'user_review' for database compatibility
+            owns_db_updates = {}
+            for k, v in owns_updates.items():
+                if k == 'review':
+                    owns_db_updates['user_review'] = v
+                else:
+                    owns_db_updates[k] = v
+            
             success = self.relationship_service.update_user_book_relationship_sync(
-                user_id, book_id, all_relationship_updates
+                user_id, book_id, owns_db_updates
             )
             if success:
-                print(f"✅ [FACADE] Updated relationship for user {user_id} and book {book_id}")
+                print(f"✅ [FACADE] Updated OWNS relationship for user {user_id} and book {book_id}")
             else:
-                print(f"❌ [FACADE] Failed to update relationship")
+                print(f"❌ [FACADE] Failed to update OWNS relationship")
         
-        # Return the updated book or fetch it fresh if only relationship was updated
+        # Update custom metadata (only true custom fields)
+        if custom_metadata_updates:
+            success = self.custom_field_service.save_custom_metadata_sync(
+                book_id, user_id, custom_metadata_updates
+            )
+            if success:
+                print(f"✅ [FACADE] Updated custom metadata for user {user_id} and book {book_id}")
+            else:
+                print(f"❌ [FACADE] Failed to update custom metadata")
+        
+        # Update location if present (still use relationship service for locations)  
+        if location_updates:
+            success = self.relationship_service.update_user_book_relationship_sync(
+                user_id, book_id, location_updates
+            )
+            if success:
+                print(f"✅ [FACADE] Updated location for user {user_id} and book {book_id}")
+            else:
+                print(f"❌ [FACADE] Failed to update location")
+        
+        # Return the updated book or fetch it fresh if only metadata was updated
         if updated_book:
             return updated_book
-        elif relationship_updates or location_updates:
+        elif owns_updates or custom_metadata_updates or location_updates:
             return self.get_book_by_uid_sync(book_id, user_id)
         else:
             return self.get_book_by_id_sync(book_id)

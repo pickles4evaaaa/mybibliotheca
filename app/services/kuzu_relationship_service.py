@@ -328,13 +328,21 @@ class KuzuRelationshipService:
             
             current_rel = results[0]['result']
             
-            # Handle custom metadata specially
+            # Handle field mapping for compatibility
+            field_mapping = {
+                'review': 'user_review'  # Map 'review' to 'user_review' in database
+            }
+            
+            # Handle custom metadata specially and apply field mapping
             processed_updates = {}
             for key, value in updates.items():
+                # Apply field mapping if needed
+                db_field = field_mapping.get(key, key)
+                
                 if key == 'custom_metadata' and isinstance(value, dict):
-                    processed_updates[key] = json.dumps(value)
+                    processed_updates[db_field] = json.dumps(value)
                 else:
-                    processed_updates[key] = value
+                    processed_updates[db_field] = value
             
             # Always update the updated_at timestamp
             # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
