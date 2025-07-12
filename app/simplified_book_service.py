@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType
 from .infrastructure.kuzu_graph import get_graph_storage
+from .services.kuzu_custom_field_service import KuzuCustomFieldService
 
 
 def normalize_goodreads_value(value, field_type='text'):
@@ -108,6 +109,7 @@ class SimplifiedBookService:
     
     def __init__(self):
         self.storage = get_graph_storage()
+        self.custom_field_service = KuzuCustomFieldService()
         # Log the database instance ID to verify single instance usage
         print(f"🔥 [SIMPLIFIED_SERVICE] Using KuzuDB instance: {id(self.storage.connection)}")
     
@@ -331,6 +333,36 @@ class SimplifiedBookService:
                 except Exception as e:
                     print(f"⚠️ [SIMPLIFIED] Book created but category processing failed: {e}")
             
+            # 5. Handle global custom metadata (if any)
+            if book_data.global_custom_metadata:
+                try:
+                    print(f"📝 [SIMPLIFIED] Processing {len(book_data.global_custom_metadata)} global custom fields")
+                    
+                    # Note: For global custom fields, we use a system user ID or the first user
+                    # This is a design decision - global fields need an owner for the field definition
+                    system_user_id = "system"  # You might want to use a real user ID
+                    
+                    # Ensure field definitions exist
+                    fields_ensured = self.custom_field_service.ensure_custom_fields_exist(
+                        system_user_id, book_data.global_custom_metadata, {}
+                    )
+                    
+                    if fields_ensured:
+                        # Save global custom metadata to the book
+                        global_saved = self.custom_field_service.save_custom_metadata_sync(
+                            book_id, system_user_id, book_data.global_custom_metadata
+                        )
+                        
+                        if global_saved:
+                            print(f"✅ [SIMPLIFIED] Global custom metadata saved for book {book_id}")
+                        else:
+                            print(f"⚠️ [SIMPLIFIED] Book created but global custom metadata save failed")
+                    else:
+                        print(f"⚠️ [SIMPLIFIED] Book created but global custom field definitions failed")
+                        
+                except Exception as e:
+                    print(f"⚠️ [SIMPLIFIED] Book created but global custom metadata processing failed: {e}")
+            
             print(f"🎉 [SIMPLIFIED] Book creation completed: {book_id}")
             
             # Force a checkpoint to ensure all book data is persisted to disk
@@ -388,6 +420,32 @@ class SimplifiedBookService:
             
             if success:
                 print(f"✅ [SIMPLIFIED] Ownership created successfully")
+                
+                # Handle personal custom metadata through custom field service
+                if ownership.custom_metadata:
+                    try:
+                        print(f"📝 [SIMPLIFIED] Processing {len(ownership.custom_metadata)} personal custom fields")
+                        
+                        # Ensure field definitions exist
+                        fields_ensured = self.custom_field_service.ensure_custom_fields_exist(
+                            ownership.user_id, {}, ownership.custom_metadata
+                        )
+                        
+                        if fields_ensured:
+                            # Save personal custom metadata
+                            personal_saved = self.custom_field_service.save_custom_metadata_sync(
+                                ownership.book_id, ownership.user_id, ownership.custom_metadata
+                            )
+                            
+                            if personal_saved:
+                                print(f"✅ [SIMPLIFIED] Personal custom metadata saved for user {ownership.user_id}")
+                            else:
+                                print(f"⚠️ [SIMPLIFIED] Ownership created but personal custom metadata save failed")
+                        else:
+                            print(f"⚠️ [SIMPLIFIED] Ownership created but personal custom field definitions failed")
+                            
+                    except Exception as e:
+                        print(f"⚠️ [SIMPLIFIED] Ownership created but personal custom metadata processing failed: {e}")
                 
                 # Force a checkpoint to ensure ownership data is persisted to disk
                 try:
@@ -578,6 +636,18 @@ class SimplifiedBookService:
                         # Default to global if just 'custom_'
                         field_name = book_field[7:]  # Remove 'custom_' prefix
                         book_data['global_custom_metadata'][field_name] = value
+                elif book_field == 'average_rating':
+                    # Convert average rating to float
+                    try:
+                        book_data['average_rating'] = float(value) if value else None
+                    except (ValueError, TypeError):
+                        book_data['average_rating'] = None
+                elif book_field == 'rating_count':
+                    # Convert rating count to int
+                    try:
+                        book_data['rating_count'] = int(value) if value else None
+                    except (ValueError, TypeError):
+                        book_data['rating_count'] = None
                 elif book_field not in ['ignore', 'reading_status', 'rating', 'finish_date', 'personal_notes']:
                     # Map other standard fields
                     if book_field in book_data:

@@ -686,6 +686,13 @@ def create_app():
     except ImportError as e:
         print(f"⚠️  Could not import onboarding system: {e}")
     
+    try:
+        from .routes.test_import_routes import test_import_bp
+        app.register_blueprint(test_import_bp, url_prefix='/test-import')
+        print("✅ Test import routes registered at /test-import")
+    except ImportError as e:
+        print(f"⚠️  Could not import test import routes: {e}")
+    
     # Note: Genre routes temporarily disabled due to missing category management methods
     # try:
     #     from .routes.genre_routes import genres_bp
