@@ -66,14 +66,124 @@ class KuzuBookService:
         
         return book
     
+    async def _load_book_contributors(self, book: Book) -> None:
+        """Load contributors for a book from the database."""
+        try:
+            if not book.id:
+                return  # Cannot load contributors without book ID
+                
+            contributors_data = await self.book_repo.get_book_authors(book.id)
+            
+            from ..domain.models import Person, BookContribution, ContributionType
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            contributors = []
+            for contrib_data in contributors_data:
+                # Create Person object
+                person = Person(
+                    id=contrib_data.get('id'),
+                    name=contrib_data.get('name') or '',
+                    normalized_name=(contrib_data.get('name') or '').strip().lower()
+                )
+                
+                # Map role string to ContributionType enum
+                role_str = contrib_data.get('role', 'authored').lower()
+                try:
+                    contribution_type = ContributionType(role_str)
+                except ValueError:
+                    # Default to AUTHORED if role is not recognized
+                    contribution_type = ContributionType.AUTHORED
+                
+                # Create BookContribution object  
+                contribution = BookContribution(
+                    person_id=person.id or '',
+                    book_id=book.id,
+                    contribution_type=contribution_type,
+                    order=contrib_data.get('order_index', 0),
+                    person=person
+                )
+                
+                contributors.append(contribution)
+            
+            book.contributors = contributors
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to load contributors for book {book.id}: {e}")
+            # Initialize empty list on error
+            book.contributors = []
+    
+    def _load_book_contributors_sync(self, book: Book) -> None:
+        """Load contributors for a book from the database (sync version)."""
+        try:
+            if not book.id:
+                return  # Cannot load contributors without book ID
+                
+            # Use the sync query method directly from the repository
+            query = """
+            MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
+            RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
+            ORDER BY rel.order_index ASC
+            """
+            
+            results = self.book_repo.db.query(query, {"book_id": book.id})
+            
+            from ..domain.models import Person, BookContribution, ContributionType
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            contributors = []
+            for result in results:
+                if result.get('col_0'):  # name
+                    # Create Person object
+                    person = Person(
+                        id=result.get('col_1') or '',
+                        name=result.get('col_0') or '',
+                        normalized_name=(result.get('col_0') or '').strip().lower()
+                    )
+                    
+                    # Map role string to ContributionType enum
+                    role_str = (result.get('col_2') or 'authored').lower()
+                    try:
+                        contribution_type = ContributionType(role_str)
+                    except ValueError:
+                        # Default to AUTHORED if role is not recognized
+                        contribution_type = ContributionType.AUTHORED
+                    
+                    # Create BookContribution object  
+                    contribution = BookContribution(
+                        person_id=person.id or '',
+                        book_id=book.id,
+                        contribution_type=contribution_type,
+                        order=result.get('col_3', 0),
+                        person=person
+                    )
+                    
+                    contributors.append(contribution)
+            
+            book.contributors = contributors
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to load contributors for book {book.id}: {e}")
+            # Initialize empty list on error
+            book.contributors = []
+
     def _initialize_book_relationships(self, book: Book) -> None:
-        """Initialize empty relationships for a book."""
+        """Initialize and load relationships for a book."""
         if not hasattr(book, 'categories'):
             book.categories = []
         if not hasattr(book, 'contributors'):
             book.contributors = []
         if not hasattr(book, 'publisher'):
             book.publisher = None
+            
+        # Load contributors from database if book has an ID
+        if book.id:
+            self._load_book_contributors_sync(book)
     
     async def create_book(self, domain_book: Book) -> Book:
         """Create a book in Kuzu."""

@@ -10,7 +10,7 @@ import traceback
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 
-from ..domain.models import Book, UserBookRelationship, ReadingStatus, OwnershipStatus
+from ..domain.models import Book, UserBookRelationship, ReadingStatus, OwnershipStatus, Person, BookContribution, ContributionType
 from ..infrastructure.kuzu_repositories import KuzuUserRepository
 from ..infrastructure.kuzu_graph import get_graph_storage
 from .kuzu_async_helper import run_async
@@ -26,10 +26,69 @@ class KuzuRelationshipService:
         self.user_repo = KuzuUserRepository()
         self.book_service = KuzuBookService()
     
+    def _load_contributors_for_book(self, book: Book) -> None:
+        """Load contributors for a book from the database."""
+        try:
+            if not book.id:
+                return  # Cannot load contributors without book ID
+                
+            # Query contributors directly using the graph storage
+            query = """
+            MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
+            RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
+            ORDER BY rel.order_index ASC
+            """
+            
+            results = self.graph_storage.query(query, {"book_id": book.id})
+            
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            contributors = []
+            for result in results:
+                if result.get('col_0'):  # name
+                    # Create Person object
+                    person = Person(
+                        id=result.get('col_1') or '',
+                        name=result.get('col_0') or '',
+                        normalized_name=(result.get('col_0') or '').strip().lower()
+                    )
+                    
+                    # Map role string to ContributionType enum
+                    role_str = (result.get('col_2') or 'authored').lower()
+                    try:
+                        contribution_type = ContributionType(role_str)
+                    except ValueError:
+                        # Default to AUTHORED if role is not recognized
+                        contribution_type = ContributionType.AUTHORED
+                    
+                    # Create BookContribution object  
+                    contribution = BookContribution(
+                        person_id=person.id or '',
+                        book_id=book.id,
+                        contribution_type=contribution_type,
+                        order=result.get('col_3', 0),
+                        person=person
+                    )
+                    
+                    contributors.append(contribution)
+            
+            book.contributors = contributors
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to load contributors for book {book.id}: {e}")
+            # Initialize empty list on error
+            book.contributors = []
+
     def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any], locations_data: Optional[List[Dict[str, Any]]] = None) -> Book:
         """Create an enriched Book object with user-specific attributes."""
         # Convert book data to Book object using the book service
         book = self.book_service._dict_to_book(book_data)
+        
+        # Load contributors directly here to avoid async issues
+        self._load_contributors_for_book(book)
         
         # Add user-specific attributes dynamically using setattr
         setattr(book, 'reading_status', relationship_data.get('reading_status', 'plan_to_read'))

@@ -1008,7 +1008,7 @@ class KuzuBookRepository:
             return []
     
     async def get_book_authors(self, book_id: str) -> List[Dict[str, Any]]:
-        """Get all authors/contributors for a book."""
+        """Get all contributors for a book with their roles."""
         try:
             query = """
             MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
@@ -1018,18 +1018,18 @@ class KuzuBookRepository:
             
             results = self.db.query(query, {"book_id": book_id})
             
-            authors = []
+            contributors = []
             for result in results:
                 if result.get('col_0'):  # name
-                    authors.append({
+                    contributors.append({
                         'name': result.get('col_0', ''),
                         'id': result.get('col_1', ''),
-                        'role': result.get('col_2', 'authored'),
+                        'role': result.get('col_2', 'authored'),  # Default to 'authored' if no role
                         'order_index': result.get('col_3', 0)
                     })
             
-            logger.debug(f"Found {len(authors)} authors for book {book_id}")
-            return authors
+            logger.debug(f"Found {len(contributors)} contributors for book {book_id}")
+            return contributors
             
         except Exception as e:
             logger.error(f"❌ Failed to get book authors: {e}")

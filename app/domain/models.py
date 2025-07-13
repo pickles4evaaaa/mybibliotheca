@@ -495,6 +495,14 @@ class Book:
         type_contributors = [c for c in self.contributors if c.contribution_type == contribution_type]
         return [c.person for c in type_contributors if c.person]
 
+    def get_contributors_by_type_str(self, contribution_type_str: str) -> List['Person']:
+        """Get contributors by contribution type string (for template compatibility)."""
+        try:
+            contribution_type = ContributionType(contribution_type_str.lower())
+            return self.get_contributors_by_type(contribution_type)
+        except ValueError:
+            return []
+
     @property
     def author(self) -> str:
         """Get primary author name for backward compatibility."""
