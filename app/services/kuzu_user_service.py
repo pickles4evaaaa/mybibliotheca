@@ -75,9 +75,7 @@ class KuzuUserService:
     async def get_user_by_username(self, username: str) -> Optional[User]:
         """Get user by username."""
         try:
-            print(f"🔍 [USER_SERVICE] Looking for user by username: '{username}'")
             user_data = await self.kuzu_service.get_user_by_username(username)
-            print(f"🔍 [USER_SERVICE] Kuzu service returned: {user_data}")
             if user_data:
                 user = User(
                     id=user_data['id'],
@@ -91,12 +89,9 @@ class KuzuUserService:
                     is_active=user_data.get('is_active', True),
                     created_at=user_data.get('created_at') or datetime.utcnow()
                 )
-                print(f"🔍 [USER_SERVICE] Created User object: {user}")
                 return user
-            print(f"🔍 [USER_SERVICE] No user data returned for username: '{username}'")
             return None
         except Exception as e:
-            print(f"🔍 [USER_SERVICE] Error getting user by username '{username}': {e}")
             current_app.logger.error(f"Error getting user by username {username}: {e}")
             return None
     
@@ -222,7 +217,6 @@ class KuzuUserService:
             print(f"🚀 [USER_SERVICE] kuzu_service.create_user returned: {created_user_data}")
             
             if created_user_data:
-                print(f"✅ [USER_SERVICE] User data returned, creating User object...")
                 user = User(
                     id=created_user_data['id'],
                     username=created_user_data['username'],
@@ -234,20 +228,13 @@ class KuzuUserService:
                     is_active=created_user_data.get('is_active', True),
                     created_at=created_user_data.get('created_at') or datetime.utcnow()
                 )
-                print(f"✅ [USER_SERVICE] User object created: {user}")
-                print(f"✅ [USER_SERVICE] User ID: {user.id}")
-                print(f"✅ [USER_SERVICE] ============ CREATE_USER_SYNC SUCCESS ============")
                 return user
             else:
-                print(f"❌ [USER_SERVICE] kuzu_service.create_user returned None")
-                print(f"❌ [USER_SERVICE] ============ CREATE_USER_SYNC FAILED ============")
                 return None
         except Exception as e:
-            print(f"❌ [USER_SERVICE] Exception in create_user_sync: {e}")
             logger.error(f"Error creating user {username}: {e}")
             import traceback
             traceback.print_exc()
-            print(f"❌ [USER_SERVICE] ============ CREATE_USER_SYNC EXCEPTION ============")
             return None
 
     def get_user_count_sync(self) -> int:

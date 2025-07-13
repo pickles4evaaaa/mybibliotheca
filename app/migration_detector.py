@@ -64,7 +64,6 @@ class MigrationDetector:
                 print(f"   DEBUG: ❌ Path does not exist: {path}")
         
         logger.info(f"📚 Found {len(db_files)} Bibliotheca database(s): {[f.name for f in db_files]}")
-        print(f"📚 DEBUG: Found {len(db_files)} Bibliotheca database(s): {[f.name for f in db_files]}")
         return db_files
     
     def _is_bibliotheca_database(self, db_path: Path) -> bool:

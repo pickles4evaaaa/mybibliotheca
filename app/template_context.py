@@ -22,7 +22,6 @@ def inject_debug_manager():
             
     except Exception as e:
         # If debug manager fails, provide safe fallbacks
-        print(f"⚠️  Debug manager injection failed: {e}")
         
         # Create a dummy debug manager that always returns False
         class DummyDebugManager:

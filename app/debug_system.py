@@ -183,7 +183,6 @@ def get_debug_manager() -> DebugManager:
             # Use simplified debug manager for Kuzu version
             debug_manager = DebugManager()
         except Exception as e:
-            print(f"⚠️  Debug manager initialization failed: {e}")
             debug_manager = DebugManager()
     return debug_manager
 

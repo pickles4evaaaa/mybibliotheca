@@ -78,12 +78,10 @@ class KuzuBookService:
     async def create_book(self, domain_book: Book) -> Book:
         """Create a book in Kuzu."""
         try:
-            print(f"📚 [CREATE_BOOK] Creating book: {domain_book.title}")
             
             # Ensure the book has an ID
             if not domain_book.id:
                 domain_book.id = str(uuid.uuid4())
-                print(f"📚 [CREATE_BOOK] Generated book ID: {domain_book.id}")
             
             # Set timestamps
             domain_book.created_at = datetime.utcnow()
@@ -95,11 +93,9 @@ class KuzuBookService:
             if not created_book:
                 raise ValueError("Failed to create book in repository")
             
-            print(f"✅ [CREATE_BOOK] Successfully created book: {domain_book.id}")
             return domain_book
             
         except Exception as e:
-            print(f"❌ [CREATE_BOOK] Error creating book: {e}")
             traceback.print_exc()
             raise
     
@@ -111,18 +107,15 @@ class KuzuBookService:
                 return self._dict_to_book(book_data)
             return None
         except Exception as e:
-            print(f"❌ [GET_BOOK] Error getting book {book_id}: {e}")
             return None
     
     async def update_book(self, book_id: str, updates: Dict[str, Any]) -> Optional[Book]:
         """Update a book's basic fields."""
         try:
-            print(f"📚 [UPDATE_BOOK] Updating book {book_id} with: {updates}")
             
             # Get current book data
             book_data = await self.book_repo.get_by_id(book_id)
             if not book_data:
-                print(f"❌ [UPDATE_BOOK] Book {book_id} not found")
                 return None
             
             # Convert to Book object
@@ -132,7 +125,6 @@ class KuzuBookService:
             for field, value in updates.items():
                 if hasattr(book, field):
                     setattr(book, field, value)
-                    print(f"📚 [UPDATE_BOOK] Updated {field} = {value}")
             
             book.updated_at = datetime.utcnow()
             
@@ -172,14 +164,11 @@ class KuzuBookService:
             # Update the book node in Kuzu
             success = self.graph_storage.update_node('Book', book_id, book_dict)
             if not success:
-                print(f"❌ [UPDATE_BOOK] Failed to update book {book_id}")
                 return None
                 
-            print(f"✅ [UPDATE_BOOK] Successfully updated book {book_id}")
             return book
             
         except Exception as e:
-            print(f"❌ [UPDATE_BOOK] Error updating book {book_id}: {e}")
             traceback.print_exc()
             return None
     
@@ -195,11 +184,9 @@ class KuzuBookService:
             """
             
             self.graph_storage.query(delete_query, {"book_id": book_id})
-            print(f"✅ [DELETE_BOOK] Successfully deleted book {book_id}")
             return True
             
         except Exception as e:
-            print(f"❌ [DELETE_BOOK] Error deleting book {book_id}: {e}")
             traceback.print_exc()
             return False
     
@@ -223,7 +210,6 @@ class KuzuBookService:
             return None
             
         except Exception as e:
-            print(f"❌ [GET_BOOK_BY_ISBN] Error getting book by ISBN {isbn}: {e}")
             return None
     
     def find_or_create_book_sync(self, domain_book: Book) -> Optional[Book]:
@@ -233,13 +219,11 @@ class KuzuBookService:
             if domain_book.isbn13:
                 existing_book = run_async(self.get_book_by_isbn(domain_book.isbn13))
                 if existing_book:
-                    print(f"📚 [FIND_OR_CREATE] Found existing book by ISBN13: {domain_book.title}")
                     return existing_book
             
             if domain_book.isbn10:
                 existing_book = run_async(self.get_book_by_isbn(domain_book.isbn10))
                 if existing_book:
-                    print(f"📚 [FIND_OR_CREATE] Found existing book by ISBN10: {domain_book.title}")
                     return existing_book
             
             # If no ISBN match, try to find by title (simplified search)
@@ -255,19 +239,20 @@ class KuzuBookService:
                 
                 if results and results[0].get('col_0'):
                     book_data = results[0]['col_0']
-                    print(f"📚 [FIND_OR_CREATE] Found existing book by title: {domain_book.title}")
                     return self._dict_to_book(book_data)
                 
             except Exception as search_error:
-                print(f"⚠️ [FIND_OR_CREATE] Error searching for existing book: {search_error}")
+                print(f"Error searching for existing book: {search_error}")
             
             # No existing book found, create a new one
-            print(f"📚 [FIND_OR_CREATE] Creating new book: {domain_book.title}")
-            created_book = run_async(self.create_book(domain_book))
-            return created_book
+            try:
+                created_book = run_async(self.create_book(domain_book))
+                return created_book
+            except Exception as create_error:
+                print(f"Error creating new book: {create_error}")
+                return None
             
         except Exception as e:
-            print(f"❌ [FIND_OR_CREATE] Error in find_or_create_book_sync: {e}")
             traceback.print_exc()
             return None
     

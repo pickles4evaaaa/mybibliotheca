@@ -108,7 +108,7 @@ class KuzuAsyncHelper:
             return run_async(coro)
         except Exception as e:
             if log_errors:
-                print(f"❌ Error in async operation: {e}")
+                print(f"Error in sync coroutine: {e}")
             return default_value
     
     @staticmethod

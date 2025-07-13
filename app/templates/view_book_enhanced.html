@@ -72,16 +72,99 @@
                                     <h2 class="h5 text-muted mb-3">{{ book.subtitle }}</h2>
                                 {% endif %}
                                 
-                                <!-- Authors -->
-                                {% if book.authors %}
-                                <div class="mb-3">
-                                    <strong class="text-muted me-2">By:</strong>
-                                    {% for author in book.authors %}
-                                        <a href="{{ url_for('people.person_details', person_id=author.id) }}" class="text-decoration-none">{{ author.name }}</a>
-                                        {%- if not loop.last %}, {% endif %}
-                                    {% endfor %}
+                                <!-- Contributors Section -->
+                                <div class="contributors-section mb-3">
+                                    <!-- Authors -->
+                                    {% if book.authors %}
+                                    <div class="contributor-group mb-2">
+                                        <strong class="text-muted me-2">By:</strong>
+                                        <div class="contributor-tags d-inline-flex flex-wrap gap-1">
+                                            {% for author in book.authors %}
+                                            <span class="contributor-tag-display">
+                                                <a href="{{ url_for('people.person_details', person_id=author.id) }}" 
+                                                   class="text-decoration-none d-flex align-items-center">
+                                                    <i class="bi bi-person-fill me-1"></i>
+                                                    {{ author.name }}
+                                                </a>
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <!-- Other Contributors -->
+                                    {% if book.narrators %}
+                                    <div class="contributor-group mb-2">
+                                        <small class="text-muted me-2">Narrated by:</small>
+                                        <div class="contributor-tags d-inline-flex flex-wrap gap-1">
+                                            {% for narrator in book.narrators %}
+                                            <span class="contributor-tag-display narrator">
+                                                <a href="{{ url_for('people.person_details', person_id=narrator.id) }}" 
+                                                   class="text-decoration-none d-flex align-items-center">
+                                                    <i class="bi bi-headphones me-1"></i>
+                                                    {{ narrator.name }}
+                                                </a>
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    {% if book.editors %}
+                                    <div class="contributor-group mb-2">
+                                        <small class="text-muted me-2">Edited by:</small>
+                                        <div class="contributor-tags d-inline-flex flex-wrap gap-1">
+                                            {% for editor in book.editors %}
+                                            <span class="contributor-tag-display editor">
+                                                <a href="{{ url_for('people.person_details', person_id=editor.id) }}" 
+                                                   class="text-decoration-none d-flex align-items-center">
+                                                    <i class="bi bi-pencil me-1"></i>
+                                                    {{ editor.name }}
+                                                </a>
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <!-- Get translators using the get_contributors_by_type method -->
+                                    {% set translators = book.get_contributors_by_type('TRANSLATED') if book.get_contributors_by_type else [] %}
+                                    {% if translators %}
+                                    <div class="contributor-group mb-2">
+                                        <small class="text-muted me-2">Translated by:</small>
+                                        <div class="contributor-tags d-inline-flex flex-wrap gap-1">
+                                            {% for translator in translators %}
+                                            <span class="contributor-tag-display translator">
+                                                <a href="{{ url_for('people.person_details', person_id=translator.id) }}" 
+                                                   class="text-decoration-none d-flex align-items-center">
+                                                    <i class="bi bi-translate me-1"></i>
+                                                    {{ translator.name }}
+                                                </a>
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <!-- Get illustrators -->
+                                    {% set illustrators = book.get_contributors_by_type('ILLUSTRATED') if book.get_contributors_by_type else [] %}
+                                    {% if illustrators %}
+                                    <div class="contributor-group mb-2">
+                                        <small class="text-muted me-2">Illustrated by:</small>
+                                        <div class="contributor-tags d-inline-flex flex-wrap gap-1">
+                                            {% for illustrator in illustrators %}
+                                            <span class="contributor-tag-display illustrator">
+                                                <a href="{{ url_for('people.person_details', person_id=illustrator.id) }}" 
+                                                   class="text-decoration-none d-flex align-items-center">
+                                                    <i class="bi bi-palette me-1"></i>
+                                                    {{ illustrator.name }}
+                                                </a>
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
                                 </div>
-                                {% endif %}
                                 
                                 <!-- Basic Metadata Row -->
                                 <div class="row mb-3">
@@ -381,15 +464,128 @@
                                         </div>
                                     </div>
                                     
-                                    <!-- Authors -->
-                                    <div class="mb-3">
-                                        <label for="edit-authors" class="form-label fw-medium">Authors</label>
-                                        <div class="position-relative">
-                                            <input type="text" class="form-control" id="edit-authors" name="authors" 
-                                                   value="{% for author in book.authors %}{{ author.name }}{% if not loop.last %}, {% endif %}{% endfor %}"
-                                                   autocomplete="off">
-                                            <div class="form-text">Separate multiple authors with commas</div>
-                                            <div id="authors-dropdown" class="autocomplete-dropdown"></div>
+                                    <!-- Contributors -->
+                                    <div class="mb-4">
+                                        <h6 class="fw-medium mb-3">
+                                            <i class="bi bi-people me-1"></i>Contributors
+                                        </h6>
+                                        
+                                        <div class="row">
+                                            <div class="col-lg-6">
+                                                <!-- Authors -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-person-fill me-1"></i> Authors
+                                                    </label>
+                                                    <div class="contributor-section" data-type="authored">
+                                                        <div class="contributors-display mb-2">
+                                                            {% for author in book.authors %}
+                                                            <div class="contributor-tag" data-id="{{ author.id or '' }}" data-name="{{ author.name }}">
+                                                                {{ author.name }}
+                                                                <span class="remove" onclick="removeContributor(this)">×</span>
+                                                            </div>
+                                                            {% endfor %}
+                                                        </div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing author name..." data-type="authored">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Narrators -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-headphones me-1"></i> Narrators
+                                                    </label>
+                                                    <div class="contributor-section" data-type="narrated">
+                                                        <div class="contributors-display mb-2">
+                                                            {% for narrator in book.narrators %}
+                                                            <div class="contributor-tag" data-id="{{ narrator.id or '' }}" data-name="{{ narrator.name }}">
+                                                                {{ narrator.name }}
+                                                                <span class="remove" onclick="removeContributor(this)">×</span>
+                                                            </div>
+                                                            {% endfor %}
+                                                        </div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing narrator name..." data-type="narrated">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="col-lg-6">
+                                                <!-- Editors -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-pencil me-1"></i> Editors
+                                                    </label>
+                                                    <div class="contributor-section" data-type="edited">
+                                                        <div class="contributors-display mb-2">
+                                                            {% for editor in book.editors %}
+                                                            <div class="contributor-tag" data-id="{{ editor.id or '' }}" data-name="{{ editor.name }}">
+                                                                {{ editor.name }}
+                                                                <span class="remove" onclick="removeContributor(this)">×</span>
+                                                            </div>
+                                                            {% endfor %}
+                                                        </div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing editor name..." data-type="edited">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Translators -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-translate me-1"></i> Translators
+                                                    </label>
+                                                    <div class="contributor-section" data-type="translated">
+                                                        <div class="contributors-display mb-2">
+                                                            {% set translators = book.get_contributors_by_type('TRANSLATED') if book.get_contributors_by_type else [] %}
+                                                            {% for translator in translators %}
+                                                            <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
+                                                                {{ translator.name }}
+                                                                <span class="remove" onclick="removeContributor(this)">×</span>
+                                                            </div>
+                                                            {% endfor %}
+                                                        </div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing translator name..." data-type="translated">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Illustrators -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-palette me-1"></i> Illustrators
+                                                    </label>
+                                                    <div class="contributor-section" data-type="illustrated">
+                                                        <div class="contributors-display mb-2">
+                                                            {% set illustrators = book.get_contributors_by_type('ILLUSTRATED') if book.get_contributors_by_type else [] %}
+                                                            {% for illustrator in illustrators %}
+                                                            <div class="contributor-tag" data-id="{{ illustrator.id or '' }}" data-name="{{ illustrator.name }}">
+                                                                {{ illustrator.name }}
+                                                                <span class="remove" onclick="removeContributor(this)">×</span>
+                                                            </div>
+                                                            {% endfor %}
+                                                        </div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing illustrator name..." data-type="illustrated">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                     
@@ -1833,6 +2029,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize autocomplete functionality
     initializeAutocomplete();
+    
+    // Initialize contributor functionality
+    initializeContributors();
 });
 
 function initializeCoverEditing() {
@@ -2160,6 +2359,308 @@ function setupDescriptionToggle() {
             }
         });
     });
+}
+
+// Contributor functionality
+function initializeContributors() {
+    let searchTimeout;
+    let activeDropdown = null;
+
+    // Initialize contributor autocomplete
+    const contributorInputs = document.querySelectorAll('.contributor-input');
+    
+    contributorInputs.forEach((input) => {
+        input.addEventListener('input', handleContributorInput);
+        input.addEventListener('keydown', handleContributorKeydown);
+        input.addEventListener('blur', handleContributorBlur);
+    });
+
+    // Update hidden inputs on form submission
+    const form = document.getElementById('book-edit-form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            updateContributorHiddenInputs();
+        });
+    }
+
+    function handleContributorInput(event) {
+        console.log('[CONTRIBUTOR_INPUT] === INPUT EVENT ===');
+        const input = event.target;
+        const query = input.value.trim();
+        console.log('[CONTRIBUTOR_INPUT] Input element:', input);
+        console.log('[CONTRIBUTOR_INPUT] Input value:', input.value);
+        console.log('[CONTRIBUTOR_INPUT] Query after trim:', query);
+        console.log('[CONTRIBUTOR_INPUT] Query length:', query.length);
+        
+        clearTimeout(searchTimeout);
+        
+        if (query.length >= 2) {
+            console.log('[CONTRIBUTOR_INPUT] Query long enough, starting search timeout...');
+            searchTimeout = setTimeout(() => {
+                console.log('[CONTRIBUTOR_INPUT] Timeout elapsed, calling searchContributors...');
+                searchContributors(input, query);
+            }, 300);
+        } else {
+            console.log('[CONTRIBUTOR_INPUT] Query too short, hiding dropdown...');
+            hideContributorDropdown(input);
+        }
+    }
+
+    function handleContributorKeydown(event) {
+        const dropdown = event.target.closest('.contributor-autocomplete').querySelector('.autocomplete-dropdown');
+        if (!dropdown || dropdown.style.display === 'none') return;
+
+        const items = dropdown.querySelectorAll('.autocomplete-item');
+        let selectedIndex = -1;
+        
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].classList.contains('selected')) {
+                selectedIndex = i;
+                break;
+            }
+        }
+
+        switch (event.key) {
+            case 'ArrowDown':
+                event.preventDefault();
+                if (selectedIndex < items.length - 1) {
+                    if (selectedIndex >= 0) items[selectedIndex].classList.remove('selected');
+                    items[selectedIndex + 1].classList.add('selected');
+                }
+                break;
+            case 'ArrowUp':
+                event.preventDefault();
+                if (selectedIndex > 0) {
+                    items[selectedIndex].classList.remove('selected');
+                    items[selectedIndex - 1].classList.add('selected');
+                }
+                break;
+            case 'Enter':
+                event.preventDefault();
+                if (selectedIndex >= 0) {
+                    selectContributor(items[selectedIndex]);
+                } else if (event.target.value.trim()) {
+                    createNewContributor(event.target);
+                }
+                break;
+            case 'Escape':
+                hideContributorDropdown(event.target);
+                break;
+        }
+    }
+
+    function handleContributorBlur(event) {
+        // Small delay to allow clicking on dropdown items
+        setTimeout(() => {
+            if (activeDropdown !== event.target.closest('.contributor-autocomplete').querySelector('.autocomplete-dropdown')) {
+                hideContributorDropdown(event.target);
+            }
+        }, 200);
+    }
+
+    // Store all persons data for client-side filtering (like the People page)
+    window.allPersonsData = {{ all_persons | tojson | safe }};
+
+    function searchContributors(input, query) {
+        if (!query || query.length < 1) {
+            hideContributorDropdown(input);
+            return;
+        }
+        
+        // Filter persons locally (like People page search)
+        const queryLower = query.toLowerCase().trim();
+        const matchingPersons = [];
+        
+        if (window.allPersonsData && Array.isArray(window.allPersonsData)) {
+            window.allPersonsData.forEach(person => {
+                // Get person name safely
+                let personName = '';
+                if (typeof person === 'object' && person !== null) {
+                    personName = person.name || '';
+                } else if (typeof person === 'string') {
+                    personName = person;
+                }
+                
+                // Convert to string and search case-insensitively
+                const personNameLower = String(personName).toLowerCase();
+                
+                if (personNameLower.includes(queryLower)) {
+                    const personId = (typeof person === 'object' && person !== null) ? person.id : personName;
+                    matchingPersons.push({
+                        id: personId,
+                        name: personName,
+                        book_count: null // Not needed for search
+                    });
+                }
+            });
+        }
+        
+        showContributorDropdown(input, matchingPersons, query);
+    }
+
+    function showContributorDropdown(input, people, query) {
+        const dropdown = input.closest('.contributor-autocomplete').querySelector('.autocomplete-dropdown');
+        dropdown.innerHTML = '';
+
+        // Add existing people
+        people.forEach(person => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.innerHTML = `
+                <div class="name">${person.name}</div>
+                ${person.book_count ? `<small class="text-muted">${person.book_count} books</small>` : ''}
+            `;
+            item.dataset.id = person.id;
+            item.dataset.name = person.name;
+            item.addEventListener('mousedown', () => selectContributor(item));
+            dropdown.appendChild(item);
+        });
+
+        // Add "create new" option
+        if (query && query.length >= 2) {
+            const createItem = document.createElement('div');
+            createItem.className = 'autocomplete-item create-new';
+            createItem.innerHTML = `
+                <div class="name">
+                    <i class="bi bi-plus-circle me-1"></i> 
+                    Add "${query}" as new person
+                </div>
+            `;
+            createItem.dataset.name = query;
+            createItem.dataset.new = 'true';
+            createItem.addEventListener('mousedown', () => selectContributor(createItem));
+            dropdown.appendChild(createItem);
+        }
+
+        dropdown.style.display = 'block';
+        activeDropdown = dropdown;
+    }
+
+    function hideContributorDropdown(input) {
+        const dropdown = input.closest('.contributor-autocomplete').querySelector('.autocomplete-dropdown');
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+        activeDropdown = null;
+    }
+
+    function selectContributor(item) {
+        const input = item.closest('.contributor-autocomplete').querySelector('.contributor-input');
+        const section = input.closest('.contributor-section');
+        const display = section.querySelector('.contributors-display');
+        
+        let personId = item.dataset.id || '';
+        const personName = item.dataset.name;
+        const isNew = item.dataset.new === 'true';
+
+        // Check if person is already added
+        const existingTags = display.querySelectorAll('.contributor-tag');
+        for (let tag of existingTags) {
+            if (tag.dataset.name === personName) {
+                input.value = '';
+                hideContributorDropdown(input);
+                return; // Person already added
+            }
+        }
+
+        // Add contributor tag
+        const tag = document.createElement('div');
+        tag.className = 'contributor-tag';
+        tag.dataset.id = personId;
+        tag.dataset.name = personName;
+        tag.dataset.new = isNew ? 'true' : 'false';
+        tag.innerHTML = `
+            ${personName}
+            ${isNew ? '<small class="text-muted"> (new)</small>' : ''}
+            <span class="remove" onclick="removeContributor(this)">×</span>
+        `;
+        
+        display.appendChild(tag);
+
+        // Clear input
+        input.value = '';
+        hideContributorDropdown(input);
+        
+        // Update hidden inputs
+        updateContributorHiddenInputs();
+    }
+
+    function createNewContributor(input) {
+        const name = input.value.trim();
+        if (!name) return;
+        
+        selectContributor({
+            dataset: { name: name, new: 'true' },
+            closest: () => input.closest('.contributor-autocomplete')
+        });
+    }
+
+    function updateContributorHiddenInputs() {
+        // Remove existing hidden inputs
+        const existingInputs = document.querySelectorAll('input[name^="contributors["]');
+        existingInputs.forEach(input => input.remove());
+
+        const form = document.getElementById('book-edit-form');
+        if (!form) return;
+
+        const sections = document.querySelectorAll('.contributor-section');
+        let contributorIndex = 0;
+        
+        sections.forEach((section) => {
+            const type = section.dataset.type;
+            const tags = section.querySelectorAll('.contributor-tag');
+            
+            tags.forEach((tag) => {
+                const id = tag.dataset.id;
+                const name = tag.dataset.name;
+                const isNew = tag.dataset.new === 'true';
+                
+                // Create hidden inputs for this contributor
+                const typeInput = document.createElement('input');
+                typeInput.type = 'hidden';
+                typeInput.name = `contributors[${contributorIndex}][type]`;
+                typeInput.value = type;
+                
+                const nameInput = document.createElement('input');
+                nameInput.type = 'hidden';
+                nameInput.name = `contributors[${contributorIndex}][name]`;
+                nameInput.value = name;
+                
+                const isNewInput = document.createElement('input');
+                isNewInput.type = 'hidden';
+                isNewInput.name = `contributors[${contributorIndex}][is_new]`;
+                isNewInput.value = isNew ? 'true' : 'false';
+                
+                if (id && !isNew) {
+                    const idInput = document.createElement('input');
+                    idInput.type = 'hidden';
+                    idInput.name = `contributors[${contributorIndex}][id]`;
+                    idInput.value = id;
+                    form.appendChild(idInput);
+                }
+                
+                form.appendChild(typeInput);
+                form.appendChild(nameInput);
+                form.appendChild(isNewInput);
+                
+                contributorIndex++;
+            });
+        });
+    }
+
+    // Make updateContributorHiddenInputs available globally
+    window.updateContributorHiddenInputs = updateContributorHiddenInputs;
+}
+
+function removeContributor(removeBtn) {
+    const contributorTag = removeBtn.closest('.contributor-tag');
+    
+    if (contributorTag) {
+        contributorTag.remove();
+        // Update hidden inputs if we're in a form context
+        if (document.getElementById('book-edit-form') && window.updateContributorHiddenInputs) {
+            window.updateContributorHiddenInputs();
+        }
+    }
 }
 
 // Initialize all functions when page loads
@@ -2652,6 +3153,224 @@ document.addEventListener('DOMContentLoaded', function() {
 .external-link:hover {
     transform: translateY(-1px);
     text-decoration: none;
+}
+
+/* Contributor editing interface */
+.contributor-autocomplete {
+    position: relative;
+}
+
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    max-height: 250px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.autocomplete-item {
+    padding: 10px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.1s ease;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+    background-color: #f8f9fa;
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item.create-new {
+    background-color: #f0f8ff;
+    border-color: #b3d7ff;
+    font-weight: 500;
+}
+
+.autocomplete-item.create-new:hover {
+    background-color: #e7f3ff;
+}
+
+.contributor-tag {
+    display: inline-block;
+    background-color: #e9ecef;
+    border: 1px solid #ced4da;
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    margin: 0.125rem;
+    font-size: 0.875rem;
+    position: relative;
+    transition: all 0.15s ease-in-out;
+}
+
+.contributor-tag:hover {
+    background-color: #dee2e6;
+    border-color: #adb5bd;
+}
+
+.contributor-tag .remove {
+    margin-left: 0.5rem;
+    color: #dc3545;
+    cursor: pointer;
+    font-weight: bold;
+    transition: color 0.15s ease;
+}
+
+.contributor-tag .remove:hover {
+    color: #b02a37;
+}
+
+.contributors-display {
+    min-height: 2rem;
+    padding: 0.25rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    background-color: #f8f9fa;
+}
+
+.contributor-section {
+    margin-bottom: 1rem;
+}
+
+/* Dark theme support for contributor editing */
+[data-theme="dark"] .autocomplete-dropdown {
+    background: #343a40;
+    border-color: #495057;
+}
+
+[data-theme="dark"] .autocomplete-item:hover,
+[data-theme="dark"] .autocomplete-item.selected {
+    background-color: #495057;
+}
+
+[data-theme="dark"] .autocomplete-item.create-new {
+    background-color: #2c3e50;
+}
+
+[data-theme="dark"] .autocomplete-item.create-new:hover {
+    background-color: #34495e;
+}
+
+[data-theme="dark"] .contributor-tag {
+    background-color: #495057;
+    border-color: #6c757d;
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .contributor-tag:hover {
+    background-color: #5a6268;
+}
+
+[data-theme="dark"] .contributors-display {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+/* Contributor display tags */
+.contributor-tag-display {
+    display: inline-block;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    margin: 0.125rem;
+    font-size: 0.875rem;
+    transition: all 0.15s ease-in-out;
+}
+
+.contributor-tag-display:hover {
+    background-color: #e9ecef;
+    border-color: #adb5bd;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.contributor-tag-display a {
+    color: #495057;
+    text-decoration: none;
+}
+
+.contributor-tag-display a:hover {
+    color: #212529;
+}
+
+/* Different styles for different contributor types */
+.contributor-tag-display.narrator {
+    background-color: #e7f3ff;
+    border-color: #b3d7ff;
+}
+
+.contributor-tag-display.narrator:hover {
+    background-color: #d1ecff;
+}
+
+.contributor-tag-display.editor {
+    background-color: #fff3cd;
+    border-color: #ffeaa7;
+}
+
+.contributor-tag-display.editor:hover {
+    background-color: #fff2b3;
+}
+
+.contributor-tag-display.translator {
+    background-color: #e8f5e8;
+    border-color: #c3e6c3;
+}
+
+.contributor-tag-display.translator:hover {
+    background-color: #d4edda;
+}
+
+.contributor-tag-display.illustrator {
+    background-color: #f8e7ff;
+    border-color: #e1b3ff;
+}
+
+.contributor-tag-display.illustrator:hover {
+    background-color: #f3d7ff;
+}
+
+.contributor-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.25rem;
+}
+
+.contributor-tags {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Dark theme support for contributor tags */
+[data-theme="dark"] .contributor-tag-display {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+[data-theme="dark"] .contributor-tag-display:hover {
+    background-color: #495057;
+    border-color: #6c757d;
+}
+
+[data-theme="dark"] .contributor-tag-display a {
+    color: #e9ecef;
+}
+
+[data-theme="dark"] .contributor-tag-display a:hover {
+    color: white;
 }
 
 /* Responsive improvements */

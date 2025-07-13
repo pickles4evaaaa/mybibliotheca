@@ -63,7 +63,6 @@ class KuzuUserRepository:
         try:
             user_data = self.db.get_node('User', user_id)
             if user_data:
-                logger.debug(f"Found user: {user_data.get('username', 'unknown')}")
                 return user_data
             return None
             
@@ -74,26 +73,19 @@ class KuzuUserRepository:
     async def get_by_username(self, username: str) -> Optional[Any]:
         """Get a user by username."""
         try:
-            print(f"🔍 [USER_REPO] Searching for user with username: '{username}'")
             query = "MATCH (u:User {username: $username}) RETURN u"
-            print(f"🔍 [USER_REPO] Executing query: {query} with params: {{'username': '{username}'}}")
             results = self.db.query(query, {"username": username})
-            print(f"🔍 [USER_REPO] Query results: {results}")
             
             if results:
                 # The query returns a single column, so check both 'result' and 'col_0' keys
                 user_data = results[0].get('result') or results[0].get('col_0')
-                print(f"🔍 [USER_REPO] Extracted user_data: {user_data}")
                 if user_data:
                     logger.debug(f"Found user by username: {username}")
                     user_dict = dict(user_data)
-                    print(f"🔍 [USER_REPO] Converted to dict: {user_dict}")
                     return user_dict
-            print(f"🔍 [USER_REPO] No user found for username: '{username}'")
             return None
             
         except Exception as e:
-            print(f"🔍 [USER_REPO] Error getting user by username '{username}': {e}")
             logger.error(f"❌ Failed to get user by username {username}: {e}")
             return None
     
@@ -129,7 +121,6 @@ class KuzuUserRepository:
                 elif 'col_0' in result:
                     users.append(dict(result['col_0']))
             
-            logger.debug(f"Retrieved {len(users)} users")
             return users
             
         except Exception as e:
@@ -384,31 +375,24 @@ class KuzuBookRepository:
     async def create(self, book: Any) -> Optional[Any]:
         """Create a new book with relationships."""
         try:
-            print(f"📚 [REPO] Starting book creation: {getattr(book, 'title', 'unknown')}")
-            print(f"📚 [REPO] Book ID: {getattr(book, 'id', 'none')}")
             
             # Debug contributors
             contributors = getattr(book, 'contributors', [])
-            print(f"📚 [REPO] Contributors: {len(contributors)}")
             for i, contrib in enumerate(contributors):
                 person = getattr(contrib, 'person', None)
                 person_name = getattr(person, 'name', 'unknown') if person else 'no person'
                 contrib_type = getattr(contrib, 'contribution_type', 'unknown')
-                print(f"📚 [REPO]   {i}: {person_name} ({contrib_type})")
             
             # Debug categories
             categories = getattr(book, 'categories', [])
             raw_categories = getattr(book, 'raw_categories', None)
-            print(f"📚 [REPO] Categories: {len(categories)} items: {categories}")
-            print(f"📚 [REPO] Raw categories: {raw_categories}")
             
             # Debug publisher
             publisher = getattr(book, 'publisher', None)
             if publisher:
                 publisher_name = getattr(publisher, 'name', 'unknown')
-                print(f"📚 [REPO] Publisher: {publisher_name} (type: {type(publisher)})")
             else:
-                print(f"📚 [REPO] Publisher: none")
+                publisher_name = 'unknown'
             
             if not getattr(book, 'id', None):
                 if hasattr(book, 'id'):
@@ -1337,7 +1321,6 @@ class KuzuUserBookRepository:
             if custom_metadata:
                 import json
                 owns_props['custom_metadata'] = json.dumps(custom_metadata)
-                print(f"🔍 [CREATE_OWNERSHIP] Adding custom metadata to OWNS relationship: {custom_metadata}")
             
             success = self.db.create_relationship(
                 'User', user_id, 'OWNS', 'Book', book_id, owns_props
@@ -1345,16 +1328,14 @@ class KuzuUserBookRepository:
             
             if success and custom_metadata:
                 # Also store individual custom field relationships for tracking
-                print(f"🔍 [CREATE_OWNERSHIP] Storing individual custom field relationships")
                 from app.infrastructure.kuzu_graph import get_graph_storage
                 storage = get_graph_storage()
                 
                 for field_name, field_value in custom_metadata.items():
                     try:
                         storage.store_custom_metadata(user_id, book_id, field_name, str(field_value))
-                        print(f"✅ [CREATE_OWNERSHIP] Stored custom field: {field_name} = {field_value}")
                     except Exception as e:
-                        print(f"⚠️ [CREATE_OWNERSHIP] Failed to store custom field {field_name}: {e}")
+                        pass  # Log custom metadata storage error but continue
             
             if success:
                 logger.info(f"✅ Created ownership relationship: user {user_id} owns book {book_id}")

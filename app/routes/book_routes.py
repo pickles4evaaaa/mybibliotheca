@@ -331,7 +331,6 @@ def library():
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
-    debug_log(f"Retrieved {len(user_books)} books for user {current_user.id}", "LIBRARY")
     books_with_locations = 0
     books_without_locations = 0
     location_counts = {}
@@ -347,13 +346,9 @@ def library():
                 # Extract location ID from location object/dict
                 loc_id = location.get('id') if isinstance(location, dict) else getattr(location, 'id', location)
                 location_counts[loc_id] = location_counts.get(loc_id, 0) + 1
-            debug_log(f"Book '{book_title}' has locations: {book_locations}", "LIBRARY")
         else:
             books_without_locations += 1
-            debug_log(f"Book '{book_title}' has NO locations", "LIBRARY")
     
-    debug_log(f"Summary: {books_with_locations} books WITH locations, {books_without_locations} books WITHOUT locations", "LIBRARY")
-    debug_log(f"Location distribution: {location_counts}", "LIBRARY")
     
     # Calculate statistics for filter buttons - handle both dict and object formats
     def get_reading_status(book):
@@ -642,18 +637,6 @@ def edit_book(uid):
             is_book_metadata_only = False  # Initialize variable
             is_mixed_form = False  # Initialize variable
             try:
-                # Add debugging for the incoming request
-                print(f"🔍 [EDIT_BOOK] Processing POST request for book {uid}")
-                print(f"🔍 [EDIT_BOOK] Form data keys: {list(request.form.keys())}")
-                print(f"🔍 [EDIT_BOOK] Request content type: {request.content_type}")
-                print(f"🔍 [EDIT_BOOK] Request content length: {request.content_length}")
-                
-                # Check for CSRF token
-                csrf_token = request.form.get('csrf_token')
-                print(f"🔍 [EDIT_BOOK] CSRF token present: {bool(csrf_token)}")
-                if csrf_token:
-                    print(f"🔍 [EDIT_BOOK] CSRF token (first 10 chars): {csrf_token[:10]}")
-                    
                 # Check what type of form submission this is
                 form_keys = set(request.form.keys())
                 
@@ -670,37 +653,35 @@ def edit_book(uid):
                     'average_rating', 'rating_count'
                 }
                 
+                # Check for contributor fields in the form
+                contributor_fields = {k for k in form_keys if k.startswith('contributors[')}
+                category_fields = {k for k in form_keys if k == 'categories' or k.startswith('categories[')}
+                
                 # Set of mixed form fields (combination of book metadata and user data)
                 mixed_form_keys = book_metadata_keys.union(personal_data_keys)
+                
+                # If we have contributor or category fields, this needs full form processing
+                has_contributor_fields = len(contributor_fields) > 0
+                has_category_fields = len(category_fields) > 0
                 
                 is_personal_data_only = form_keys.issubset(personal_data_keys)
                 is_book_metadata_only = form_keys.issubset(book_metadata_keys)
                 is_mixed_form = form_keys.issubset(mixed_form_keys) and not is_personal_data_only and not is_book_metadata_only
-                
-                print(f"🔍 [EDIT_BOOK] Is personal data only submission: {is_personal_data_only}")
-                print(f"🔍 [EDIT_BOOK] Is book metadata only submission: {is_book_metadata_only}")
-                print(f"🔍 [EDIT_BOOK] Is mixed form submission: {is_mixed_form}")
-                print(f"🔍 [EDIT_BOOK] Form keys: {form_keys}")
-                print(f"🔍 [EDIT_BOOK] Personal data keys: {personal_data_keys}")
-                print(f"🔍 [EDIT_BOOK] Book metadata keys: {book_metadata_keys}")
-                print(f"🔍 [EDIT_BOOK] Mixed form keys: {mixed_form_keys}")
                 
                 # Check which fields are actually present for each category
                 personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
                 book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
                 unknown_fields = form_keys - mixed_form_keys
                 
-                print(f"🔍 [EDIT_BOOK] Personal fields present: {personal_fields_present}")
-                print(f"🔍 [EDIT_BOOK] Book fields present: {book_fields_present}")
-                print(f"🔍 [EDIT_BOOK] Unknown fields: {unknown_fields}")
-                
             except Exception as debug_error:
-                print(f"❌ [EDIT_BOOK] Debug error: {debug_error}")
                 # Continue processing despite debug errors
+                pass
                 
             # Initialize variables outside try block to avoid scope issues
             personal_fields_present = set()
             book_fields_present = set()
+            has_contributor_fields = False
+            has_category_fields = False
             try:
                 # Re-analyze form if debug failed
                 form_keys = set(request.form.keys())
@@ -715,23 +696,30 @@ def edit_book(uid):
                 }
                 personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
                 book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
+                
+                # Check for contributor and category fields
+                contributor_fields = {k for k in form_keys if k.startswith('contributors[')}
+                category_fields = {k for k in form_keys if k == 'categories' or k.startswith('categories[')}
+                has_contributor_fields = len(contributor_fields) > 0
+                has_category_fields = len(category_fields) > 0
             except:
                 pass
                 
             # Improved detection logic - handle mixed forms with unknown fields
             has_personal_fields = len(personal_fields_present) > 0
             has_book_fields = len(book_fields_present) > 0
-            has_only_personal = has_personal_fields and not has_book_fields
-            has_only_book = has_book_fields and not has_personal_fields
-            has_mixed = has_personal_fields and has_book_fields
+            has_only_personal = has_personal_fields and not has_book_fields and not has_contributor_fields and not has_category_fields
+            has_only_book = has_book_fields and not has_personal_fields and not has_contributor_fields and not has_category_fields
+            has_mixed = has_personal_fields and has_book_fields and not has_contributor_fields and not has_category_fields
+            
+            # If we have contributor or category fields, we need to do full form processing regardless
+            if has_contributor_fields or has_category_fields:
+                has_only_personal = False
+                has_only_book = False
+                has_mixed = False
             
             # Handle personal data only submission (notes, review, rating, status, etc.)
             if has_only_personal:
-                print(f"🔍 [EDIT_BOOK] Handling personal data only submission")
-                
-                # Debug all form fields
-                for key, value in request.form.items():
-                    print(f"🔍 [EDIT_BOOK] Form field '{key}': '{value}'")
                 
                 # Extract all user-specific fields from the form
                 update_data = {}
@@ -745,9 +733,6 @@ def edit_book(uid):
                 if 'review' in request.form:
                     update_data['review'] = review
                 
-                print(f"🔍 [EDIT_BOOK] Review field - raw value: '{request.form.get('review', '')}', processed: '{review}'")
-                print(f"🔍 [EDIT_BOOK] Personal notes field - raw value: '{request.form.get('personal_notes', '')}', processed: '{personal_notes}'")
-                
                 # User rating
                 user_rating = request.form.get('user_rating', '').strip()
                 if 'user_rating' in request.form:
@@ -755,7 +740,7 @@ def edit_book(uid):
                         try:
                             update_data['user_rating'] = float(user_rating)
                         except ValueError:
-                            print(f"⚠️ [EDIT_BOOK] Invalid user rating: {user_rating}")
+                            pass
                     else:
                         update_data['user_rating'] = None  # Clear rating
                 
@@ -774,12 +759,9 @@ def edit_book(uid):
                 if 'media_type' in request.form and media_type:
                     update_data['media_type'] = media_type
                 
-                print(f"🔍 [EDIT_BOOK] Personal data update fields: {list(update_data.keys())}")
-                print(f"🔍 [EDIT_BOOK] Update data values: {update_data}")
                 
                 try:
                     success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
-                    print(f"🔍 [EDIT_BOOK] Personal data update result: {success}")
                     
                     if success:
                         # Create appropriate success message based on what was updated
@@ -806,7 +788,6 @@ def edit_book(uid):
                     return redirect(url_for('book.view_book_enhanced', uid=uid))
                     
                 except Exception as e:
-                    print(f"❌ [EDIT_BOOK] Exception during personal data update: {type(e).__name__}: {str(e)}")
                     import traceback
                     traceback.print_exc()
                     flash(f'Error updating personal data: {str(e)}', 'error')
@@ -814,11 +795,6 @@ def edit_book(uid):
             
             # Handle book metadata only submission (publisher, rating, etc.)
             elif has_only_book:
-                print(f"🔍 [EDIT_BOOK] Handling book metadata only submission")
-                
-                # Debug all form fields
-                for key, value in request.form.items():
-                    print(f"🔍 [EDIT_BOOK] Form field '{key}': '{value}'")
                 
                 # Extract book metadata fields from the form
                 update_data = {}
@@ -867,7 +843,7 @@ def edit_book(uid):
                         try:
                             update_data['average_rating'] = float(average_rating)
                         except ValueError:
-                            print(f"⚠️ [EDIT_BOOK] Invalid average rating: {average_rating}")
+                            pass
                     else:
                         update_data['average_rating'] = None
                 
@@ -877,15 +853,12 @@ def edit_book(uid):
                         try:
                             update_data['rating_count'] = int(rating_count)
                         except ValueError:
-                            print(f"⚠️ [EDIT_BOOK] Invalid rating count: {rating_count}")
+                            pass
                     else:
                         update_data['rating_count'] = None
                 
-                print(f"🔍 [EDIT_BOOK] Book metadata update fields: {list(update_data.keys())}")
-                
                 try:
                     success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
-                    print(f"🔍 [EDIT_BOOK] Book metadata update result: {success}")
                     
                     if success:
                         # Create appropriate success message based on what was updated
@@ -920,7 +893,6 @@ def edit_book(uid):
                     return redirect(url_for('book.view_book_enhanced', uid=uid))
                     
                 except Exception as e:
-                    print(f"❌ [EDIT_BOOK] Exception during book metadata update: {type(e).__name__}: {str(e)}")
                     import traceback
                     traceback.print_exc()
                     flash(f'Error updating book metadata: {str(e)}', 'error')
@@ -928,11 +900,6 @@ def edit_book(uid):
             
             # Handle mixed form submission (both book metadata and personal data)
             elif has_mixed:
-                print(f"🔍 [EDIT_BOOK] Handling mixed form submission")
-                
-                # Debug all form fields
-                for key, value in request.form.items():
-                    print(f"🔍 [EDIT_BOOK] Form field '{key}': '{value}'")
                 
                 # Split fields into book metadata and personal data
                 book_update_data = {}
@@ -949,12 +916,12 @@ def edit_book(uid):
                             try:
                                 book_update_data[field] = float(value)
                             except ValueError:
-                                print(f"⚠️ [EDIT_BOOK] Invalid {field}: {value}")
+                                pass
                         elif field in ['rating_count'] and value:
                             try:
                                 book_update_data[field] = int(value)
                             except ValueError:
-                                print(f"⚠️ [EDIT_BOOK] Invalid {field}: {value}")
+                                pass
                         else:
                             book_update_data[field] = value
                 
@@ -967,25 +934,20 @@ def edit_book(uid):
                             try:
                                 personal_update_data[field] = float(value)
                             except ValueError:
-                                print(f"⚠️ [EDIT_BOOK] Invalid {field}: {value}")
+                                pass
                         else:
                             personal_update_data[field] = value
-                
-                print(f"🔍 [EDIT_BOOK] Book metadata update fields: {list(book_update_data.keys())}")
-                print(f"🔍 [EDIT_BOOK] Personal data update fields: {list(personal_update_data.keys())}")
                 
                 try:
                     # Update book metadata if any book fields present
                     book_success = True
                     if book_update_data:
                         book_success = book_service.update_book_sync(uid, str(current_user.id), **book_update_data)
-                        print(f"🔍 [EDIT_BOOK] Book metadata update result: {book_success}")
                     
                     # Update personal data if any personal fields present  
                     personal_success = True
                     if personal_update_data:
                         personal_success = book_service.update_book_sync(uid, str(current_user.id), **personal_update_data)
-                        print(f"🔍 [EDIT_BOOK] Personal data update result: {personal_success}")
                     
                     if book_success and personal_success:
                         # Create appropriate success message
@@ -1016,14 +978,13 @@ def edit_book(uid):
                     return redirect(url_for('book.view_book_enhanced', uid=uid))
                     
                 except Exception as e:
-                    print(f"❌ [EDIT_BOOK] Exception during mixed form update: {type(e).__name__}: {str(e)}")
                     import traceback
                     traceback.print_exc()
                     flash(f'Error updating data: {str(e)}', 'error')
                     return redirect(url_for('book.view_book_enhanced', uid=uid))
             
             # Handle full form submission (if not personal data only, book metadata only, or mixed form)
-            print(f"🔍 [EDIT_BOOK] Handling full form submission")
+            pass
         
         new_isbn13 = request.form.get('isbn13', '').strip() or None
         new_isbn10 = request.form.get('isbn10', '').strip() or None
@@ -1076,8 +1037,6 @@ def edit_book(uid):
                 
                 try:
                     # Always use find_or_create approach - the most reliable method
-                    from app.debug_system import debug_log
-                    debug_log(f"Finding or creating person: {person_name}", "PERSON_CREATION")
                     
                     # Use the same logic as the repository's find_or_create_person method
                     from app.infrastructure.kuzu_graph import get_graph_storage
@@ -1093,7 +1052,6 @@ def edit_book(uid):
                         existing_normalized = person_data.get('normalized_name', '').strip().lower()
                         
                         if existing_name == normalized_name or existing_normalized == normalized_name:
-                            debug_log(f"Found existing person: {person_data.get('name')} (ID: {person_data.get('id')})", "PERSON_CREATION")
                             # Convert back to Person object
                             person = Person(
                                 id=person_data.get('id'),
@@ -1111,7 +1069,6 @@ def edit_book(uid):
                     
                     # If not found, create new person using clean repository (with auto-fetch)
                     if not person:
-                        debug_log(f"Creating new person via clean repository: {person_name}", "PERSON_CREATION")
                         from app.infrastructure.kuzu_repositories import KuzuPersonRepository
                         from app.infrastructure.kuzu_graph import get_kuzu_connection
                         
@@ -1145,21 +1102,16 @@ def edit_book(uid):
                                     created_at=datetime.now(),
                                     updated_at=datetime.now()
                                 )
-                                debug_log(f"Created new person with auto-fetch: {person.name} (ID: {person.id})", "PERSON_CREATION")
                             else:
-                                debug_log(f"Failed to create person via repository: {person_name}", "PERSON_CREATION_ERROR")
                                 continue
                         except Exception as repo_error:
-                            debug_log(f"Repository creation failed for {person_name}: {repo_error}", "PERSON_CREATION_ERROR")
                             continue
                     
                     # Validate person has valid ID
                     if not person or not person.id:
-                        debug_log(f"Person has invalid ID: {person}", "PERSON_CREATION_ERROR")
                         continue
                     
                 except Exception as e:
-                    print(f"❌ [DEBUG] Error processing person {person_name}: {e}")
                     import traceback
                     traceback.print_exc()
                     continue
@@ -1234,11 +1186,8 @@ def edit_book(uid):
                 filtered_data[k] = v
         
         try:
-            print(f"🔍 [EDIT_BOOK] Calling book_service.update_book_sync with filtered_data: {filtered_data}")
             success = book_service.update_book_sync(uid, str(current_user.id), **filtered_data)
-            print(f"🔍 [EDIT_BOOK] Book update result: {success}")
         except Exception as e:
-            print(f"❌ [EDIT_BOOK] Exception during book update: {type(e).__name__}: {str(e)}")
             import traceback
             traceback.print_exc()
             flash(f'Error updating book: {str(e)}', 'error')
@@ -1246,9 +1195,7 @@ def edit_book(uid):
         
         # Handle location update separately
         location_id = request.form.get('location_id', '').strip()
-        print(f"🔍 [EDIT_BOOK] location_id from form: '{location_id}' (type: {type(location_id)})")
         if location_id is not None:  # Allow empty string to clear location
-            print(f"🔍 [EDIT_BOOK] Proceeding with location update...")
             # Use the location service to update the book location
             try:
                 from app.location_service import LocationService
@@ -1264,13 +1211,10 @@ def edit_book(uid):
                     location_id if location_id else None, 
                     str(current_user.id)
                 )
-                print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
                 if not location_success:
-                    print(f"⚠️ Failed to update location for book {uid}")
+                    pass
             except Exception as e:
-                print(f"❌ [EDIT_BOOK] Error updating location: {e}")
-        else:
-            print(f"🔍 [EDIT_BOOK] Skipping location update (location_id is None)")
+                pass
         
         if success:
             flash('Book updated successfully.', 'success')
@@ -1286,7 +1230,7 @@ def edit_book(uid):
             if book_id:
                 book_categories = book_service.get_book_categories_sync(book_id)
         except Exception as e:
-            print(f"❌ [EDIT] Error loading book categories: {e}")
+            pass
         
         # Convert dictionary to object-like structure for template compatibility
         if isinstance(user_book, dict):
@@ -1334,7 +1278,6 @@ def edit_book(uid):
         return render_template('edit_book_enhanced.html', book=user_book, book_categories=book_categories)
 
     except Exception as e:
-        print(f"❌ [EDIT_BOOK] Uncaught exception in edit_book: {type(e).__name__}: {str(e)}")
         import traceback
         traceback.print_exc()
         flash(f'Error processing request: {str(e)}', 'error')
@@ -1345,28 +1288,16 @@ def edit_book(uid):
 @login_required
 def view_book_enhanced(uid):
     """Enhanced book view with new status system."""
-    from app.debug_system import debug_log, debug_book_details, debug_service_call, debug_template_data
     
-    debug_log(f"🔍 [VIEW] Starting enhanced book view for UID: {uid}, User: {current_user.id}", "BOOK_VIEW")
-    
-    # Service call debugging
-    debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, None, "BEFORE")
     user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
-    debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, user_book, "AFTER")
     
     if not user_book:
-        debug_log(f"❌ [VIEW] Book {uid} not found for user {current_user.id}", "BOOK_VIEW")
         abort(404)
 
-    # Enhanced book debugging
-    debug_book_details(user_book, uid, str(current_user.id), "VIEW")
-
     title = user_book.get('title', 'Unknown Title') if isinstance(user_book, dict) else getattr(user_book, 'title', 'Unknown Title')
-    debug_log(f"✅ [VIEW] Found book: {title}", "BOOK_VIEW")
 
     # Convert dictionary to object-like structure for template compatibility
     if isinstance(user_book, dict):
-        debug_log(f"🔄 [VIEW] Converting dict to object for template compatibility", "BOOK_VIEW")
         # Create an object-like structure that the template can work with
         class BookObj:
             def __init__(self, data):
@@ -1386,7 +1317,6 @@ def view_book_enhanced(uid):
                     self.custom_metadata = {}
                 # DEBUG: Log all cover-related fields
                 cover_url_value = getattr(self, 'cover_url', None)
-                debug_log(f"🖼️ [VIEW] Cover URL field - cover_url: {cover_url_value}", "BOOK_VIEW")
                 
                 # Cover URL field is already correct (cover_url is the database field)
                 # No field mapping needed since we're using the correct field name everywhere
@@ -1395,12 +1325,10 @@ def view_book_enhanced(uid):
                 isbn13_value = getattr(self, 'isbn13', None)
                 isbn10_value = getattr(self, 'isbn10', None)
                 isbn_value = getattr(self, 'isbn', None)
-                debug_log(f"📚 [VIEW] ISBN fields - isbn13: {isbn13_value}, isbn10: {isbn10_value}, isbn: {isbn_value}", "BOOK_VIEW")
                 
                 # Handle ISBN field consistency - Template expects isbn13/isbn10 specifically
                 if not hasattr(self, 'isbn') and (hasattr(self, 'isbn13') or hasattr(self, 'isbn10')):
                     self.isbn = getattr(self, 'isbn13', None) or getattr(self, 'isbn10', None)
-                    debug_log(f"📚 [VIEW] Mapped primary ISBN: {self.isbn}", "BOOK_VIEW")
                 
                 # REVERSE NORMALIZATION: If we have 'isbn' but not isbn13/isbn10, normalize it
                 isbn_value = getattr(self, 'isbn', None)
@@ -1410,10 +1338,8 @@ def view_book_enhanced(uid):
                     clean_isbn = re.sub(r'[^0-9X]', '', str(isbn_value).upper())
                     if len(clean_isbn) == 13:
                         self.isbn13 = clean_isbn
-                        debug_log(f"📚 [VIEW] Normalized generic ISBN to isbn13: {clean_isbn}", "BOOK_VIEW")
                     elif len(clean_isbn) == 10:
                         self.isbn10 = clean_isbn
-                        debug_log(f"📚 [VIEW] Normalized generic ISBN to isbn10: {clean_isbn}", "BOOK_VIEW")
                 
                 # Ensure both fields exist for template (even if None)
                 if not hasattr(self, 'isbn13'):
@@ -1425,22 +1351,18 @@ def view_book_enhanced(uid):
                 categories_value = getattr(self, 'categories', None)
                 genre_value = getattr(self, 'genre', None)
                 genres_value = getattr(self, 'genres', None)
-                debug_log(f"🏷️ [VIEW] Category fields - categories: {categories_value}, genre: {genre_value}, genres: {genres_value}", "BOOK_VIEW")
                 
                 # Handle category field consistency
                 if not hasattr(self, 'categories') or not getattr(self, 'categories', None):
                     if hasattr(self, 'genres') and getattr(self, 'genres', None):
                         self.categories = getattr(self, 'genres')
-                        debug_log(f"🏷️ [VIEW] Mapped genres to categories: {self.categories}", "BOOK_VIEW")
                     elif hasattr(self, 'genre') and getattr(self, 'genre', None):
                         genre_val = getattr(self, 'genre')
                         self.categories = [genre_val] if isinstance(genre_val, str) else genre_val
-                        debug_log(f"🏷️ [VIEW] Mapped genre to categories: {self.categories}", "BOOK_VIEW")
                 
                 # Final debug
                 final_cover_url = getattr(self, 'cover_url', None)
                 final_cover_url_alt = getattr(self, 'cover_url', None)
-                debug_log(f"🖼️ [VIEW] Final cover URLs - cover_url: {final_cover_url}, cover_url_alt: {final_cover_url_alt}", "BOOK_VIEW")
                 
                 # Handle location field - if location_id exists but locations is empty, get location name
                 location_id = getattr(self, 'location_id', None)
@@ -1508,7 +1430,6 @@ def view_book_enhanced(uid):
                 return filtered
         
         user_book = BookObj(user_book)
-        debug_log(f"✅ [VIEW] Converted dictionary to object for template compatibility", "BOOK_VIEW")
         
         # Debug ISBN fields specifically and ensure final normalization
         isbn13 = getattr(user_book, 'isbn13', None)
@@ -1516,9 +1437,6 @@ def view_book_enhanced(uid):
         isbn_generic = getattr(user_book, 'isbn', None)
         cover_url = getattr(user_book, 'cover_url', None)
         
-        debug_log(f"🔍 [VIEW] ISBN Debug - ISBN13: {isbn13}, ISBN10: {isbn10}, Generic ISBN: {isbn_generic}", "BOOK_VIEW")
-        debug_log(f"🔍 [VIEW] Cover Debug - Cover URL: {cover_url}", "BOOK_VIEW")
-        debug_log(f"🔍 [VIEW] Available book attributes: {[attr for attr in dir(user_book) if not attr.startswith('_')]}", "BOOK_VIEW")
         
         # FINAL NORMALIZATION: Ensure ISBN fields are available for template
         if not isbn13 and not isbn10 and isbn_generic:
@@ -1526,10 +1444,8 @@ def view_book_enhanced(uid):
             clean_isbn = re.sub(r'[^0-9X]', '', str(isbn_generic).upper())
             if len(clean_isbn) == 13:
                 user_book.isbn13 = clean_isbn
-                debug_log(f"📚 [VIEW] Final: Normalized generic ISBN to isbn13: {clean_isbn}", "BOOK_VIEW")
             elif len(clean_isbn) == 10:
                 user_book.isbn10 = clean_isbn
-                debug_log(f"📚 [VIEW] Final: Normalized generic ISBN to isbn10: {clean_isbn}", "BOOK_VIEW")
         
         # Ensure both fields exist (template expects them)
         if not hasattr(user_book, 'isbn13'):
@@ -1542,7 +1458,6 @@ def view_book_enhanced(uid):
     # Get book authors
     try:
         book_id = getattr(user_book, 'id', None)
-        debug_log(f"🔍 [VIEW] Getting authors for book ID: {book_id}", "BOOK_VIEW")
         if book_id and (hasattr(user_book, 'contributors') and not user_book.contributors):
             # Fetch authors from database using the same pattern as categories
             from app.infrastructure.kuzu_graph import get_kuzu_connection
@@ -1584,34 +1499,24 @@ def view_book_enhanced(uid):
             # Authors property is automatically derived from contributors
             # No need to set it manually since it's a read-only property
                     
-            debug_log(f"✅ [VIEW] Found and populated {len(contributors)} authors as contributors", "BOOK_VIEW")
-            debug_log(f"✅ [VIEW] Authors will be derived automatically from contributors", "BOOK_VIEW")
         else:
-            debug_log(f"ℹ️ [VIEW] Book already has contributors or no book ID", "BOOK_VIEW")
-            
             # Even if contributors exist, make sure they have the proper structure
             # Authors property is automatically derived from contributors
             if hasattr(user_book, 'contributors') and user_book.contributors:
-                debug_log(f"✅ [VIEW] Using existing {len(user_book.contributors)} contributors for authors", "BOOK_VIEW")
+                pass
     except Exception as e:
         current_app.logger.error(f"Error loading book authors: {e}")
-        debug_log(f"❌ [VIEW] Error loading book authors: {e}", "BOOK_VIEW")
 
     # Get book categories
     book_categories = []
     try:
         book_id = getattr(user_book, 'id', None)
-        debug_log(f"🔍 [VIEW] Getting categories for book ID: {book_id}", "BOOK_VIEW")
         if book_id:
-            debug_service_call("book_service", "get_book_categories_sync", {"book_id": book_id}, None, "BEFORE")
             book_categories = book_service.get_book_categories_sync(book_id)
-            debug_service_call("book_service", "get_book_categories_sync", {"book_id": book_id}, book_categories, "AFTER")
-            debug_log(f"✅ [VIEW] Found {len(book_categories)} categories", "BOOK_VIEW")
         else:
-            debug_log(f"❌ [VIEW] No book ID found for category lookup", "BOOK_VIEW")
+            pass
     except Exception as e:
         current_app.logger.error(f"Error loading book categories: {e}")
-        debug_log(f"❌ [VIEW] Error loading book categories: {e}", "BOOK_VIEW")
 
     # Get custom metadata for display
     global_metadata_display = []
@@ -1623,13 +1528,11 @@ def view_book_enhanced(uid):
     current_metadata = {}
     
     try:
-        debug_log(f"🔍 [VIEW] Processing custom metadata", "BOOK_VIEW")
         # Get custom metadata using the custom field service
         custom_metadata = custom_field_service.get_custom_metadata_sync(uid, str(current_user.id))
         current_metadata = custom_metadata or {}
         
         if custom_metadata:
-            debug_log(f"✅ [VIEW] Combined metadata found: {custom_metadata}", "BOOK_VIEW")
             
             # Separate global and personal metadata for display
             global_metadata = {}
@@ -1641,10 +1544,8 @@ def view_book_enhanced(uid):
                     field_def = custom_field_service._get_field_definition(field_name)
                     if field_def and field_def.get('is_global', False):
                         global_metadata[field_name] = field_value
-                        debug_log(f"🌍 [VIEW] Field '{field_name}' classified as GLOBAL", "BOOK_VIEW")
                     else:
                         personal_metadata[field_name] = field_value
-                        debug_log(f"👤 [VIEW] Field '{field_name}' classified as PERSONAL", "BOOK_VIEW")
             
             # Convert to display format separately
             global_metadata_display = custom_field_service.get_custom_metadata_for_display(
@@ -1654,23 +1555,19 @@ def view_book_enhanced(uid):
                 personal_metadata
             ) or []
             
-            debug_log(f"✅ [VIEW] Converted to {len(global_metadata_display)} global and {len(personal_metadata_display)} personal display items", "BOOK_VIEW")
         else:
-            debug_log(f"ℹ️ [VIEW] No metadata found", "BOOK_VIEW")
+            pass
             
         # Get available custom fields for the edit mode
         personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False) or []
         global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True) or []
-        debug_log(f"✅ [VIEW] Found {len(personal_fields)} personal fields and {len(global_fields)} global fields", "BOOK_VIEW")
         
     except Exception as e:
         current_app.logger.error(f"Error loading custom metadata for display: {e}")
-        debug_log(f"❌ [VIEW] Error loading custom metadata for display: {e}", "BOOK_VIEW")
     
     # Get user locations for the location dropdown and debug info
     user_locations = []
     try:
-        debug_log(f"🔍 [VIEW] Getting user locations", "BOOK_VIEW")
         from app.location_service import LocationService
         from app.infrastructure.kuzu_graph import get_kuzu_connection
         from config import Config
@@ -1679,10 +1576,8 @@ def view_book_enhanced(uid):
         location_service = LocationService(kuzu_connection.connect())
         # Get all available locations, not just those with books
         user_locations = location_service.get_all_locations()
-        debug_log(f"✅ [VIEW] Found {len(user_locations)} locations for user {current_user.id}", "BOOK_VIEW")
     except Exception as e:
         current_app.logger.error(f"Error loading user locations: {e}")
-        debug_log(f"❌ [VIEW] Error loading user locations: {e}", "BOOK_VIEW")
     
     # Prepare template data
     template_data = {
@@ -1696,8 +1591,15 @@ def view_book_enhanced(uid):
         'current_metadata': current_metadata
     }
     
-    debug_template_data('view_book_enhanced.html', template_data, "VIEW")
-    debug_log(f"🎨 [VIEW] Rendering template with {len(global_metadata_display)} global and {len(personal_metadata_display)} personal metadata items", "BOOK_VIEW")
+    # Get all persons for contributor search
+    all_persons = book_service.list_all_persons_sync()
+    if not isinstance(all_persons, list):
+        all_persons = []
+    
+    template_data.update({
+        'all_persons': all_persons
+    })
+    
     
     return render_template(
         'view_book_enhanced.html', 
@@ -1708,7 +1610,8 @@ def view_book_enhanced(uid):
         user_locations=user_locations,
         personal_fields=personal_fields,
         global_fields=global_fields,
-        current_metadata=current_metadata
+        current_metadata=current_metadata,
+        all_persons=all_persons
     )
 
 
@@ -1769,13 +1672,10 @@ def update_book_details(uid):
     
     # Use service layer to update
     try:
-        print(f"🔍 [EDIT_BOOK] Calling book_service.update_book_sync with update_data: {update_data}")
         updated_book = book_service.update_book_sync(uid, str(current_user.id), **update_data)
         
         # Handle location update separately
-        print(f"🔍 [EDIT_BOOK] location_id from form: '{location_id}' (type: {type(location_id)})")
         if location_id is not None:  # Allow empty string to clear location
-            print(f"🔍 [EDIT_BOOK] Proceeding with location update...")
             # Use the location service to update the book location
             try:
                 from app.location_service import LocationService
@@ -1791,13 +1691,12 @@ def update_book_details(uid):
                     location_id if location_id.strip() else None, 
                     str(current_user.id)
                 )
-                print(f"🔍 [EDIT_BOOK] Location update result: {location_success}")
                 if not location_success:
-                    print(f"⚠️ Failed to update location for book {uid}")
+                    pass
             except Exception as e:
-                print(f"❌ [EDIT_BOOK] Error updating location: {e}")
+                pass
         else:
-            print(f"🔍 [EDIT_BOOK] Skipping location update (location_id is None)")
+            pass
         
         if updated_book is not None:
             flash('Book details updated successfully.', 'success')
@@ -1895,15 +1794,11 @@ def edit_book_custom_metadata(uid):
     from app.debug_system import debug_log, debug_metadata_operation, debug_service_call, debug_template_data
     
     try:
-        debug_log(f"🔍 [EDIT_META] Starting custom metadata edit for book {uid}, user {current_user.id}", "METADATA")
         
         # Get user book with relationship data (includes custom metadata)
-        debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, None, "BEFORE")
         user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
-        debug_service_call("book_service", "get_book_by_uid_sync", {"uid": uid, "user_id": str(current_user.id)}, user_book, "AFTER")
         
         if not user_book:
-            debug_log(f"❌ [EDIT_META] User book {uid} not found for user {current_user.id}", "METADATA")
             flash('Book not found in your library.', 'error')
             return redirect(url_for('main.library'))
         
@@ -1913,33 +1808,23 @@ def edit_book_custom_metadata(uid):
         debug_metadata_operation(book_id, uid, str(current_user.id), existing_metadata, "LOAD")
         
         title = user_book.get('title', 'Unknown Title') if isinstance(user_book, dict) else getattr(user_book, 'title', 'Unknown Title')
-        debug_log(f"✅ [EDIT_META] Found user book: {title}", "METADATA")
-        debug_log(f"📊 [EDIT_META] User book custom metadata: {getattr(user_book, 'custom_metadata', 'NO ATTR')}", "METADATA")
         
         if request.method == 'POST':
-            debug_log(f"🔍 [EDIT_META] Processing POST request", "METADATA")
-            debug_log(f"🔍 [EDIT_META] Form data keys: {list(request.form.keys())}", "METADATA")
-            debug_log(f"🔍 [EDIT_META] Full form data: {dict(request.form)}", "METADATA")
             
             # Process form data for custom metadata
             # Note: In current architecture, we're storing everything as personal metadata
             personal_metadata = {}
             
             # Get available fields (treating all as personal for now)
-            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": False}, None, "BEFORE")
             personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False)
-            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": False}, personal_fields, "AFTER")
             
-            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": True}, None, "BEFORE")
             global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True)
-            debug_service_call("custom_field_service", "get_available_fields_sync", {"user_id": current_user.id, "is_global": True}, global_fields, "AFTER")
             
             # Ensure we have lists, not None
             personal_fields = personal_fields or []
             global_fields = global_fields or []
             all_fields = personal_fields + global_fields
             
-            debug_log(f"🔍 [EDIT_META] Found {len(personal_fields)} personal fields, {len(global_fields)} global fields", "METADATA")
             
             # Process all fields as personal metadata
             for field in all_fields:
@@ -1951,12 +1836,10 @@ def edit_book_custom_metadata(uid):
                 personal_value = request.form.get(personal_key, '').strip()
                 global_value = request.form.get(global_key, '').strip()
                 
-                print(f"🔍 [EDIT_META] Field {field_name}: personal_key='{personal_key}' value='{personal_value}', global_key='{global_key}' value='{global_value}'")
                 
                 value = personal_value or global_value
                 if value:
                     personal_metadata[field_name] = value
-                    print(f"✅ [EDIT_META] Added to metadata: {field_name} = {value}")
             
             print(f"📝 [EDIT_META] Final processed metadata: {personal_metadata}")
             
@@ -1977,14 +1860,11 @@ def edit_book_custom_metadata(uid):
                     )
                     
                     if success:
-                        print(f"✅ [EDIT_META] Updated user book personal metadata")
                         flash('Custom metadata updated successfully!', 'success')
                         return redirect(url_for('book.view_book_enhanced', uid=uid))
                     else:
-                        print(f"❌ [EDIT_META] Failed to update custom metadata")
                         flash('Failed to update custom metadata.', 'error')
                 except Exception as e:
-                    print(f"❌ [EDIT_META] Exception updating metadata: {e}")
                     flash('Failed to update custom metadata.', 'error')
             else:
                 # Show validation errors
@@ -1996,7 +1876,6 @@ def edit_book_custom_metadata(uid):
         personal_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=False) or []
         global_fields = custom_field_service.get_available_fields_sync(current_user.id, is_global=True) or []
         
-        print(f"🔍 [EDIT_META] Template data preparation:")
         print(f"   📋 [EDIT_META] Personal fields count: {len(personal_fields)}")
         print(f"   📋 [EDIT_META] Global fields count: {len(global_fields)}")
         
@@ -2027,7 +1906,6 @@ def edit_book_custom_metadata(uid):
         )
         
     except Exception as e:
-        print(f"❌ [EDIT_META] Exception in edit_book_custom_metadata: {type(e).__name__}: {str(e)}")
         import traceback
         traceback.print_exc()
         flash(f'Error loading custom metadata: {str(e)}', 'error')
@@ -2501,7 +2379,6 @@ def add_book_manual():
     # 🔥 SIMPLIFIED ARCHITECTURE INTERCEPT
     # Use simplified service to avoid complex transaction issues
     try:
-        print(f"📚 [INTERCEPT] Using simplified architecture for manual book addition")
         
         # Get form data
         title = request.form['title'].strip()
@@ -2569,7 +2446,6 @@ def add_book_manual():
                     check_sum += int(digit) * (1 if i % 2 == 0 else 3)
                 check_digit = (10 - (check_sum % 10)) % 10
                 isbn13 = isbn13_base + str(check_digit)
-                print(f"📚 [MANUAL] Converted ISBN10 {isbn10} to ISBN13 {isbn13}")
             elif len(clean_isbn) == 13:
                 # ISBN13 - try to convert to ISBN10 if it starts with 978
                 isbn13 = clean_isbn
@@ -2584,12 +2460,10 @@ def add_book_manual():
                     elif check_digit == 11:
                         check_digit = '0'
                     isbn10 = isbn10_base + str(check_digit)
-                    print(f"📚 [MANUAL] Converted ISBN13 {isbn13} to ISBN10 {isbn10}")
             
             # Enhanced API lookup with both Google Books and OpenLibrary
             normalized_isbn = isbn13 or isbn10
             if normalized_isbn:
-                print(f"🔍 [MANUAL] Performing enhanced API lookup for ISBN: {normalized_isbn}")
                 
                 try:
                     # Google Books lookup
@@ -2623,7 +2497,6 @@ def add_book_manual():
                                     google_data['cover_url'] = image_links[size].replace('http://', 'https://')
                                     break
                             
-                            print(f"✅ [MANUAL] Google Books data retrieved")
                     
                     # OpenLibrary lookup
                     openlibrary_data = None
@@ -2650,7 +2523,6 @@ def add_book_manual():
                                 'description': book.get('notes', {}).get('value', '') if isinstance(book.get('notes'), dict) else str(book.get('notes', '')),
                                 'cover_url': book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
                             }
-                            print(f"✅ [MANUAL] OpenLibrary data retrieved")
                     
                     # Merge API data
                     if google_data or openlibrary_data:
@@ -2715,15 +2587,14 @@ def add_book_manual():
                                 
                                 cached_cover_url = f"/static/covers/{filename}"
                                 cover_url = cached_cover_url
-                                print(f"🖼️ [MANUAL] Cover cached: {cached_cover_url}")
                                 
                             except Exception as e:
-                                print(f"⚠️ [MANUAL] Failed to cache cover: {e}")
                                 # If caching fails, use the original URL
-                                print(f"🔗 [MANUAL] Using original cover URL: {cover_url}")
+                                print(f"Cover caching failed: {e}")
+                                # cover_url already contains the original URL
                 
                 except Exception as e:
-                    print(f"⚠️ [MANUAL] API lookup failed: {e}")
+                    pass
         
         # Create simplified book data with enhanced API fields
         book_data = SimplifiedBook(
@@ -2744,7 +2615,6 @@ def add_book_manual():
         )
         
         # Enhanced debugging for ISBN and cover
-        print(f"🔍 [MANUAL] Final book data:")
         print(f"   Title: {book_data.title}")
         print(f"   Author: {book_data.author}")
         print(f"   ISBN13: {book_data.isbn13}")
@@ -2768,15 +2638,12 @@ def add_book_manual():
         
         if success:
             flash(f'Successfully added "{title}" to your library!', 'success')
-            print(f"✅ [INTERCEPT] Successfully added book using simplified architecture")
         else:
             flash('Failed to add book. Please try again.', 'danger')
-            print(f"❌ [INTERCEPT] Failed to add book using simplified architecture")
             
         return redirect(url_for('main.library'))
         
     except Exception as e:
-        print(f"❌ [INTERCEPT] Simplified architecture failed: {e}")
         flash('Error adding book. Please try again.', 'danger')
         return redirect(url_for('main.library'))
     
@@ -2876,14 +2743,12 @@ def add_book_manual():
                     check_digit = '0'
                 isbn10 = isbn10_base + str(check_digit)
         
-        print(f"📚 [MANUAL] Enhanced ISBN processing: {isbn} -> ISBN10: {isbn10}, ISBN13: {isbn13}")
     
     # Process manual genre input
     manual_categories = []
     if genres:
         # Split by comma and clean up
         manual_categories = [cat.strip() for cat in genres.split(',') if cat.strip()]
-        print(f"📚 [MANUAL] Manual categories: {manual_categories}")
     
     start_date_str = request.form.get('start_date') or None
     finish_date_str = request.form.get('finish_date') or None
@@ -2903,7 +2768,6 @@ def add_book_manual():
             print(f"📋 [MANUAL] Selected existing custom field: {field_name} = {field_value}")
             custom_metadata[field_name] = field_value
 
-    print(f"📊 [MANUAL] Final custom metadata: {custom_metadata}")
 
     # Enhanced API lookup with comprehensive field mapping
     api_data = None
@@ -2911,7 +2775,6 @@ def add_book_manual():
     cached_cover_url = None
     
     if normalized_isbn:
-        print(f"🔍 [MANUAL] Performing enhanced API lookup for ISBN: {normalized_isbn}")
         
         # Enhanced Google Books API lookup
         def enhanced_google_books_lookup(isbn):
@@ -2977,7 +2840,6 @@ def add_book_manual():
                     'source': 'google_books'
                 }
             except Exception as e:
-                print(f"❌ Google Books API error: {e}")
                 return None
         
         # Enhanced OpenLibrary API lookup
@@ -3053,7 +2915,6 @@ def add_book_manual():
                     'source': 'openlibrary'
                 }
             except Exception as e:
-                print(f"❌ OpenLibrary API error: {e}")
                 return None
         
         # Perform API lookups
@@ -3090,7 +2951,6 @@ def add_book_manual():
             elif ol_data:
                 api_data = ol_data
             
-            print(f"✅ [MANUAL] API data retrieved from {api_data.get('sources', api_data.get('source', 'unknown'))}")
             
             # Enhanced ISBN handling from API
             if not isbn13 and api_data.get('isbn13'):
@@ -3138,13 +2998,11 @@ def add_book_manual():
                             f.write(chunk)
                     
                     cached_cover_url = f"/static/covers/{filename}"
-                    print(f"🖼️ [MANUAL] Cover cached: {final_cover_url} -> {cached_cover_url}")
                     
                 except Exception as e:
-                    print(f"❌ [MANUAL] Failed to cache cover: {e}")
                     cached_cover_url = final_cover_url  # Fallback to original URL
         else:
-            print(f"❌ [MANUAL] No API data found for ISBN: {normalized_isbn}")
+            pass
     
     # Enhanced field mapping with API fallbacks
     final_title = title or (api_data.get('title') if api_data else '')
@@ -3191,7 +3049,6 @@ def add_book_manual():
             unique_categories.append(cat.strip())
             seen.add(cat_normalized)
     
-    print(f"📚 [MANUAL] Final categories (API + manual): {unique_categories}")
     
     # Use manual publisher if provided, otherwise use API publisher
     final_publisher = publisher_name or publisher
@@ -3257,9 +3114,9 @@ def add_book_manual():
         
         # Categories are already processed by find_or_create_book_sync, no need to process again
         if unique_categories:
-            print(f"📚 [MANUAL] Categories already processed during book creation: {unique_categories}")
+            pass  # Categories already handled
         else:
-            print(f"📚 [MANUAL] No categories found for book {title}")
+            pass  # No categories to process
         
         # Add to user's library with custom metadata and location
         # Determine location to use: form-selected location takes priority, then default location
@@ -3274,37 +3131,29 @@ def add_book_manual():
             
             # Check if user selected a location in the form
             if location_id:
-                print(f"📍 [MANUAL] User selected location from form: {location_id}")
                 final_locations = [location_id]
             else:
-                print(f"📍 [MANUAL] No location selected in form, attempting to get default location for user {current_user.id}")
                 
                 default_location = location_service.get_default_location(str(current_user.id))
                 
                 if default_location:
                     final_locations = [default_location.id]
-                    print(f"📍 [MANUAL] ✅ Found default location: {default_location.name} (ID: {default_location.id})")
                 else:
-                    print(f"📍 [MANUAL] ❌ No default location found for user {current_user.id}")
                     # Check if user has any locations at all
                     all_locations = location_service.get_all_locations()
                     if not all_locations:
-                        print(f"📍 [MANUAL] 🏗️ User has no locations, creating default location...")
                         default_locations_created = location_service.setup_default_locations()
                         if default_locations_created:
                             final_locations = [default_locations_created[0].id]
-                            print(f"📍 [MANUAL] ✅ Created and assigned default location: {default_locations_created[0].name} (ID: {default_locations_created[0].id})")
                         else:
-                            print(f"📍 [MANUAL] ❌ Failed to create default locations")
+                            final_locations = []  # No default location available
                     else:
-                        print(f"📍 [MANUAL] User has {len(all_locations)} locations but none are default")
+                        final_locations = [all_locations[0].id]  # Use first available location
                 
         except Exception as e:
-            print(f"❌ [MANUAL] Error handling location: {e}")
             import traceback
             traceback.print_exc()
         
-        print(f"📍 [MANUAL] Final locations list: {final_locations}")
         
         # Convert reading status string to enum
         reading_status_enum = ReadingStatus.PLAN_TO_READ  # Default
@@ -3312,7 +3161,7 @@ def add_book_manual():
             try:
                 reading_status_enum = ReadingStatus(reading_status)
             except ValueError:
-                print(f"⚠️ [MANUAL] Invalid reading status: {reading_status}, using default")
+                pass
         
         # Convert ownership status string to enum
         ownership_status_enum = None
@@ -3321,7 +3170,7 @@ def add_book_manual():
                 from .domain.models import OwnershipStatus
                 ownership_status_enum = OwnershipStatus(ownership_status)
             except ValueError:
-                print(f"⚠️ [MANUAL] Invalid ownership status: {ownership_status}")
+                pass
         
         # Convert media type string to enum
         media_type_enum = None
@@ -3330,13 +3179,10 @@ def add_book_manual():
                 from .domain.models import MediaType
                 media_type_enum = MediaType(media_type)
             except ValueError:
-                print(f"⚠️ [MANUAL] Invalid media type: {media_type}")
-        
-        print(f"📚 [MANUAL] Adding book to user library with reading status: {reading_status_enum}")
+                pass
         
         # Extract the first location ID for the simplified book service
         location_id = final_locations[0] if final_locations else None
-        print(f"📍 [MANUAL] Using location_id: {location_id}")
         
         result = book_service.add_book_to_user_library_sync(
             user_id=current_user.id,
@@ -3345,7 +3191,6 @@ def add_book_manual():
             location_id=location_id,
             custom_metadata=custom_metadata if custom_metadata else None
         )
-        print(f"📚 [MANUAL] Add to library result: {result}")
         
         # Update additional fields if specified
         update_data = {}
@@ -3366,7 +3211,6 @@ def add_book_manual():
         # Note: location is already handled via the locations parameter above
             
         if update_data:
-            print(f"📚 [MANUAL] Updating book with additional data: {update_data}")
             book_service.update_book_sync(existing_book.uid, str(current_user.id), **update_data)
         
         if existing_book.id == domain_book.id:

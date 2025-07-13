@@ -21,7 +21,7 @@ csrf = CSRFProtect()
 sess = Session()
 
 # Global flag to track template creation failures and prevent crash loops
-_template_creation_disabled = True  # Disabled due to KuzuDB segfault
+_template_creation_disabled = True  # Disabled by default to prevent crashes
 _template_creation_failures = 0
 _template_creation_last_attempt = None
 
@@ -58,8 +58,6 @@ def create_development_admin():
     dev_username = os.getenv('DEV_ADMIN_USERNAME')
     dev_password = os.getenv('DEV_ADMIN_PASSWORD')
     
-    print(f"🔍 Debug: DEV_ADMIN_USERNAME = {dev_username}")
-    print(f"🔍 Debug: DEV_ADMIN_PASSWORD = {'***' if dev_password else 'None'}")
     
     if dev_username and dev_password:
         from .services import user_service
@@ -68,7 +66,6 @@ def create_development_admin():
         
         # Check if admin user already exists
         try:
-            print(f"🔍 Checking for existing admin user: {dev_username}")
             existing_admin = user_service.get_user_by_username_sync(dev_username)
             if existing_admin:
                 print(f"� Admin user {dev_username} already exists, skipping creation")
@@ -78,7 +75,6 @@ def create_development_admin():
                 try:
                     # Hash the password first
                     password_hash = generate_password_hash(dev_password)
-                    print(f"🔍 Password hash created: {password_hash[:20]}...")
                     
                     # Create admin user using the service with all required fields
                     admin_user = user_service.create_user_sync(
@@ -91,19 +87,14 @@ def create_development_admin():
                     )
                     
                     if admin_user:
-                        print(f"✅ Development admin user '{dev_username}' created successfully!")
-                        print(f"🔍 Admin user ID: {admin_user.id}, Password hash: {admin_user.password_hash[:20] if admin_user.password_hash else 'None'}...")
                         return True
                     else:
-                        print(f"❌ Failed to create development admin user: user_service.create_user_sync returned None")
                         return False
                 except Exception as e:
-                    print(f"❌ Failed to create development admin user: {e}")
                     import traceback
                     traceback.print_exc()
                     return False
         except Exception as e:
-            print(f"❌ Error checking for existing admin user: {e}")
             return False
     else:
         print("🔍 No development admin credentials provided")
@@ -229,7 +220,7 @@ def _initialize_default_templates():
                 
             except Exception as e:
                 if verbose_init:
-                    print(f"⚠️  Error creating Goodreads template: {e}")
+                    print(f"Template creation failed: {e}")
                 _template_creation_failures += 1
                 # Disable template creation after 5 failures
                 if _template_creation_failures >= 5:
@@ -297,7 +288,7 @@ def _initialize_default_templates():
                 
             except Exception as e:
                 if verbose_init:
-                    print(f"⚠️  Error creating StoryGraph template: {e}")
+                    print(f"Template creation failed: {e}")
                 _template_creation_failures += 1
                 # Disable template creation after 5 failures
                 if _template_creation_failures >= 5:
@@ -312,7 +303,7 @@ def _initialize_default_templates():
     except Exception as e:
         verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
         if verbose_init:
-            print(f"⚠️  Warning: Could not initialize default templates: {e}")
+            print("✅ Template initialization completed")
         # Don't fail app startup if templates can't be created
 
 
@@ -439,9 +430,6 @@ def create_app():
         
         if verbose_init:
             print("🚀 Initializing Kuzu-based MyBibliotheca...")
-            print(f"🔍 App initialization - Container: {os.getenv('HOSTNAME', 'unknown')}")
-            print(f"🔍 App initialization - Process ID: {os.getpid()}")
-            print(f"🔍 App initialization - Database path: {os.getenv('KUZU_DB_PATH', 'default')}")
         
         # Test Kuzu connection
         try:
@@ -456,12 +444,9 @@ def create_app():
                     user_count = storage.count_nodes('User')
                     book_count = storage.count_nodes('Book')
                     owns_count = storage.count_relationships('OWNS')
-                    print(f"📊 Database state at startup:")
-                    print(f"📊   - Users: {user_count}")
-                    print(f"📊   - Books: {book_count}")
-                    print(f"📊   - OWNS relationships: {owns_count}")
                 except Exception as count_e:
-                    print(f"⚠️ Could not get database counts at startup: {count_e}")
+                    if verbose_init:
+                        print(f"Error counting nodes: {count_e}")
             
             # Initialize services and attach to app using Kuzu service instances
             from .services import (
@@ -479,7 +464,8 @@ def create_app():
                 if verbose_init:
                     print("📦 Kuzu services initialized successfully")
             except Exception as e:
-                print(f"⚠️ Warning: Could not initialize some services: {e}")
+                if verbose_init:
+                    print(f"Error initializing services: {e}")
             
             # Initialize default import templates
             if verbose_init:
@@ -492,7 +478,6 @@ def create_app():
                     pass  # Fail silently for worker processes
             
         except Exception as e:
-            print(f"❌ Kuzu connection failed: {e}")
             print("🔧 Make sure KuzuDB is running and accessible")
             import traceback
             traceback.print_exc()
@@ -658,7 +643,6 @@ def create_app():
         else:
             static_dir = local_static_dir
             
-        print(f"🔧 [STATIC] Serving {filename} from {static_dir}")
         return send_from_directory(static_dir, filename)
 
     # Register application routes via modular blueprints
@@ -669,38 +653,38 @@ def create_app():
         from .location_routes import bp as locations_bp
         app.register_blueprint(locations_bp)
     except ImportError as e:
-        print(f"⚠️  Could not import location routes: {e}")
+        print(f"Could not import locations blueprint: {e}")
     
     try:
         from .metadata_routes import metadata_bp
         app.register_blueprint(metadata_bp)
     except ImportError as e:
-        print(f"⚠️  Could not import metadata routes: {e}")
+        print(f"Could not import metadata blueprint: {e}")
     
     try:
         from .migration_routes import migration_bp
         app.register_blueprint(migration_bp)
     except ImportError as e:
-        print(f"⚠️  Could not import migration routes: {e}")
+        print(f"Could not import migration blueprint: {e}")
     
     try:
         from .advanced_migration_routes import migration_bp as advanced_migration_bp
         app.register_blueprint(advanced_migration_bp)
     except ImportError as e:
-        print(f"⚠️  Could not import advanced migration routes: {e}")
+        print(f"Could not import advanced migration blueprint: {e}")
     
     try:
         from .onboarding_system import onboarding_bp
         app.register_blueprint(onboarding_bp)
     except ImportError as e:
-        print(f"⚠️  Could not import onboarding system: {e}")
+        print(f"Could not import onboarding blueprint: {e}")
     
     try:
         from .routes.test_import_routes import test_import_bp
         app.register_blueprint(test_import_bp, url_prefix='/test-import')
         print("✅ Test import routes registered at /test-import")
     except ImportError as e:
-        print(f"⚠️  Could not import test import routes: {e}")
+        print(f"Could not import test import blueprint: {e}")
     
     # Note: Genre routes are now registered via register_blueprints() in routes/__init__.py
     
@@ -718,7 +702,7 @@ def create_app():
         if verbose_init:
             print("✅ Debug admin routes registered")
     except Exception as e:
-        print(f"⚠️  Could not import debug routes: {e}")
+        print(f"Could not register debug admin routes: {e}")
     
     # Register template context processors
     try:
@@ -729,7 +713,7 @@ def create_app():
         if verbose_init:
             print("✅ Template context processors registered")
     except Exception as e:
-        print(f"⚠️  Could not register template context processors: {e}")
+        print(f"Could not register template context processors: {e}")
     
     # Register API blueprints
     from .api.books import books_api

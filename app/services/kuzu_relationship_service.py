@@ -130,7 +130,6 @@ class KuzuRelationshipService:
             return books
             
         except Exception as e:
-            print(f"❌ [GET_BOOKS_FOR_USER] Error getting books for user {user_id}: {e}")
             traceback.print_exc()
             return []
     
@@ -174,7 +173,6 @@ class KuzuRelationshipService:
             return book
             
         except Exception as e:
-            print(f"❌ [GET_BOOK_FOR_USER] Error getting book {book_id} for user {user_id}: {e}")
             traceback.print_exc()
             return None
     
@@ -195,15 +193,12 @@ class KuzuRelationshipService:
                         custom_metadata = metadata_value
                     else:
                         custom_metadata = {}
-                    print(f"🔍 [LOAD_CUSTOM_META] Loaded from OWNS.custom_metadata: {custom_metadata}")
                 except (json.JSONDecodeError, TypeError) as e:
-                    print(f"❌ Error parsing custom_metadata JSON: {e}")
                     custom_metadata = {}
             
             return custom_metadata
             
         except Exception as e:
-            print(f"❌ [LOAD_CUSTOM_META] Error loading custom metadata: {e}")
             return {}
     
     def add_book_to_user_library_sync(self, user_id: str, book_id: str, 
@@ -261,21 +256,18 @@ class KuzuRelationshipService:
             )
             
             if success:
-                print(f"✅ [ADD_TO_LIBRARY] Added book {book_id} to user {user_id} library with status {reading_status}")
                 if custom_metadata:
-                    print(f"✅ [ADD_TO_LIBRARY] Attached custom metadata: {custom_metadata}")
+                    pass  # Custom metadata would be handled separately
             
             return success
             
         except Exception as e:
-            print(f"❌ [ADD_TO_LIBRARY] Error adding book to user library: {e}")
             traceback.print_exc()
             return False
     
     async def update_user_book_relationship(self, user_id: str, book_id: str, updates: Dict[str, Any]) -> bool:
         """Update the relationship between a user and book."""
         try:
-            print(f"🔗 [UPDATE_RELATIONSHIP] Updating user {user_id} - book {book_id} with: {updates}")
             
             # Get the current relationship - check if any OWNS relationship exists
             query = """
@@ -289,15 +281,11 @@ class KuzuRelationshipService:
                 "book_id": book_id
             })
             
-            print(f"🔍 [UPDATE_RELATIONSHIP] Query returned {len(results) if results else 0} results")
             if results:
-                print(f"🔍 [UPDATE_RELATIONSHIP] First result keys: {list(results[0].keys()) if results[0] else 'No keys'}")
-                print(f"🔍 [UPDATE_RELATIONSHIP] First result content: {results[0]}")
+                pass  # Process results
             
             if not results or 'result' not in results[0]:
-                print(f"❌ [UPDATE_RELATIONSHIP] No relationship found between user {user_id} and book {book_id}")
                 # Try to create the relationship first with the updates included
-                print(f"🔗 [UPDATE_RELATIONSHIP] Attempting to create relationship with updates")
                 
                 # Extract base properties for relationship creation
                 reading_status = updates.get('reading_status', 'library_only')
@@ -321,10 +309,8 @@ class KuzuRelationshipService:
                 )
                 
                 if not success:
-                    print(f"❌ [UPDATE_RELATIONSHIP] Failed to create relationship")
                     return False
                 
-                print(f"✅ [UPDATE_RELATIONSHIP] Created relationship with updates included")
                 return True
             
             current_rel = results[0]['result']
@@ -369,11 +355,9 @@ class KuzuRelationshipService:
             
             self.graph_storage.query(update_query, params)
             
-            print(f"✅ [UPDATE_RELATIONSHIP] Successfully updated relationship")
             return True
             
         except Exception as e:
-            print(f"❌ [UPDATE_RELATIONSHIP] Error updating relationship: {e}")
             traceback.print_exc()
             return False
     
@@ -393,11 +377,9 @@ class KuzuRelationshipService:
                 "book_id": book_id
             })
             
-            print(f"✅ [REMOVE_FROM_LIBRARY] Successfully removed book from library")
             return True
             
         except Exception as e:
-            print(f"❌ [REMOVE_FROM_LIBRARY] Error removing book from library: {e}")
             traceback.print_exc()
             return False
     
@@ -429,7 +411,6 @@ class KuzuRelationshipService:
             return book_dicts
             
         except Exception as e:
-            print(f"❌ [GET_ALL_WITH_OVERLAY] Error getting all books with user overlay for user {user_id}: {e}")
             traceback.print_exc()
             return []
     

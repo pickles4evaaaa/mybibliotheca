@@ -103,9 +103,6 @@ def detect_csv_format(csv_file_path):
             goodreads_normalized = goodreads_score / sum(goodreads_indicators.values())
             storygraph_normalized = storygraph_score / sum(storygraph_indicators.values())
             
-            print(f"📊 [DETECT] Goodreads score: {goodreads_score:.1f} (normalized: {goodreads_normalized:.3f})")
-            print(f"📊 [DETECT] StoryGraph score: {storygraph_score:.1f} (normalized: {storygraph_normalized:.3f})")
-            print(f"📊 [DETECT] Headers found: {headers}")
             
             # Determine format with minimum confidence threshold
             min_confidence = 0.3
@@ -118,7 +115,6 @@ def detect_csv_format(csv_file_path):
                 return 'unknown', max(goodreads_normalized, storygraph_normalized)
                 
     except Exception as e:
-        print(f"❌ [DETECT] Error detecting CSV format: {e}")
         return 'unknown', 0.0
 
 def auto_detect_fields(headers, user_id):
@@ -322,13 +318,12 @@ def auto_create_custom_fields(field_mappings, user_id):
                     }
                     success = custom_field_service.create_field_sync(user_id, field_data)
                     if success:
-                        print(f"✅ Created custom field: {config['display_name']} ({field_name})")
                         existing_field_names.add(field_name)
                     else:
-                        print(f"❌ Failed to create custom field: {field_name}")
+                        pass  # Field creation failed
                         
                 except Exception as e:
-                    print(f"❌ Error creating custom field {field_name}: {e}")
+                    pass  # Error creating field
             else:
                 # Create a generic field if no specific config exists
                 try:
@@ -354,13 +349,12 @@ def auto_create_custom_fields(field_mappings, user_id):
                     }
                     success = custom_field_service.create_field_sync(user_id, field_data)
                     if success:
-                        print(f"✅ Created generic custom field: {display_name} ({field_name})")
                         existing_field_names.add(field_name)
                     else:
-                        print(f"❌ Failed to create generic custom field: {field_name}")
+                        pass  # Generic field creation failed
                         
                 except Exception as e:
-                    print(f"❌ Error creating generic custom field {field_name}: {e}")
+                    pass  # Error creating generic field
 
 def get_goodreads_field_mappings():
     """Get predefined field mappings for Goodreads CSV format with custom field support.
@@ -950,11 +944,6 @@ def import_books_execute():
     # Also keep in memory for backward compatibility
     import_jobs[task_id] = job_data
     
-    print(f"📊 [EXECUTE] Kuzu storage: {'✅' if kuzu_success else '❌'}")
-    print(f"💾 [EXECUTE] Memory storage: ✅")
-    print(f"🔧 [EXECUTE] Job status: {job_data['status']}")
-    print(f"📈 [EXECUTE] Total rows to process: {job_data['total']}")
-    
     # Start the import in background thread
     # Store necessary data for background processing
     import_config = {
@@ -974,7 +963,6 @@ def import_books_execute():
             asyncio.run(process_simple_import(import_config))
             
         except Exception as e:
-            print(f"❌ [IMPORT] Error in background thread: {e}")
             traceback.print_exc()
             # Update job with error in both storage systems
             try:
@@ -989,7 +977,7 @@ def import_books_execute():
                         import_jobs[task_id]['error_messages'] = []
                     import_jobs[task_id]['error_messages'].append(str(e))
             except Exception as update_error:
-                print(f"❌ [IMPORT] Failed to update job with error: {update_error}")
+                pass  # Error updating job status
     
     # Start the import process in background
     thread = threading.Thread(target=run_import)
@@ -1178,7 +1166,6 @@ def direct_import():
                 asyncio.run(process_simple_import(import_config))
                 
             except Exception as e:
-                print(f"❌ [DIRECT_IMPORT] Error in background thread: {e}")
                 import traceback
                 traceback.print_exc()
                 # Update job with error
@@ -1191,7 +1178,7 @@ def direct_import():
                     if task_id in import_jobs:
                         import_jobs[task_id].update(error_update)
                 except Exception as update_error:
-                    print(f"❌ [DIRECT_IMPORT] Failed to update job with error: {update_error}")
+                    pass  # Error updating job status
         
         # Start the import process in background
         import threading
@@ -1480,7 +1467,6 @@ def simple_import():
         
         # Detect CSV format
         format_type, confidence = detect_csv_format(temp_path)
-        print(f"🔍 [SIMPLE_IMPORT] Detected format: {format_type} (confidence: {confidence:.3f})")
         
         if format_type == 'unknown':
             flash('Could not detect CSV format. Please use the manual import for custom CSV files.', 'warning')
@@ -1559,12 +1545,10 @@ def simple_import():
                 asyncio.set_event_loop(loop)
                 try:
                     loop.run_until_complete(process_simple_import(import_config))
-                    print(f"✅ [SIMPLE_IMPORT] Background processing completed successfully for {task_id}")
                 finally:
                     loop.close()
                     
             except Exception as e:
-                print(f"❌ [SIMPLE_IMPORT] Error in background thread: {e}")
                 traceback.print_exc()
                 # Update job with error
                 error_update = {'status': 'failed', 'error_messages': [str(e)]}
@@ -1616,22 +1600,19 @@ async def process_simple_import(import_config):
     
     try:
         # STEP 1: Pre-analyze and create custom fields BEFORE processing any books
-        print(f"🔍 [PROCESS_SIMPLE] Pre-analyzing custom fields...")
         try:
             custom_fields_success, created_custom_fields = await pre_analyze_and_create_custom_fields(
                 csv_file_path, mappings, user_id
             )
             
             if not custom_fields_success:
-                print(f"⚠️ [PROCESS_SIMPLE] Custom field pre-analysis failed, continuing anyway...")
                 created_custom_fields = {}
             else:
-                print(f"✅ [PROCESS_SIMPLE] Pre-created {len(created_custom_fields)} custom fields")
+                print(f"🔧 [PROCESS_SIMPLE] Created {len(created_custom_fields)} custom fields")
         except Exception as e:
-            print(f"⚠️ [PROCESS_SIMPLE] Custom field pre-analysis error: {e}, continuing anyway...")
+            print(f"Warning: Could not create custom fields: {e}")
             created_custom_fields = {}
             
-        print(f"✅ [PROCESS_SIMPLE] Pre-created {len(created_custom_fields)} custom fields")
         
         # STEP 2: Read and process CSV
         with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
@@ -1668,12 +1649,10 @@ async def process_simple_import(import_config):
                     simplified_book = simplified_service.build_book_data_from_row(row, mappings)
                     
                     if not simplified_book or not simplified_book.title:
-                        print(f"⚠️ [PROCESS_SIMPLE] Row {row_num}: Could not build book data or missing title")
                         processed_count += 1
                         skipped_count += 1
                         continue
                     
-                    print(f"📚 [PROCESS_SIMPLE] Processing: {simplified_book.title}")
                     
                     # Apply API enrichment if enabled
                     if enable_api_enrichment and book_metadata:
@@ -1698,10 +1677,8 @@ async def process_simple_import(import_config):
                     processed_count += 1
                     if result:
                         success_count += 1
-                        print(f"✅ [PROCESS_SIMPLE] Successfully added: {simplified_book.title}")
                     else:
                         error_count += 1
-                        print(f"❌ [PROCESS_SIMPLE] Failed to add: {simplified_book.title}")
                     
                     # Update progress after each book for real-time feedback
                     progress_update = {
@@ -1725,7 +1702,6 @@ async def process_simple_import(import_config):
                 except Exception as row_error:
                     processed_count += 1
                     error_count += 1
-                    print(f"❌ [PROCESS_SIMPLE] Error processing row {row_num}: {row_error}")
                     continue
         
         # Mark as completed
@@ -1745,7 +1721,6 @@ async def process_simple_import(import_config):
         print(f"🎉 [PROCESS_SIMPLE] Import completed! {success_count} success, {error_count} errors, {skipped_count} skipped")
         
     except Exception as e:
-        print(f"❌ [PROCESS_SIMPLE] Import failed: {e}")
         traceback.print_exc()
         
         # Mark as failed
@@ -1764,7 +1739,7 @@ async def process_simple_import(import_config):
                 os.unlink(csv_file_path)
                 print(f"🗑️ [PROCESS_SIMPLE] Cleaned up temp file: {csv_file_path}")
         except Exception as cleanup_error:
-            print(f"⚠️ [PROCESS_SIMPLE] Could not clean up temp file: {cleanup_error}")
+            print(f"Warning: Could not clean up temp file: {cleanup_error}")
 
 def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_metadata):
     """Merge API metadata into a SimplifiedBook object."""
@@ -1777,20 +1752,16 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
         api_data = book_metadata[simplified_book.isbn10]['data']
     
     if not api_data:
-        print(f"📚 [ENRICH] No API data found for: {simplified_book.title}")
         return simplified_book
     
-    print(f"📚 [ENRICH] Enriching book: {simplified_book.title}")
     
     # Merge title (prefer API if available and different)
     if api_data.get('title') and api_data['title'] != simplified_book.title:
-        print(f"📚 [ENRICH] Updating title: '{simplified_book.title}' -> '{api_data['title']}'")
         simplified_book.title = api_data['title']
     
     # Merge authors (prefer API authors over CSV authors)
     if api_data.get('authors_list'):
         api_authors = api_data['authors_list']
-        print(f"📚 [ENRICH] Got {len(api_authors)} authors from API: {api_authors}")
         
         # Use the first API author as the primary author
         if api_authors:
@@ -1817,27 +1788,22 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     # Merge description (prefer API if CSV doesn't have one)
     if api_data.get('description') and not simplified_book.description:
         simplified_book.description = api_data['description']
-        print(f"📚 [ENRICH] Added description from API")
     
     # Merge publisher (prefer API if CSV doesn't have one)
     if api_data.get('publisher') and not simplified_book.publisher:
         simplified_book.publisher = api_data['publisher']
-        print(f"📚 [ENRICH] Added publisher from API: {simplified_book.publisher}")
     
     # Merge page count (prefer API if CSV doesn't have one)
     if api_data.get('page_count') and not simplified_book.page_count:
         simplified_book.page_count = api_data['page_count']
-        print(f"📚 [ENRICH] Added page count from API: {simplified_book.page_count}")
     
     # Merge publication date (prefer API if CSV doesn't have one)
     if api_data.get('published_date') and not simplified_book.published_date:
         simplified_book.published_date = api_data['published_date']
-        print(f"📚 [ENRICH] Added publication date from API: {simplified_book.published_date}")
     
     # Merge language (prefer API if CSV doesn't have one)
     if api_data.get('language') and not simplified_book.language:
         simplified_book.language = api_data['language']
-        print(f"📚 [ENRICH] Added language from API: {simplified_book.language}")
     
     # Merge categories - ALWAYS prefer API categories over CSV data
     # CSV categories are often user tags rather than real book genres
@@ -1847,54 +1813,43 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
             # Always use API categories, don't merge with CSV "categories"
             # Keep as list since SimplifiedBook.categories is List[str]
             simplified_book.categories = api_categories
-            print(f"📚 [ENRICH] Using API categories (overriding CSV): {simplified_book.categories}")
         elif isinstance(api_categories, str) and api_categories.strip():
             # Split string categories by comma and clean them
             simplified_book.categories = [cat.strip() for cat in api_categories.split(',') if cat.strip()]
-            print(f"📚 [ENRICH] Using API categories (overriding CSV): {simplified_book.categories}")
     else:
         # If no API categories available, clear any existing CSV categories
         # since they're usually incorrect (user tags instead of real genres)
         if simplified_book.categories:
-            print(f"📚 [ENRICH] No API categories found, clearing CSV categories: {simplified_book.categories}")
             simplified_book.categories = []
     
     # Merge cover URL (prefer API cover)
     if api_data.get('cover') and not simplified_book.cover_url:
         simplified_book.cover_url = api_data['cover']
-        print(f"📚 [ENRICH] Added cover URL from API")
     
     # Merge average rating (prefer API if CSV doesn't have one)
     if api_data.get('average_rating') and not simplified_book.average_rating:
         simplified_book.average_rating = api_data['average_rating']
-        print(f"📚 [ENRICH] Added average rating from API: {simplified_book.average_rating}")
     
     # Merge rating count (prefer API if CSV doesn't have one)
     if api_data.get('rating_count') and not simplified_book.rating_count:
         simplified_book.rating_count = api_data['rating_count']
-        print(f"📚 [ENRICH] Added rating count from API: {simplified_book.rating_count}")
     
     # Merge ISBN data from API if CSV doesn't have it
     if api_data.get('isbn13') and not simplified_book.isbn13:
         simplified_book.isbn13 = api_data['isbn13']
-        print(f"📚 [ENRICH] Added ISBN13 from API: {simplified_book.isbn13}")
     
     if api_data.get('isbn10') and not simplified_book.isbn10:
         simplified_book.isbn10 = api_data['isbn10']
-        print(f"📚 [ENRICH] Added ISBN10 from API: {simplified_book.isbn10}")
     
     # Add API identifiers to global custom metadata
     if api_data.get('google_books_id'):
         simplified_book.global_custom_metadata['google_books_id'] = api_data['google_books_id']
-        print(f"📚 [ENRICH] Added Google Books ID: {api_data['google_books_id']}")
     
     if api_data.get('openlibrary_id'):
         simplified_book.global_custom_metadata['openlibrary_id'] = api_data['openlibrary_id']
-        print(f"📚 [ENRICH] Added OpenLibrary ID: {api_data['openlibrary_id']}")
     
     if api_data.get('asin'):
         simplified_book.global_custom_metadata['asin'] = api_data['asin']
-        print(f"📚 [ENRICH] Added ASIN: {api_data['asin']}")
     
     return simplified_book
 
@@ -1918,7 +1873,6 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
         try:
             asyncio.run(process_simple_import(import_config))
         except Exception as e:
-            print(f"❌ [LEGACY_IMPORT] Error in import: {e}")
             traceback.print_exc()
     
     thread = threading.Thread(target=run_import)
@@ -1955,7 +1909,7 @@ def batch_fetch_book_metadata(isbns):
             try:
                 google_data = get_google_books_cover(isbn, fetch_title_author=True)
                 if google_data:
-                    print(f"✅ [API] Got Google Books data for {isbn}")
+                    print(f"🌐 [API] Google Books data found for {isbn}")
             except Exception as e:
                 print(f"⚠️ [API] Google Books failed for {isbn}: {e}")
             
@@ -1964,7 +1918,7 @@ def batch_fetch_book_metadata(isbns):
             try:
                 openlibrary_data = fetch_book_data(isbn)
                 if openlibrary_data:
-                    print(f"✅ [API] Got OpenLibrary data for {isbn}")
+                    print(f"🌐 [API] OpenLibrary data found for {isbn}")
             except Exception as e:
                 print(f"⚠️ [API] OpenLibrary failed for {isbn}: {e}")
             
@@ -2003,17 +1957,14 @@ def batch_fetch_book_metadata(isbns):
                     'data': combined_data,
                     'source': combined_data.get('source', 'unknown')
                 }
-                print(f"📚 [API] Combined data for {isbn}: {list(combined_data.keys())}")
                 
                 # Log category info specifically
                 if combined_data.get('categories'):
-                    print(f"📚 [API] Categories for {isbn}: {combined_data['categories']}")
+                    print(f"🏷️ [API] Found {len(combined_data['categories'])} categories for {isbn}")
             else:
-                print(f"⚠️ [API] No data found for {isbn}")
                 failed_isbns.append(isbn)
                 
         except Exception as e:
-            print(f"❌ [API] Error fetching data for {isbn}: {e}")
             failed_isbns.append(isbn)
             continue
     
@@ -2021,28 +1972,30 @@ def batch_fetch_book_metadata(isbns):
     print(f"🎉 [API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs ({success_rate:.1f}% success rate)")
     
     if failed_isbns:
-        print(f"⚠️ [API] Failed ISBNs: {failed_isbns[:10]}{'...' if len(failed_isbns) > 10 else ''}")
+        print(f"⚠️ [API] Failed to fetch metadata for {len(failed_isbns)} ISBNs")
     
     return metadata
 
 def store_job_in_kuzu(task_id, job_data):
     """Store import job status in KuzuDB."""
     try:
-        print(f"📊 [KUZU_JOB] Storing job {task_id} with status {job_data.get('status', 'unknown')}")
         # TODO: Implement actual Kuzu storage
+        return True
     except Exception as e:
-        print(f"❌ [KUZU_JOB] Error storing job: {e}")
+        print(f"Error storing job in Kuzu: {e}")
+        return False
 
 def update_job_in_kuzu(task_id, update_data):
     """Update import job status in KuzuDB."""
     try:
-        print(f"📊 [KUZU_JOB] Updating job {task_id} with data: {list(update_data.keys())}")
         # Update in-memory job tracking
         if task_id in import_jobs:
             import_jobs[task_id].update(update_data)
         # TODO: Implement actual Kuzu update
+        return True
     except Exception as e:
-        print(f"❌ [KUZU_JOB] Error updating job: {e}")
+        print(f"Error updating job in Kuzu: {e}")
+        return False
 
 @import_bp.route('/simple', methods=['GET', 'POST'])
 @login_required
@@ -2054,22 +2007,18 @@ def simple_csv_import():
     
     # Handle POST request
     try:
-        print(f"🔍 [SIMPLE_IMPORT] Processing upload for user {current_user.id}")
         
         # Check for file upload
         if 'csv_file' not in request.files:
-            print(f"❌ [SIMPLE_IMPORT] No file in request")
             flash('Please select a file to upload', 'error')
             return redirect(request.url)
         
         file = request.files['csv_file']
         if file.filename == '':
-            print(f"❌ [SIMPLE_IMPORT] Empty filename")
             flash('Please select a file to upload', 'error')
             return redirect(request.url)
         
         if not file.filename or not file.filename.lower().endswith('.csv'):
-            print(f"❌ [SIMPLE_IMPORT] Invalid file type: {file.filename}")
             flash('Please upload a CSV file (.csv)', 'error')
             return redirect(request.url)
         
@@ -2083,10 +2032,8 @@ def simple_csv_import():
         
         # Detect format
         format_type, confidence = detect_csv_format(temp_path)
-        print(f"🔍 [SIMPLE_IMPORT] Format detection: {format_type} (confidence: {confidence:.2f})")
         
         if confidence < 0.5:
-            print(f"⚠️ [SIMPLE_IMPORT] Low confidence in format detection")
             flash('Could not automatically detect file format. Please use the manual import.', 'warning')
             try:
                 import os
@@ -2103,7 +2050,6 @@ def simple_csv_import():
             mappings = get_storygraph_field_mappings()
             print(f"📋 [SIMPLE_IMPORT] Using StoryGraph mappings: {len(mappings)} fields")
         else:
-            print(f"❌ [SIMPLE_IMPORT] Unknown format type: {format_type}")
             flash('Unsupported file format detected', 'error')
             try:
                 import os
@@ -2126,7 +2072,6 @@ def simple_csv_import():
             with open(temp_path, 'r', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
                 rows = list(reader)
-                print(f"📊 [SIMPLE_IMPORT] Found {len(rows)} rows to process")
                 
                 for row_num, row in enumerate(rows, 1):
                     try:
@@ -2137,13 +2082,11 @@ def simple_csv_import():
                         
                         if not simplified_book or not simplified_book.title:
                             error_msg = f"Row {row_num}: Could not extract book data or missing title"
-                            print(f"⚠️ [SIMPLE_IMPORT] {error_msg}")
                             errors.append(error_msg)
                             error_count += 1
                             processed_count += 1
                             continue
                         
-                        print(f"📚 [SIMPLE_IMPORT] Processing: {simplified_book.title}")
                         
                         # Set default reading status if not provided
                         if not simplified_book.reading_status:
@@ -2162,18 +2105,15 @@ def simple_csv_import():
                         
                         if result:
                             success_count += 1
-                            print(f"✅ [SIMPLE_IMPORT] Successfully added: {simplified_book.title}")
                         else:
                             error_count += 1
                             error_msg = f"Row {row_num}: Failed to add book '{simplified_book.title}'"
-                            print(f"❌ [SIMPLE_IMPORT] {error_msg}")
                             errors.append(error_msg)
                     
                     except Exception as row_error:
                         processed_count += 1
                         error_count += 1
                         error_msg = f"Row {row_num}: {str(row_error)}"
-                        print(f"❌ [SIMPLE_IMPORT] {error_msg}")
                         errors.append(error_msg)
                         continue
         
@@ -2184,7 +2124,7 @@ def simple_csv_import():
                 os.unlink(temp_path)
                 print(f"🗑️ [SIMPLE_IMPORT] Cleaned up temp file")
             except Exception as cleanup_error:
-                print(f"⚠️ [SIMPLE_IMPORT] Could not clean up temp file: {cleanup_error}")
+                print(f"Warning: Could not clean up temp file: {cleanup_error}")
         
         # Report results
         print(f"🎉 [SIMPLE_IMPORT] Completed: {success_count} success, {error_count} errors, {processed_count} total")
@@ -2204,7 +2144,6 @@ def simple_csv_import():
         return redirect(url_for('main.library'))
         
     except Exception as e:
-        print(f"❌ [SIMPLE_IMPORT] Critical error: {e}")
         traceback.print_exc()
         flash('An unexpected error occurred during import. Please try again.', 'error')
         return redirect(request.url)
@@ -2214,21 +2153,17 @@ def simple_csv_import():
 def simple_upload():
     """Handle simple CSV upload with auto-detection and processing."""
     
-    print(f"🔍 [SIMPLE_UPLOAD] Starting upload for user {current_user.id}")
     
     try:
         # Check for file upload
         if 'csv_file' not in request.files:
-            print(f"❌ [SIMPLE_UPLOAD] No file in request")
             return jsonify({'error': 'No file provided'}), 400
         
         file = request.files['csv_file']
         if file.filename == '':
-            print(f"❌ [SIMPLE_UPLOAD] Empty filename")
             return jsonify({'error': 'No file selected'}), 400
         
         if not file.filename or not file.filename.lower().endswith('.csv'):
-            print(f"❌ [SIMPLE_UPLOAD] Invalid file type: {file.filename}")
             return jsonify({'error': 'File must be a CSV (.csv)'}), 400
         
         # Save file temporarily
@@ -2239,7 +2174,6 @@ def simple_upload():
         
         # Detect format
         format_type, confidence = detect_csv_format(temp_path)
-        print(f"🔍 [SIMPLE_UPLOAD] Format: {format_type}, Confidence: {confidence:.2f}")
         
         # Get appropriate field mappings
         if format_type == 'goodreads':
@@ -2249,7 +2183,6 @@ def simple_upload():
             field_mappings = get_storygraph_field_mappings()
             print(f"📋 [SIMPLE_UPLOAD] Using StoryGraph mappings: {len(field_mappings)} fields")
         else:
-            print(f"❌ [SIMPLE_UPLOAD] Unknown format type: {format_type}, using empty mappings")
             field_mappings = {}
         
         # Count total books in CSV for progress tracking
@@ -2260,10 +2193,8 @@ def simple_upload():
                 next(reader, None)
                 total_books = sum(1 for row in reader)
         except Exception as e:
-            print(f"⚠️ [SIMPLE_UPLOAD] Could not count CSV rows: {e}")
             total_books = 0
         
-        print(f"📊 [SIMPLE_UPLOAD] Found {total_books} books to import")
         
         # Create import config
         import_config = {
@@ -2297,7 +2228,6 @@ def simple_upload():
             'recent_activity': [f'Started import of {file.filename} ({total_books} books)']
         }
         import_jobs[task_id] = job_data
-        print(f"📊 [SIMPLE_UPLOAD] Initialized job tracking for {task_id}")
         
         # Start background processing
         def process_upload():
@@ -2310,12 +2240,10 @@ def simple_upload():
                 asyncio.set_event_loop(loop)
                 try:
                     loop.run_until_complete(process_simple_import(import_config))
-                    print(f"✅ [SIMPLE_UPLOAD] Background processing completed successfully for {task_id}")
                 finally:
                     loop.close()
                     
             except Exception as e:
-                print(f"❌ [SIMPLE_UPLOAD] Background processing error: {e}")
                 traceback.print_exc()
                 # Update job status
                 if task_id in import_jobs:
@@ -2337,7 +2265,6 @@ def simple_upload():
         })
         
     except Exception as e:
-        print(f"❌ [SIMPLE_UPLOAD] Error: {e}")
         traceback.print_exc()
         return jsonify({'error': 'Processing failed'}), 500
 
@@ -2355,7 +2282,6 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
     """
     from app.services.kuzu_custom_field_service import KuzuCustomFieldService
     
-    print(f"🔍 [PRE_ANALYZE] Starting custom field pre-analysis")
     
     custom_field_service = KuzuCustomFieldService()
     custom_fields_to_create = []
@@ -2366,8 +2292,6 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
             reader = csv.DictReader(csvfile)
             csv_headers = reader.fieldnames or []
             
-        print(f"🔍 [PRE_ANALYZE] CSV headers: {csv_headers}")
-        print(f"🔍 [PRE_ANALYZE] Field mappings: {field_mappings}")
         
         # Step 2: Identify custom field mappings 
         for csv_field, mapped_field in field_mappings.items():
@@ -2402,7 +2326,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
                             field_type = infer_field_type_from_samples(sample_rows)
                             
                 except Exception as e:
-                    print(f"⚠️ [PRE_ANALYZE] Could not sample data for {csv_field}: {e}")
+                    print(f"Warning: Could not sample field {csv_field}: {e}")
                 
                 custom_fields_to_create.append({
                     'name': field_name,
@@ -2412,7 +2336,6 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
                     'mapped_field': mapped_field
                 })
         
-        print(f"🔍 [PRE_ANALYZE] Found {len(custom_fields_to_create)} custom fields to create:")
         for field in custom_fields_to_create:
             print(f"   - {field['name']} ({field['type']}, {'global' if field['is_global'] else 'personal'})")
         
@@ -2449,20 +2372,16 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
                         'type': field_info['type'],
                         'is_global': field_info['is_global']
                     }
-                    print(f"✅ [PRE_ANALYZE] Created custom field: {field_info['name']}")
                 else:
-                    print(f"⚠️ [PRE_ANALYZE] Field creation returned falsy result for: {field_info['name']}")
+                    print(f"Failed to create custom field: {field_info['name']}")
                     
             except Exception as e:
-                print(f"❌ [PRE_ANALYZE] Error creating custom field {field_info['name']}: {e}")
                 import traceback
                 traceback.print_exc()
         
-        print(f"✅ [PRE_ANALYZE] Custom field creation complete. Created {len(created_fields)} fields.")
         return True, created_fields
         
     except Exception as e:
-        print(f"❌ [PRE_ANALYZE] Error during custom field pre-analysis: {e}")
         import traceback
         traceback.print_exc()
         return False, {}

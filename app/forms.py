@@ -138,7 +138,6 @@ class SetupForm(FlaskForm):
                 raise ValidationError('Please use a different username.')
         except Exception as e:
             # During onboarding, database might not be fully set up, so ignore validation errors
-            print(f"🔍 FORM DEBUG: Username validation skipped due to error: {e}")
             pass
 
     def validate_email(self, email):
@@ -150,7 +149,6 @@ class SetupForm(FlaskForm):
                 raise ValidationError('Please use a different email address.')
         except Exception as e:
             # During onboarding, database might not be fully set up, so ignore validation errors
-            print(f"🔍 FORM DEBUG: Email validation skipped due to error: {e}")
             pass
         
         # Check for .local domains and provide helpful message
@@ -167,9 +165,9 @@ class SetupForm(FlaskForm):
                 from flask import session
                 csrf_token = generate_csrf()
                 session.modified = True
-                print(f"🔍 FORM DEBUG: Generated fresh CSRF token: {csrf_token[:10]}...")
             except Exception as e:
-                print(f"🔍 FORM DEBUG: Could not generate CSRF token: {e}")
+                # Handle CSRF token generation error gracefully
+                pass
         
         # Call parent validation
         return super().validate(extra_validators)

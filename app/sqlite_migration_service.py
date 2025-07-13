@@ -130,7 +130,6 @@ class SQLiteMigrationService:
         finally:
             conn.close()
         
-        print(f"✅ [V1_MIGRATION] Extracted {len(all_books_data)} books, {len(all_isbns)} ISBNs, {len(all_authors)} authors")
         
         # Use batch processing pipeline
         return self._process_books_with_batch_pipeline(all_books_data, all_isbns, all_authors, target_user_id)
@@ -211,7 +210,6 @@ class SQLiteMigrationService:
         finally:
             conn.close()
         
-        print(f"✅ [V1.5_MIGRATION] Extracted {len(all_books_data)} books, {len(all_isbns)} ISBNs, {len(all_authors)} authors")
         print(f"📝 [V1.5_MIGRATION] {migration_note}")
         
         # Use batch processing pipeline
@@ -225,13 +223,14 @@ class SQLiteMigrationService:
         """Process books using the existing batch import infrastructure."""
         
         # ===== PHASE 2-3: Use existing batch API functions =====
-        from app.routes.import_routes import batch_fetch_book_metadata, batch_fetch_author_metadata
+        from app.routes.import_routes import batch_fetch_book_metadata
         
-        print(f"🔍 [BATCH_MIGRATION] Batch fetching book metadata for {len(all_isbns)} ISBNs...")
+        print(f"📚 [BATCH_MIGRATION] Batch fetching book metadata for {len(all_isbns)} ISBNs...")
         book_api_data = batch_fetch_book_metadata(list(all_isbns))
         
-        print(f"👥 [BATCH_MIGRATION] Batch fetching author metadata for {len(all_authors)} authors...")  
-        author_api_data = batch_fetch_author_metadata(list(all_authors))
+        # For migration, we'll use the author data from SQLite without API enhancement
+        print(f"👥 [BATCH_MIGRATION] Using {len(all_authors)} authors from SQLite data...")  
+        author_api_data = {}  # Empty dict since we don't have batch author metadata
         
         # ===== PHASE 4-5: Use existing book creation pipeline =====
         from app.services import book_service
@@ -240,7 +239,6 @@ class SQLiteMigrationService:
         
         user_book_repo = KuzuUserBookRepository()
         
-        print(f"📚 [BATCH_MIGRATION] Creating books and user relationships...")
         
         success_count = 0
         error_count = 0
@@ -263,11 +261,9 @@ class SQLiteMigrationService:
                 if existing_book:
                     # Book already exists for this user
                     created_book = existing_book
-                    print(f"📚 Found existing book: {book_data.title}")
                 else:
                     # Create new book (this automatically creates the user-book relationship)
                     created_book = book_service.create_book_sync(domain_book, target_user_id)
-                    print(f"📚 Created new book: {book_data.title}")
                 
                 if created_book:
                     # Get book ID (handle both Book objects and book IDs)
@@ -302,7 +298,6 @@ class SQLiteMigrationService:
                     })
                     
             except Exception as e:
-                print(f"❌ [BATCH_MIGRATION] Error migrating book {book_data.title}: {e}")
                 error_count += 1
                 migration_details.append({
                     'title': book_data.title,
@@ -310,7 +305,6 @@ class SQLiteMigrationService:
                     'error': str(e)
                 })
         
-        print(f"✅ [BATCH_MIGRATION] Migration completed: {success_count} success, {error_count} errors")
         
         return {
             'total_books': len(all_books_data),
@@ -504,10 +498,10 @@ class SQLiteMigrationService:
                 }
                 
                 storage.query(query, params)
-                print(f"✅ [MIGRATION] Updated personal info for book {book_id}")
                 
         except Exception as e:
-            print(f"⚠️ [MIGRATION] Failed to update personal info for book {book_id}: {e}")
+            print(f"❌ [MIGRATION] Error updating personal information: {e}")
+            # Continue migration even if personal info update fails
     
     # Helper methods
     def _extract_isbn13(self, isbn_str):

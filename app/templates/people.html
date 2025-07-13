@@ -58,20 +58,6 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
-                            {% set authors_count = 0 %}
-                            {% for person in persons %}
-                                {% if person.contributions and 'authored' in person.contributions and person.contributions.authored %}
-                                    {% set authors_count = authors_count + 1 %}
-                                {% endif %}
-                            {% endfor %}
-                            <h3 class="stat-number">{{ authors_count }}</h3>
-                            <p class="stat-label mb-0">Authors</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card stat-card">
-                        <div class="card-body text-center">
                             {% set total_books = persons | map(attribute='book_count') | sum %}
                             <h3 class="stat-number">{{ total_books }}</h3>
                             <p class="stat-label mb-0">Total Books</p>
@@ -84,6 +70,47 @@
                             {% set active_people = persons | selectattr('book_count', 'greaterthan', 0) | list | length %}
                             <h3 class="stat-number">{{ active_people }}</h3>
                             <p class="stat-label mb-0">With Books</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <!-- Contribution Types Accordion -->
+                            <div class="accordion" id="contributionAccordion">
+                                <div class="accordion-item border-0">
+                                    <h2 class="accordion-header" id="contributionHeading">
+                                        <button class="accordion-button collapsed p-2" type="button" data-bs-toggle="collapse" data-bs-target="#contributionCollapse" aria-expanded="false" aria-controls="contributionCollapse">
+                                            <div class="text-center w-100">
+                                                <h3 class="stat-number mb-0">
+                                                    {% if contribution_counts %}
+                                                        {{ contribution_counts.values() | sum }}
+                                                    {% else %}
+                                                        0
+                                                    {% endif %}
+                                                </h3>
+                                                <p class="stat-label mb-0">Contributors</p>
+                                            </div>
+                                        </button>
+                                    </h2>
+                                    <div id="contributionCollapse" class="accordion-collapse collapse" aria-labelledby="contributionHeading" data-bs-parent="#contributionAccordion">
+                                        <div class="accordion-body p-2">
+                                            {% if contribution_counts %}
+                                                {% for contribution_type, count in contribution_counts.items() %}
+                                                    {% if count > 0 %}
+                                                    <div class="d-flex justify-content-between mb-1">
+                                                        <small>{{ contribution_type.replace('_', ' ').title() }}:</small>
+                                                        <span class="badge bg-primary">{{ count }}</span>
+                                                    </div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            {% else %}
+                                                <small class="text-muted">No contributors yet</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -13,7 +13,7 @@ import asyncio
 import re
 
 from app.domain.models import Person
-from app.services import book_service
+from app.services import book_service, person_service
 
 # Create people blueprint
 people_bp = Blueprint('people', __name__)
@@ -71,7 +71,7 @@ def people():
                 # Get book count and contributions for this person
                 person_id = getattr(person_obj, 'id', None)
                 if person_id:
-                    books_by_type = safe_call_sync_method(book_service.get_books_by_person_sync, person_id, str(current_user.id))
+                    books_by_type = safe_call_sync_method(person_service.get_books_by_person_for_user_sync, person_id, str(current_user.id))
                     if books_by_type:
                         total_books = sum(len(books) for books in books_by_type.values())
                         person_obj.book_count = total_books
@@ -105,10 +105,18 @@ def people():
         except Exception as summary_error:
             debug_log(f"⚠️ [PEOPLE] Error calculating summary: {summary_error}", "PEOPLE_VIEW")
         
-        template_data = {'persons': processed_persons}
+        # Get contribution type counts for the accordion
+        try:
+            contribution_counts = safe_call_sync_method(person_service.get_contribution_type_counts_sync)
+            debug_log(f"📊 [PEOPLE] Contribution counts: {contribution_counts}", "PEOPLE_VIEW")
+        except Exception as counts_error:
+            debug_log(f"⚠️ [PEOPLE] Error getting contribution counts: {counts_error}", "PEOPLE_VIEW")
+            contribution_counts = {}
+        
+        template_data = {'persons': processed_persons, 'contribution_counts': contribution_counts}
         debug_template_data('people.html', template_data, "PEOPLE_VIEW")
         
-        return render_template('people.html', persons=processed_persons)
+        return render_template('people.html', persons=processed_persons, contribution_counts=contribution_counts)
     
     except Exception as e:
         debug_log(f"❌ [PEOPLE] Error loading people page: {e}", "PEOPLE_VIEW")
@@ -424,7 +432,6 @@ def delete_person(person_id):
         storage = get_graph_storage()
         
         # FIRST: Clean up orphaned relationships - relationships pointing to books that no longer exist
-        print(f"🧹 [DELETE_PERSON] Starting orphaned relationship cleanup for person {person_id}")
         
         # Get all user's books first to check which ones actually exist
         user_books = safe_call_sync_method(book_service.get_all_books_with_user_overlay_sync, str(current_user.id))
@@ -438,15 +445,12 @@ def delete_person(person_id):
             if book_id:
                 valid_book_ids.add(str(book_id))
         
-        print(f"🧹 [DELETE_PERSON] User has {len(valid_book_ids)} valid books in their library")
-        
         # Find all relationships that point TO this person/author (from any book)
         orphaned_relationships_found = 0
         orphaned_relationships_cleaned = 0
         
         # Get ALL books in the system (not just user's books) to check for orphaned relationships
         all_book_nodes = storage.find_nodes_by_type('book')
-        print(f"🧹 [DELETE_PERSON] Checking {len(all_book_nodes)} total books for orphaned relationships")
         
         for book_data in all_book_nodes:
             if not book_data or not book_data.get('_id'):
@@ -469,18 +473,12 @@ def delete_person(person_id):
                     
                     # If the book doesn't exist in user's library, it's orphaned
                     if not book_exists_in_user_library:
-                        print(f"🧹 [DELETE_PERSON] Cleaning orphaned relationship: {book_id} -> {person_id} (book not in user library)")
                         storage.delete_relationship('book', book_id, rel.get('relationship_type', 'WRITTEN_BY'), 'person', person_id)
                         orphaned_relationships_cleaned += 1
-        
-        print(f"🧹 [DELETE_PERSON] Found {orphaned_relationships_found} total relationships to person")
-        print(f"🧹 [DELETE_PERSON] Cleaned {orphaned_relationships_cleaned} orphaned relationships")
         
         # NOW: Count remaining valid books that have relationships to this person/author
         total_associated_books = 0
         associated_book_details = []
-        
-        print(f"🔍 [DELETE_PERSON] Checking remaining relationships after cleanup")
         
         for book in user_books:
             book_id = getattr(book, 'id', None) or getattr(book, '_id', None)
@@ -500,16 +498,11 @@ def delete_person(person_id):
                     associated_book_details.append(f"{book_title} ({rel.get('relationship_type', 'unknown')})")
                     break  # Only count each book once
         
-        print(f"📊 [DELETE_PERSON] Total valid associated books found: {total_associated_books}")
-        if associated_book_details:
-            print(f"📋 [DELETE_PERSON] Valid associated books: {associated_book_details[:5]}")  # Show first 5
-        
         if total_associated_books > 0:
             flash(f'Cannot delete "{person_name}" because they are associated with {total_associated_books} books. Please consider merging with another person instead.', 'error')
             return redirect(url_for('people.person_details', person_id=person_id))
         
         # Final cleanup: Remove any remaining relationships TO this person before deletion
-        print(f"🗑️ [DELETE_PERSON] Performing final cleanup of all relationships TO person {person_id}")
         
         # Find and delete ALL relationships pointing to this person (both author and person types)
         all_book_nodes = storage.find_nodes_by_type('book')
@@ -529,42 +522,30 @@ def delete_person(person_id):
             # Remove any relationships pointing to our person
             for rel in all_relationships:
                 if rel.get('target_id') == person_id and rel.get('target_type') in ['person', 'author']:
-                    print(f"🗑️ [DELETE_PERSON] Removing final relationship: {book_id} -> {person_id}")
                     storage.delete_relationship('book', book_id, rel.get('relationship_type', 'WRITTEN_BY'), 'person', person_id)
                     final_cleanup_count += 1
         
-        print(f"🗑️ [DELETE_PERSON] Final cleanup removed {final_cleanup_count} remaining relationships")
-        
         # Delete the person node from Kuzu
-        print(f"🗑️ [DELETE_PERSON] Deleting person node {person_id}")
-        print(f"🔍 [DELETE_PERSON] Storage object: {storage}")
         
         # Check if person or author node exists in Kuzu
-        print(f"🔍 [DELETE_PERSON] Checking if person node exists: {person_id}")
         person_node = storage.get_node('person', person_id)
         person_exists = person_node is not None
-        print(f"🔍 [DELETE_PERSON] Person node exists: {person_exists}")
         
-        print(f"🔍 [DELETE_PERSON] Checking if author node exists: {person_id}")
         author_node = storage.get_node('author', person_id)
         author_exists = author_node is not None
-        print(f"🔍 [DELETE_PERSON] Author node exists: {author_exists}")
         
         deletion_success = False
         
         try:
             if person_exists:
-                print(f"🗑️ [DELETE_PERSON] Deleting person node")
                 storage.delete_node('person', person_id)
                 deletion_success = True
             
             if author_exists:
-                print(f"🗑️ [DELETE_PERSON] Deleting author node")
                 storage.delete_node('author', person_id)
                 deletion_success = True
                 
         except Exception as delete_error:
-            print(f"❌ [DELETE_PERSON] Error during deletion: {delete_error}")
             current_app.logger.error(f"Error deleting person node: {delete_error}")
         
         if deletion_success:
@@ -640,13 +621,8 @@ def refresh_person_metadata(person_id):
 @login_required
 def bulk_delete_persons():
     """Delete multiple persons selected from the people view."""
-    print(f"Bulk delete persons route called by user {current_user.id}")
-    print(f"Form data: {request.form}")
-    
     selected_person_ids = request.form.getlist('selected_persons')
     force_delete = request.form.get('force_delete') == 'true'
-    print(f"Selected person IDs: {selected_person_ids}")
-    print(f"Force delete: {force_delete}")
     
     if not selected_person_ids:
         flash('No persons selected for deletion.', 'warning')
@@ -706,12 +682,10 @@ def bulk_delete_persons():
                 pass
             
             deleted_count += 1
-            print(f"✅ Deleted person: {person_name}")
             
         except Exception as e:
             failed_count += 1
             failed_persons.append(f"Person {person_id} (error: {str(e)})")
-            print(f"❌ Failed to delete person {person_id}: {e}")
     
     # Provide feedback
     if deleted_count > 0:
@@ -738,18 +712,24 @@ def api_search_persons():
     try:
         # Get all persons and filter by name
         all_persons = book_service.list_all_persons_sync()
+        
         if not isinstance(all_persons, list):
             all_persons = []
         
-        # Filter persons by name (case-insensitive)
+        # Filter persons by name (case-insensitive, supports first/last name search)
         matching_persons = []
+        query_lower = query.lower().strip()
+        
         for person in all_persons:
             person_name = getattr(person, 'name', '') or (person.get('name') if isinstance(person, dict) else '') or ''
             # Ensure person_name is always a string
             if not isinstance(person_name, str):
                 person_name = str(person_name) if person_name is not None else ''
             
-            if query.lower() in person_name.lower():
+            person_name_lower = person_name.lower()
+            
+            # Simple case-insensitive substring search
+            if query_lower in person_name_lower:
                 person_id = getattr(person, 'id', '') or (person.get('id') if isinstance(person, dict) else '')
                 matching_persons.append({
                     'id': person_id,
@@ -763,115 +743,6 @@ def api_search_persons():
     except Exception as e:
         current_app.logger.error(f"Error searching persons: {e}")
         return jsonify([])
-    """Display detailed information about a person."""
-    from app.debug_system import debug_log, debug_person_details, debug_service_call, debug_template_data
-    
-    try:
-        debug_log(f"🔍 [PERSON] Starting person details page for person_id: {person_id}, user: {current_user.id}", "PERSON_DETAILS")
-        
-        # Get person details
-        debug_log(f"🔍 [PERSON] Calling get_person_by_id_sync for person_id: {person_id}", "PERSON_DETAILS")
-        debug_service_call("book_service", "get_person_by_id_sync", {"person_id": person_id}, None, "BEFORE")
-        person = book_service.get_person_by_id_sync(person_id)
-        debug_service_call("book_service", "get_person_by_id_sync", {"person_id": person_id}, person, "AFTER")
-        
-        debug_log(f"📊 [PERSON] Got person: {person}", "PERSON_DETAILS")
-        debug_log(f"📊 [PERSON] Person type: {type(person)}", "PERSON_DETAILS")
-        
-        if not person:
-            debug_log(f"❌ [PERSON] Person not found for ID: {person_id}", "PERSON_DETAILS")
-            flash('Person not found.', 'error')
-            return redirect(url_for('people.people'))
-        
-        # Get person name and ID safely
-        person_name = getattr(person, 'name', None) or (person.get('name') if isinstance(person, dict) else 'Unknown')
-        person_id_val = getattr(person, 'id', None) or (person.get('id') if isinstance(person, dict) else person_id)
-        
-        debug_log(f"✅ [PERSON] Found person: {person_name} (ID: {person_id_val})", "PERSON_DETAILS")
-        
-        # Enhanced person debugging
-        debug_person_details(person, person_id, str(current_user.id), "DETAILS_VIEW")
-        
-        # Get books by this person for current user
-        debug_log(f"🔍 [PERSON] Getting books by person for user {current_user.id}", "PERSON_DETAILS")
-        debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, None, "BEFORE")
-        books_by_type = book_service.get_books_by_person_sync(person_id, str(current_user.id))
-        debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, books_by_type, "AFTER")
-        debug_log(f"📊 [PERSON] Got books_by_type: {type(books_by_type)}", "PERSON_DETAILS")
-        debug_log(f"📊 [PERSON] Books by type keys: {list(books_by_type.keys()) if books_by_type else 'None'}", "PERSON_DETAILS")
-        
-        # Convert service objects to template-compatible format
-        converted_books_by_type = {}
-        if books_by_type:
-            for contribution_type, books in books_by_type.items():
-                debug_log(f"📋 [PERSON] {contribution_type}: {len(books)} books", "PERSON_DETAILS")
-                
-                # Convert each book service object to a template-compatible object
-                converted_books = []
-                for book in books:
-                    if hasattr(book, '__dict__'):
-                        # Service object - ensure it has all required attributes
-                        if not hasattr(book, 'uid') and hasattr(book, 'id'):
-                            book.uid = book.id
-                        if not hasattr(book, 'reading_status') or book.reading_status is None:
-                            book.reading_status = 'unread'
-                        if not hasattr(book, 'cover_url'):
-                            book.cover_url = None
-                        if not hasattr(book, 'published_date'):
-                            book.published_date = None
-                        converted_books.append(book)
-                    elif isinstance(book, dict):
-                        # Convert dict to object-like structure
-                        class BookObjForPersonDetails:
-                            def __init__(self, data):
-                                for key, value in data.items():
-                                    setattr(self, key, value)
-                                # Ensure required attributes are available
-                                if not hasattr(self, 'uid') and (hasattr(self, 'id') or 'id' in data):
-                                    self.uid = getattr(self, 'id', data.get('id'))
-                                if not hasattr(self, 'reading_status') or self.reading_status is None:
-                                    self.reading_status = 'unread'
-                                if not hasattr(self, 'cover_url'):
-                                    self.cover_url = None
-                                if not hasattr(self, 'published_date'):
-                                    self.published_date = None
-                        
-                        converted_books.append(BookObjForPersonDetails(book))
-                    else:
-                        # Unknown book format - create a minimal object
-                        class BookObjMinimal:
-                            def __init__(self, source_book):
-                                self.id = getattr(source_book, 'id', None)
-                                self.uid = getattr(source_book, 'uid', None) or self.id
-                                self.title = getattr(source_book, 'title', 'Unknown Title')
-                                self.reading_status = getattr(source_book, 'reading_status', None) or 'unread'
-                                self.cover_url = getattr(source_book, 'cover_url', None)
-                                self.published_date = getattr(source_book, 'published_date', None)
-                        
-                        converted_books.append(BookObjMinimal(book))
-                
-                converted_books_by_type[contribution_type] = converted_books
-        
-        # Prepare template data
-        template_data = {
-            'person': person,
-            'contributions_by_type': converted_books_by_type
-        }
-        debug_template_data('person_details.html', template_data, "PERSON_DETAILS")
-        
-        debug_log(f"✅ [PERSON] Rendering template", "PERSON_DETAILS")
-        return render_template('person_details.html', 
-                             person=person, 
-                             contributions_by_type=converted_books_by_type)
-    
-    except Exception as e:
-        debug_log(f"❌ [PERSON] Error loading person details for {person_id}: {e}", "PERSON_DETAILS")
-        import traceback
-        traceback.print_exc()
-        current_app.logger.error(f"Error loading person details: {e}")
-        flash('Error loading person details.', 'error')
-        return redirect(url_for('people.people'))
-
 
 @people_bp.route('/person/merge', methods=['GET', 'POST'])
 @login_required
@@ -906,12 +777,10 @@ def merge_persons():
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
                             # Can't use loop.run_until_complete if loop is already running
-                            print(f"⚠️ [MERGE_PERSON] Loop is running, method {method.__name__} returned coroutine")
                             return None  # Return None as fallback
                         else:
                             return loop.run_until_complete(result)
                     except Exception as e:
-                        print(f"⚠️ [MERGE_PERSON] Error running coroutine for {method.__name__}: {e}")
                         return None
                 return result
             
@@ -1008,12 +877,10 @@ def merge_persons():
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         # Can't use loop.run_until_complete if loop is already running
-                        print(f"⚠️ [MERGE_GET] Loop is running, method {method.__name__} returned coroutine")
                         return []  # Return empty list as fallback
                     else:
                         return loop.run_until_complete(result)
                 except Exception as e:
-                    print(f"⚠️ [MERGE_GET] Error running coroutine for {method.__name__}: {e}")
                     return []
             return result
         
@@ -1061,7 +928,7 @@ def toggle_theme():
         })
         
     except Exception as e:
-        current_app.logger.error(f"Error toggling theme: {e}")
+        current_app.logger.error(f"Error toggling theme: {e}")        
         return jsonify({
             'success': False,
             'error': 'Failed to toggle theme'

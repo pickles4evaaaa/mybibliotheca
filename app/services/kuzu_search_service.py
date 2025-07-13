@@ -42,7 +42,6 @@ class KuzuSearchService:
             return filtered_books[:limit]
             
         except Exception as e:
-            print(f"❌ [SEARCH_BOOKS] Error searching books for user {user_id}: {e}")
             traceback.print_exc()
             return []
     
@@ -77,7 +76,6 @@ class KuzuSearchService:
             return books
             
         except Exception as e:
-            print(f"❌ [SEARCH_GLOBAL] Error in global book search: {e}")
             traceback.print_exc()
             return []
     
@@ -92,7 +90,6 @@ class KuzuSearchService:
             return None
             
         except Exception as e:
-            print(f"❌ [GET_BY_ISBN] Error getting book by ISBN {isbn} for user {user_id}: {e}")
             return None
     
     async def get_books_with_sharing_users(self, days_back: int = 30, limit: int = 20) -> List[Book]:
@@ -128,7 +125,6 @@ class KuzuSearchService:
             return finished_books[:limit]
             
         except Exception as e:
-            print(f"❌ [GET_SHARING_BOOKS] Error getting books with sharing users: {e}")
             traceback.print_exc()
             return []
     
@@ -165,7 +161,6 @@ class KuzuSearchService:
             return currently_reading[:limit]
             
         except Exception as e:
-            print(f"❌ [GET_CURRENTLY_READING] Error getting currently reading shared books: {e}")
             traceback.print_exc()
             return []
     
@@ -209,7 +204,6 @@ class KuzuSearchService:
             return recommended_books[:limit]
             
         except Exception as e:
-            print(f"❌ [GET_RECOMMENDED] Error getting recommended books for user {user_id}: {e}")
             traceback.print_exc()
             return []
     
@@ -262,7 +256,6 @@ class KuzuSearchService:
             return filtered_books[:limit]
             
         except Exception as e:
-            print(f"❌ [SEARCH_BY_FILTERS] Error searching with filters: {e}")
             traceback.print_exc()
             return []
     

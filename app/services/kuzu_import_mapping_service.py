@@ -53,8 +53,8 @@ class KuzuImportMappingService:
                     raise e
                 
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error ensuring tables: {e}")
             # Tables might already exist, continue
+            pass
     
     def get_template_by_id_sync(self, template_id: str) -> Optional[ImportMappingTemplate]:
         """Get an import mapping template by ID."""
@@ -70,7 +70,6 @@ class KuzuImportMappingService:
             return None
             
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error getting template: {e}")
             return None
     
     def create_template_sync(self, template: ImportMappingTemplate) -> Optional[ImportMappingTemplate]:
@@ -122,14 +121,12 @@ class KuzuImportMappingService:
                 sample_headers_json = json.dumps(template.sample_headers)
                 print(f"📋 [IMPORT_MAPPING] Serialized sample_headers successfully (length: {len(sample_headers_json)})")
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error serializing sample_headers: {e}")
                 sample_headers_json = "[]"
             
             try:
                 field_mappings_json = json.dumps(template.field_mappings)
                 print(f"📋 [IMPORT_MAPPING] Serialized field_mappings successfully (length: {len(field_mappings_json)})")
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error serializing field_mappings: {e}")
                 field_mappings_json = "{}"
             
             print(f"📋 [IMPORT_MAPPING] Step 7: Preparing query")
@@ -181,17 +178,13 @@ class KuzuImportMappingService:
                 
                 created_template = self._dict_to_template(created_template_data)
                 if created_template:
-                    print(f"✅ [IMPORT_MAPPING] Successfully created template: {template.name}")
                     return created_template
                 else:
-                    print(f"❌ [IMPORT_MAPPING] Failed to convert created template data")
                     return None
             else:
-                print(f"❌ [IMPORT_MAPPING] No result from query")
                 return None
                 
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error creating template: {e}")
             traceback.print_exc()
             return None
     
@@ -236,14 +229,11 @@ class KuzuImportMappingService:
             if result and len(result) > 0:
                 updated_template_data = result[0].get('t', {})
                 updated_template = self._dict_to_template(updated_template_data)
-                print(f"✅ [IMPORT_MAPPING] Updated template: {template.name}")
                 return updated_template
             else:
-                print(f"❌ [IMPORT_MAPPING] Failed to update template: {template.name}")
                 return None
                 
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error updating template: {e}")
             traceback.print_exc()
             return None
     
@@ -274,7 +264,6 @@ class KuzuImportMappingService:
             return templates
             
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error getting user templates: {e}")
             return []
     
     def detect_template_sync(self, headers: List[str], user_id: str) -> Optional[ImportMappingTemplate]:
@@ -305,7 +294,6 @@ class KuzuImportMappingService:
             return None
             
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error detecting template: {e}")
             return None
     
     def _calculate_header_match_score(self, headers1: List[str], headers2: List[str]) -> float:
@@ -345,7 +333,6 @@ class KuzuImportMappingService:
             })
             
             if not results:
-                print(f"❌ [IMPORT_MAPPING] User {user_id} does not own template {template_id}")
                 return False
             
             # Delete the template
@@ -356,11 +343,9 @@ class KuzuImportMappingService:
             
             self.graph_storage.query(delete_query, {"template_id": template_id})
             
-            print(f"✅ [IMPORT_MAPPING] Deleted template: {template_id}")
             return True
             
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error deleting template: {e}")
             return False
     
     def _dict_to_template(self, data: Dict[str, Any]) -> Optional[ImportMappingTemplate]:
@@ -368,7 +353,6 @@ class KuzuImportMappingService:
         try:
             # Safety check for null or corrupted data
             if not data or not isinstance(data, dict):
-                print(f"❌ [IMPORT_MAPPING] Invalid data provided to _dict_to_template: {data}")
                 return None
                 
             print(f"📋 [IMPORT_MAPPING] Converting dict to template: {data}")
@@ -388,7 +372,6 @@ class KuzuImportMappingService:
                     # Handle other timestamp formats
                     created_at = datetime.utcnow()
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error parsing created_at: {e}")
                 created_at = datetime.utcnow()
             
             try:
@@ -398,7 +381,6 @@ class KuzuImportMappingService:
                     # Handle other timestamp formats
                     updated_at = datetime.utcnow()
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error parsing updated_at: {e}")
                 updated_at = datetime.utcnow()
             
             try:
@@ -408,7 +390,6 @@ class KuzuImportMappingService:
                     # Handle other timestamp formats
                     last_used = None
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error parsing last_used: {e}")
                 last_used = None
             
             print(f"📋 [IMPORT_MAPPING] Parsed timestamps - created_at: {created_at}, updated_at: {updated_at}, last_used: {last_used}")
@@ -421,7 +402,6 @@ class KuzuImportMappingService:
                 elif not isinstance(sample_headers, list):
                     sample_headers = []
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error parsing sample_headers: {e}")
                 sample_headers = []
             
             field_mappings = data.get('field_mappings', '{}')
@@ -431,13 +411,11 @@ class KuzuImportMappingService:
                 elif not isinstance(field_mappings, dict):
                     field_mappings = {}
             except Exception as e:
-                print(f"❌ [IMPORT_MAPPING] Error parsing field_mappings: {e}")
                 field_mappings = {}
             
             try:
                 times_used = int(data.get('times_used', 0))
             except (ValueError, TypeError) as e:
-                print(f"❌ [IMPORT_MAPPING] Error parsing times_used: {e}")
                 times_used = 0
             
             print(f"📋 [IMPORT_MAPPING] Creating ImportMappingTemplate with data...")
@@ -463,6 +441,5 @@ class KuzuImportMappingService:
             return template
             
         except Exception as e:
-            print(f"❌ [IMPORT_MAPPING] Error converting dict to template: {e}")
             traceback.print_exc()
             return None

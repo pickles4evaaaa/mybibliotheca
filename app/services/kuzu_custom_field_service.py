@@ -105,25 +105,20 @@ class KuzuCustomFieldService:
                     raise e
                 
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error ensuring tables: {e}")
             # Tables might already exist, continue
+            pass
     
     def get_custom_metadata_for_display(self, custom_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Convert custom metadata to display format."""
-        print(f"🔍 [CUSTOM_FIELDS] DEBUG: get_custom_metadata_for_display called with: {custom_metadata}")
         
         if not custom_metadata:
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: No custom metadata provided, returning empty list")
             return []
         
         display_items = []
         for key, value in custom_metadata.items():
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: Processing field '{key}' with value '{value}' (type: {type(value)})")
-            
             if value is not None and value != '':
                 # Try to get field definition for better display
                 field_def = self._get_field_definition(key)
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Field definition for '{key}': {field_def}")
                 
                 display_name = field_def.get('display_name', key.replace('_', ' ').title()) if field_def else key.replace('_', ' ').title()
                 field_type = field_def.get('field_type', 'text') if field_def else 'text'
@@ -136,23 +131,17 @@ class KuzuCustomFieldService:
                     'field_type': field_type
                 }
                 
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Created display item: {display_item}")
                 display_items.append(display_item)
-            else:
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Skipping field '{key}' - empty or None value")
         
-        print(f"🔍 [CUSTOM_FIELDS] DEBUG: Final display items: {display_items}")
         return display_items
     
     def _get_field_definition(self, field_name: str) -> Optional[Dict[str, Any]]:
         """Get field definition by name."""
-        print(f"🔍 [CUSTOM_FIELDS] DEBUG: _get_field_definition called for field: {field_name}")
         
         try:
             query = "MATCH (f:CustomField) WHERE f.name = $name RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at"
             results = self.graph_storage.query(query, {"name": field_name})
             
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: Field definition query results: {results}")
             
             if results and len(results) > 0:
                 result = results[0]
@@ -166,14 +155,11 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5'),
                     'created_at': result.get('col_6')
                 }
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Parsed field definition: {field_definition}")
                 return field_definition
             
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: No field definition found for '{field_name}'")
             return None
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting field definition: {e}")
             return None
     
     def get_user_fields_sync(self, user_id: str) -> List[Dict[str, Any]]:
@@ -211,7 +197,6 @@ class KuzuCustomFieldService:
             return fields
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting user fields: {e}")
             return []
     
     def create_field_sync(self, user_id: str, field_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -256,7 +241,6 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5'),
                     'created_at': created_at.isoformat() if created_at and hasattr(created_at, 'isoformat') else None
                 }
-                print(f"✅ [CUSTOM_FIELDS] Field '{field_name}' already exists with ID {existing_field['id']}")
                 return existing_field
             
             # Field doesn't exist, create new one
@@ -301,7 +285,6 @@ class KuzuCustomFieldService:
             
             if result and len(result) > 0:
                 created_field = result[0].get('f', {})
-                print(f"✅ [CUSTOM_FIELDS] Created {'global' if is_global else 'personal'} field '{field_name}' with ID {field_id}")
                 
                 # For global fields, we might want to add the property to the Book schema
                 if is_global:
@@ -318,11 +301,9 @@ class KuzuCustomFieldService:
                     'created_at': created_at.isoformat() if created_at and hasattr(created_at, 'isoformat') else None
                 }
             else:
-                print(f"❌ [CUSTOM_FIELDS] Failed to create field '{field_name}'")
                 return None
                 
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error creating field: {e}")
             traceback.print_exc()
             return None
     
@@ -341,7 +322,6 @@ class KuzuCustomFieldService:
             for field_name, field_value in custom_metadata.items():
                 if field_value is not None and field_value != '':
                     field_def = self._get_field_definition(field_name)
-                    print(f"🔍 [CUSTOM_FIELDS] DEBUG: Field '{field_name}' definition: {field_def}")
                     
                     if field_def and field_def.get('is_global', False):
                         global_metadata[field_name] = field_value
@@ -383,7 +363,6 @@ class KuzuCustomFieldService:
                             elif isinstance(metadata_json, dict):
                                 existing_global_metadata = metadata_json
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"❌ [CUSTOM_FIELDS] Error parsing existing global metadata JSON: {e}")
                             existing_global_metadata = {}
                 
                 # Merge new global metadata with existing
@@ -404,7 +383,6 @@ class KuzuCustomFieldService:
                         "global_custom_fields": json.dumps(merged_global_metadata),
                         "updated_at": current_time
                     })
-                    print(f"✅ [CUSTOM_FIELDS] Updated existing global metadata")
                 else:
                     # Create new global metadata relationship
                     # First ensure GlobalMetadata node exists
@@ -424,9 +402,7 @@ class KuzuCustomFieldService:
                         "created_at": current_time,
                         "updated_at": current_time
                     })
-                    print(f"✅ [CUSTOM_FIELDS] Created new global metadata relationship")
                 
-                print(f"✅ [CUSTOM_FIELDS] Saved {len(global_metadata)} global fields to HAS_GLOBAL_METADATA")
             
             # Save personal metadata to HAS_PERSONAL_METADATA relationship
             if personal_metadata:
@@ -444,9 +420,7 @@ class KuzuCustomFieldService:
                     "book_id": book_id
                 })
                 
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Node verification results = {verify_results}")
                 if not verify_results or len(verify_results) == 0:
-                    print(f"❌ [CUSTOM_FIELDS] ERROR: User {user_id} or Book {book_id} nodes don't exist!")
                     return False
                 
                 # Check if HAS_PERSONAL_METADATA relationship exists
@@ -460,13 +434,9 @@ class KuzuCustomFieldService:
                     "book_id": book_id
                 })
                 
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: check existing_results = {existing_results}")
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: check existing_results type = {type(existing_results)}")
                 if existing_results:
-                    print(f"🔍 [CUSTOM_FIELDS] DEBUG: check len(existing_results) = {len(existing_results)}")
                     if len(existing_results) > 0:
-                        print(f"🔍 [CUSTOM_FIELDS] DEBUG: check existing_results[0] = {existing_results[0]}")
-                        print(f"🔍 [CUSTOM_FIELDS] DEBUG: check existing_results[0] keys = {list(existing_results[0].keys()) if isinstance(existing_results[0], dict) else 'Not a dict'}")
+                        pass  # Process existing results
                 
                 # Get existing personal metadata and merge
                 existing_personal_metadata = {}
@@ -485,7 +455,6 @@ class KuzuCustomFieldService:
                             elif isinstance(metadata_json, dict):
                                 existing_personal_metadata = metadata_json
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"❌ [CUSTOM_FIELDS] Error parsing existing personal metadata JSON: {e}")
                             existing_personal_metadata = {}
                 
                 # Merge new personal metadata with existing
@@ -509,9 +478,7 @@ class KuzuCustomFieldService:
                             "personal_custom_fields": json.dumps(merged_personal_metadata),
                             "updated_at": current_time
                         })
-                        print(f"✅ [CUSTOM_FIELDS] DEBUG: Update result: {update_result}")
                     except Exception as e:
-                        print(f"❌ [CUSTOM_FIELDS] DEBUG: Error updating relationship: {e}")
                         raise
                 else:
                     # Create new relationship
@@ -536,19 +503,14 @@ class KuzuCustomFieldService:
                             "created_at": current_time,
                             "updated_at": current_time
                         })
-                        print(f"✅ [CUSTOM_FIELDS] DEBUG: Create result: {create_result}")
                     except Exception as e:
-                        print(f"❌ [CUSTOM_FIELDS] DEBUG: Error creating relationship: {e}")
                         raise
                 
-                print(f"✅ [CUSTOM_FIELDS] Saved {len(personal_metadata)} personal fields to HAS_PERSONAL_METADATA")
             
             total_saved = len(global_metadata) + len(personal_metadata)
-            print(f"✅ [CUSTOM_FIELDS] Successfully saved {total_saved} custom metadata items")
             return True
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error saving custom metadata: {e}")
             traceback.print_exc()
             return False
     
@@ -579,8 +541,6 @@ class KuzuCustomFieldService:
                                result.get('result'))
                 
                 print(f"📝 [CUSTOM_FIELDS] Found global metadata: {metadata_json}")
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: global metadata_json type = {type(metadata_json)}")
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: global metadata_json value = {repr(metadata_json)}")
                 if metadata_json:
                     try:
                         global_metadata = {}
@@ -593,7 +553,7 @@ class KuzuCustomFieldService:
                         custom_metadata.update(global_metadata)
                         print(f"📝 [CUSTOM_FIELDS] Loaded {len(global_metadata)} global custom fields")
                     except (json.JSONDecodeError, TypeError) as e:
-                        print(f"❌ [CUSTOM_FIELDS] Error parsing global custom metadata JSON: {e}")
+                        pass  # Error parsing global metadata JSON
             else:
                 print(f"📝 [CUSTOM_FIELDS] No global custom metadata found")
             
@@ -616,23 +576,17 @@ class KuzuCustomFieldService:
                 "user_id": user_id
             })
             
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: exists_results = {exists_results}")
             if exists_results and len(exists_results) > 0:
                 rel_count = exists_results[0].get('col_0') or exists_results[0].get('rel_count') or exists_results[0].get('result') or 0
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: Found {rel_count} HAS_PERSONAL_METADATA relationships")
             
             personal_results = self.graph_storage.query(personal_query, {
                 "book_id": book_id,
                 "user_id": user_id
             })
             
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: personal_results = {personal_results}")
-            print(f"🔍 [CUSTOM_FIELDS] DEBUG: personal_results type = {type(personal_results)}")
             if personal_results:
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: len(personal_results) = {len(personal_results)}")
                 if len(personal_results) > 0:
-                    print(f"🔍 [CUSTOM_FIELDS] DEBUG: personal_results[0] = {personal_results[0]}")
-                    print(f"🔍 [CUSTOM_FIELDS] DEBUG: personal_results[0] keys = {list(personal_results[0].keys()) if isinstance(personal_results[0], dict) else 'Not a dict'}")
+                    pass  # Process personal results
             
             if personal_results and len(personal_results) > 0:
                 # KuzuDB returns column-based results - personal_custom_fields is col_0
@@ -644,8 +598,6 @@ class KuzuCustomFieldService:
                                result.get('result'))
                 
                 print(f"📝 [CUSTOM_FIELDS] Found personal metadata: {metadata_json}")
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: metadata_json type = {type(metadata_json)}")
-                print(f"🔍 [CUSTOM_FIELDS] DEBUG: metadata_json value = {repr(metadata_json)}")
                 if metadata_json:
                     try:
                         personal_metadata = {}
@@ -658,7 +610,7 @@ class KuzuCustomFieldService:
                         custom_metadata.update(personal_metadata)
                         print(f"📝 [CUSTOM_FIELDS] Loaded {len(personal_metadata)} personal custom fields")
                     except (json.JSONDecodeError, TypeError) as e:
-                        print(f"❌ [CUSTOM_FIELDS] Error parsing personal custom metadata JSON: {e}")
+                        pass  # Error parsing personal metadata JSON
             else:
                 print(f"📝 [CUSTOM_FIELDS] No personal custom metadata found")
             
@@ -685,13 +637,12 @@ class KuzuCustomFieldService:
                                 custom_metadata = metadata_json
                             print(f"📝 [CUSTOM_FIELDS] Found {len(custom_metadata)} metadata items in OWNS relationship (backward compatibility)")
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"❌ [CUSTOM_FIELDS] Error parsing OWNS custom_metadata JSON: {e}")
+                            pass  # Error parsing OWNS custom_metadata JSON
             
             print(f"📝 [CUSTOM_FIELDS] Found {len(custom_metadata)} total custom metadata items")
             return custom_metadata
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting custom metadata: {e}")
             traceback.print_exc()
             return {}
     
@@ -760,7 +711,6 @@ class KuzuCustomFieldService:
             return fields
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting fields with usage: {e}")
             return []
     
     def get_shareable_fields_with_calculated_usage_sync(self, exclude_user_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -825,7 +775,6 @@ class KuzuCustomFieldService:
             return fields
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting shareable fields: {e}")
             return []
     
     def get_field_by_id_sync(self, field_id: str) -> Optional[Dict[str, Any]]:
@@ -866,7 +815,6 @@ class KuzuCustomFieldService:
                 return None
                 
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting field by ID: {e}")
             return None
     
     def update_field_sync(self, field_id: str, user_id: str, field_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -877,11 +825,9 @@ class KuzuCustomFieldService:
             # First check if user owns this field
             field = self.get_field_by_id_sync(field_id)
             if not field:
-                print(f"❌ [CUSTOM_FIELDS] Field not found: {field_id}")
                 return None
                 
             if field.get('created_by_user_id') != user_id:
-                print(f"❌ [CUSTOM_FIELDS] User {user_id} does not own field {field_id}")
                 return None
             
             current_time = datetime.utcnow()
@@ -915,7 +861,6 @@ class KuzuCustomFieldService:
             
             if result and len(result) > 0:
                 row = result[0]
-                print(f"✅ [CUSTOM_FIELDS] Updated field {field_id}")
                 # Column mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, 
                 # col_4=description, col_5=is_global, col_6=created_at, col_7=updated_at, col_8=created_by_user_id
                 return {
@@ -930,11 +875,9 @@ class KuzuCustomFieldService:
                     'created_by_user_id': row.get('col_8')
                 }
             else:
-                print(f"❌ [CUSTOM_FIELDS] Failed to update field {field_id}")
                 return None
                 
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error updating field: {e}")
             return None
     
     def delete_field_sync(self, field_id: str, user_id: str) -> bool:
@@ -955,7 +898,6 @@ class KuzuCustomFieldService:
             })
             
             if not results:
-                print(f"❌ [CUSTOM_FIELDS] User {user_id} does not own field {field_id}")
                 return False
             
             # Step 1: Delete all custom field values that use this field
@@ -975,11 +917,9 @@ class KuzuCustomFieldService:
             
             self.graph_storage.query(delete_field_query, {"field_id": field_id})
             
-            print(f"✅ [CUSTOM_FIELDS] Deleted field {field_id}")
             return True
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error deleting field: {e}")
             return False
         
     def get_available_fields_sync(self, user_id: str, is_global: Optional[bool] = None) -> List[Dict[str, Any]]:
@@ -1036,7 +976,6 @@ class KuzuCustomFieldService:
             return fields
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error getting available fields: {e}")
             return []
     
     def ensure_custom_fields_exist(self, user_id: str, global_custom_metadata: Dict[str, Any], 
@@ -1046,7 +985,6 @@ class KuzuCustomFieldService:
         Creates field definitions if they don't already exist.
         """
         try:
-            print(f"🔍 [CUSTOM_FIELDS] Ensuring custom field definitions exist...")
             
             # Process global custom fields
             for field_name, value in global_custom_metadata.items():
@@ -1062,10 +1000,9 @@ class KuzuCustomFieldService:
                             'description': f'Global custom field for {field_name}'
                         })
                         if not field_def:
-                            print(f"❌ [CUSTOM_FIELDS] Failed to create global field: {field_name}")
                             return False
                     else:
-                        print(f"✅ [CUSTOM_FIELDS] Global field already exists: {field_name}")
+                        pass  # Global field already exists
             
             # Process personal custom fields
             for field_name, value in personal_custom_metadata.items():
@@ -1081,17 +1018,14 @@ class KuzuCustomFieldService:
                             'description': f'Personal custom field for {field_name}'
                         })
                         if not field_def:
-                            print(f"❌ [CUSTOM_FIELDS] Failed to create personal field: {field_name}")
                             return False
                     else:
-                        print(f"✅ [CUSTOM_FIELDS] Personal field already exists: {field_name}")
+                        pass  # Personal field already exists
             
             total_fields = len(global_custom_metadata) + len(personal_custom_metadata)
-            print(f"✅ [CUSTOM_FIELDS] Custom field definitions ensured for {total_fields} fields")
             return True
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error ensuring custom fields exist: {e}")
             return False
         
     def migrate_custom_metadata_from_owns(self, book_id: str, user_id: str) -> bool:
@@ -1139,21 +1073,17 @@ class KuzuCustomFieldService:
                                     "user_id": user_id
                                 })
                                 
-                                print(f"✅ [MIGRATION] Successfully migrated {len(old_metadata)} metadata items")
                                 return True
                             else:
-                                print(f"❌ [MIGRATION] Failed to save migrated metadata")
                                 return False
                                 
                     except (json.JSONDecodeError, TypeError) as e:
-                        print(f"❌ [MIGRATION] Error parsing old metadata JSON: {e}")
                         return False
             
             print(f"📝 [MIGRATION] No metadata to migrate")
             return True
             
         except Exception as e:
-            print(f"❌ [MIGRATION] Error migrating custom metadata: {e}")
             return False
 
     def migrate_all_custom_metadata_from_owns(self) -> bool:
@@ -1189,13 +1119,10 @@ class KuzuCustomFieldService:
                         migrated_count += 1
                     else:
                         failed_count += 1
-                        print(f"❌ [MIGRATION] Failed to migrate metadata for user {user_id}, book {book_id}")
             
-            print(f"✅ [MIGRATION] Migration complete: {migrated_count} successful, {failed_count} failed")
             return failed_count == 0
             
         except Exception as e:
-            print(f"❌ [MIGRATION] Error during bulk migration: {e}")
             return False
 
     def cleanup_old_custom_field_nodes(self) -> bool:
@@ -1210,11 +1137,9 @@ class KuzuCustomFieldService:
             """
             
             self.graph_storage.query(cleanup_query)
-            print(f"✅ [CLEANUP] Cleaned up old CustomFieldValue nodes")
             return True
             
         except Exception as e:
-            print(f"❌ [CLEANUP] Error cleaning up old nodes: {e}")
             return False
     
     def _calculate_field_usage_count(self, field_name: str, is_global: bool) -> int:
@@ -1230,7 +1155,6 @@ class KuzuCustomFieldService:
                 LIMIT 5
                 """
                 debug_results = self.graph_storage.query(debug_global_query)
-                print(f"🔍 [USAGE_COUNT] DEBUG: Sample HAS_GLOBAL_METADATA records:")
                 for i, result in enumerate(debug_results):
                     print(f"  {i}: book_id={result.get('col_0')}, global_custom_fields={result.get('col_1')}, gm_book_id={result.get('col_2')}")
                 
@@ -1241,12 +1165,10 @@ class KuzuCustomFieldService:
                 """
                 global_results = self.graph_storage.query(global_query)
                 
-                print(f"🔍 [USAGE_COUNT] Checking global field '{field_name}', found {len(global_results)} global metadata records")
                 
                 for i, result in enumerate(global_results):
                     # Use col_1 since we're now returning b.id, r.global_custom_fields, gm.book_id
                     metadata_json = result.get('col_1')
-                    print(f"🔍 [USAGE_COUNT] Result {i}: metadata_json = {metadata_json}")
                     
                     if metadata_json:
                         try:
@@ -1255,19 +1177,15 @@ class KuzuCustomFieldService:
                             elif isinstance(metadata_json, dict):
                                 metadata = metadata_json
                             else:
-                                print(f"🔍 [USAGE_COUNT] Skipping result {i}: unknown type {type(metadata_json)}")
                                 continue
                                 
-                            print(f"🔍 [USAGE_COUNT] Result {i} parsed metadata: {metadata}")
                             
                             # Check if this field name exists and has a non-empty value
                             if field_name in metadata and metadata[field_name] is not None and str(metadata[field_name]).strip():
                                 usage_count += 1
-                                print(f"✅ [USAGE_COUNT] Found usage for '{field_name}': {metadata[field_name]}")
                             else:
-                                print(f"❌ [USAGE_COUNT] No usage for '{field_name}' in metadata: {metadata}")
+                                pass  # No usage found for this field
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"❌ [USAGE_COUNT] Error parsing metadata for result {i}: {e}")
                             continue
             else:
                 # First, let's debug what's actually in the HAS_PERSONAL_METADATA relationship
@@ -1277,7 +1195,6 @@ class KuzuCustomFieldService:
                 LIMIT 5
                 """
                 debug_results = self.graph_storage.query(debug_personal_query)
-                print(f"🔍 [USAGE_COUNT] DEBUG: Sample HAS_PERSONAL_METADATA records:")
                 for i, result in enumerate(debug_results):
                     print(f"  {i}: user_id={result.get('col_0')}, book_id={result.get('col_1')}, personal_custom_fields={result.get('col_2')}")
                 
@@ -1288,12 +1205,10 @@ class KuzuCustomFieldService:
                 """
                 personal_results = self.graph_storage.query(personal_query)
                 
-                print(f"🔍 [USAGE_COUNT] Checking personal field '{field_name}', found {len(personal_results)} personal metadata records")
                 
                 for i, result in enumerate(personal_results):
                     # Use col_2 since we're now returning u.id, b.id, r.personal_custom_fields
                     metadata_json = result.get('col_2')
-                    print(f"🔍 [USAGE_COUNT] Personal result {i}: metadata_json = {metadata_json}")
                     
                     if metadata_json:
                         try:
@@ -1302,25 +1217,19 @@ class KuzuCustomFieldService:
                             elif isinstance(metadata_json, dict):
                                 metadata = metadata_json
                             else:
-                                print(f"🔍 [USAGE_COUNT] Skipping personal result {i}: unknown type {type(metadata_json)}")
                                 continue
                                 
-                            print(f"🔍 [USAGE_COUNT] Personal result {i} parsed metadata: {metadata}")
                             
                             # Check if this field name exists and has a non-empty value
                             if field_name in metadata and metadata[field_name] is not None and str(metadata[field_name]).strip():
                                 usage_count += 1
-                                print(f"✅ [USAGE_COUNT] Found personal usage for '{field_name}': {metadata[field_name]}")
                             else:
-                                print(f"❌ [USAGE_COUNT] No personal usage for '{field_name}' in metadata: {metadata}")
+                                pass  # No usage found for this personal field
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"❌ [USAGE_COUNT] Error parsing personal metadata for result {i}: {e}")
                             continue
             
-            print(f"📊 [CUSTOM_FIELDS] Field '{field_name}' ({'global' if is_global else 'personal'}) usage count: {usage_count}")
             return usage_count
             
         except Exception as e:
-            print(f"❌ [CUSTOM_FIELDS] Error calculating usage count for field '{field_name}': {e}")
             return 0
 

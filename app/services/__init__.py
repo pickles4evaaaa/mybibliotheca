@@ -17,6 +17,7 @@ try:
     from .kuzu_user_service import KuzuUserService
     from .kuzu_custom_field_service import KuzuCustomFieldService
     from .kuzu_import_mapping_service import KuzuImportMappingService
+    from .kuzu_person_service import KuzuPersonService
 
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade
@@ -26,6 +27,7 @@ try:
     user_service = KuzuUserService()
     custom_field_service = KuzuCustomFieldService()
     import_mapping_service = KuzuImportMappingService()
+    person_service = KuzuPersonService()
 
     # Placeholder services for compatibility during migration
     class StubService:
@@ -49,6 +51,7 @@ try:
         'KuzuImportMappingService',  # Import mapping service
         'book_service',        # Default service instance
         'user_service',        # User service instance
+        'person_service',      # Person service instance
         'run_async',
         # Stub services for compatibility
         'reading_log_service',
@@ -58,6 +61,5 @@ try:
         'job_service'
     ]
 except ImportError as e:
-    print(f"⚠️ Warning: Could not import all services: {e}")
     # Fallback imports
     __all__ = []

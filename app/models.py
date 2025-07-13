@@ -58,11 +58,9 @@ class _NoOpModel:
     
     @classmethod
     def query(cls):
-        print(f"⚠️  SQLite model {cls.__name__}.query disabled - use Kuzu services instead")
         return _NoOpQuery()
     
     def __init__(self, **kwargs):
-        print(f"⚠️  SQLite model {self.__class__.__name__} instantiation disabled - use Kuzu services instead")
         # Set attributes to prevent errors, but don't save anywhere
         for key, value in kwargs.items():
             setattr(self, key, value)

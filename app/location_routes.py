@@ -187,7 +187,8 @@ def view_location(location_id):
                 if book:
                     books.append(book)
             except Exception as e:
-                print(f"❌ Error loading book {book_id}: {e}")
+                # Handle book retrieval error gracefully
+                pass
     
     # Get book count
     book_count = location_service.get_location_book_count(location_id, str(current_user.id))
@@ -227,5 +228,4 @@ def api_set_book_location():
             return jsonify({'success': False, 'error': 'Failed to update book location'}), 500
         
     except Exception as e:
-        print(f"❌ Error setting book location: {e}")
         return jsonify({'success': False, 'error': 'Server error'}), 500

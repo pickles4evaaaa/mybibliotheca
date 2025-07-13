@@ -59,21 +59,16 @@ def get_onboarding_data() -> Dict:
     
     # If main data is missing but backup exists, use backup and restore
     if not data and backup:
-        print(f"🔍 SESSION DEBUG: Main onboarding_data missing but backup found, restoring...")
         session['onboarding_data'] = backup
         session.modified = True
         data = backup
-        print(f"🔍 SESSION DEBUG: Restored data: {data}")
     
-    print(f"🔍 SESSION DEBUG: get_onboarding_data returning: {data}")
-    print(f"🔍 SESSION DEBUG: backup available: {backup}")
     logger.info(f"🔍 SESSION DEBUG: get_onboarding_data returning: {data}")
     return data
 
 
 def update_onboarding_data(data: Dict):
     """Update onboarding data in session."""
-    print(f"🔍 SESSION DEBUG: update_onboarding_data called with: {data}")
     logger.info(f"🔍 SESSION DEBUG: update_onboarding_data called with: {data}")
     
     # Force session to be permanent for better persistence
@@ -84,7 +79,6 @@ def update_onboarding_data(data: Dict):
         session['onboarding_data'] = {}
     
     current_data = session['onboarding_data']
-    print(f"🔍 SESSION DEBUG: current_data before update: {current_data}")
     logger.info(f"🔍 SESSION DEBUG: current_data before update: {current_data}")
     
     # Update the data
@@ -95,9 +89,6 @@ def update_onboarding_data(data: Dict):
     # Also store in a backup location to help with debugging
     session['onboarding_backup'] = current_data.copy()
     
-    print(f"🔍 SESSION DEBUG: session after update: {dict(session)}")
-    print(f"🔍 SESSION DEBUG: onboarding_data in session: {session.get('onboarding_data', 'NOT_FOUND')}")
-    print(f"🔍 SESSION DEBUG: backup data: {session.get('onboarding_backup', 'NOT_FOUND')}")
     logger.info(f"🔍 SESSION DEBUG: session after update: {dict(session)}")
     logger.info(f"🔍 SESSION DEBUG: onboarding_data in session: {session.get('onboarding_data', 'NOT_FOUND')}")
 
@@ -128,20 +119,12 @@ def clear_onboarding_session():
     session.pop('onboarding_import_task_id', None)
     session.modified = True
     logger.info(f"🔍 SESSION DEBUG: Onboarding session cleared")
-    print(f"🔍 SESSION DEBUG: Onboarding session cleared")
 
 
 @onboarding_bp.route('/start')
 @debug_route('ONBOARDING_START')  
 def start():
     """Start the onboarding process."""
-    print(f"🔍 ONBOARDING START: ============ START ROUTE CALLED ============")
-    print(f"🔍 ONBOARDING START: Called from {request.environ.get('HTTP_REFERER', 'unknown')}")
-    print(f"🔍 ONBOARDING START: User agent: {request.environ.get('HTTP_USER_AGENT', 'unknown')[:100]}...")
-    print(f"🔍 ONBOARDING START: Request method: {request.method}")
-    print(f"🔍 ONBOARDING START: Request path: {request.path}")
-    print(f"🔍 ONBOARDING START: Request args: {dict(request.args)}")
-    print(f"🔍 ONBOARDING START: Current session before check: {dict(session)}")
     
     try:
         # Only check user count if we're not in the middle of onboarding
@@ -149,33 +132,25 @@ def start():
         current_step = session.get('onboarding_step', 0)
         onboarding_data = session.get('onboarding_data', {})
         
-        print(f"🔍 ONBOARDING START: Current step: {current_step}, Has data: {bool(onboarding_data)}")
         
         if current_step == 0 and not onboarding_data:  # Only check on fresh start
             user_count = user_service.get_user_count_sync()
-            print(f"🔍 ONBOARDING START: User count: {user_count}")
             if user_count is not None and user_count > 0:
-                print(f"🔍 ONBOARDING START: Users exist and no active onboarding, should redirect to login")
                 flash('Setup has already been completed.', 'info')
                 return redirect(url_for('auth.login'))
         else:
-            print(f"🔍 ONBOARDING START: Onboarding in progress (step {current_step}) or has data, allowing continuation")
+            logger.info("Onboarding already in progress, skipping user count check")
     except Exception as e:
-        print(f"❌ ONBOARDING START: Error checking user count: {e}")
         logger.error(f"Error checking user count: {e}")
     
-    print(f"🔍 ONBOARDING START: Proceeding to session check and initialization")
     
     # Only clear session if we're not in the middle of active onboarding
     current_step = session.get('onboarding_step', 0)
     onboarding_data = session.get('onboarding_data', {})
     
     if current_step > 0 and onboarding_data:
-        print(f"🔍 ONBOARDING START: Active onboarding detected (step {current_step}), NOT clearing session")
-        print(f"🔍 ONBOARDING START: Redirecting to current onboarding step")
         return redirect(url_for('onboarding.step', step_num=current_step))
     else:
-        print(f"🔍 ONBOARDING START: No active onboarding, initializing fresh session")
         # Initialize onboarding session with explicit session management
         clear_onboarding_session()
     
@@ -191,11 +166,8 @@ def start():
         from flask_wtf.csrf import generate_csrf
         csrf_token = generate_csrf()
         session.modified = True
-        print(f"🔍 ONBOARDING START: Generated CSRF token: {csrf_token[:10]}...")
     except Exception as e:
-        print(f"🔍 ONBOARDING START: Could not generate CSRF token: {e}")
-    
-    print(f"🔍 ONBOARDING START: Session initialized: {dict(session)}")
+        logger.warning(f"Failed to generate CSRF token: {e}")
     
     return redirect(url_for('onboarding.step', step_num=1))
 
@@ -204,13 +176,9 @@ def start():
 @debug_route('ONBOARDING_STEP')
 def step(step_num: int):
     """Handle individual onboarding steps."""
-    print(f"🔍 STEP DEBUG: Accessing step {step_num}, method={request.method}")
     current_step = get_onboarding_step()
-    print(f"🔍 STEP DEBUG: Current step: {current_step}")
     
     # DEBUG: Log step access attempt
-    print(f"🔍 STEP DEBUG: Session keys: {list(session.keys())}")
-    print(f"🔍 STEP DEBUG: Session data: {dict(session)}")
     logger.info(f"🔍 ONBOARDING DEBUG: User accessing step {step_num}, current_step={current_step}")
     logger.info(f"🔍 ONBOARDING DEBUG: Session data: {dict(session)}")
     logger.info(f"🔍 ONBOARDING DEBUG: Request method: {request.method}")
@@ -218,41 +186,32 @@ def step(step_num: int):
     # Allow backward navigation always
     # For forward navigation, check if we have completed previous steps
     if step_num > current_step:
-        print(f"🔍 STEP DEBUG: Forward navigation check for step {step_num}")
         # Check if we have the required data for this step
         onboarding_data = get_onboarding_data()
-        print(f"🔍 STEP DEBUG: Onboarding data keys: {list(onboarding_data.keys())}")
         
         logger.info(f"🔍 ONBOARDING DEBUG: Forward navigation check - onboarding_data keys: {list(onboarding_data.keys())}")
         
         # Step 2 requires admin data from step 1
         if step_num >= 2 and 'admin' not in onboarding_data:
-            print(f"🔍 ONBOARDING DEBUG: Missing admin data for step {step_num}")
-            print(f"🔍 ONBOARDING DEBUG: Available data: {onboarding_data}")
-            print(f"🔍 ONBOARDING DEBUG: Session backup: {session.get('onboarding_backup', 'NO_BACKUP')}")
             
             # Try to recover from backup
             backup = session.get('onboarding_backup', {})
             if 'admin' in backup:
-                print(f"🔍 ONBOARDING DEBUG: Found admin data in backup, restoring session")
                 session['onboarding_data'] = backup
                 session.modified = True
                 onboarding_data = backup
             else:
-                print(f"🔍 ONBOARDING DEBUG: No admin data in backup either, redirecting to step 1")
                 logger.warning(f"🔍 ONBOARDING DEBUG: Missing admin data for step {step_num}, redirecting to step 1")
                 flash('Please complete the admin setup first.', 'warning')
                 return redirect(url_for('onboarding.step', step_num=1))
         
         # Step 3 requires site config from step 2  
         if step_num >= 3 and 'site_config' not in onboarding_data:
-            print(f"🔍 ONBOARDING DEBUG: Missing site_config data for step {step_num}, redirecting to step 2")
             logger.warning(f"🔍 ONBOARDING DEBUG: Missing site_config data for step {step_num}, redirecting to step 2")
             return redirect(url_for('onboarding.step', step_num=2))
         
         # Step 4+ requires data options from step 3
         if step_num >= 4 and 'data_options' not in onboarding_data:
-            print(f"🔍 ONBOARDING DEBUG: Missing data_options for step {step_num}, redirecting to step 3")
             logger.warning(f"🔍 ONBOARDING DEBUG: Missing data_options for step {step_num}, redirecting to step 3")
             return redirect(url_for('onboarding.step', step_num=3))
         
@@ -262,27 +221,22 @@ def step(step_num: int):
             if data_options.get('option') == 'import':
                 # Check if import file was selected
                 if 'import_file' not in data_options or not data_options.get('import_file'):
-                    print(f"🔍 ONBOARDING DEBUG: Import option selected but no file chosen, redirecting to step 3")
                     logger.warning(f"🔍 ONBOARDING DEBUG: Import option selected but no file chosen for step {step_num}")
                     flash('Please select a file to import before proceeding.', 'error')
                     return redirect(url_for('onboarding.step', step_num=3))
             
         # Allow access if we have the required data
-        print(f"🔍 STEP DEBUG: Requirements met, setting step to {step_num}")
         logger.info(f"🔍 ONBOARDING DEBUG: Access granted, setting step to {step_num}")
         set_onboarding_step(step_num)
     elif step_num == current_step:
         # User is accessing their current step - this is always allowed
-        print(f"🔍 STEP DEBUG: User accessing current step {step_num}")
         logger.info(f"🔍 ONBOARDING DEBUG: User accessing current step {step_num}")
     else:
         # Backward navigation - always allowed, but don't change the current step
-        print(f"🔍 STEP DEBUG: Backward navigation to step {step_num} from {current_step}")
         logger.info(f"🔍 ONBOARDING DEBUG: Backward navigation to step {step_num} from {current_step}")
         # Don't call set_onboarding_step() for backward navigation
         # This preserves the user's actual progress
     
-    print(f"🔍 STEP DEBUG: Proceeding to handle step {step_num}")
     logger.info(f"🔍 ONBOARDING DEBUG: Proceeding to handle step {step_num}")
     
     # Handle each step
@@ -303,9 +257,6 @@ def step(step_num: int):
 
 def admin_setup_step():
     """Step 1: Admin account setup."""
-    print(f"🔍 ADMIN_SETUP DEBUG: admin_setup_step called, method={request.method}")
-    print(f"🔍 ADMIN_SETUP DEBUG: Session keys: {list(session.keys())}")
-    print(f"🔍 ADMIN_SETUP DEBUG: Current onboarding data: {get_onboarding_data()}")
     logger.info(f"🔍 ONBOARDING DEBUG: admin_setup_step called")
     
     # Force session to be permanent to ensure persistence
@@ -313,20 +264,12 @@ def admin_setup_step():
     
     form = SetupForm()
     
-    print(f"🔍 ADMIN_SETUP DEBUG: Form created, submitted={form.is_submitted()}")
     logger.info(f"🔍 ONBOARDING DEBUG: Form created, is_submitted={form.is_submitted()}")
     
     if request.method == 'POST':
-        print(f"🔍 ADMIN_SETUP DEBUG: POST request detected")
-        print(f"🔍 ADMIN_SETUP DEBUG: Form data: username={request.form.get('username')}, email={request.form.get('email')}")
-        print(f"🔍 ADMIN_SETUP DEBUG: Form is_submitted: {form.is_submitted()}")
         
         # Manual form validation for better debugging
         form_valid = form.validate()
-        print(f"🔍 ADMIN_SETUP DEBUG: Manual form validation: {form_valid}")
-        print(f"🔍 ADMIN_SETUP DEBUG: Form errors: {form.errors}")
-        print(f"🔍 ADMIN_SETUP DEBUG: CSRF token in form: {request.form.get('csrf_token', 'MISSING')}")
-        print(f"🔍 ADMIN_SETUP DEBUG: CSRF token in session: {session.get('csrf_token', 'MISSING')}")
         
         # Check if basic required fields are present
         username = request.form.get('username', '').strip()
@@ -334,12 +277,10 @@ def admin_setup_step():
         password = request.form.get('password', '').strip()
         password2 = request.form.get('password2', '').strip()
         
-        print(f"🔍 ADMIN_SETUP DEBUG: Extracted data - username='{username}', email='{email}', password_len={len(password)}, password2_len={len(password2)}")
         
         # If form validation fails, try to process anyway if we have required data
         if form_valid or (username and email and password and password == password2):
             try:
-                print(f"🔍 ADMIN_SETUP DEBUG: Processing form data (form_valid={form_valid})")
                 logger.info(f"🔍 ONBOARDING DEBUG: Form processing, using form data directly")
                 
                 # Use form data directly if form validation failed but data is present
@@ -357,10 +298,8 @@ def admin_setup_step():
                         'password': password
                     }
                 
-                print(f"🔍 ADMIN_SETUP DEBUG: Admin data prepared: username={admin_data['username']}, email={admin_data['email']}")
                 logger.info(f"🔍 ONBOARDING DEBUG: Saving admin data: {admin_data['username']}, {admin_data['email']}")
                 
-                print(f"🔍 ADMIN_SETUP DEBUG: Before update - session keys: {list(session.keys())}")
                 
                 # Use direct session assignment instead of helper function
                 if 'onboarding_data' not in session:
@@ -372,38 +311,28 @@ def admin_setup_step():
                 # Also create a backup
                 session['onboarding_backup'] = session['onboarding_data'].copy()
                 
-                print(f"🔍 ADMIN_SETUP DEBUG: After update - session keys: {list(session.keys())}")
-                print(f"🔍 ADMIN_SETUP DEBUG: Session onboarding_data: {session.get('onboarding_data', 'MISSING')}")
                 
                 # Move to next step
-                print(f"🔍 ADMIN_SETUP DEBUG: Setting step to 2")
                 logger.info(f"🔍 ONBOARDING DEBUG: Moving to step 2")
                 session['onboarding_step'] = 2
                 session.modified = True
-                print(f"🔍 ADMIN_SETUP DEBUG: Step set, current step: {session.get('onboarding_step')}")
                 
-                print(f"🔍 ADMIN_SETUP DEBUG: Full session after all updates: {dict(session)}")
                 logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {dict(session)}")
                 
                 flash('Admin account configured successfully!', 'success')
-                print(f"🔍 ADMIN_SETUP DEBUG: About to redirect to step 2")
                 return redirect(url_for('onboarding.step', step_num=2))
                 
             except Exception as e:
-                print(f"❌ ADMIN_SETUP ERROR: {e}")
                 import traceback
                 traceback.print_exc()
                 logger.error(f"🔍 ONBOARDING DEBUG: Error in admin setup: {e}")
                 flash(f'Error configuring admin account: {e}', 'error')
         else:
-            print(f"❌ ADMIN_SETUP DEBUG: Form validation failed and insufficient data")
-            print(f"❌ ADMIN_SETUP DEBUG: Missing or invalid data - username='{username}', email='{email}', passwords_match={password == password2}")
             if not form_valid:
                 for field, errors in form.errors.items():
                     for error in errors:
                         flash(f'{field}: {error}', 'error')
     
-    print(f"🔍 ADMIN_SETUP DEBUG: Rendering step 1 template")
     logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 1 template")
     
     return render_template('onboarding/step1_admin_setup.html', 
@@ -414,7 +343,6 @@ def admin_setup_step():
 
 def site_config_step():
     """Step 2: Site configuration (location, timezone, site name)."""
-    print(f"🔍 SITE_CONFIG DEBUG: site_config_step called, method={request.method}")
     logger.info(f"🔍 ONBOARDING DEBUG: site_config_step called, method={request.method}")
     
     # Force session to be permanent for better persistence
@@ -422,7 +350,6 @@ def site_config_step():
     
     if request.method == 'POST':
         try:
-            print(f"🔍 SITE_CONFIG DEBUG: Processing POST data: {dict(request.form)}")
             logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {dict(request.form)}")
             
             site_config = {
@@ -432,7 +359,6 @@ def site_config_step():
                 'location_set_as_default': 'location_set_as_default' in request.form
             }
             
-            print(f"🔍 SITE_CONFIG DEBUG: Saving site_config: {site_config}")
             logger.info(f"🔍 ONBOARDING DEBUG: Saving site_config: {site_config}")
             
             # Use direct session assignment for better reliability
@@ -446,34 +372,26 @@ def site_config_step():
             session['onboarding_backup'] = session['onboarding_data'].copy()
             
             # Move to next step
-            print(f"🔍 SITE_CONFIG DEBUG: Moving to step 3")
             logger.info(f"🔍 ONBOARDING DEBUG: Moving to step 3")
             session['onboarding_step'] = 3
             session.modified = True
             
-            print(f"🔍 SITE_CONFIG DEBUG: Session after all updates: {dict(session)}")
             logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {dict(session)}")
             
             flash('Site configuration saved!', 'success')
-            print(f"🔍 SITE_CONFIG DEBUG: About to redirect to step 3")
             return redirect(url_for('onboarding.step', step_num=3))
             
         except Exception as e:
-            print(f"❌ SITE_CONFIG ERROR: {e}")
             import traceback
             traceback.print_exc()
             logger.error(f"🔍 ONBOARDING DEBUG: Error in site config: {e}")
             flash(f'Error saving site configuration: {e}', 'error')
     
     # Get timezone list
-    print(f"🔍 SITE_CONFIG DEBUG: GET request, preparing template render")
-    print(f"🔍 SITE_CONFIG DEBUG: Current session: {dict(session)}")
     timezones = pytz.common_timezones
     current_config = get_onboarding_data().get('site_config', {})
-    print(f"🔍 SITE_CONFIG DEBUG: Retrieved current_config: {current_config}")
     
     logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 2 template with current_config: {current_config}")
-    print(f"🔍 SITE_CONFIG DEBUG: About to render template")
     
     return render_template('onboarding/step2_site_config.html',
                          timezones=timezones,
@@ -916,10 +834,6 @@ def confirmation_step():
     
     # DEBUG: Log all form data for POST requests
     if request.method == 'POST':
-        print(f"🔍 STEP5 DEBUG: POST request received")
-        print(f"🔍 STEP5 DEBUG: Form data: {dict(request.form)}")
-        print(f"🔍 STEP5 DEBUG: Action value: '{request.form.get('action', 'MISSING')}'")
-        print(f"🔍 STEP5 DEBUG: CSRF token: '{request.form.get('csrf_token', 'MISSING')}'")
         logger.info(f"🔍 ONBOARDING DEBUG: POST form data: {dict(request.form)}")
     
     onboarding_data = get_onboarding_data()
@@ -933,29 +847,23 @@ def confirmation_step():
         print(f"🚨🚨🚨 STEP5 DEBUG: POST REQUEST RECEIVED! 🚨🚨🚨")
         print(f"🚨 STEP5 DEBUG: Form data: {dict(request.form)}")
         action = request.form.get('action')
-        print(f"🔍 STEP5 DEBUG: Checking action '{action}' == 'execute': {action == 'execute'}")
         
         if action == 'execute':
             try:
-                print(f"🔍 STEP5 DEBUG: Starting execution process")
-                print(f"🔍 STEP5 DEBUG: Received onboarding_data: {onboarding_data}")
                 logger.info(f"🔍 ONBOARDING DEBUG: Executing onboarding with data keys: {list(onboarding_data.keys())}")
                 
                 # Validate that we have all required data before proceeding
                 if not onboarding_data.get('admin'):
-                    print(f"❌ STEP5 DEBUG: Missing admin data during execution")
                     logger.error("❌ Missing admin data during execution")
                     flash('Missing admin account information. Please start over.', 'error')
                     return redirect(url_for('onboarding.step', step_num=1))
                 
                 if not onboarding_data.get('site_config'):
-                    print(f"❌ STEP5 DEBUG: Missing site config data during execution")
                     logger.error("❌ Missing site config data during execution")
                     flash('Missing site configuration. Please complete site setup.', 'error')
                     return redirect(url_for('onboarding.step', step_num=2))
                 
                 if not onboarding_data.get('data_options'):
-                    print(f"❌ STEP5 DEBUG: Missing data options during execution")
                     logger.error("❌ Missing data options during execution")
                     flash('Missing data configuration. Please complete data setup.', 'error')
                     return redirect(url_for('onboarding.step', step_num=3))
@@ -968,16 +876,12 @@ def confirmation_step():
                 
                 if data_option == 'import':
                     # For imports, execute like migrations - stay on same page with progress
-                    print(f"🔍 STEP5 DEBUG: Import option - calling execute_onboarding for synchronous import")
                     logger.info(f"Import option selected - executing synchronous import like migration")
                     success = execute_onboarding(onboarding_data)
-                    print(f"🔍 STEP5 DEBUG: execute_onboarding returned: {success}")
                     
                     if success:
-                        print(f"🔍 STEP5 DEBUG: Import successful, proceeding to completion")
                         return handle_onboarding_completion(onboarding_data)
                     else:
-                        print(f"❌ STEP5 DEBUG: Import failed")
                         logger.error(f"🔍 ONBOARDING DEBUG: Import failed")
                         flash('Import failed. Please check the error message and try again.', 'error')
                         # Ensure session data is preserved
@@ -985,16 +889,12 @@ def confirmation_step():
                         set_onboarding_step(5)
                 elif data_option == 'migrate':
                     # For migrations, execute full migration
-                    print(f"🔍 STEP5 DEBUG: Migration option - calling execute_onboarding")
                     logger.info(f"Migration option selected - executing full migration")
                     success = execute_onboarding(onboarding_data)
-                    print(f"🔍 STEP5 DEBUG: execute_onboarding returned: {success}")
                     
                     if success:
-                        print(f"🔍 STEP5 DEBUG: Migration successful, proceeding to completion")
                         return handle_onboarding_completion(onboarding_data)
                     else:
-                        print(f"❌ STEP5 DEBUG: Migration failed")
                         logger.error(f"🔍 ONBOARDING DEBUG: Migration failed")
                         flash('Migration failed. Please check the error message and try again.', 'error')
                         # Ensure session data is preserved
@@ -1002,17 +902,13 @@ def confirmation_step():
                         set_onboarding_step(5)
                 else:
                     # For fresh start or any other option, execute basic setup only
-                    print(f"🔍 STEP5 DEBUG: Fresh start option ('{data_option}') - calling execute_onboarding_setup_only")
                     logger.info(f"🔍 ONBOARDING DEBUG: Fresh start - executing basic setup only")
                     success = execute_onboarding_setup_only(onboarding_data)
-                    print(f"🔍 STEP5 DEBUG: execute_onboarding_setup_only returned: {success}")
                     
                     if success:
-                        print(f"🔍 STEP5 DEBUG: Fresh start setup completed, proceeding to completion")
                         logger.info(f"🔍 ONBOARDING DEBUG: Fresh start setup completed, proceeding to completion")
                         return handle_onboarding_completion(onboarding_data)
                     else:
-                        print(f"❌ STEP5 DEBUG: Fresh start setup failed")
                         logger.error(f"🔍 ONBOARDING DEBUG: Fresh start setup failed")
                         flash('Setup failed. Please check the error message and try again.', 'error')
                         # Ensure session data is preserved
@@ -1020,7 +916,6 @@ def confirmation_step():
                         set_onboarding_step(5)
                     
             except Exception as e:
-                print(f"❌ STEP5 DEBUG: Exception during execution: {e}")
                 logger.error(f"🔍 ONBOARDING DEBUG: Error executing onboarding: {e}")
                 import traceback
                 traceback.print_exc()
@@ -1030,13 +925,10 @@ def confirmation_step():
                     update_onboarding_data(onboarding_data)
                     set_onboarding_step(5)
                 except Exception as session_error:
-                    print(f"❌ STEP5 DEBUG: Could not preserve session data: {session_error}")
                     logger.error(f"❌ Could not preserve session data: {session_error}")
         else:
-            print(f"🔍 STEP5 DEBUG: Action '{action}' does not match 'execute', rendering template")
             logger.info(f"Non-execute action received: {action}")
     
-    print(f"🔍 STEP5 DEBUG: Rendering step 5 confirmation template")
     logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 5 confirmation template")
     
     return render_template('onboarding/step5_confirmation.html',
@@ -1435,7 +1327,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         site_config = onboarding_data.get('site_config', {})
         
         if not admin_data:
-            print(f"❌ [SETUP] Missing admin data in execute_onboarding_setup_only")
             logger.error("❌ Missing admin data in execute_onboarding_setup_only")
             return False
         
@@ -1451,7 +1342,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             password_hash = generate_password_hash(admin_data['password'])
             print(f"🚀 [SETUP] Password hash generated successfully")
         except Exception as hash_error:
-            print(f"❌ [SETUP] Failed to generate password hash: {hash_error}")
             logger.error(f"Failed to generate password hash: {hash_error}")
             return False
         
@@ -1470,36 +1360,26 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             )
             print(f"🚀 [SETUP] user_service.create_user_sync returned: {admin_user}")
         except Exception as user_create_error:
-            print(f"❌ [SETUP] Exception creating admin user: {user_create_error}")
             logger.error(f"Exception creating admin user: {user_create_error}")
             import traceback
             traceback.print_exc()
             return False
         
         if not admin_user:
-            print(f"❌ [SETUP] Admin user creation returned None or False")
             logger.error("❌ Failed to create admin user - service returned None")
             return False
         
-        print(f"✅ [SETUP] Admin user created successfully!")
-        print(f"✅ [SETUP] User ID: {getattr(admin_user, 'id', 'NO_ID')}")
-        print(f"✅ [SETUP] Username: {getattr(admin_user, 'username', 'NO_USERNAME')}")
-        print(f"✅ [SETUP] Email: {getattr(admin_user, 'email', 'NO_EMAIL')}")
-        print(f"✅ [SETUP] Is Admin: {getattr(admin_user, 'is_admin', 'NO_ADMIN_FLAG')}")
         logger.info(f"✅ Admin user created: {admin_user.username} (ID: {admin_user.id})")
         
         # Log in the user immediately after creation
         try:
             print(f"🚀 [SETUP] Attempting to log in admin user...")
             login_user(admin_user)
-            print(f"✅ [SETUP] Admin user logged in successfully!")
             logger.info(f"✅ Admin user logged in: {admin_user.username}")
             
             # Verify login worked
             from flask_login import current_user
-            print(f"✅ [SETUP] Current user after login: authenticated={current_user.is_authenticated}, id={getattr(current_user, 'id', 'NO_ID')}")
         except Exception as login_error:
-            print(f"❌ [SETUP] Failed to log in admin user: {login_error}")
             logger.error(f"Failed to log in admin user: {login_error}")
             # Don't return False here - continue with setup even if login fails
         
@@ -1528,7 +1408,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 admin_user_id = getattr(admin_user, 'id', None)
                 print(f"🏠 [SETUP] Admin user ID for location creation: {admin_user_id}")
                 if not admin_user_id:
-                    print(f"❌ [SETUP] Admin user has no ID for location creation")
                     logger.error(f"❌ Admin user has no ID for location creation")
                     raise Exception("Admin user has no ID")
                 
@@ -1543,14 +1422,11 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 print(f"🏠 [SETUP] create_location returned: {location}")
                 
                 if location:
-                    print(f"✅ [SETUP] Created location: {location.name} (ID: {location.id})")
                     logger.info(f"✅ Created location: {location.name} (ID: {location.id})")
                 else:
-                    print(f"❌ [SETUP] Location creation returned None")
                     logger.error(f"❌ Location creation returned None")
                 
             except Exception as e:
-                print(f"❌ [SETUP] Failed to create location '{location_name}': {e}")
                 logger.error(f"❌ Failed to create location '{location_name}': {e}")
                 import traceback
                 traceback.print_exc()
@@ -1605,7 +1481,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                     admin_user_id = getattr(admin_user, 'id', None)
                     print(f"🏷️ [SETUP] Admin user ID for custom field creation: {admin_user_id}")
                     if not admin_user_id:
-                        print(f"❌ [SETUP] Admin user has no ID for custom field creation")
                         logger.error(f"❌ Admin user has no ID for custom field creation")
                         continue  # Skip this custom field
                     
@@ -1640,21 +1515,17 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                         print(f"🏷️ [SETUP] Custom field service returned: {custom_field}")
                         
                         if custom_field:
-                            print(f"✅ [SETUP] Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
                             logger.info(f"✅ Created custom field: {field_name} ({field_type}) from CSV column: {csv_field}")
                         else:
-                            print(f"❌ [SETUP] Custom field creation returned None for: {field_name}")
                             logger.error(f"❌ Custom field creation returned None for: {field_name}")
                     
                     except Exception as field_error:
-                        print(f"❌ [SETUP] Exception creating custom field {field_name}: {field_error}")
                         logger.error(f"❌ Exception creating custom field {field_name}: {field_error}")
                         import traceback
                         traceback.print_exc()
                         continue  # Continue with next field
                     
             except Exception as e:
-                print(f"❌ [SETUP] Failed to create custom metadata fields: {e}")
                 logger.error(f"❌ Failed to create custom metadata fields: {e}")
                 import traceback
                 traceback.print_exc()
@@ -1677,7 +1548,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             admin_user_id = getattr(admin_user, 'id', None)
             print(f"📂 [SETUP] Admin user ID for import: {admin_user_id}")
             if not admin_user_id:
-                print(f"❌ [SETUP] Admin user has no ID for import job")
                 logger.error("❌ Admin user has no ID")
                 return False
             
@@ -1688,18 +1558,14 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 print(f"📂 [SETUP] start_onboarding_import_job returned: {import_task_id}")
                 
                 if not import_task_id:
-                    print(f"❌ [SETUP] Failed to start CSV import job - returned None")
                     logger.error("❌ Failed to start CSV import job")
                     return False
                 else:
-                    print(f"✅ [SETUP] CSV import job started with ID: {import_task_id}")
                     logger.info(f"✅ CSV import job started with ID: {import_task_id}")
                     # Store the task ID for progress tracking
                     session['onboarding_import_task_id'] = import_task_id
                     session.modified = True
-                    print(f"✅ [SETUP] Task ID stored in session")
             except Exception as import_error:
-                print(f"❌ [SETUP] Exception starting CSV import job: {import_error}")
                 logger.error(f"Exception starting CSV import job: {import_error}")
                 import traceback
                 traceback.print_exc()
@@ -1713,8 +1579,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         return True
         
     except Exception as e:
-        print(f"❌ [SETUP] ============ SETUP FAILED WITH EXCEPTION ============")
-        print(f"❌ [SETUP] Error executing onboarding setup: {e}")
         logger.error(f"Error executing onboarding setup: {e}")
         import traceback
         traceback.print_exc()
@@ -1760,27 +1624,20 @@ def handle_onboarding_completion(onboarding_data: Dict):
         
         # Add debugging: let's see what users actually exist
         try:
-            print(f"🔍 [COMPLETION DEBUG] Checking database for users...")
             from .kuzu_integration import KuzuIntegrationService
             kuzu_service = KuzuIntegrationService()
             kuzu_service.initialize()
             if kuzu_service.db is not None:
                 all_users = kuzu_service.db.query("MATCH (u:User) RETURN u.username, u.id, u.email LIMIT 10")
-                print(f"🔍 [COMPLETION DEBUG] All users in database: {all_users}")
                 logger.info(f"All users in database: {all_users}")
             else:
-                print(f"🔍 [COMPLETION DEBUG] Database connection is None")
                 logger.warning("Database connection is None during completion")
         except Exception as debug_error:
-            print(f"🔍 [COMPLETION DEBUG] Could not query users: {debug_error}")
             logger.error(f"Could not query users during completion: {debug_error}")
         
-        print(f"🔍 [COMPLETION] Calling user_service.get_user_by_username_sync('{admin_username}')...")
         admin_user = user_service.get_user_by_username_sync(admin_username)
-        print(f"🔍 [COMPLETION] user_service returned: {admin_user}")
         
         if not admin_user:
-            print(f"❌ [COMPLETION] Could not find admin user: {admin_username}")
             logger.error(f"🔍 ONBOARDING DEBUG: Could not find admin user: {admin_username}")
             # Don't clear session - stay on step 5 with error
             flash('Setup completed but login failed. Please try logging in manually.', 'warning')
@@ -1796,7 +1653,6 @@ def handle_onboarding_completion(onboarding_data: Dict):
         
         # Simple verification - just check if we're authenticated
         if not current_user.is_authenticated:
-            print(f"❌ [COMPLETION] Login verification failed - user not authenticated")
             logger.error("Login verification failed - user not authenticated")
             flash('Setup completed but login failed. Please log in manually.', 'warning')
             return redirect(url_for('auth.login'))
@@ -1814,7 +1670,6 @@ def handle_onboarding_completion(onboarding_data: Dict):
         return redirect(url_for('main.library'))
         
     except Exception as e:
-        print(f"❌ [COMPLETION] Error handling onboarding completion: {e}")
         logger.error(f"Error handling onboarding completion: {e}")
         import traceback
         traceback.print_exc()
@@ -1874,7 +1729,6 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     job_data['total'] = sum(1 for _ in reader)
                     print(f"🚀 [IMPORT_JOB] CSV row count: {job_data['total']}")
         except Exception as e:
-            print(f"⚠️ [IMPORT_JOB] Could not count CSV rows: {e}")
             logger.warning(f"⚠️ Could not count CSV rows: {e}")
             job_data['total'] = 0
         
@@ -1916,16 +1770,13 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     user_id=user_id,
                     format_type=import_config.get('detected_type', 'unknown')
                 )
-                print(f"✅ [IMPORT_JOB] Background import completed for task {task_id}")
                 
                 # Update job status to completed
                 if task_id in import_jobs:
                     import_jobs[task_id]['status'] = 'completed'
                     import_jobs[task_id]['current_book'] = 'Import completed successfully'
-                    print(f"✅ [IMPORT_JOB] Updated job status to completed")
                     
             except Exception as e:
-                print(f"❌ [IMPORT_JOB] Background import failed for task {task_id}: {e}")
                 import traceback
                 traceback.print_exc()
                 
@@ -1935,7 +1786,6 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     if 'error_messages' not in import_jobs[task_id]:
                         import_jobs[task_id]['error_messages'] = []
                     import_jobs[task_id]['error_messages'].append(str(e))
-                    print(f"❌ [IMPORT_JOB] Updated job status to failed")
                 logger.error(f"Onboarding import job {task_id} failed: {e}")
         
         print(f"🚀 [IMPORT_JOB] Creating background thread...")
@@ -1944,7 +1794,6 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         thread.daemon = True
         print(f"🚀 [IMPORT_JOB] Starting background thread...")
         thread.start()
-        print(f"✅ [IMPORT_JOB] Background thread started successfully")
         
         # Wait a moment to let the thread start and update job status
         import time
@@ -1952,17 +1801,16 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         
         # Verify the job is still in memory after thread start
         if task_id in import_jobs:
-            print(f"✅ [IMPORT_JOB] Job {task_id} confirmed in memory: {import_jobs[task_id].get('status', 'unknown')}")
+            print(f"🚀 [IMPORT_JOB] Job {task_id} confirmed in memory after thread start")
+            logger.info(f"Job {task_id} confirmed in memory after thread start")
         else:
-            print(f"⚠️ [IMPORT_JOB] Job {task_id} not found in memory after thread start!")
+            print(f"❌ [IMPORT_JOB] Job {task_id} missing from memory after thread start")
+            logger.warning(f"Job {task_id} missing from memory after thread start")
         
-        print(f"✅ [IMPORT_JOB] ============ IMPORT JOB SETUP COMPLETE ============")
-        print(f"✅ [IMPORT_JOB] Returning task ID: {task_id}")
         logger.info(f"✅ Onboarding import job {task_id} started successfully")
         return task_id
         
     except Exception as e:
-        print(f"❌ [IMPORT_JOB] Failed to start onboarding import job: {e}")
         logger.error(f"❌ Failed to start onboarding import job: {e}")
         import traceback
         traceback.print_exc()

@@ -52,7 +52,6 @@ class KuzuCategoryService:
             return categories
             
         except Exception as e:
-            print(f"❌ [LIST_CATEGORIES] Error getting all categories: {e}")
             return []
     
     async def get_category_by_id(self, category_id: str) -> Optional[Dict[str, Any]]:
@@ -83,7 +82,6 @@ class KuzuCategoryService:
             return None
             
         except Exception as e:
-            print(f"❌ [GET_CATEGORY] Error getting category by ID {category_id}: {e}")
             return None
     
     def get_category_by_id_with_hierarchy(self, category_id: str) -> Optional[Category]:
@@ -91,7 +89,6 @@ class KuzuCategoryService:
         try:
             return self._build_category_with_hierarchy(category_id)
         except Exception as e:
-            print(f"❌ [GET_CATEGORY_HIERARCHY] Error getting category by ID {category_id}: {e}")
             return None
     
     def _build_category_with_hierarchy(self, category_id: str) -> Optional[Category]:
@@ -156,7 +153,6 @@ class KuzuCategoryService:
             return category
             
         except Exception as e:
-            print(f"❌ [BUILD_HIERARCHY] Error building category hierarchy for {category_id}: {e}")
             return None
     
     async def get_child_categories(self, parent_id: str) -> List[Dict[str, Any]]:
@@ -195,7 +191,6 @@ class KuzuCategoryService:
             return categories
             
         except Exception as e:
-            print(f"❌ [GET_CHILDREN] Error getting child categories for {parent_id}: {e}")
             import traceback
             traceback.print_exc()
             return []
@@ -246,7 +241,6 @@ class KuzuCategoryService:
             return books
             
         except Exception as e:
-            print(f"❌ [GET_BOOKS_BY_CATEGORY] Error getting books by category {category_id}: {e}")
             return []
     
     async def _get_all_descendant_categories(self, category_id: str) -> List[str]:
@@ -269,7 +263,6 @@ class KuzuCategoryService:
             return descendant_ids
             
         except Exception as e:
-            print(f"❌ [GET_DESCENDANTS] Error getting descendant categories for {category_id}: {e}")
             traceback.print_exc()
             return []
     
@@ -282,14 +275,11 @@ class KuzuCategoryService:
             created_category = await self.category_repo.create(category)
             
             if created_category:
-                print(f"✅ [CREATE_CATEGORY] Successfully created category: {category.name}")
                 return created_category
             else:
-                print(f"❌ [CREATE_CATEGORY] Failed to create category: {category.name}")
                 return None
                 
         except Exception as e:
-            print(f"❌ [CREATE_CATEGORY] Error creating category: {e}")
             traceback.print_exc()
             return None
     
@@ -329,14 +319,11 @@ class KuzuCategoryService:
             results = self.graph_storage.query(query, category_data)
             
             if results:
-                print(f"✅ [UPDATE_CATEGORY] Successfully updated category: {category.name}")
                 return category
             else:
-                print(f"❌ [UPDATE_CATEGORY] Failed to update category: {category.name}")
                 return None
                 
         except Exception as e:
-            print(f"❌ [UPDATE_CATEGORY] Error updating category: {e}")
             traceback.print_exc()
             return None
     
@@ -352,11 +339,9 @@ class KuzuCategoryService:
             """
             
             self.graph_storage.query(query, {"category_id": category_id})
-            print(f"✅ [DELETE_CATEGORY] Successfully deleted category: {category_id}")
             return True
             
         except Exception as e:
-            print(f"❌ [DELETE_CATEGORY] Error deleting category: {e}")
             traceback.print_exc()
             return False
     
@@ -394,11 +379,9 @@ class KuzuCategoryService:
                 # Delete the merge category
                 await self.delete_category(merge_id)
             
-            print(f"✅ [MERGE_CATEGORIES] Successfully merged categories")
             return True
             
         except Exception as e:
-            print(f"❌ [MERGE_CATEGORIES] Error merging categories: {e}")
             traceback.print_exc()
             return False
     
@@ -444,7 +427,6 @@ class KuzuCategoryService:
             return categories
             
         except Exception as e:
-            print(f"❌ [SEARCH_CATEGORIES] Error searching categories: {e}")
             return []
     
     async def get_root_categories(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -472,7 +454,6 @@ class KuzuCategoryService:
             return categories
             
         except Exception as e:
-            print(f"❌ [GET_ROOT_CATEGORIES] Error getting root categories: {e}")
             import traceback
             traceback.print_exc()
             return []
@@ -571,5 +552,4 @@ class KuzuCategoryService:
             return category_data
             
         except Exception as e:
-            print(f"❌ [BUILD_HIERARCHY_SYNC] Error building hierarchy: {e}")
             return category_data

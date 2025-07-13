@@ -194,23 +194,17 @@ class KuzuIntegrationService:
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get user by username."""
         if not self._ensure_initialized():
-            print(f"🔍 [KUZU_INTEGRATION] Not initialized, cannot get user by username: {username}")
             return None
         
         try:
-            print(f"🔍 [KUZU_INTEGRATION] Looking for user by username: '{username}'")
             user_repo = self._get_user_repo()
             user = await user_repo.get_by_username(username)
-            print(f"🔍 [KUZU_INTEGRATION] User repo returned: {user}")
             if user:
                 user_dict = self._user_to_dict(user)
-                print(f"🔍 [KUZU_INTEGRATION] Converted to dict: {user_dict}")
                 return user_dict
-            print(f"🔍 [KUZU_INTEGRATION] No user found for username: '{username}'")
             return None
             
         except Exception as e:
-            print(f"🔍 [KUZU_INTEGRATION] Error getting user by username '{username}': {e}")
             logger.error(f"Failed to get user by username {username}: {e}")
             return None
     

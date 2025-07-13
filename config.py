@@ -85,6 +85,11 @@ class Config:
     SESSION_REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD')
     SESSION_REDIS_DB = int(os.environ.get('REDIS_SESSION_DB', 0))
 
+    # Database configuration
+    DATABASE_PATH = os.path.join(data_dir, 'books.db')
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE_PATH}"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
     # File uploads
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
 
@@ -133,3 +138,8 @@ class Config:
     
     # Debug log level (only used if debug mode is enabled)
     DEBUG_LOG_LEVEL = os.environ.get('MYBIBLIOTHECA_DEBUG_LOG_LEVEL', 'INFO')
+
+    # Database configuration
+    DATABASE_PATH = os.path.join(data_dir, 'books.db')
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE_PATH}"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False

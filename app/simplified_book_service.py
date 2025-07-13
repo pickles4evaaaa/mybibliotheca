@@ -36,7 +36,7 @@ def normalize_goodreads_value(value, field_type='text'):
         # Validate that it looks like an ISBN (digits, X, hyphens only)
         if value and not all(c.isdigit() or c in 'X-' for c in value):
             # If it doesn't look like an ISBN, it might be corrupted
-            print(f"⚠️ [NORMALIZE] Potentially corrupted ISBN value: '{value}'")
+            pass  # Continue with potentially corrupted ISBN
     
     return value.strip()
 
@@ -121,7 +121,6 @@ class SimplifiedBookService:
         try:
             book_id = str(uuid.uuid4())
             
-            print(f"📚 [SIMPLIFIED] Creating standalone book: {book_data.title}")
             
             # Prepare core book node data
             book_node_data = {
@@ -153,7 +152,6 @@ class SimplifiedBookService:
             book_node_data = {k: v for k, v in book_node_data.items() if v is not None}
             
             # Enhanced debugging for ISBN fields
-            print(f"🔍 [SIMPLIFIED] Book node data being stored:")
             print(f"   ISBN13: {book_node_data.get('isbn13')}")
             print(f"   ISBN10: {book_node_data.get('isbn10')}")
             print(f"   Cover URL: {book_node_data.get('cover_url')}")
@@ -164,10 +162,8 @@ class SimplifiedBookService:
             # 1. Create book node (SINGLE TRANSACTION)
             book_success = self.storage.store_node('Book', book_id, book_node_data)
             if not book_success:
-                print(f"❌ [SIMPLIFIED] Failed to create book node")
                 return None
             
-            print(f"✅ [SIMPLIFIED] Book node created: {book_id}")
             
             # Initialize book repository for relationship creation
             from .infrastructure.kuzu_repositories import KuzuBookRepository
@@ -192,14 +188,12 @@ class SimplifiedBookService:
             # 2. Create author relationship using clean repository (with auto-fetch)
             if book_data.author:
                 try:
-                    print(f"🔍 [SIMPLIFIED] Creating author relationship for: {book_data.author}")
                     
                     person_data = create_person_data(book_data.author)
                     
                     # Use the book repository's _ensure_person_exists method
                     author_id = await book_repo._ensure_person_exists(person_data)
                     if author_id:
-                        print(f"✅ [SIMPLIFIED] Author created/found with ID: {author_id}")
                         
                         # Create AUTHORED relationship
                         authored_success = self.storage.create_relationship(
@@ -211,13 +205,12 @@ class SimplifiedBookService:
                             }
                         )
                         if authored_success:
-                            print(f"✅ [SIMPLIFIED] Author relationship created with auto-fetch: {book_data.author}")
+                            pass  # Author relationship created successfully
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Book created but author relationship failed")
+                            pass  # Author relationship creation failed
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Book created but author creation failed")
+                        pass  # Author creation failed
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Book created but author processing failed: {e}")
                     import traceback
                     traceback.print_exc()
             
@@ -226,7 +219,6 @@ class SimplifiedBookService:
                 try:
                     additional_authors_list = [name.strip() for name in book_data.additional_authors.split(',') if name.strip()]
                     for index, author_name in enumerate(additional_authors_list):
-                        print(f"🔍 [SIMPLIFIED] Creating additional author relationship for: {author_name}")
                         
                         person_data = create_person_data(author_name)
                         author_id = await book_repo._ensure_person_exists(person_data)
@@ -241,16 +233,21 @@ class SimplifiedBookService:
                                 }
                             )
                             if authored_success:
-                                print(f"✅ [SIMPLIFIED] Additional author relationship created: {author_name}")
+                                pass  # Author relationship created successfully
+                            else:
+                                pass  # Author relationship creation failed
+                        else:
+                            pass  # Author creation failed
+                    else:
+                        pass  # Author creation failed
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Error processing additional authors: {e}")
+                    pass  # Error creating author relationship
             
             # 2.6. Handle narrator if present
             if book_data.narrator:
                 try:
                     narrator_list = [name.strip() for name in book_data.narrator.split(',') if name.strip()]
                     for index, narrator_name in enumerate(narrator_list):
-                        print(f"🔍 [SIMPLIFIED] Creating narrator relationship for: {narrator_name}")
                         
                         person_data = create_person_data(narrator_name)
                         narrator_id = await book_repo._ensure_person_exists(person_data)
@@ -265,9 +262,15 @@ class SimplifiedBookService:
                                 }
                             )
                             if narrated_success:
-                                print(f"✅ [SIMPLIFIED] Narrator relationship created: {narrator_name}")
+                                pass  # Narrator relationship created successfully
+                            else:
+                                pass  # Narrator relationship creation failed
+                        else:
+                            pass  # Narrator creation failed
+                    else:
+                        pass  # Narrator creation failed
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Error processing narrators: {e}")
+                    pass  # Error creating narrator relationship
             
             # 3. Create publisher relationship using clean repository
             if book_data.publisher:
@@ -287,7 +290,6 @@ class SimplifiedBookService:
                                         # Try alternative formats
                                         pub_date = datetime.strptime(book_data.published_date, '%Y').date()
                                     except ValueError:
-                                        print(f"⚠️ [SIMPLIFIED] Could not parse publication date: {book_data.published_date}")
                                         pub_date = None
                             else:
                                 pub_date = book_data.published_date
@@ -300,13 +302,13 @@ class SimplifiedBookService:
                             }
                         )
                         if published_success:
-                            print(f"✅ [SIMPLIFIED] Publisher relationship created: {book_data.publisher}")
+                            pass  # Publisher relationship created successfully
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Book created but publisher relationship failed")
+                            pass  # Publisher relationship creation failed
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Book created but publisher creation failed")
+                        pass  # Publisher creation failed
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Book created but publisher processing failed: {e}")
+                    pass  # Error creating publisher relationship
             
             # 4. Create category relationships using clean repository
             if book_data.categories:
@@ -325,13 +327,13 @@ class SimplifiedBookService:
                                 }
                             )
                             if categorized_success:
-                                print(f"✅ [SIMPLIFIED] Category relationship created: {category_name}")
+                                pass  # Category relationship created successfully
                             else:
-                                print(f"⚠️ [SIMPLIFIED] Book created but category relationship failed: {category_name}")
+                                pass  # Category relationship creation failed
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Book created but category creation failed: {category_name}")
+                            pass  # Category creation failed
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Book created but category processing failed: {e}")
+                    pass  # Error creating category relationship
             
             # 5. Handle global custom metadata (if any)
             if book_data.global_custom_metadata:
@@ -354,14 +356,14 @@ class SimplifiedBookService:
                         )
                         
                         if global_saved:
-                            print(f"✅ [SIMPLIFIED] Global custom metadata saved for book {book_id}")
+                            pass  # Custom metadata saved successfully
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Book created but global custom metadata save failed")
+                            pass  # Custom metadata save failed
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Book created but global custom field definitions failed")
+                        pass  # System user not found
                         
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Book created but global custom metadata processing failed: {e}")
+                    pass  # Error saving custom metadata
             
             print(f"🎉 [SIMPLIFIED] Book creation completed: {book_id}")
             
@@ -369,14 +371,13 @@ class SimplifiedBookService:
             try:
                 print(f"🔄 [SIMPLIFIED] Forcing checkpoint to ensure persistence...")
                 self.storage._force_checkpoint()
-                print(f"✅ [SIMPLIFIED] Checkpoint completed - book data persisted to disk")
+                print(f"✅ [SIMPLIFIED] Checkpoint completed successfully")
             except Exception as e:
-                print(f"⚠️ [SIMPLIFIED] Checkpoint failed but continuing: {e}")
+                print(f"⚠️ [SIMPLIFIED] Checkpoint failed: {e}")
             
             return book_id
             
         except Exception as e:
-            print(f"❌ [SIMPLIFIED] Failed to create standalone book: {e}")
             return None
     
     def create_user_ownership(self, ownership: UserBookOwnership) -> bool:
@@ -385,7 +386,6 @@ class SimplifiedBookService:
         Returns True if successful, False if failed.
         """
         try:
-            print(f"🔗 [SIMPLIFIED] Creating ownership: User {ownership.user_id} -> Book {ownership.book_id}")
             
             # Ensure date_added is set
             if ownership.date_added is None:
@@ -419,7 +419,6 @@ class SimplifiedBookService:
             )
             
             if success:
-                print(f"✅ [SIMPLIFIED] Ownership created successfully")
                 
                 # Handle personal custom metadata through custom field service
                 if ownership.custom_metadata:
@@ -438,30 +437,28 @@ class SimplifiedBookService:
                             )
                             
                             if personal_saved:
-                                print(f"✅ [SIMPLIFIED] Personal custom metadata saved for user {ownership.user_id}")
+                                pass  # Personal custom metadata saved successfully
                             else:
-                                print(f"⚠️ [SIMPLIFIED] Ownership created but personal custom metadata save failed")
+                                pass  # Personal custom metadata save failed
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Ownership created but personal custom field definitions failed")
+                            pass  # User not found for custom metadata
                             
                     except Exception as e:
-                        print(f"⚠️ [SIMPLIFIED] Ownership created but personal custom metadata processing failed: {e}")
+                        pass  # Error saving personal custom metadata
                 
                 # Force a checkpoint to ensure ownership data is persisted to disk
                 try:
                     print(f"🔄 [SIMPLIFIED] Forcing checkpoint to ensure ownership persistence...")
                     self.storage._force_checkpoint()
-                    print(f"✅ [SIMPLIFIED] Checkpoint completed - ownership data persisted to disk")
+                    print(f"✅ [SIMPLIFIED] Ownership checkpoint completed successfully")
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Checkpoint failed but continuing: {e}")
+                    print(f"⚠️ [SIMPLIFIED] Ownership checkpoint failed: {e}")
                 
                 return True
             else:
-                print(f"❌ [SIMPLIFIED] Failed to create ownership relationship")
                 return False
                 
         except Exception as e:
-            print(f"❌ [SIMPLIFIED] Failed to create user ownership: {e}")
             return False
     
     def find_book_by_isbn(self, isbn: str) -> Optional[str]:
@@ -487,7 +484,6 @@ class SimplifiedBookService:
             return None
             
         except Exception as e:
-            print(f"❌ [SIMPLIFIED] Error finding book by ISBN: {e}")
             return None
     
     async def find_or_create_book(self, book_data: SimplifiedBook) -> Optional[str]:
@@ -500,21 +496,17 @@ class SimplifiedBookService:
             if book_data.isbn13:
                 existing_id = self.find_book_by_isbn(book_data.isbn13)
                 if existing_id:
-                    print(f"📚 [SIMPLIFIED] Found existing book by ISBN13: {existing_id}")
                     return existing_id
             
             if book_data.isbn10:
                 existing_id = self.find_book_by_isbn(book_data.isbn10)
                 if existing_id:
-                    print(f"📚 [SIMPLIFIED] Found existing book by ISBN10: {existing_id}")
                     return existing_id
             
             # Book doesn't exist, create new one
-            print(f"📚 [SIMPLIFIED] Book not found, creating new book")
             return await self.create_standalone_book(book_data)
             
         except Exception as e:
-            print(f"❌ [SIMPLIFIED] Error in find_or_create_book: {e}")
             return None
     
     def build_book_data_from_row(self, row, mappings, book_meta_map=None, author_meta_map=None):
@@ -706,7 +698,6 @@ class SimplifiedBookService:
             # Step 1: Find or create standalone book
             book_id = await self.find_or_create_book(book_data)
             if not book_id:
-                print(f"❌ [SIMPLIFIED] Failed to find/create book")
                 return False
             
             # Step 2: Create user ownership relationship
@@ -725,12 +716,10 @@ class SimplifiedBookService:
             
             ownership_success = self.create_user_ownership(ownership)
             if not ownership_success:
-                print(f"❌ [SIMPLIFIED] Book created but ownership failed")
                 return False
 
             # Step 3: Handle location assignment (NEW)
             if location_id:
-                print(f"📍 [SIMPLIFIED] Assigning book to location: {location_id}")
                 try:
                     from .location_service import LocationService
                     from .infrastructure.kuzu_graph import get_kuzu_connection
@@ -741,15 +730,13 @@ class SimplifiedBookService:
                     
                     location_success = location_service.add_book_to_location(book_id, location_id, user_id)
                     if location_success:
-                        print(f"✅ [SIMPLIFIED] Book assigned to location successfully")
+                        pass  # Book added to location successfully
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Failed to assign book to location, but continuing...")
+                        pass  # Failed to add book to location
                         
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Error assigning location: {e}")
-                    # Don't fail the entire operation for location assignment issues
+                    pass  # Don't fail the entire operation for location assignment issues
             else:
-                print(f"📍 [SIMPLIFIED] No location specified, trying to assign to default location")
                 try:
                     from .location_service import LocationService
                     from .infrastructure.kuzu_graph import get_kuzu_connection
@@ -761,7 +748,6 @@ class SimplifiedBookService:
                     # Get or create default location
                     default_location = location_service.get_default_location(user_id)
                     if not default_location:
-                        print(f"📍 [SIMPLIFIED] No default location found, creating one...")
                         default_locations = location_service.setup_default_locations()
                         if default_locations:
                             default_location = default_locations[0]
@@ -769,15 +755,14 @@ class SimplifiedBookService:
                     if default_location and default_location.id:
                         location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
                         if location_success:
-                            print(f"✅ [SIMPLIFIED] Book assigned to default location: {default_location.name}")
+                            pass  # Book added to default location successfully
                         else:
-                            print(f"⚠️ [SIMPLIFIED] Failed to assign book to default location")
+                            pass  # Failed to add book to default location
                     else:
-                        print(f"⚠️ [SIMPLIFIED] Could not find or create default location")
+                        pass  # No default location available
                         
                 except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Error with default location assignment: {e}")
-                    # Don't fail the entire operation for location assignment issues
+                    pass  # Don't fail the entire operation for location assignment issues
             
             print(f"🎉 [SIMPLIFIED] Successfully added book to user library")
             
@@ -785,14 +770,13 @@ class SimplifiedBookService:
             try:
                 print(f"🔄 [SIMPLIFIED] Final checkpoint to ensure complete persistence...")
                 self.storage._force_checkpoint()
-                print(f"✅ [SIMPLIFIED] Final checkpoint completed - all data guaranteed on disk")
+                print(f"✅ [SIMPLIFIED] Final checkpoint completed successfully")
             except Exception as e:
-                print(f"⚠️ [SIMPLIFIED] Final checkpoint failed but continuing: {e}")
+                print(f"⚠️ [SIMPLIFIED] Final checkpoint failed: {e}")
             
             return True
             
         except Exception as e:
-            print(f"❌ [SIMPLIFIED] Failed to add book to user library: {e}")
             return False
     
     def add_book_to_user_library_sync(self, book_data: SimplifiedBook, user_id: str, 
