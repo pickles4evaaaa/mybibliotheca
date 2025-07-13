@@ -125,11 +125,11 @@ class Config:
     API_TEST_TOKEN = os.environ.get('API_TEST_TOKEN')  # No default - must be set via env var
     
     # Debug settings (disabled by default for security)
-    DEBUG_MODE = os.environ.get('BIBLIOTHECA_DEBUG', 'false').lower() in ['true', 'on', '1']
-    DEBUG_CSRF = os.environ.get('BIBLIOTHECA_DEBUG_CSRF', 'false').lower() in ['true', 'on', '1']
-    DEBUG_SESSION = os.environ.get('BIBLIOTHECA_DEBUG_SESSION', 'false').lower() in ['true', 'on', '1']
-    DEBUG_AUTH = os.environ.get('BIBLIOTHECA_DEBUG_AUTH', 'false').lower() in ['true', 'on', '1']
-    DEBUG_REQUESTS = os.environ.get('BIBLIOTHECA_DEBUG_REQUESTS', 'false').lower() in ['true', 'on', '1']
+    DEBUG_MODE = os.environ.get('MYBIBLIOTHECA_DEBUG', 'false').lower() in ['true', 'on', '1']
+    DEBUG_CSRF = os.environ.get('MYBIBLIOTHECA_DEBUG_CSRF', 'false').lower() in ['true', 'on', '1']
+    DEBUG_SESSION = os.environ.get('MYBIBLIOTHECA_DEBUG_SESSION', 'false').lower() in ['true', 'on', '1']
+    DEBUG_AUTH = os.environ.get('MYBIBLIOTHECA_DEBUG_AUTH', 'false').lower() in ['true', 'on', '1']
+    DEBUG_REQUESTS = os.environ.get('MYBIBLIOTHECA_DEBUG_REQUESTS', 'false').lower() in ['true', 'on', '1']
     
     # Debug log level (only used if debug mode is enabled)
-    DEBUG_LOG_LEVEL = os.environ.get('BIBLIOTHECA_DEBUG_LOG_LEVEL', 'INFO')
+    DEBUG_LOG_LEVEL = os.environ.get('MYBIBLIOTHECA_DEBUG_LOG_LEVEL', 'INFO')

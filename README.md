@@ -176,9 +176,9 @@ curl http://localhost:5054/auth/setup/status
 **🐛 Enable Debug Mode:**
 ```bash
 # For detailed troubleshooting
-export BIBLIOTHECA_DEBUG=true
-export BIBLIOTHECA_DEBUG_AUTH=true
-export BIBLIOTHECA_DEBUG_CSRF=true
+export MYBIBLIOTHECA_DEBUG=true
+export MYBIBLIOTHECA_DEBUG_AUTH=true
+export MYBIBLIOTHECA_DEBUG_CSRF=true
 
 # Restart the application and check logs
 ```

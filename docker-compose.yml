@@ -23,7 +23,7 @@ services:
       - WORKERS=1
       
       # Logging settings - disable verbose initialization to prevent duplicate messages
-      - BIBLIOTHECA_VERBOSE_INIT=${BIBLIOTHECA_VERBOSE_INIT:-false}
+      - MYBIBLIOTHECA_VERBOSE_INIT=${MYBIBLIOTHECA_VERBOSE_INIT:-false}
       
       # Migration settings (DISABLED for manual migration)
       - AUTO_MIGRATE=false

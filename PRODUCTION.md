@@ -51,7 +51,7 @@ GRAPH_DATABASE_ENABLED=true
 WORKERS=1
 
 # Logging
-BIBLIOTHECA_VERBOSE_INIT=false
+MYBIBLIOTHECA_VERBOSE_INIT=false
 ```
 
 ### 4. Launch Application

@@ -33,15 +33,12 @@ class DebugManager:
     def is_debug_enabled(self) -> bool:
         """Check if debug mode is enabled globally."""
         try:
-            # For now, enable debug by default (ignoring admin setting as requested)
-            debug_state = os.getenv('BIBLIOTHECA_DEBUG', 'true')  # Changed default to 'true'
-            return debug_state.lower() == 'true'
-            
-            # Fallback to environment variable - also default to true
-            return os.getenv('DEBUG_MODE', 'true').lower() == 'true'  # Changed default to 'true'
+            # Check MYBIBLIOTHECA_DEBUG environment variable (default to false for performance)
+            debug_state = os.getenv('MYBIBLIOTHECA_DEBUG', 'false')
+            return debug_state.lower() in ['true', 'on', '1']
         except Exception as e:
             self.logger.error(f"Failed to check debug status: {e}")
-            return True  # Return True on error to ensure debugging works
+            return False  # Return False on error to prevent performance issues
     
     def is_user_admin(self, user=None) -> bool:
         """Check if the current user is an admin."""
@@ -63,11 +60,11 @@ class DebugManager:
     def should_show_debug(self, user=None) -> bool:
         """Determine if debug info should be shown to the current user."""
         try:
-            # For now, ignore admin check and just return debug enabled status
-            return self.is_debug_enabled()
+            # Only show debug info if debug is enabled AND user is admin
+            return self.is_debug_enabled() and self.is_user_admin(user)
         except Exception as e:
             self.logger.error(f"Error in should_show_debug: {e}")
-            return True  # Return True on error to ensure debugging works
+            return False  # Return False on error to prevent performance issues
     
     def enable_debug_mode(self, user_id: str) -> bool:
         """Enable debug mode (admin only)."""
@@ -76,7 +73,7 @@ class DebugManager:
                 return False
             
             # For Kuzu version, we'll use environment variable control
-            self.log_debug(f"Debug mode controlled via BIBLIOTHECA_DEBUG environment variable")
+            self.log_debug(f"Debug mode controlled via MYBIBLIOTHECA_DEBUG environment variable")
             self.log_debug(f"Debug mode enable requested by user {user_id}")
             return True
         except Exception as e:
@@ -90,7 +87,7 @@ class DebugManager:
                 return False
             
             # For Kuzu version, we'll use environment variable control
-            self.log_debug(f"Debug mode controlled via BIBLIOTHECA_DEBUG environment variable")
+            self.log_debug(f"Debug mode controlled via MYBIBLIOTHECA_DEBUG environment variable")
             self.log_debug(f"Debug mode disable requested by user {user_id}")
             return True
         except Exception as e:
