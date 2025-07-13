@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from 'macros/contributors.html' import display_authors, display_narrators, display_editors %}
+{% from 'macros/categories.html' import display_categories, display_category_badges %}
 {% block title %}{{ book.title }} - MyBibliotheca{% endblock %}
 
 {% block content %}
@@ -281,21 +282,7 @@
                                 {% if book_categories or book.categories %}
                                 <div class="mb-3">
                                     <small class="text-muted d-block mb-2">Genres:</small>
-                                    <div class="d-flex flex-wrap gap-1">
-                                        {% if book_categories %}
-                                            {% for category in book_categories %}
-                                                <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
-                                                    <span class="badge bg-secondary">{{ category.name }}</span>
-                                                </a>
-                                            {% endfor %}
-                                        {% elif book.categories %}
-                                            {% for category in book.categories %}
-                                                <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
-                                                    <span class="badge bg-secondary">{{ category.name }}</span>
-                                                </a>
-                                            {% endfor %}
-                                        {% endif %}
-                                    </div>
+                                    {{ display_categories(book, compact=false, show_icon=true, book_categories=book_categories) }}
                                 </div>
                                 {% endif %}
                                 
@@ -591,13 +578,38 @@
                                     
                                     <!-- Genres & Categories -->
                                     <div class="mb-3">
-                                        <label for="edit-categories" class="form-label fw-medium">Genres & Categories</label>
-                                        <div class="position-relative">
-                                            <input type="text" class="form-control" id="edit-categories" name="categories" 
-                                                   value="{% if book_categories %}{% for category in book_categories %}{{ category.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% elif book.categories %}{% for category in book.categories %}{{ category.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}"
-                                                   autocomplete="off">
-                                            <div class="form-text">Separate multiple genres with commas</div>
-                                            <div id="categories-dropdown" class="autocomplete-dropdown"></div>
+                                        <label class="form-label fw-medium">
+                                            <i class="bi bi-tag-fill me-1"></i> Genres & Categories
+                                        </label>
+                                        <div class="category-section" data-type="category">
+                                            <div class="categories-display mb-2">
+                                                {% if book_categories %}
+                                                    {% for category in book_categories %}
+                                                    <div class="category-tag" data-id="{{ category.id or '' }}" data-name="{{ category.name }}">
+                                                        {{ category.name }}
+                                                        <span class="remove" onclick="removeCategory(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                {% elif book.categories %}
+                                                    {% for category in book.categories %}
+                                                    <div class="category-tag" data-id="{{ category.id or '' }}" data-name="{{ category.name }}">
+                                                        {{ category.name }}
+                                                        <span class="remove" onclick="removeCategory(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                {% endif %}
+                                            </div>
+                                            <div class="category-autocomplete">
+                                                <input type="text" class="form-control category-input" 
+                                                       placeholder="Start typing genre or category name..." data-type="category">
+                                                <div class="autocomplete-dropdown"></div>
+                                            </div>
+                                            <div class="form-text">
+                                                <small class="text-muted">
+                                                    <i class="bi bi-info-circle me-1"></i>
+                                                    Type to search existing genres or add new ones. Popular genres: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
+                                                </small>
+                                            </div>
                                         </div>
                                     </div>
                                     
@@ -2032,6 +2044,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize contributor functionality
     initializeContributors();
+    
+    // Initialize category functionality
+    initializeCategories();
 });
 
 function initializeCoverEditing() {
@@ -2651,6 +2666,268 @@ function initializeContributors() {
     window.updateContributorHiddenInputs = updateContributorHiddenInputs;
 }
 
+// Category functionality
+function initializeCategories() {
+    let searchTimeout;
+    let activeDropdown = null;
+
+    // Initialize category autocomplete
+    const categoryInputs = document.querySelectorAll('.category-input');
+    
+    categoryInputs.forEach((input) => {
+        input.addEventListener('input', handleCategoryInput);
+        input.addEventListener('keydown', handleCategoryKeydown);
+        input.addEventListener('blur', handleCategoryBlur);
+    });
+
+    // Update hidden inputs on form submission
+    const form = document.getElementById('book-edit-form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            updateCategoryHiddenInputs();
+        });
+    }
+
+    function handleCategoryInput(event) {
+        const input = event.target;
+        const query = input.value.trim();
+        const dropdown = input.nextElementSibling;
+        
+        clearTimeout(searchTimeout);
+        
+        if (query.length >= 2) {
+            searchTimeout = setTimeout(() => {
+                searchCategories(query, dropdown, input);
+            }, 300);
+        } else {
+            hideCategoryDropdown(dropdown);
+        }
+    }
+
+    function handleCategoryKeydown(event) {
+        const dropdown = event.target.nextElementSibling;
+        const items = dropdown.querySelectorAll('.autocomplete-item');
+        const selected = dropdown.querySelector('.autocomplete-item.selected');
+        
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (selected) {
+                selected.classList.remove('selected');
+                const next = selected.nextElementSibling || items[0];
+                next.classList.add('selected');
+            } else if (items.length > 0) {
+                items[0].classList.add('selected');
+            }
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (selected) {
+                selected.classList.remove('selected');
+                const prev = selected.previousElementSibling || items[items.length - 1];
+                prev.classList.add('selected');
+            }
+        } else if (event.key === 'Enter') {
+            event.preventDefault();
+            if (selected) {
+                selectCategory(selected, event.target);
+            } else {
+                createNewCategory(event.target);
+            }
+        } else if (event.key === 'Escape') {
+            hideCategoryDropdown(dropdown);
+        }
+    }
+
+    function handleCategoryBlur(event) {
+        setTimeout(() => {
+            const dropdown = event.target.nextElementSibling;
+            hideCategoryDropdown(dropdown);
+        }, 200);
+    }
+
+    function searchCategories(query, dropdown, input) {
+        dropdown.innerHTML = `
+            <div class="autocomplete-item">
+                <div class="name text-muted">
+                    <i class="bi bi-hourglass-split"></i> Searching genres...
+                </div>
+            </div>
+        `;
+        dropdown.style.display = 'block';
+        
+        fetch(`/genres/api/search?q=${encodeURIComponent(query)}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(categories => {
+                showCategoryDropdown(dropdown, categories, input);
+            })
+            .catch(error => {
+                console.error('Error searching categories:', error);
+                showCategoryDropdown(dropdown, [], input);
+            });
+    }
+
+    function showCategoryDropdown(dropdown, categories, input) {
+        if (!dropdown) {
+            return;
+        }
+        
+        dropdown.innerHTML = '';
+        
+        // Show existing categories
+        categories.forEach((category, index) => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.innerHTML = `
+                <div class="name">${category.name}</div>
+                ${category.description ? `<div class="bio">${category.description}</div>` : ''}
+            `;
+            item.dataset.id = category.id;
+            item.dataset.name = category.name;
+            item.addEventListener('mousedown', () => selectCategory(item, input));
+            dropdown.appendChild(item);
+        });
+        
+        // Add "Create new" option at the bottom if query exists
+        if (input.value.trim()) {
+            const createItem = document.createElement('div');
+            createItem.className = 'autocomplete-item create-new';
+            createItem.innerHTML = `
+                <div class="name">
+                    <i class="bi bi-plus-circle me-1"></i> 
+                    Add "${input.value.trim()}" as new genre
+                </div>
+            `;
+            createItem.dataset.name = input.value.trim();
+            createItem.dataset.new = 'true';
+            createItem.addEventListener('mousedown', () => selectCategory(createItem, input));
+            dropdown.appendChild(createItem);
+        }
+        
+        dropdown.style.display = 'block';
+        activeDropdown = dropdown;
+    }
+
+    function hideCategoryDropdown(dropdown) {
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+        activeDropdown = null;
+    }
+
+    function selectCategory(item, input) {
+        const section = input.closest('.category-section');
+        const display = section.querySelector('.categories-display');
+        
+        let categoryId = item.dataset.id || '';
+        const categoryName = item.dataset.name;
+        const isNew = item.dataset.new === 'true';
+        
+        // Check if category is already added
+        const existingTags = display.querySelectorAll('.category-tag');
+        for (let tag of existingTags) {
+            if (tag.dataset.name === categoryName) {
+                input.value = '';
+                hideCategoryDropdown(input.nextElementSibling);
+                return; // Category already added
+            }
+        }
+        
+        // Add category tag
+        const tag = document.createElement('div');
+        tag.className = 'category-tag';
+        tag.dataset.id = categoryId;
+        tag.dataset.name = categoryName;
+        tag.dataset.new = isNew ? 'true' : 'false';
+        tag.innerHTML = `
+            ${categoryName}
+            ${isNew ? '<small class="text-muted"> (new)</small>' : ''}
+            <span class="remove" onclick="removeCategory(this)">×</span>
+        `;
+        
+        display.appendChild(tag);
+        
+        // Clear input
+        input.value = '';
+        hideCategoryDropdown(input.nextElementSibling);
+        
+        // Update hidden inputs
+        updateCategoryHiddenInputs();
+    }
+
+    function createNewCategory(input) {
+        const name = input.value.trim();
+        if (!name) return;
+        
+        selectCategory({
+            dataset: { name: name, new: 'true' }
+        }, input);
+    }
+
+    function updateCategoryHiddenInputs() {
+        const hiddenContainer = document.getElementById('categoryInputs');
+        if (!hiddenContainer) {
+            // Create hidden container if it doesn't exist
+            const form = document.getElementById('book-edit-form');
+            if (form) {
+                const container = document.createElement('div');
+                container.id = 'categoryInputs';
+                container.style.display = 'none';
+                form.appendChild(container);
+            }
+            return;
+        }
+        
+        hiddenContainer.innerHTML = '';
+        
+        const tags = document.querySelectorAll('.category-tag');
+        
+        tags.forEach((tag, index) => {
+            const id = tag.dataset.id;
+            const name = tag.dataset.name;
+            const isNew = tag.dataset.new === 'true';
+            
+            const nameInput = document.createElement('input');
+            nameInput.type = 'hidden';
+            nameInput.name = `categories[${index}][name]`;
+            nameInput.value = name;
+            
+            const isNewInput = document.createElement('input');
+            isNewInput.type = 'hidden';
+            isNewInput.name = `categories[${index}][is_new]`;
+            isNewInput.value = isNew ? 'true' : 'false';
+            
+            if (id && !isNew) {
+                const idInput = document.createElement('input');
+                idInput.type = 'hidden';
+                idInput.name = `categories[${index}][id]`;
+                idInput.value = id;
+                hiddenContainer.appendChild(idInput);
+            }
+            
+            hiddenContainer.appendChild(nameInput);
+            hiddenContainer.appendChild(isNewInput);
+        });
+    }
+
+    // Make updateCategoryHiddenInputs available globally
+    window.updateCategoryHiddenInputs = updateCategoryHiddenInputs;
+}
+
+function removeCategory(removeBtn) {
+    const categoryTag = removeBtn.closest('.category-tag');
+    
+    if (categoryTag) {
+        categoryTag.remove();
+        // Update hidden inputs if we're in a form context
+        if (document.getElementById('book-edit-form') && window.updateCategoryHiddenInputs) {
+            window.updateCategoryHiddenInputs();
+        }
+    }
+}
+
 function removeContributor(removeBtn) {
     const contributorTag = removeBtn.closest('.contributor-tag');
     
@@ -3200,6 +3477,117 @@ document.addEventListener('DOMContentLoaded', function() {
 
 .autocomplete-item.create-new:hover {
     background-color: #e7f3ff;
+}
+
+/* Category tag styles - matching contributor layout */
+.category-tag {
+    display: inline-block;
+    background-color: #e7f3ff;
+    border: 1px solid #b3d7ff;
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    margin: 0.125rem;
+    font-size: 0.875rem;
+    position: relative;
+    transition: all 0.15s ease-in-out;
+    color: #0066cc;
+}
+
+.category-tag:hover {
+    background-color: #d1ecff;
+    border-color: #80c7ff;
+}
+
+.category-tag .remove {
+    margin-left: 0.5rem;
+    color: #dc3545;
+    cursor: pointer;
+    font-weight: bold;
+    transition: color 0.15s ease;
+}
+
+.category-tag .remove:hover {
+    color: #b02a37;
+}
+
+.categories-display {
+    min-height: 2rem;
+    padding: 0.25rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    background-color: #f8f9fa;
+}
+
+.category-section {
+    margin-bottom: 1rem;
+}
+
+.category-autocomplete {
+    position: relative;
+}
+
+/* Category display tags for view mode */
+.category-tag-display {
+    display: inline-block;
+    background-color: #e7f3ff;
+    border: 1px solid #b3d7ff;
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    margin: 0.125rem;
+    font-size: 0.875rem;
+    transition: all 0.15s ease-in-out;
+    color: #0066cc;
+}
+
+.category-tag-display:hover {
+    background-color: #d1ecff;
+    border-color: #80c7ff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.category-tag-display a {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+.category-tag-display a:hover {
+    color: #004d99;
+}
+
+/* Dark theme support for categories */
+[data-theme="dark"] .category-tag {
+    background-color: #2c3e50;
+    border-color: #34495e;
+    color: #85c1e9;
+}
+
+[data-theme="dark"] .category-tag:hover {
+    background-color: #34495e;
+}
+
+[data-theme="dark"] .categories-display {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+[data-theme="dark"] .category-tag-display {
+    background-color: #2c3e50;
+    border-color: #34495e;
+    color: #85c1e9;
+}
+
+[data-theme="dark"] .category-tag-display:hover {
+    background-color: #34495e;
+    border-color: #4a6741;
+}
+
+[data-theme="dark"] .category-tag-display a {
+    color: #85c1e9;
+}
+
+[data-theme="dark"] .category-tag-display a:hover {
+    color: #aed6f1;
 }
 
 .contributor-tag {

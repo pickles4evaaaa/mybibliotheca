@@ -63,8 +63,6 @@ def index():
         if all_categories is None:
             all_categories = []
         
-        debug_log(f"📊 [GENRES] Found {len(all_categories)} total categories", "GENRE_VIEW")
-        
         # Convert dictionaries to objects for template compatibility
         processed_categories = []
         
@@ -84,11 +82,7 @@ def index():
                     self.children = []
         
         for cat in all_categories:
-            if isinstance(cat, dict):
-                # Debug: Check what keys are in the dictionary
-                debug_log(f"📊 [GENRES] Category dict keys: {list(cat.keys())}", "GENRE_VIEW")
-                debug_log(f"📊 [GENRES] Category data: {cat}", "GENRE_VIEW")
-                
+            if isinstance(cat, dict):                
                 cat_obj = CategoryObj(cat)
                 processed_categories.append(cat_obj)
             else:
@@ -595,3 +589,47 @@ def api_search_categories():
     except Exception as e:
         current_app.logger.error(f"Error in API search: {e}")
         return jsonify([])
+
+
+@genres_bp.route('/api/create', methods=['POST'])
+@login_required
+def api_create_category():
+    """API endpoint for creating a new category."""
+    try:
+        data = request.get_json()
+        if not data or not data.get('name'):
+            return jsonify({'error': 'Category name is required'}), 400
+        
+        # Check if category already exists
+        existing = book_service.search_categories_sync(data['name'], limit=1, user_id=str(current_user.id))
+        if existing and len(existing) > 0:
+            # Return the existing category
+            category = existing[0]
+            return jsonify({
+                'id': get_attr(category, 'id', ''),
+                'name': get_attr(category, 'name', ''),
+                'description': get_attr(category, 'description', ''),
+                'book_count': get_attr(category, 'book_count', 0)
+            })
+        
+        # Create new category
+        category_data = {
+            'name': data['name'].strip(),
+            'description': data.get('description', '').strip() or None,
+            'parent_id': data.get('parent_id') or None
+        }
+        
+        new_category = book_service.create_category_sync(category_data)
+        if new_category:
+            return jsonify({
+                'id': get_attr(new_category, 'id', ''),
+                'name': get_attr(new_category, 'name', ''),
+                'description': get_attr(new_category, 'description', ''),
+                'book_count': 0
+            })
+        else:
+            return jsonify({'error': 'Failed to create category'}), 500
+            
+    except Exception as e:
+        current_app.logger.error(f"Error creating category via API: {e}")
+        return jsonify({'error': 'Internal server error'}), 500

@@ -69,6 +69,40 @@
     margin-left: 5px;
 }
 
+/* Category tag styles - matching contributor layout */
+.category-tag {
+    display: inline-block;
+    background-color: #e7f3ff;
+    border: 1px solid #b3d7ff;
+    border-radius: 16px;
+    padding: 4px 12px;
+    margin: 2px;
+    font-size: 0.875em;
+    color: #0066cc;
+}
+
+.category-tag .remove {
+    color: #dc3545;
+    cursor: pointer;
+    margin-left: 5px;
+}
+
+.categories-display {
+    min-height: 2rem;
+    padding: 0.25rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    background-color: #f8f9fa;
+}
+
+.category-section {
+    margin-bottom: 1rem;
+}
+
+.category-autocomplete {
+    position: relative;
+}
+
 /* Category/Genre styles */
 .category-autocomplete {
     position: relative;
@@ -609,7 +643,10 @@
                         <div id="collapseGenres" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
                             <div class="accordion-body">
                                 <div class="mb-3">
-                                    <div class="categories-section">
+                                    <label class="form-label fw-medium">
+                                        <i class="bi bi-tag-fill me-1"></i> Genres & Categories
+                                    </label>
+                                    <div class="category-section" data-type="category">
                                         <div class="categories-display mb-2">
                                             {% if book_categories %}
                                                 {% for category in book_categories %}
@@ -622,8 +659,8 @@
                                         </div>
                                         <div class="category-autocomplete">
                                             <input type="text" class="form-control category-input" 
-                                                   placeholder="Start typing genre or category name...">
-                                            <div class="autocomplete-dropdown-categories"></div>
+                                                   placeholder="Start typing genre or category name..." data-type="category">
+                                            <div class="autocomplete-dropdown"></div>
                                         </div>
                                         <div class="form-text">
                                             <small class="text-muted">
@@ -852,7 +889,7 @@ let activeDropdown = null;
 // Initialize contributor autocomplete
 document.addEventListener('DOMContentLoaded', function() {
     const contributorInputs = document.querySelectorAll('.contributor-input');
-    const categoryInput = document.querySelector('.category-input');
+    const categoryInputs = document.querySelectorAll('.category-input');
     
     contributorInputs.forEach((input, index) => {
         input.addEventListener('input', handleInput);
@@ -860,12 +897,12 @@ document.addEventListener('DOMContentLoaded', function() {
         input.addEventListener('blur', handleBlur);
     });
     
-    // Initialize category autocomplete
-    if (categoryInput) {
-        categoryInput.addEventListener('input', handleCategoryInput);
-        categoryInput.addEventListener('keydown', handleCategoryKeydown);
-        categoryInput.addEventListener('blur', handleCategoryBlur);
-    }
+    // Initialize category autocomplete with new tag-based system
+    categoryInputs.forEach((input, index) => {
+        input.addEventListener('input', handleCategoryInput);
+        input.addEventListener('keydown', handleCategoryKeydown);
+        input.addEventListener('blur', handleCategoryBlur);
+    });
     
     // Update hidden inputs on form submission
     const form = document.getElementById('editBookForm');
@@ -1299,7 +1336,8 @@ function hideCategoryDropdown(dropdown) {
 
 function selectCategory(item) {
     const input = item.closest('.category-autocomplete').querySelector('.category-input');
-    const display = document.querySelector('.categories-display');
+    const section = input.closest('.category-section');
+    const display = section.querySelector('.categories-display');
     
     let categoryId = item.dataset.id || '';
     const categoryName = item.dataset.name;
@@ -1310,7 +1348,7 @@ function selectCategory(item) {
     for (let tag of existingTags) {
         if (tag.dataset.name === categoryName) {
             input.value = '';
-            hideCategoryDropdown(item.closest('.autocomplete-dropdown-categories'));
+            hideCategoryDropdown(input.nextElementSibling);
             return;
         }
     }
@@ -1331,7 +1369,7 @@ function selectCategory(item) {
     
     // Clear input
     input.value = '';
-    hideCategoryDropdown(item.closest('.autocomplete-dropdown-categories'));
+    hideCategoryDropdown(input.nextElementSibling);
     
     // Update hidden inputs
     updateCategoryInputs();

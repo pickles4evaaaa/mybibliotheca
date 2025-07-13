@@ -1,0 +1,73 @@
+<!-- Macros for displaying book categories -->
+
+{% macro display_categories(book, compact=false, show_icon=true, style_class="", max_display=5, book_categories=None) %}
+  {% set categories = book_categories if book_categories else (book.categories if book.categories else []) %}
+  
+  {% if categories %}
+    {% if compact %}
+      <!-- Compact display for library cards -->
+      <div class="category-tags d-inline-flex flex-wrap gap-1">
+        {% for category in categories[:max_display] %}
+          <span class="category-tag-compact">
+            {% if show_icon %}<i class="bi bi-tag-fill me-1"></i>{% endif %}
+            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+              <span class="{{ style_class or 'text-secondary' }}">{{ category.name }}</span>
+            </a>
+          </span>
+        {% endfor %}
+        {% if categories|length > max_display %}
+          <small class="text-muted"> +{{ categories|length - max_display }} more</small>
+        {% endif %}
+      </div>
+    {% else %}
+      <!-- Full display for book details -->
+      <div class="category-tags d-inline-flex flex-wrap gap-1">
+        {% for category in categories %}
+          <span class="category-tag-display">
+            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
+               class="text-decoration-none d-flex align-items-center">
+              {% if show_icon %}<i class="bi bi-tag-fill me-1"></i>{% endif %}
+              {{ category.name }}
+            </a>
+          </span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+
+{% macro display_category_badges(book, show_icon=true) %}
+  {% set categories = book_categories if book_categories is defined else book.categories %}
+  
+  {% if categories %}
+    <div class="d-flex flex-wrap gap-1">
+      {% for category in categories %}
+        <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+          <span class="badge bg-secondary">
+            {% if show_icon %}<i class="bi bi-tag-fill me-1"></i>{% endif %}
+            {{ category.name }}
+          </span>
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro display_categories_for_library(book, max_display=3) %}
+  {% set categories = book.categories if book.categories else [] %}
+  
+  {% if categories %}
+    <div class="category-tags d-inline-flex flex-wrap gap-1">
+      {% for category in categories[:max_display] %}
+        <span class="category-tag-compact">
+          <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+            <small class="text-muted">{{ category.name }}</small>
+          </a>
+        </span>
+      {% endfor %}
+      {% if categories|length > max_display %}
+        <small class="text-muted"> +{{ categories|length - max_display }} more</small>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endmacro %}

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from 'macros/contributors.html' import display_all_contributors %}
+{% from 'macros/categories.html' import display_categories_for_library %}
 
 {% block title %}My Library - MyBibliotheca{% endblock %}
 {% block content %}
@@ -568,6 +569,9 @@
                                     
                                     <!-- Contributors (compact display) -->
                                     {{ display_all_contributors(book, compact=true) }}
+
+                                    <!-- Categories (compact display) -->
+                                    {{ display_categories_for_library(book, max_display=2) }}
 
                                     <!-- Reading Status Badge -->
                                     <div class="mb-2">

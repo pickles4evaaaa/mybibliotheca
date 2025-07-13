@@ -1023,10 +1023,31 @@ def edit_book(uid):
                         category_data[index_part] = {}
                     category_data[index_part][field] = value
         
-        # Create category list for processing
+        # Create category list for processing - handle new category creation
         for cat_data in category_data.values():
             if cat_data.get('name'):
-                categories.append(cat_data['name'])  # Just pass the name, service will handle creation/linking
+                category_name = cat_data['name'].strip()
+                is_new = cat_data.get('is_new', 'false').lower() == 'true'
+                
+                # If it's a new category, try to create it first
+                if is_new:
+                    try:
+                        # Use the same service that handles category creation
+                        new_category_data = {
+                            'name': category_name,
+                            'description': '',  # Default empty description
+                            'parent_id': None   # Default to root level
+                        }
+                        created_category = book_service.create_category_sync(new_category_data)
+                        if created_category:
+                            current_app.logger.info(f"Created new category: {category_name}")
+                        else:
+                            current_app.logger.warning(f"Failed to create new category: {category_name}")
+                    except Exception as e:
+                        current_app.logger.error(f"Error creating category {category_name}: {e}")
+                        # Continue anyway - the raw_categories processing might still handle it
+                
+                categories.append(category_name)  # Add to list for raw_categories processing
         
         # Create BookContribution objects
         for contrib in contributor_data.values():
@@ -1155,7 +1176,7 @@ def edit_book(uid):
             'series_volume': request.form.get('series_volume', '').strip() or None,
             'series_order': int(series_order_str) if (series_order_str := request.form.get('series_order', '').strip()) else None,
             'contributors': contributors,
-            'raw_categories': ','.join(categories) if categories else None,
+            'raw_categories': categories if categories else None,
             # Additional metadata fields - these are Book properties, not user-specific
             'publisher': request.form.get('publisher', '').strip() or None,
             'asin': request.form.get('asin', '').strip() or None,

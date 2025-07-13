@@ -71,8 +71,6 @@ class KuzuServiceFacade:
     
     def update_book_sync(self, book_id: str, user_id: str, **kwargs) -> Optional[Book]:
         """Update a book with filtering for relationship-specific updates."""
-        print(f"🔄 [FACADE] update_book_sync called with book_id={book_id}, user_id={user_id}")
-        print(f"🔄 [FACADE] kwargs: {kwargs}")
         
         # Separate different types of updates based on correct architecture:
         # 1. Book metadata (global) - goes to Book table
@@ -92,9 +90,12 @@ class KuzuServiceFacade:
         # Contributor fields (handled separately)
         contributor_fields = {'contributors'}
         
+        # Category fields (handled separately)
+        category_fields = {'raw_categories', 'categories'}
+        
         # Split the updates
         book_updates = {k: v for k, v in kwargs.items() 
-                       if k not in owns_relationship_fields and k not in custom_metadata_fields and k not in location_fields and k not in contributor_fields}
+                       if k not in owns_relationship_fields and k not in custom_metadata_fields and k not in location_fields and k not in contributor_fields and k not in category_fields}
         owns_updates = {k: v for k, v in kwargs.items() 
                        if k in owns_relationship_fields}
         custom_metadata_updates = {k: v for k, v in kwargs.items() 
@@ -103,14 +104,8 @@ class KuzuServiceFacade:
                            if k in location_fields}
         contributor_updates = {k: v for k, v in kwargs.items() 
                              if k in contributor_fields}
-        
-        print(f"🔄 [FACADE] Book updates: {book_updates}")
-        print(f"🔄 [FACADE] OWNS relationship updates: {owns_updates}")
-        print(f"🔄 [FACADE] Custom metadata updates: {custom_metadata_updates}")
-        if location_updates:
-            print(f"🔄 [FACADE] Location updates: {location_updates}")
-        if contributor_updates:
-            print(f"🔄 [FACADE] Contributor updates: {contributor_updates}")
+        category_updates = {k: v for k, v in kwargs.items() 
+                          if k in category_fields}
         
         # Update book metadata (global fields)
         updated_book = None
@@ -166,10 +161,21 @@ class KuzuServiceFacade:
             except Exception as e:
                 print(f"Error updating contributors for book {book_id}: {e}")
         
+        # Update categories if present
+        if category_updates and 'raw_categories' in category_updates:
+            try:
+                success = run_async(self._update_categories_async(book_id, category_updates['raw_categories']))
+                if success:
+                    pass  # Success logged elsewhere
+                else:
+                    print(f"Failed to update categories for book {book_id}")
+            except Exception as e:
+                print(f"Error updating categories for book {book_id}: {e}")
+        
         # Return the updated book or fetch it fresh if only metadata was updated
         if updated_book:
             return updated_book
-        elif owns_updates or custom_metadata_updates or location_updates or contributor_updates:
+        elif owns_updates or custom_metadata_updates or location_updates or contributor_updates or category_updates:
             return self.get_book_by_uid_sync(book_id, user_id)
         else:
             return self.get_book_by_id_sync(book_id)
@@ -177,8 +183,6 @@ class KuzuServiceFacade:
     def delete_book_sync(self, book_id: str, user_id: str) -> bool:
         """Delete a book from user's library."""
         try:
-            print(f"🗑️ [FACADE] Deleting book {book_id} for user {user_id}")
-            
             # Remove from user's library first
             success = self.relationship_service.remove_book_from_user_library_sync(user_id, book_id)
             
@@ -208,12 +212,9 @@ class KuzuServiceFacade:
                 
                 if owner_count == 0:
                     # No other users own this book, safe to delete the book node entirely
-                    print(f"🗑️ [FACADE] No other owners, deleting book node {book_id}")
                     book_delete_success = self.book_service.delete_book_sync(book_id)
                     if book_delete_success:
-                        print(f"✅ [FACADE] Successfully deleted book node {book_id}")
                         # Clean up any orphaned OWNS relationships that might reference this book
-                        print(f"🧹 [FACADE] Cleaning up orphaned relationships for book {book_id}")
                         cleanup_query = """
                         MATCH ()-[owns:OWNS]->(:Book {id: $book_id})
                         DELETE owns
@@ -221,11 +222,9 @@ class KuzuServiceFacade:
                         try:
                             self.graph_storage.query(cleanup_query, {"book_id": book_id})
                         except Exception as cleanup_error:
-                            print(f"⚠️ [FACADE] Cleanup warning: {cleanup_error}")
-                    else:
-                        print(f"❌ [FACADE] Failed to delete book node {book_id}")
+                            pass  # Cleanup errors are not critical
                 else:
-                    print(f"📚 [FACADE] Other users still own book {book_id}, keeping book node")
+                    pass  # Other users still own this book, keeping book node
                 
             
             return success
@@ -535,20 +534,37 @@ class KuzuServiceFacade:
     async def _update_contributors_async(self, book_id: str, contributors: List[Any]) -> bool:
         """Update contributor relationships for a book."""
         try:
-            print(f"🔄 [FACADE] Updating contributors for book {book_id}")
-            
             # First, remove all existing contributor relationships for this book
             delete_query = """
             MATCH (p:Person)-[r:AUTHORED]->(b:Book {id: $book_id})
             DELETE r
             """
-            self.book_repo.db.query(delete_query, {"book_id": book_id})
-            print(f"🧹 [FACADE] Removed existing contributor relationships for book {book_id}")
+            result = self.book_repo.db.query(delete_query, {"book_id": book_id})
             
             # Then add the new contributor relationships
             if contributors:
                 for i, contribution in enumerate(contributors):
                     await self.book_repo._create_contributor_relationship(book_id, contribution, i)
+            
+            return True
+            
+        except Exception as e:
+            traceback.print_exc()
+            return False
+
+    async def _update_categories_async(self, book_id: str, raw_categories: Any) -> bool:
+        """Update category relationships for a book."""
+        try:
+            # First, remove all existing category relationships for this book
+            delete_query = """
+            MATCH (b:Book {id: $book_id})-[r:CATEGORIZED_AS]->(c:Category)
+            DELETE r
+            """
+            result = self.book_repo.db.query(delete_query, {"book_id": book_id})
+            
+            # Then add the new category relationships using the existing method
+            if raw_categories:
+                await self.book_repo._create_category_relationships_from_raw(book_id, raw_categories)
             
             return True
             
