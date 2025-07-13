@@ -740,11 +740,11 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5', False),
                     'created_at': result.get('col_6')
                 }
-                # Set usage_count to 0 for now since we're not calculating it
-                usage_count = 0
+                # Calculate actual usage count for this field
+                usage_count = self._calculate_field_usage_count(field_data['name'], field_data['is_global'])
                 
                 if field_data.get('id'):
-                    print(f"📝 [CUSTOM_FIELDS] Processing field: {field_data}")
+                    print(f"📝 [CUSTOM_FIELDS] Processing field: {field_data} (usage: {usage_count})")
                     fields.append({
                         'id': field_data['id'],
                         'name': field_data['name'],
@@ -806,8 +806,8 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5', False),
                     'created_at': result.get('col_6')
                 }
-                # Set usage_count to 0 for now since we're not calculating it
-                usage_count = 0
+                # Calculate actual usage count for this field
+                usage_count = self._calculate_field_usage_count(field_data['name'], field_data['is_global'])
                 
                 if field_data.get('id'):
                     fields.append({
@@ -1216,4 +1216,111 @@ class KuzuCustomFieldService:
         except Exception as e:
             print(f"❌ [CLEANUP] Error cleaning up old nodes: {e}")
             return False
+    
+    def _calculate_field_usage_count(self, field_name: str, is_global: bool) -> int:
+        """Calculate how many times a custom field is actually used in the database."""
+        try:
+            usage_count = 0
+            
+            if is_global:
+                # First, let's debug what's actually in the HAS_GLOBAL_METADATA relationship
+                debug_global_query = """
+                MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                RETURN b.id, r.global_custom_fields, gm.book_id
+                LIMIT 5
+                """
+                debug_results = self.graph_storage.query(debug_global_query)
+                print(f"🔍 [USAGE_COUNT] DEBUG: Sample HAS_GLOBAL_METADATA records:")
+                for i, result in enumerate(debug_results):
+                    print(f"  {i}: book_id={result.get('col_0')}, global_custom_fields={result.get('col_1')}, gm_book_id={result.get('col_2')}")
+                
+                # Count global metadata usage by retrieving all JSON data and parsing it
+                global_query = """
+                MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                RETURN b.id, r.global_custom_fields, gm.book_id
+                """
+                global_results = self.graph_storage.query(global_query)
+                
+                print(f"🔍 [USAGE_COUNT] Checking global field '{field_name}', found {len(global_results)} global metadata records")
+                
+                for i, result in enumerate(global_results):
+                    # Use col_1 since we're now returning b.id, r.global_custom_fields, gm.book_id
+                    metadata_json = result.get('col_1')
+                    print(f"🔍 [USAGE_COUNT] Result {i}: metadata_json = {metadata_json}")
+                    
+                    if metadata_json:
+                        try:
+                            if isinstance(metadata_json, str):
+                                metadata = json.loads(metadata_json)
+                            elif isinstance(metadata_json, dict):
+                                metadata = metadata_json
+                            else:
+                                print(f"🔍 [USAGE_COUNT] Skipping result {i}: unknown type {type(metadata_json)}")
+                                continue
+                                
+                            print(f"🔍 [USAGE_COUNT] Result {i} parsed metadata: {metadata}")
+                            
+                            # Check if this field name exists and has a non-empty value
+                            if field_name in metadata and metadata[field_name] is not None and str(metadata[field_name]).strip():
+                                usage_count += 1
+                                print(f"✅ [USAGE_COUNT] Found usage for '{field_name}': {metadata[field_name]}")
+                            else:
+                                print(f"❌ [USAGE_COUNT] No usage for '{field_name}' in metadata: {metadata}")
+                        except (json.JSONDecodeError, TypeError) as e:
+                            print(f"❌ [USAGE_COUNT] Error parsing metadata for result {i}: {e}")
+                            continue
+            else:
+                # First, let's debug what's actually in the HAS_PERSONAL_METADATA relationship
+                debug_personal_query = """
+                MATCH (u:User)-[r:HAS_PERSONAL_METADATA]->(b:Book)
+                RETURN u.id, b.id, r.personal_custom_fields
+                LIMIT 5
+                """
+                debug_results = self.graph_storage.query(debug_personal_query)
+                print(f"🔍 [USAGE_COUNT] DEBUG: Sample HAS_PERSONAL_METADATA records:")
+                for i, result in enumerate(debug_results):
+                    print(f"  {i}: user_id={result.get('col_0')}, book_id={result.get('col_1')}, personal_custom_fields={result.get('col_2')}")
+                
+                # Count personal metadata usage by retrieving all JSON data and parsing it
+                personal_query = """
+                MATCH (u:User)-[r:HAS_PERSONAL_METADATA]->(b:Book)
+                RETURN u.id, b.id, r.personal_custom_fields
+                """
+                personal_results = self.graph_storage.query(personal_query)
+                
+                print(f"🔍 [USAGE_COUNT] Checking personal field '{field_name}', found {len(personal_results)} personal metadata records")
+                
+                for i, result in enumerate(personal_results):
+                    # Use col_2 since we're now returning u.id, b.id, r.personal_custom_fields
+                    metadata_json = result.get('col_2')
+                    print(f"🔍 [USAGE_COUNT] Personal result {i}: metadata_json = {metadata_json}")
+                    
+                    if metadata_json:
+                        try:
+                            if isinstance(metadata_json, str):
+                                metadata = json.loads(metadata_json)
+                            elif isinstance(metadata_json, dict):
+                                metadata = metadata_json
+                            else:
+                                print(f"🔍 [USAGE_COUNT] Skipping personal result {i}: unknown type {type(metadata_json)}")
+                                continue
+                                
+                            print(f"🔍 [USAGE_COUNT] Personal result {i} parsed metadata: {metadata}")
+                            
+                            # Check if this field name exists and has a non-empty value
+                            if field_name in metadata and metadata[field_name] is not None and str(metadata[field_name]).strip():
+                                usage_count += 1
+                                print(f"✅ [USAGE_COUNT] Found personal usage for '{field_name}': {metadata[field_name]}")
+                            else:
+                                print(f"❌ [USAGE_COUNT] No personal usage for '{field_name}' in metadata: {metadata}")
+                        except (json.JSONDecodeError, TypeError) as e:
+                            print(f"❌ [USAGE_COUNT] Error parsing personal metadata for result {i}: {e}")
+                            continue
+            
+            print(f"📊 [CUSTOM_FIELDS] Field '{field_name}' ({'global' if is_global else 'personal'}) usage count: {usage_count}")
+            return usage_count
+            
+        except Exception as e:
+            print(f"❌ [CUSTOM_FIELDS] Error calculating usage count for field '{field_name}': {e}")
+            return 0
 
