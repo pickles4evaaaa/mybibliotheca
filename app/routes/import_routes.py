@@ -25,6 +25,7 @@ logger.setLevel(logging.DEBUG)
 from app.services import book_service, import_mapping_service, custom_field_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import CustomFieldDefinition, CustomFieldType
+from app.utils import normalize_goodreads_value
 
 # Global dictionary to store import jobs (shared with routes.py for now)
 import_jobs = {}
@@ -207,12 +208,13 @@ def auto_detect_fields(headers, user_id):
         
         # Goodreads-specific fields (mapped to custom fields)
         'average rating': 'custom_global_average_rating',
-        'binding': 'custom_global_binding',
+        'binding': 'custom_global_binding_type',
         'original publication year': 'custom_global_original_publication_year',
-        'spoiler': 'custom_global_spoiler',
+        'spoiler': 'custom_personal_spoiler_flag',
         'private notes': 'custom_global_private_notes',
-        'read count': 'custom_global_read_count',
+        'read count': 'custom_personal_read_count',
         'owned copies': 'custom_personal_owned_copies',
+        'bookshelves with positions': 'custom_global_shelf_positions',
     }
     
     # Match headers (case insensitive)
@@ -234,25 +236,25 @@ def auto_create_custom_fields(field_mappings, user_id):
     FIELD_CONFIGS = {
         'goodreads_book_id': {'display_name': 'Goodreads Book ID', 'type': CustomFieldType.TEXT, 'global': True},
         'average_rating': {'display_name': 'Average Rating', 'type': CustomFieldType.NUMBER, 'global': True},
-        'binding': {'display_name': 'Binding Type', 'type': CustomFieldType.TEXT, 'global': True},
+        'binding_type': {'display_name': 'Binding Type', 'type': CustomFieldType.TEXT, 'global': True},
         'original_publication_year': {'display_name': 'Original Publication Year', 'type': CustomFieldType.NUMBER, 'global': True},
         'bookshelves': {'display_name': 'Bookshelves', 'type': CustomFieldType.TAGS, 'global': True},
-        'bookshelves_with_positions': {'display_name': 'Bookshelves with Positions', 'type': CustomFieldType.TEXTAREA, 'global': True},
-        'spoiler': {'display_name': 'Spoiler Review', 'type': CustomFieldType.BOOLEAN, 'global': True},
+        'shelf_positions': {'display_name': 'Bookshelves with Positions', 'type': CustomFieldType.TEXTAREA, 'global': True},
+        'spoiler_flag': {'display_name': 'Spoiler Review', 'type': CustomFieldType.BOOLEAN, 'global': False},
         'private_notes': {'display_name': 'Private Notes', 'type': CustomFieldType.TEXTAREA, 'global': False},
-        'read_count': {'display_name': 'Number of Times Read', 'type': CustomFieldType.NUMBER, 'global': True},
+        'read_count': {'display_name': 'Number of Times Read', 'type': CustomFieldType.NUMBER, 'global': False},
         'owned_copies': {'display_name': 'Number of Owned Copies', 'type': CustomFieldType.NUMBER, 'global': False},
         'format': {'display_name': 'Book Format', 'type': CustomFieldType.TEXT, 'global': True},
         'moods': {'display_name': 'Moods', 'type': CustomFieldType.TAGS, 'global': True},
         'pace': {'display_name': 'Reading Pace', 'type': CustomFieldType.TEXT, 'global': True},
         'character_plot_driven': {'display_name': 'Character vs Plot Driven', 'type': CustomFieldType.TEXT, 'global': True},
-        'content_warnings': {'display_name': 'Content Warnings', 'type': CustomFieldType.TAGS, 'global': True},
-        'diverse_characters': {'display_name': 'Diverse Characters', 'type': CustomFieldType.BOOLEAN, 'global': True},
-        'flawed_characters': {'display_name': 'Flawed Characters', 'type': CustomFieldType.BOOLEAN, 'global': True},
+        'content_warnings': {'display_name': 'Content Warnings', 'type': CustomFieldType.TAGS, 'global': False},
+        'character_development': {'display_name': 'Strong Character Development', 'type': CustomFieldType.BOOLEAN, 'global': False},
+        'loveable_characters': {'display_name': 'Loveable Characters', 'type': CustomFieldType.BOOLEAN, 'global': False},
+        'diverse_characters': {'display_name': 'Diverse Characters', 'type': CustomFieldType.BOOLEAN, 'global': False},
+        'flawed_characters': {'display_name': 'Flawed Characters', 'type': CustomFieldType.BOOLEAN, 'global': False},
         # StoryGraph-specific fields
         'tags': {'display_name': 'Tags', 'type': CustomFieldType.TAGS, 'global': True},
-        'character_development': {'display_name': 'Strong Character Development', 'type': CustomFieldType.BOOLEAN, 'global': True},
-        'loveable_characters': {'display_name': 'Loveable Characters', 'type': CustomFieldType.BOOLEAN, 'global': True},
     }
     
     # Get existing custom fields to avoid duplicates
@@ -360,8 +362,9 @@ def auto_create_custom_fields(field_mappings, user_id):
                     print(f"❌ Error creating generic custom field {field_name}: {e}")
 
 def get_goodreads_field_mappings():
-    """Get predefined field mappings for Goodreads CSV format - simplified version."""
-    return {
+    """Get predefined field mappings for Goodreads CSV format with custom field support."""
+    # Base mappings
+    base_mappings = {
         'Title': 'title',
         'Author': 'author', 
         'Additional Authors': 'additional_authors',
@@ -370,7 +373,6 @@ def get_goodreads_field_mappings():
         'My Rating': 'user_rating',
         'Average Rating': 'average_rating',
         'Publisher': 'publisher',
-        'Binding': 'binding',
         'Number of Pages': 'page_count',
         'Year Published': 'publication_year',
         'Original Publication Year': 'original_publication_year',
@@ -379,15 +381,28 @@ def get_goodreads_field_mappings():
         'Bookshelves': 'categories',
         'Exclusive Shelf': 'reading_status',
         'My Review': 'personal_notes',
-        'Spoiler': 'spoiler_flag',
         'Private Notes': 'private_notes',
-        'Read Count': 'read_count',
-        'Owned Copies': 'owned_copies',
     }
+    
+    # Enhanced mappings with custom field support
+    enhanced_mappings = {**base_mappings}
+    enhanced_mappings.update({
+        # Global custom fields (shared across users)
+        'Binding': 'custom_global_binding_type',
+        'Bookshelves with positions': 'custom_global_shelf_positions',
+        
+        # Personal custom fields (per-user)
+        'Spoiler': 'custom_personal_spoiler_flag', 
+        'Read Count': 'custom_personal_read_count',
+        'Owned Copies': 'custom_personal_owned_copies',
+    })
+    
+    return enhanced_mappings
 
 def get_storygraph_field_mappings():
-    """Get predefined field mappings for StoryGraph CSV format - simplified version."""
-    return {
+    """Get predefined field mappings for StoryGraph CSV format with custom field support."""
+    # Base mappings
+    base_mappings = {
         'Title': 'title',
         'Author': 'author',
         'ISBN': 'isbn',
@@ -402,16 +417,26 @@ def get_storygraph_field_mappings():
         'Star Rating': 'user_rating',
         'Review': 'personal_notes',
         'Tags': 'categories',
-        'Moods': 'moods',
-        'Pace': 'pace',
-        'Character- or Plot-Driven?': 'character_plot_driven',
-        'Strong Character Development?': 'character_development',
-        'Loveable Characters?': 'loveable_characters',
-        'Diverse Characters?': 'diverse_characters',
-        'Flawed Characters?': 'flawed_characters',
-        'Content Warnings': 'content_warnings',
         'Format': 'format',
     }
+    
+    # Enhanced mappings with custom field support
+    enhanced_mappings = {**base_mappings}
+    enhanced_mappings.update({
+        # Global custom fields (shared across users)
+        'Moods': 'custom_global_moods',
+        'Pace': 'custom_global_pace', 
+        'Character- or Plot-Driven?': 'custom_global_character_plot_driven',
+        
+        # Personal custom fields (per-user)
+        'Strong Character Development?': 'custom_personal_character_development',
+        'Loveable Characters?': 'custom_personal_loveable_characters',
+        'Diverse Characters?': 'custom_personal_diverse_characters',
+        'Flawed Characters?': 'custom_personal_flawed_characters',
+        'Content Warnings': 'custom_personal_content_warnings',
+    })
+    
+    return enhanced_mappings
 
 @import_bp.route('/import-books', methods=['GET', 'POST'])
 @login_required
@@ -975,7 +1000,17 @@ def import_books_progress(task_id):
         flash('Import job not found.', 'error')
         return redirect(url_for('import.import_books'))
     
-    return render_template('import_progress.html', job=job, task_id=task_id)
+    # Get total books count from job data or default to 0
+    total_books = job.get('total_books', 0)
+    
+    # Parse start time or use current time
+    start_time = job.get('created_at', datetime.now().isoformat())
+    
+    return render_template('import_books_progress.html', 
+                         job=job, 
+                         task_id=task_id,
+                         total_books=total_books,
+                         start_time=start_time)
 
 @import_bp.route('/api/import/progress/<task_id>')
 @login_required
@@ -1488,7 +1523,17 @@ def simple_import():
         def run_simple_import():
             try:
                 print(f"🚀 [SIMPLE_IMPORT] Starting background thread for job {task_id}")
-                asyncio.run(process_simple_import(import_config))
+                print(f"🔧 [SIMPLE_IMPORT] Import config: {import_config}")
+                
+                # Call the async import function with an event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(process_simple_import(import_config))
+                    print(f"✅ [SIMPLE_IMPORT] Background processing completed successfully for {task_id}")
+                finally:
+                    loop.close()
+                    
             except Exception as e:
                 print(f"❌ [SIMPLE_IMPORT] Error in background thread: {e}")
                 traceback.print_exc()
@@ -1538,13 +1583,19 @@ async def process_simple_import(import_config):
     try:
         # STEP 1: Pre-analyze and create custom fields BEFORE processing any books
         print(f"🔍 [PROCESS_SIMPLE] Pre-analyzing custom fields...")
-        custom_fields_success, created_custom_fields = await pre_analyze_and_create_custom_fields(
-            csv_file_path, mappings, user_id
-        )
-        
-        if not custom_fields_success:
-            print(f"❌ [PROCESS_SIMPLE] Custom field pre-analysis failed")
-            return False
+        try:
+            custom_fields_success, created_custom_fields = await pre_analyze_and_create_custom_fields(
+                csv_file_path, mappings, user_id
+            )
+            
+            if not custom_fields_success:
+                print(f"⚠️ [PROCESS_SIMPLE] Custom field pre-analysis failed, continuing anyway...")
+                created_custom_fields = {}
+            else:
+                print(f"✅ [PROCESS_SIMPLE] Pre-created {len(created_custom_fields)} custom fields")
+        except Exception as e:
+            print(f"⚠️ [PROCESS_SIMPLE] Custom field pre-analysis error: {e}, continuing anyway...")
+            created_custom_fields = {}
             
         print(f"✅ [PROCESS_SIMPLE] Pre-created {len(created_custom_fields)} custom fields")
         
@@ -1618,18 +1669,21 @@ async def process_simple_import(import_config):
                         error_count += 1
                         print(f"❌ [PROCESS_SIMPLE] Failed to add: {simplified_book.title}")
                     
-                    # Update progress every 10 books
-                    if processed_count % 10 == 0:
-                        progress_update = {
-                            'processed': processed_count,
-                            'success': success_count,
-                            'errors': error_count,
-                            'skipped': skipped_count,
-                            'current_book': simplified_book.title
-                        }
+                    # Update progress after each book for real-time feedback
+                    progress_update = {
+                        'processed': processed_count,
+                        'success': success_count,
+                        'errors': error_count,
+                        'skipped': skipped_count,
+                        'current_book': simplified_book.title
+                    }
+                    # Update in memory for fast API access
+                    if task_id in import_jobs:
+                        import_jobs[task_id].update(progress_update)
+                    
+                    # Update in Kuzu less frequently to avoid performance issues
+                    if processed_count % 5 == 0:
                         update_job_in_kuzu(task_id, progress_update)
-                        if task_id in import_jobs:
-                            import_jobs[task_id].update(progress_update)
                     
                     # Small delay to prevent overwhelming the system
                     await asyncio.sleep(0.05)
@@ -1839,38 +1893,72 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
     
     return task_id
 
-def normalize_goodreads_value(value, field_type=None):
-    """Normalize Goodreads CSV values."""
-    if not value or value == '':
-        return None
-    
-    # Handle Goodreads specific formatting
-    if field_type == 'isbn':
-        # Remove quotes and formatting
-        value = str(value).strip().replace('"', '').replace('=', '')
-        # Remove non-digit characters except for X (for ISBN-10)
-        value = ''.join(c for c in value if c.isdigit() or c.upper() == 'X')
-        return value if len(value) >= 10 else None
-    
-    if field_type == 'date':
-        # Handle Goodreads date format
-        try:
-            from datetime import datetime
-            if '/' in value:
-                return datetime.strptime(value, '%Y/%d').date()
-            elif '-' in value:
-                return datetime.strptime(value, '%Y-%m-%d').date()
-        except:
-            pass
-        return None
-    
-    return str(value).strip() if value else None
-
 def batch_fetch_book_metadata(isbns):
-    """Placeholder for batch API metadata fetching."""
-    print(f"🌐 [API] Would fetch metadata for {len(isbns)} ISBNs")
-    # Return empty dict for now - real implementation would use Google Books API
-    return {}
+    """Batch fetch metadata from Google Books and OpenLibrary APIs."""
+    print(f"🌐 [API] Fetching metadata for {len(isbns)} ISBNs")
+    
+    from app.utils import fetch_book_data, get_google_books_cover
+    import time
+    
+    metadata = {}
+    
+    for i, isbn in enumerate(isbns):
+        if not isbn:
+            continue
+            
+        print(f"🌐 [API] Processing {i+1}/{len(isbns)}: {isbn}")
+        
+        try:
+            # Try Google Books first (usually faster and more complete)
+            google_data = get_google_books_cover(isbn, fetch_title_author=True)
+            
+            # Try OpenLibrary as backup/additional source
+            openlibrary_data = fetch_book_data(isbn)
+            
+            # Merge the data, preferring Google Books for most fields
+            combined_data = {}
+            
+            if google_data:
+                combined_data.update(google_data)
+                combined_data['source'] = 'google_books'
+                print(f"✅ [API] Got Google Books data for {isbn}")
+            
+            if openlibrary_data:
+                # Add OpenLibrary data for missing fields
+                for key, value in openlibrary_data.items():
+                    if value and (key not in combined_data or not combined_data[key]):
+                        combined_data[key] = value
+                
+                # Add OpenLibrary specific fields
+                if openlibrary_data.get('openlibrary_id'):
+                    combined_data['openlibrary_id'] = openlibrary_data['openlibrary_id']
+                
+                if google_data:
+                    combined_data['source'] = 'google_books,openlibrary'
+                else:
+                    combined_data['source'] = 'openlibrary'
+                
+                print(f"✅ [API] Got OpenLibrary data for {isbn}")
+            
+            if combined_data:
+                metadata[isbn] = {
+                    'data': combined_data,
+                    'source': combined_data.get('source', 'unknown')
+                }
+                print(f"📚 [API] Combined data for {isbn}: {list(combined_data.keys())}")
+            else:
+                print(f"⚠️ [API] No data found for {isbn}")
+            
+            # Rate limiting: small delay between requests to be respectful
+            if i < len(isbns) - 1:  # Don't delay after the last request
+                time.sleep(0.5)  # 500ms between requests
+                
+        except Exception as e:
+            print(f"❌ [API] Error fetching data for {isbn}: {e}")
+            continue
+    
+    print(f"🎉 [API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs")
+    return metadata
 
 def store_job_in_kuzu(task_id, job_data):
     """Store import job status in KuzuDB."""
@@ -2099,6 +2187,19 @@ def simple_upload():
             print(f"❌ [SIMPLE_UPLOAD] Unknown format type: {format_type}, using empty mappings")
             field_mappings = {}
         
+        # Count total books in CSV for progress tracking
+        try:
+            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                # Skip header
+                next(reader, None)
+                total_books = sum(1 for row in reader)
+        except Exception as e:
+            print(f"⚠️ [SIMPLE_UPLOAD] Could not count CSV rows: {e}")
+            total_books = 0
+        
+        print(f"📊 [SIMPLE_UPLOAD] Found {total_books} books to import")
+        
         # Create import config
         import_config = {
             'task_id': str(uuid.uuid4()),
@@ -2109,7 +2210,7 @@ def simple_upload():
             'filename': file.filename,
             'field_mappings': field_mappings,
             'default_reading_status': 'plan_to_read',
-            'enable_api_enrichment': request.form.get('enable_api_enrichment', 'false').lower() == 'true'
+            'enable_api_enrichment': request.form.get('enable_api_enrichment', 'true').lower() == 'true'
         }
         
         # Initialize job tracking
@@ -2117,17 +2218,18 @@ def simple_upload():
         job_data = {
             'task_id': task_id,
             'user_id': str(current_user.id),
-            'status': 'processing',
+            'status': 'running',
             'filename': file.filename,
             'format_type': format_type,
             'confidence': confidence,
+            'total_books': total_books,
             'processed': 0,
             'success': 0,
             'errors': 0,
             'skipped': 0,
             'current_book': None,
             'created_at': datetime.now().isoformat(),
-            'recent_activity': [f'Started import of {file.filename}']
+            'recent_activity': [f'Started import of {file.filename} ({total_books} books)']
         }
         import_jobs[task_id] = job_data
         print(f"📊 [SIMPLE_UPLOAD] Initialized job tracking for {task_id}")
@@ -2135,10 +2237,25 @@ def simple_upload():
         # Start background processing
         def process_upload():
             try:
-                asyncio.run(process_simple_import(import_config))
+                print(f"🚀 [SIMPLE_UPLOAD] Starting background processing for {task_id}")
+                print(f"🔧 [SIMPLE_UPLOAD] Import config: {import_config}")
+                
+                # Create new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(process_simple_import(import_config))
+                    print(f"✅ [SIMPLE_UPLOAD] Background processing completed successfully for {task_id}")
+                finally:
+                    loop.close()
+                    
             except Exception as e:
                 print(f"❌ [SIMPLE_UPLOAD] Background processing error: {e}")
                 traceback.print_exc()
+                # Update job status
+                if task_id in import_jobs:
+                    import_jobs[task_id]['status'] = 'failed'
+                    import_jobs[task_id]['error_messages'] = [str(e)]
         
         thread = threading.Thread(target=process_upload)
         thread.daemon = True
@@ -2249,7 +2366,16 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
                     'description': f"Custom field for {field_info['name']} (imported from CSV)"
                 })
                 
-                field_id = field_def['id'] if field_def else None
+                # Handle different return types from create_field_sync
+                field_id = None
+                if isinstance(field_def, dict) and 'id' in field_def:
+                    field_id = field_def['id']
+                elif field_def and hasattr(field_def, 'id'):
+                    field_id = getattr(field_def, 'id', None)
+                elif field_def:
+                    # If it returns something truthy but not a dict/object with id, 
+                    # assume success and use field name as identifier
+                    field_id = field_info['name']
                 
                 if field_id:
                     created_fields[field_info['mapped_field']] = {
@@ -2260,7 +2386,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
                     }
                     print(f"✅ [PRE_ANALYZE] Created custom field: {field_info['name']}")
                 else:
-                    print(f"❌ [PRE_ANALYZE] Failed to create custom field: {field_info['name']}")
+                    print(f"⚠️ [PRE_ANALYZE] Field creation returned falsy result for: {field_info['name']}")
                     
             except Exception as e:
                 print(f"❌ [PRE_ANALYZE] Error creating custom field {field_info['name']}: {e}")

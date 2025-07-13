@@ -657,7 +657,7 @@ function processFile() {
     if (fileType.startsWith('image/')) {
         endpoint = '{{ url_for("main.add_book_from_image") }}';
     } else if (fileName.toLowerCase().endsWith('.csv')) {
-        endpoint = '{{ url_for("main.import_books") }}';
+        endpoint = '{{ url_for("import.simple_upload") }}';
     } else if (fileName.toLowerCase().endsWith('.db')) {
         endpoint = '{{ url_for("main.migrate_sqlite") }}';
     } else {
@@ -685,8 +685,11 @@ function processFile() {
     .then(response => {
         if (response.ok) {
             // Handle successful response
-            if (fileName.toLowerCase().endsWith('.csv') || fileName.toLowerCase().endsWith('.db')) {
-                // For CSV and DB files, redirect to the response URL (mapping page)
+            if (fileName.toLowerCase().endsWith('.csv')) {
+                // For CSV files, handle JSON response from simple-upload
+                return response.json();
+            } else if (fileName.toLowerCase().endsWith('.db')) {
+                // For DB files, redirect to the response URL (mapping page)
                 window.location.href = response.url;
             } else {
                 // For images, handle the ISBN extraction result
@@ -701,6 +704,9 @@ function processFile() {
             // Auto-populate ISBN field and fetch book data
             document.getElementById('isbn-lookup').value = data.isbn;
             fetchBookFromISBN();
+        } else if (data && data.task_id) {
+            // For CSV imports, redirect to progress page
+            window.location.href = `/import/import-books/progress/${data.task_id}`;
         }
     })
     .catch(error => {
