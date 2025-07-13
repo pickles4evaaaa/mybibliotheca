@@ -23,6 +23,9 @@
             <button type="button" class="btn btn-secondary" onclick="startScanner()">
               <i class="bi bi-upc-scan me-1"></i>Scan Barcode
             </button>
+            <button type="button" class="btn btn-info ms-2" onclick="triggerImageUpload()">
+              <i class="bi bi-camera me-1"></i>Upload Image
+            </button>
           </div>
 
           <!-- ISBN input -->
@@ -43,6 +46,20 @@
             position: relative;
             background-color: #000;
           "></div>
+
+          <!-- Image upload section -->
+          <div class="mb-3">
+            <input type="file" id="imageUpload" accept="image/*" style="display: none;" onchange="processImageUpload(this)">
+            <div id="imagePreview" style="display: none; margin: 1rem 0;">
+              <img id="uploadedImage" src="" alt="Uploaded Image" style="max-width: 300px; max-height: 200px; border: 1px solid #ccc; border-radius: 4px;">
+              <div class="mt-2">
+                <small class="text-muted">Processing image for ISBN extraction...</small>
+                <div id="ocrProgress" class="progress mt-1" style="height: 4px; display: none;">
+                  <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <!-- Fetch and book data inputs -->
           <div class="mb-3">
@@ -149,6 +166,113 @@ function startScanner() {
       }
     }
   });
+}
+
+// Image upload functions
+function triggerImageUpload() {
+  document.getElementById('imageUpload').click();
+}
+
+function processImageUpload(input) {
+  if (input.files && input.files[0]) {
+    const file = input.files[0];
+    
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/tiff', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      alert('Please select a valid image file (PNG, JPEG, GIF, BMP, TIFF, WebP)');
+      return;
+    }
+    
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      alert('File too large. Please select an image smaller than 10MB.');
+      return;
+    }
+    
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const img = document.getElementById('uploadedImage');
+      img.src = e.target.result;
+      document.getElementById('imagePreview').style.display = 'block';
+      document.getElementById('ocrProgress').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+    
+    // Upload and process image
+    uploadImageForOCR(file);
+  }
+}
+
+function uploadImageForOCR(file) {
+  const formData = new FormData();
+  formData.append('image', file);
+  
+  // Add CSRF token
+  const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+  formData.append('csrf_token', csrfToken);
+  
+  fetch('{{ url_for("books.add_book_from_image") }}', {
+    method: 'POST',
+    body: formData
+  })
+  .then(response => response.json())
+  .then(data => {
+    document.getElementById('ocrProgress').style.display = 'none';
+    
+    if (data.success) {
+      // Populate ISBN field
+      document.getElementById('isbn').value = data.isbn;
+      
+      // If book data was fetched, populate other fields
+      if (data.book_data) {
+        if (data.book_data.title) {
+          document.getElementById('title').value = data.book_data.title;
+        }
+        if (data.book_data.author) {
+          document.querySelector('input[name="author"]').value = data.book_data.author;
+        }
+      }
+      
+      // Show success message
+      showMessage(data.message, 'success');
+      
+      // Hide image preview after successful processing
+      setTimeout(() => {
+        document.getElementById('imagePreview').style.display = 'none';
+      }, 3000);
+      
+    } else {
+      showMessage(data.error + (data.suggestion ? ' ' + data.suggestion : ''), 'error');
+    }
+  })
+  .catch(error => {
+    document.getElementById('ocrProgress').style.display = 'none';
+    console.error('Error:', error);
+    showMessage('Error processing image. Please try again.', 'error');
+  });
+}
+
+function showMessage(message, type) {
+  // Create alert element
+  const alertDiv = document.createElement('div');
+  alertDiv.className = `alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+  alertDiv.innerHTML = `
+    ${message}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  `;
+  
+  // Insert after the card header
+  const cardBody = document.querySelector('.card-body');
+  cardBody.insertBefore(alertDiv, cardBody.firstChild);
+  
+  // Auto-dismiss after 5 seconds
+  setTimeout(() => {
+    if (alertDiv.parentNode) {
+      alertDiv.remove();
+    }
+  }, 5000);
 }
 </script>
 {% endblock %}

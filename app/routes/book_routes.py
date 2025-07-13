@@ -110,19 +110,54 @@ def add_book_from_image():
             if file.filename == '':
                 return jsonify({'error': 'No file selected'}), 400
             
-            # TODO: Implement image processing and ISBN extraction
-            # This would involve:
-            # 1. Save uploaded image temporarily
-            # 2. Use OCR to extract text from image
-            # 3. Parse extracted text to find ISBN
-            # 4. Look up book by ISBN
-            # 5. Add book to user's library
+            # Validate file type
+            allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'webp'}
+            filename = file.filename or ''
+            file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename and len(filename.rsplit('.', 1)) > 1 else ''
+            if file_ext not in allowed_extensions:
+                return jsonify({'error': 'Invalid file type. Please upload an image file.'}), 400
             
-            return jsonify({'error': 'Image upload feature not implemented yet'}), 501
+            # Import OCR scanner
+            from app.ocr_scanner import extract_isbn_from_image, is_ocr_available
+            
+            # Check if OCR is available
+            if not is_ocr_available():
+                return jsonify({
+                    'error': 'OCR functionality not available. Please install required dependencies: opencv-python, pyzbar, pytesseract'
+                }), 500
+            
+            # Extract ISBN from image
+            isbn = extract_isbn_from_image(file)
+            
+            if not isbn:
+                return jsonify({
+                    'error': 'No ISBN found in image. Please try a clearer image with visible barcode or ISBN text.',
+                    'suggestion': 'Make sure the barcode or ISBN text is clearly visible and well-lit'
+                }), 404
+            
+            # Try to fetch book data using the extracted ISBN
+            from app.utils import fetch_book_data
+            book_data = fetch_book_data(isbn)
+            
+            if book_data and 'title' in book_data:
+                return jsonify({
+                    'success': True,
+                    'isbn': isbn,
+                    'book_data': book_data,
+                    'message': f'Successfully extracted ISBN: {isbn}'
+                })
+            else:
+                # Return the ISBN even if book data fetch failed
+                return jsonify({
+                    'success': True,
+                    'isbn': isbn,
+                    'book_data': None,
+                    'message': f'ISBN extracted: {isbn}, but book data could not be fetched. You can enter details manually.'
+                })
             
         except Exception as e:
-            print(f"❌ [IMAGE_UPLOAD] Error: {e}")
-            return jsonify({'error': 'Failed to process image'}), 500
+            current_app.logger.error(f"Error processing image upload: {e}")
+            return jsonify({'error': 'Failed to process image. Please try again.'}), 500
 
 @book_bp.route('/search', methods=['GET', 'POST'])
 @login_required

@@ -12,7 +12,7 @@ ENV OPENSSL_ENABLE_SHA1_SIGNATURES=1
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies required for psutil and cryptographic packages
+# Install system dependencies required for psutil, cryptographic packages, and OCR
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -23,6 +23,18 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     build-essential \
     pkg-config \
+    # OCR and image processing dependencies \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libzbar0 \
+    libzbar-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libgtk-3-0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

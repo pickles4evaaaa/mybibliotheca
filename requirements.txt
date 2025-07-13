@@ -12,6 +12,12 @@ python-dotenv==0.20.0
 Pillow>=10.4.0
 pytz==2024.1
 email-validator==2.2.0
+
+# OCR and Barcode Detection Dependencies
+opencv-python==4.10.0.84
+pyzbar==0.1.9
+pytesseract==0.3.10
+numpy>=1.21.0,<2.0.0
 gunicorn==22.0.0
 psutil==5.9.8
 scrypt==0.8.24
