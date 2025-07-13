@@ -1616,6 +1616,10 @@ class KuzuCategoryRepository:
             
             # Generate ID if not provided
             category_id = getattr(category, 'id', None) or str(uuid.uuid4())
+            parent_id = getattr(category, 'parent_id', None)
+            
+            # Debug parent_id value
+            logger.info(f"📁 [CREATE_CATEGORY] Creating category '{category_name}' with parent_id: {parent_id} (type: {type(parent_id)})")
             
             # Include all properties that exist in the Category schema
             category_data = {
@@ -1623,6 +1627,7 @@ class KuzuCategoryRepository:
                 'name': category_name,
                 'normalized_name': category_name.strip().lower(),
                 'description': getattr(category, 'description', ''),
+                'parent_id': parent_id,  # Include parent_id
                 'level': getattr(category, 'level', 0),  # Default to root level
                 'color': getattr(category, 'color', ''),
                 'icon': getattr(category, 'icon', ''),
@@ -1636,7 +1641,24 @@ class KuzuCategoryRepository:
             success = self.db.create_node('Category', category_data)
             if success:
                 logger.info(f"✅ Created new category: {category_name} (ID: {category_id})")
-                return category
+                # Create a new category object with the generated ID
+                from app.domain.models import Category
+                created_category = Category(
+                    id=category_id,
+                    name=category_name,
+                    normalized_name=category_name.strip().lower(),
+                    description=getattr(category, 'description', ''),
+                    parent_id=parent_id,
+                    level=getattr(category, 'level', 0),
+                    color=getattr(category, 'color', None),
+                    icon=getattr(category, 'icon', None),
+                    aliases=getattr(category, 'aliases', []),
+                    book_count=getattr(category, 'book_count', 0),
+                    user_book_count=getattr(category, 'user_book_count', 0),
+                    created_at=getattr(category, 'created_at', datetime.utcnow()),
+                    updated_at=getattr(category, 'updated_at', datetime.utcnow())
+                )
+                return created_category
             else:
                 logger.error(f"❌ Failed to create category: {category_name}")
                 return None

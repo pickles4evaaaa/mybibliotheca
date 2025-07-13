@@ -85,38 +85,24 @@
                                     <i class="bi bi-plus-circle"></i>
                                 </a>
                                 {% if category.book_count > 0 %}
-                                <a href="{{ url_for('main.library') }}?category={{ category.id }}" class="btn btn-info btn-sm">
+                                <a href="{{ url_for('main.library') }}?category={{ category.id }}" class="btn btn-info btn-sm" title="View {{ category.book_count }} books">
                                     <i class="bi bi-book"></i> ({{ category.book_count }})
                                 </a>
                                 {% endif %}
-                                <div class="btn-group" role="group">
-                                    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                        <i class="bi bi-three-dots"></i>
+                                <a href="{{ url_for('genres.merge_categories', source_id=category.id) }}" class="btn btn-outline-secondary btn-sm" title="Merge with Another Category">
+                                    <i class="bi bi-arrow-down-up"></i>
+                                </a>
+                                <a href="{{ url_for('genres.hierarchy_view', highlight=category.id) }}" class="btn btn-outline-secondary btn-sm" title="View in Hierarchy">
+                                    <i class="bi bi-diagram-3"></i>
+                                </a>
+                                {% if category.book_count == 0 and (not children or children|length == 0) %}
+                                <form method="POST" action="{{ url_for('genres.delete_category', category_id=category.id) }}" 
+                                      class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ category.name }}? This action cannot be undone.')">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete Category">
+                                        <i class="bi bi-trash"></i>
                                     </button>
-                                    <ul class="dropdown-menu">
-                                        <li>
-                                            <a class="dropdown-item" href="{{ url_for('genres.merge_categories', source_id=category.id) }}">
-                                                <i class="bi bi-arrow-down-up"></i> Merge with Another
-                                            </a>
-                                        </li>
-                                        <li>
-                                            <a class="dropdown-item" href="{{ url_for('genres.hierarchy_view', highlight=category.id) }}">
-                                                <i class="bi bi-diagram-3"></i> View in Hierarchy
-                                            </a>
-                                        </li>
-                                        {% if category.book_count == 0 and (not children or children|length == 0) %}
-                                        <li><hr class="dropdown-divider"></li>
-                                        <li>
-                                            <form method="POST" action="{{ url_for('genres.delete_category', category_id=category.id) }}" 
-                                                  onsubmit="return confirm('Are you sure you want to delete {{ category.name }}? This action cannot be undone.')">
-                                                <button type="submit" class="dropdown-item text-danger">
-                                                    <i class="bi bi-trash"></i> Delete Category
-                                                </button>
-                                            </form>
-                                        </li>
-                                        {% endif %}
-                                    </ul>
-                                </div>
+                                </form>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -412,6 +398,31 @@
 
 .badge {
     font-size: 0.75rem;
+}
+
+/* Fix dropdown z-index to ensure it appears above other elements */
+.dropdown-menu {
+    z-index: 1055 !important;
+    position: absolute !important;
+}
+
+.btn-group .dropdown-menu {
+    z-index: 1055 !important;
+    position: absolute !important;
+}
+
+/* Ensure dropdown toggle button has proper positioning */
+.btn-group {
+    position: relative !important;
+}
+
+/* Fix for Bootstrap dropdown positioning issues */
+.dropdown {
+    position: relative !important;
+}
+
+.dropdown-toggle::after {
+    vertical-align: 0.125em;
 }
 </style>
 {% endblock %}

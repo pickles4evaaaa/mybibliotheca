@@ -311,12 +311,12 @@ class KuzuGraphDB:
                     normalized_name STRING,
                     parent_id STRING,
                     description STRING,
-                    level INT64,
+                    level INT64 DEFAULT 0,
                     color STRING,
                     icon STRING,
                     aliases STRING,
-                    book_count INT64,
-                    user_book_count INT64,
+                    book_count INT64 DEFAULT 0,
+                    user_book_count INT64 DEFAULT 0,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP,
                     PRIMARY KEY(id)
@@ -858,9 +858,15 @@ class KuzuGraphStorage:
                     pass
             
             # Filter out None values and empty strings that can cause ANY type errors in Kuzu
+            # Exception: parent_id can be None for root categories
             clean_data = {}
             for k, v in serialized_data.items():
-                if v is not None and v != '' and v != []:
+                if k == 'parent_id':
+                    # For parent_id, allow None (root categories) but filter empty strings
+                    if v is not None and v != '':
+                        clean_data[k] = v
+                    # If None, don't include it (allows NULL in database)
+                elif v is not None and v != '' and v != []:
                     clean_data[k] = v
                 else:
                     logger.debug(f"[KUZU_GRAPH][DEBUG] Filtering out NULL/empty field {k}={v} for {node_type}")

@@ -364,6 +364,10 @@ class KuzuServiceFacade:
         """Get root categories (categories without parent)."""
         return self.category_service.get_root_categories_sync(user_id)
     
+    def get_all_categories_sync(self) -> List[Dict[str, Any]]:
+        """Get all categories (alias for list_all_categories_sync)."""
+        return self.category_service.list_all_categories_sync()
+    
     # ==========================================
     # Person Service Methods
     # ==========================================

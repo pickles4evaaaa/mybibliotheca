@@ -174,13 +174,30 @@ class KuzuCategoryService:
             
             categories = []
             for result in results:
-                if 'col_0' in result:
-                    categories.append(result['col_0'])
+                # Check different possible result formats
+                category_data = None
+                if 'result' in result:
+                    category_data = result['result']
+                elif 'col_0' in result:
+                    category_data = result['col_0']
+                elif 'c' in result:
+                    category_data = result['c']
+                else:
+                    # Return the first value if it looks like a category
+                    for key, value in result.items():
+                        if isinstance(value, dict) and 'id' in value and 'name' in value:
+                            category_data = value
+                            break
+                
+                if category_data:
+                    categories.append(category_data)
             
             return categories
             
         except Exception as e:
             print(f"❌ [GET_CHILDREN] Error getting child categories for {parent_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     async def get_books_by_category(self, category_id: str, include_subcategories: bool = False) -> List[Dict[str, Any]]:
@@ -404,11 +421,25 @@ class KuzuCategoryService:
             
             categories = []
             for result in results:
-                if 'col_0' in result:
-                    category = result['col_0']
+                # Check different possible result formats
+                category_data = None
+                if 'result' in result:
+                    category_data = result['result']
+                elif 'col_0' in result:
+                    category_data = result['col_0']
+                elif 'c' in result:
+                    category_data = result['c']
+                else:
+                    # Return the first value if it looks like a category
+                    for key, value in result.items():
+                        if isinstance(value, dict) and 'id' in value and 'name' in value:
+                            category_data = value
+                            break
+                
+                if category_data:
                     # Add full_path for better search results
-                    category['full_path'] = category.get('name', '')
-                    categories.append(category)
+                    category_data['full_path'] = category_data.get('name', '')
+                    categories.append(category_data)
             
             return categories
             
@@ -419,9 +450,10 @@ class KuzuCategoryService:
     async def get_root_categories(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get root categories (categories without parent)."""
         try:
+            # Check for categories with NULL parent_id OR empty/missing parent_id
             query = """
             MATCH (c:Category)
-            WHERE c.parent_id IS NULL
+            WHERE c.parent_id IS NULL OR c.parent_id = ''
             RETURN c
             ORDER BY c.name ASC
             """
@@ -432,11 +464,17 @@ class KuzuCategoryService:
             for result in results:
                 if 'col_0' in result:
                     categories.append(result['col_0'])
+                elif 'result' in result:
+                    categories.append(result['result'])
+                elif 'c' in result:
+                    categories.append(result['c'])
             
             return categories
             
         except Exception as e:
             print(f"❌ [GET_ROOT_CATEGORIES] Error getting root categories: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     # Sync wrappers for backward compatibility

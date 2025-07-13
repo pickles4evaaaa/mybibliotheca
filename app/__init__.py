@@ -702,12 +702,7 @@ def create_app():
     except ImportError as e:
         print(f"⚠️  Could not import test import routes: {e}")
     
-    # Note: Genre routes temporarily disabled due to missing category management methods
-    # try:
-    #     from .routes.genre_routes import genres_bp
-    #     app.register_blueprint(genres_bp, url_prefix='/genres')
-    # except ImportError as e:
-    #     print(f"⚠️  Could not import genre routes: {e}")
+    # Note: Genre routes are now registered via register_blueprints() in routes/__init__.py
     
     # Register main and modular routes
     register_blueprints(app)
