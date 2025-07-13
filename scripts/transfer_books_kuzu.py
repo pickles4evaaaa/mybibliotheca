@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Book Transfer Tool for Kuzu-based Bibliotheca
+Book Transfer Tool for Kuzu-based MyBibliotheca
 Transfer book ownership from one user to another using Kuzu graph database.
 
 This script replaces the Redis-based transfer_books.py script.
@@ -21,7 +21,7 @@ try:
     from config import Config
 except ImportError as e:
     print(f"❌ Error importing application modules: {e}")
-    print("🔧 Make sure you're running this from the Bibliotheca directory")
+    print("🔧 Make sure you're running this from the MyBibliotheca directory")
     sys.exit(1)
 
 
@@ -128,7 +128,7 @@ def transfer_books_kuzu(from_username: str, to_username: str, book_ids: List[str
 def main():
     """Main function with argument parsing."""
     parser = argparse.ArgumentParser(
-        description="Transfer book ownership between users in Kuzu-based Bibliotheca"
+        description="Transfer book ownership between users in Kuzu-based MyBibliotheca"
     )
     parser.add_argument("from_user", help="Source username")
     parser.add_argument("to_user", help="Target username")

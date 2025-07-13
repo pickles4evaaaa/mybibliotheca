@@ -1,5 +1,5 @@
 """
-Import/Export routes for the Bibliotheca application.
+Import/Export routes for the MyBibliotheca application.
 Handles book import functionality including CSV processing, progress tracking, and batch operations.
 """
 

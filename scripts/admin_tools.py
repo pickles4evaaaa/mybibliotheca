@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bibliotheca Admin Tools
+MyBibliotheca Admin Tools
 Command-line utilities for administrative tasks
 
 Available commands:
@@ -27,7 +27,7 @@ try:
     from config import Config
 except ImportError as e:
     print(f"❌ Error importing application modules: {e}")
-    print("🔧 Make sure you're running this from the Bibliotheca directory")
+    print("🔧 Make sure you're running this from the MyBibliotheca directory")
     sys.exit(1)
 
 def validate_password(password):
@@ -281,7 +281,7 @@ def system_stats(args):
         admin_users = len([u for u in all_users if u.is_admin])
         active_users = len([u for u in all_users if u.is_active])
         
-        print("📊 Bibliotheca System Statistics")
+        print("📊 MyBibliotheca System Statistics")
         print("=" * 40)
         print(f"👥 Users:")
         print(f"   Total: {total_users}")
@@ -308,7 +308,7 @@ def system_stats(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Bibliotheca Admin Tools",
+        description="MyBibliotheca Admin Tools",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

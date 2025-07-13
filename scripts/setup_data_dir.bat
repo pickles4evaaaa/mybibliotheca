@@ -1,5 +1,5 @@
 @echo off
-REM Windows batch script to set up data directory for Bibliotheca
+REM Windows batch script to set up data directory for MyBibliotheca
 REM This ensures parity with Docker environment setup on Windows
 
 echo Setting up data directory for standalone execution on Windows...
@@ -27,7 +27,7 @@ echo    Data directory: %CD%\data
 echo    Database path: %CD%\data\books.db
 echo    Permissions: Using Windows default file permissions
 echo.
-echo You can now run Bibliotheca using:
+echo You can now run MyBibliotheca using:
 echo    python -m gunicorn -w 4 -b 0.0.0.0:5054 run:app
 echo.
 echo Or if you have gunicorn installed globally:

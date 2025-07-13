@@ -92,7 +92,7 @@ def setup_data_directory():
     else:
         print(f"   Permissions: Using Windows default file permissions")
     
-    print("\nYou can now run Bibliotheca using:")
+    print("\nYou can now run MyBibliotheca using:")
     if system == "Windows":
         print("   python -m gunicorn -w 4 -b 0.0.0.0:5054 run:app")
     else:

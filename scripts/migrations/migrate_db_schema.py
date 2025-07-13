@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database Schema Migration Script for Bibliotheca
+Database Schema Migration Script for MyBibliotheca
 
 ⚠️  DEPRECATED: This manual migration script is no longer needed.
 Database migrations now run automatically when the application starts.

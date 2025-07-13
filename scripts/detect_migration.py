@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.migration_detector import MigrationDetector
 
 def main():
-    print("🔍 Bibliotheca Migration Detection")
+    print("🔍 MyBibliotheca Migration Detection")
     print("=" * 40)
     
     detector = MigrationDetector()

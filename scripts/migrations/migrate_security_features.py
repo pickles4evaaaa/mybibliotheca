@@ -30,7 +30,7 @@ def migrate_database():
     return True
 
 if __name__ == '__main__':
-    print("Bibliotheca - Security & Privacy Features Migration")
+    print("MyBibliotheca - Security & Privacy Features Migration")
     print("=" * 60)
     print("⚠️  WARNING: This migration script is deprecated.")
     print("Database migrations now run automatically when the application starts.")

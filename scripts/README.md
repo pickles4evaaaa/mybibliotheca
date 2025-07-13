@@ -1,6 +1,6 @@
 # Default Import Templates
 
-This directory contains scripts and functionality for managing default import templates in Bibliotheca.
+This directory contains scripts and functionality for managing default import templates in MyBibliotheca.
 
 ## Overview
 

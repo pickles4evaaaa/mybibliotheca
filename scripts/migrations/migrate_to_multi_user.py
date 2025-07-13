@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database migration script for Bibliotheca
+Database migration script for MyBibliotheca
 Migrates from single-user to multi-user architecture
 
 This script:
@@ -24,7 +24,7 @@ from config import Config
 def create_default_admin():
     """Create a default admin user for migration"""
     admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-    admin_email = os.environ.get('ADMIN_EMAIL', 'admin@bibliotheca.local')
+    admin_email = os.environ.get('ADMIN_EMAIL', 'admin@mybibliotheca.local')
     admin_password = os.environ.get('ADMIN_PASSWORD', 'TempAdmin123!@#')
     
     # Check if admin already exists
@@ -136,7 +136,7 @@ def run_migration():
     app = create_app()
     
     with app.app_context():
-        print("🚀 Starting Bibliotheca multi-user migration...")
+        print("🚀 Starting MyBibliotheca multi-user migration...")
         print("=" * 50)
         
         # Check if migration is needed using raw SQL to avoid model issues
