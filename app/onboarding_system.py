@@ -514,7 +514,7 @@ def data_options_step():
             logger.info(f"🔍 ONBOARDING DEBUG: Selected data option: {data_option}")
             
             if data_option == 'migrate' and db_analysis:
-                selected_db = request.form.get('selected_database')
+                selected_db = request.form.get('migration_source')
                 data_options['selected_database'] = selected_db
                 
                 logger.info(f"🔍 ONBOARDING DEBUG: Selected database: {selected_db}")
@@ -865,7 +865,7 @@ def get_goodreads_field_mappings():
         'Original Publication Year': 'custom_global_original_publication_year',
         'Date Read': 'date_read',
         'Date Added': 'date_added',
-        'Bookshelves': 'custom_global_bookshelves',
+        'Bookshelves': 'custom_global_bookshelves',  # Keep as custom field - usually reading status, not genres
         'Bookshelves with positions': 'custom_global_bookshelves_with_positions',
         'Exclusive Shelf': 'reading_status',
         'My Review': 'notes',
@@ -967,31 +967,19 @@ def confirmation_step():
                 logger.info(f"🔍 ONBOARDING DEBUG: Data option selected: {data_option}")
                 
                 if data_option == 'import':
-                    # For imports, execute the basic setup first (user, location, custom fields)
-                    # but handle the CSV import as a background job
-                    print(f"🔍 STEP5 DEBUG: Import option - calling execute_onboarding_setup_only")
-                    logger.info(f"Import option selected - executing setup only")
-                    success = execute_onboarding_setup_only(onboarding_data)
-                    print(f"🔍 STEP5 DEBUG: execute_onboarding_setup_only returned: {success}")
+                    # For imports, execute like migrations - stay on same page with progress
+                    print(f"🔍 STEP5 DEBUG: Import option - calling execute_onboarding for synchronous import")
+                    logger.info(f"Import option selected - executing synchronous import like migration")
+                    success = execute_onboarding(onboarding_data)
+                    print(f"🔍 STEP5 DEBUG: execute_onboarding returned: {success}")
                     
                     if success:
-                        # Get the import task ID from session (set during setup)
-                        import_task_id = session.get('onboarding_import_task_id')
-                        print(f"🔍 STEP5 DEBUG: Import task ID from session: {import_task_id}")
-                        
-                        if import_task_id:
-                            print(f"🔍 STEP5 DEBUG: Redirecting to import progress with task_id: {import_task_id}")
-                            logger.info(f"🔍 ONBOARDING DEBUG: Redirecting to import progress with task_id: {import_task_id}")
-                            return redirect(url_for('onboarding.import_progress', task_id=import_task_id))
-                        else:
-                            # No import task, proceed to completion
-                            print(f"🔍 STEP5 DEBUG: No import task, proceeding to completion")
-                            logger.info(f"🔍 ONBOARDING DEBUG: No import task, proceeding to completion")
-                            return handle_onboarding_completion(onboarding_data)
+                        print(f"🔍 STEP5 DEBUG: Import successful, proceeding to completion")
+                        return handle_onboarding_completion(onboarding_data)
                     else:
-                        print(f"❌ STEP5 DEBUG: Setup failed")
-                        logger.error(f"🔍 ONBOARDING DEBUG: Setup failed")
-                        flash('Setup failed. Please check the error message and try again.', 'error')
+                        print(f"❌ STEP5 DEBUG: Import failed")
+                        logger.error(f"🔍 ONBOARDING DEBUG: Import failed")
+                        flash('Import failed. Please check the error message and try again.', 'error')
                         # Ensure session data is preserved
                         update_onboarding_data(onboarding_data)
                         set_onboarding_step(5)
@@ -1079,48 +1067,70 @@ def complete():
 @onboarding_bp.route('/import-progress/<task_id>')
 @debug_route('ONBOARDING_IMPORT_PROGRESS')
 def import_progress(task_id: str):
-    """Show import progress during onboarding."""
-    logger.info(f"🔍 ONBOARDING DEBUG: Showing import progress for task {task_id}")
+    """Show simple import splash screen during onboarding."""
+    logger.info(f"🔍 ONBOARDING DEBUG: Showing import splash for task {task_id}")
     
     try:
-        # Get total books from job data if available
-        try:
-            job = import_jobs.get(task_id)
-            total_books = job.get('total', 0) if job else 0
-        except Exception as e:
-            logger.warning(f"⚠️ Could not get job data: {e}")
-            total_books = 0
+        # For simple onboarding, always show the splash screen regardless of task status
+        # Get site configuration for template context
+        onboarding_data = get_onboarding_data()
+        site_config = onboarding_data.get('site_config', {})
         
-        # Make sure we have default template context
         template_context = {
             'task_id': task_id,
-            'total_books': total_books,
-            'start_time': datetime.utcnow().isoformat(),
             'step': 5,
             'total_steps': 5,
-            'site_name': 'MyBibliotheca',  # Default fallback
-            'current_theme': 'light'  # Default fallback
+            'site_name': site_config.get('site_name', 'MyBibliotheca'),
+            'current_theme': site_config.get('theme', 'light')
         }
         
-        return render_template('onboarding/import_books_progress.html', **template_context)
+        logger.info(f"🔍 ONBOARDING DEBUG: Rendering splash screen with context: {template_context}")
+        return render_template('onboarding/import_splash.html', **template_context)
         
     except Exception as e:
-        logger.error(f"❌ Error rendering import progress template: {e}")
+        logger.error(f"❌ Error rendering import splash template: {e}")
         import traceback
         traceback.print_exc()
-        # Return a simple error page
+        # Return a simple fallback page
         return f"""
+        <!DOCTYPE html>
         <html>
-        <head><title>Import Progress</title></head>
+        <head>
+            <title>Importing Your Library</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; 
+                       text-align: center; padding: 50px; background: #f8f9fa; }}
+                .spinner {{ width: 50px; height: 50px; border: 4px solid #f3f3f3; 
+                           border-top: 4px solid #6f42c1; border-radius: 50%; 
+                           animation: spin 1s linear infinite; margin: 20px auto; }}
+                @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+            </style>
+        </head>
         <body>
-        <h1>Import in Progress</h1>
-        <p>Your books are being imported. Task ID: {task_id}</p>
-        <p>Please wait while we set up your library...</p>
-        <script>
-        setTimeout(function() {{
-            window.location.href = '/library';
-        }}, 30000);  // Redirect after 30 seconds
-        </script>
+            <h1>📚 Importing Your Library</h1>
+            <div class="spinner"></div>
+            <p>Please be patient while we set up your personal library...</p>
+            <p><small>Task ID: {task_id}</small></p>
+            <script>
+                // Auto-redirect after 3 minutes
+                setTimeout(function() {{
+                    window.location.href = '/library';
+                }}, 180000);
+                
+                // Check for completion every 5 seconds
+                setInterval(function() {{
+                    fetch('/onboarding/import-progress-json/{task_id}')
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.status === 'completed' || data.status === 'success' || data.status === 'failed') {{
+                                setTimeout(() => window.location.href = '/library', 2000);
+                            }}
+                        }})
+                        .catch(() => {{}}); // Ignore errors
+                }}, 5000);
+            </script>
         </body>
         </html>
         """, 200
@@ -1133,13 +1143,11 @@ def import_progress_json(task_id: str):
     logger.info(f"🔍 ONBOARDING DEBUG: Getting progress JSON for task {task_id}")
     
     try:
-        # For onboarding, check only memory jobs (not Kuzu)
-        
-        # Try to get job from memory first
+        # First, try to get job from memory for real import tasks
         job = import_jobs.get(task_id)
         
         if job:
-            logger.info(f"📊 Job data: {job}")
+            logger.info(f"📊 Found real job data: {job}")
             return jsonify({
                 'status': job.get('status', 'pending'),
                 'processed': job.get('processed', 0),
@@ -1150,15 +1158,49 @@ def import_progress_json(task_id: str):
                 'error_messages': job.get('error_messages', []),
                 'recent_activity': job.get('recent_activity', [])
             })
+        
+        # For simple onboarding fallback (when no real import was started)
+        if task_id == 'simple-onboarding-import':
+            # Return completed status immediately for simple imports
+            logger.info(f"✅ Simple onboarding import - returning completed status")
+            return jsonify({
+                'status': 'completed',
+                'processed': 1,
+                'success': 1,
+                'errors': 0,
+                'total': 1,
+                'current_book': 'Import completed',
+                'error_messages': [],
+                'recent_activity': ['Import completed successfully - redirecting to library']
+            })
+        
+        # Job not found in memory - might be completed and cleaned up
+        # Check if onboarding is complete by checking session
+        logger.warning(f"⚠️ Job {task_id} not found in memory - checking if onboarding is complete")
+        
+        # If the onboarding session is cleared, assume the job completed successfully
+        current_step = get_onboarding_step()
+        if current_step is None:
+            logger.info(f"✅ No onboarding step found - assuming import completed")
+            return jsonify({
+                'status': 'completed',
+                'processed': 1,
+                'success': 1,
+                'errors': 0,
+                'total': 1,
+                'current_book': 'Import completed',
+                'error_messages': [],
+                'recent_activity': ['Import completed successfully']
+            })
         else:
-            logger.warning(f"⚠️ Job {task_id} not found")
+            logger.warning(f"⚠️ Job {task_id} not found but onboarding still active")
             return jsonify({
                 'status': 'not_found',
                 'processed': 0,
                 'success': 0,
                 'errors': 0,
                 'total': 0,
-                'error_messages': ['Job not found']
+                'error_messages': ['Job not found - may have been cleaned up']
             })
     
     except Exception as e:
@@ -1264,7 +1306,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                         logger.error(f"❌ Invalid admin_mapping type: {e}")
                         return False
                     
-                    success = migration_system.migrate_v2_database(db_path, user_mapping)
+                    success = migration_system.migrate_v2_database(db_path, user_mapping, fetch_api_metadata=False)
                 else:
                     success = False
                 
@@ -1331,24 +1373,41 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                     logger.error(f"❌ Failed to create custom metadata fields: {e}")
                     # Continue with import even if custom fields fail
             
-            # Execute actual CSV file import with the configured field mappings
+            # Execute actual CSV file import synchronously (like migration)
             logger.info(f"📋 Import configuration saved: {import_config}")
             logger.info(f"🔧 Custom fields configured: {len(custom_fields)}")
             
-            # Start the CSV import as a background job
             if not admin_user.id:
                 logger.error("❌ Admin user has no ID")
                 return False
-            
-            import_task_id = start_onboarding_import_job(admin_user.id, import_config)
-            if not import_task_id:
-                logger.error("❌ Failed to start CSV import job")
+                
+            # Import synchronously instead of as background job
+            try:
+                import asyncio
+                from .routes.import_routes import process_simple_import
+                
+                # Generate a task ID for tracking (but don't use background processing)
+                task_id = str(uuid.uuid4())
+                
+                # Create import config for synchronous processing
+                sync_import_config = {
+                    'task_id': task_id,
+                    'csv_file_path': import_config.get('csv_file_path'),
+                    'field_mappings': import_config.get('field_mappings', {}),
+                    'user_id': admin_user.id,
+                    'default_reading_status': 'library_only',
+                    'enable_api_enrichment': True,
+                    'format_type': import_config.get('detected_type', 'unknown')
+                }
+                
+                # Execute import synchronously
+                logger.info(f"🚀 Starting synchronous CSV import for user {admin_user.id}")
+                asyncio.run(process_simple_import(sync_import_config))
+                logger.info(f"✅ CSV import completed successfully")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to execute CSV import: {e}")
                 return False
-            else:
-                logger.info(f"✅ CSV import job started with ID: {import_task_id}")
-                # Store the task ID for progress tracking
-                session['onboarding_import_task_id'] = import_task_id
-                session.modified = True
         
         return True
         
@@ -1686,7 +1745,7 @@ def handle_onboarding_completion(onboarding_data: Dict):
             
             print(f"🎉 [COMPLETION] Success! Redirecting to main index")
             logger.info(f"🔍 ONBOARDING DEBUG: Success! Redirecting to main index")
-            flash('🎉 Welcome to Bibliotheca! Your library is ready.', 'success')
+            flash('🎉 Welcome to MyBibliotheca! Your library is ready.', 'success')
             
             return redirect(url_for('main.index'))
         
@@ -1747,13 +1806,12 @@ def handle_onboarding_completion(onboarding_data: Dict):
         clear_onboarding_session()
         logger.info(f"🔍 ONBOARDING DEBUG: Onboarding session cleared")
         
-        print(f"🎉 [COMPLETION] Success! Redirecting to main index")
-        logger.info(f"🔍 ONBOARDING DEBUG: Success! Redirecting to main index")
-        flash('🎉 Welcome to Bibliotheca! Your library is ready.', 'success')
+        print(f"🎉 [COMPLETION] Success! Redirecting to library")
+        logger.info(f"🔍 ONBOARDING DEBUG: Success! Redirecting to library")
+        flash('🎉 Welcome to MyBibliotheca! Your library is ready.', 'success')
         
-        # Instead of redirecting to library, redirect to index first to avoid potential route issues
-        # The user can navigate to library from there
-        return redirect(url_for('main.index'))
+        # Redirect directly to library after successful onboarding
+        return redirect(url_for('main.library'))
         
     except Exception as e:
         print(f"❌ [COMPLETION] Error handling onboarding completion: {e}")
@@ -1782,6 +1840,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         logger.info(f"🚀 Starting simplified onboarding import job {task_id} for user {user_id}")
         
         # Create job data structure exactly like the working post-onboarding import
+        detected_type = import_config.get('detected_type', 'unknown')
         job_data = {
             'task_id': task_id,
             'user_id': user_id,
@@ -1790,6 +1849,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             'default_reading_status': 'library_only',
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
+            'format_type': detected_type,  # Pass the detected format type
             'status': 'pending',
             'processed': 0,
             'success': 0,
@@ -1841,15 +1901,41 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         def run_import():
             try:
                 print(f"🚀 [IMPORT_JOB] Starting background import thread for task {task_id}")
-                start_import_job(task_id)
+                print(f"🚀 [IMPORT_JOB] Import config: {import_config}")
+                
+                # Update job status to running
+                if task_id in import_jobs:
+                    import_jobs[task_id]['status'] = 'running'
+                    import_jobs[task_id]['current_book'] = 'Starting import...'
+                    print(f"🚀 [IMPORT_JOB] Updated job status to running")
+                
+                start_import_job(
+                    task_id=task_id,
+                    csv_file_path=import_config.get('csv_file_path'),
+                    field_mappings=import_config.get('field_mappings', {}),
+                    user_id=user_id,
+                    format_type=import_config.get('detected_type', 'unknown')
+                )
                 print(f"✅ [IMPORT_JOB] Background import completed for task {task_id}")
+                
+                # Update job status to completed
+                if task_id in import_jobs:
+                    import_jobs[task_id]['status'] = 'completed'
+                    import_jobs[task_id]['current_book'] = 'Import completed successfully'
+                    print(f"✅ [IMPORT_JOB] Updated job status to completed")
+                    
             except Exception as e:
                 print(f"❌ [IMPORT_JOB] Background import failed for task {task_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                
                 if task_id in import_jobs:
                     import_jobs[task_id]['status'] = 'failed'
+                    import_jobs[task_id]['current_book'] = f'Import failed: {str(e)}'
                     if 'error_messages' not in import_jobs[task_id]:
                         import_jobs[task_id]['error_messages'] = []
                     import_jobs[task_id]['error_messages'].append(str(e))
+                    print(f"❌ [IMPORT_JOB] Updated job status to failed")
                 logger.error(f"Onboarding import job {task_id} failed: {e}")
         
         print(f"🚀 [IMPORT_JOB] Creating background thread...")
@@ -1859,6 +1945,16 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         print(f"🚀 [IMPORT_JOB] Starting background thread...")
         thread.start()
         print(f"✅ [IMPORT_JOB] Background thread started successfully")
+        
+        # Wait a moment to let the thread start and update job status
+        import time
+        time.sleep(0.5)
+        
+        # Verify the job is still in memory after thread start
+        if task_id in import_jobs:
+            print(f"✅ [IMPORT_JOB] Job {task_id} confirmed in memory: {import_jobs[task_id].get('status', 'unknown')}")
+        else:
+            print(f"⚠️ [IMPORT_JOB] Job {task_id} not found in memory after thread start!")
         
         print(f"✅ [IMPORT_JOB] ============ IMPORT JOB SETUP COMPLETE ============")
         print(f"✅ [IMPORT_JOB] Returning task ID: {task_id}")
@@ -1900,7 +1996,13 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         }
         
         # Execute the actual CSV import with progress tracking
-        success = execute_csv_import_with_progress(user_id, import_config, task_id)
+        success = execute_csv_import_with_progress(
+            task_id=task_id,
+            csv_file_path=import_config['csv_file_path'], 
+            field_mappings=import_config['field_mappings'],
+            user_id=user_id,
+            default_locations=[]  # Will be created during execution
+        )
         
         # Update final job status
         if success:
@@ -1942,7 +2044,41 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
             logger.error(f"❌ Job {task_id} not found")
             return False
         
-        logger.info(f"📊 Starting CSV import with mappings: {field_mappings}")
+        # Setup default locations for the onboarding process
+        # During onboarding, we need to ensure the user has a default location
+        if not default_locations:
+            from .location_service import LocationService
+            from .infrastructure.kuzu_graph import get_graph_storage
+            
+            storage = get_graph_storage()
+            location_service = LocationService(storage.kuzu_conn)
+            
+            # Get or create default location for this user
+            default_location = location_service.get_default_location(user_id)
+            if not default_location:
+                logger.info(f"� Creating default location for user during onboarding import")
+                created_locations = location_service.setup_default_locations()
+                if created_locations:
+                    default_location = location_service.get_default_location(user_id)
+                    if default_location and default_location.id:
+                        default_locations = [default_location.id]
+                        logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")
+                    else:
+                        logger.error(f"❌ Failed to get default location after creation")
+                        default_locations = []
+                else:
+                    logger.error(f"❌ Failed to create default locations")
+                    default_locations = []
+            else:
+                if default_location.id:
+                    default_locations = [default_location.id]
+                    logger.info(f"✅ Using existing default location: {default_location.name} (ID: {default_location.id})")
+                else:
+                    logger.error(f"❌ Default location has no ID")
+                    default_locations = []
+        
+        logger.info(f"�📊 Starting CSV import with mappings: {field_mappings}")
+        logger.info(f"📍 Using default locations: {default_locations}")
         
         # Read and process the CSV file
         with open(csv_file_path, 'r', encoding='utf-8', errors='ignore') as csvfile:

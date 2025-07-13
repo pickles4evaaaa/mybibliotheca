@@ -218,7 +218,7 @@
     <p>How would you like to set up your book collection?</p>
 </div>
 
-<form method="POST">
+<form method="POST" enctype="multipart/form-data">
     <!-- CSRF Token -->
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     

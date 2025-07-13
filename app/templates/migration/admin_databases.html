@@ -1,7 +1,7 @@
 <!-- migration/admin_databases.html -->
 {% extends "base.html" %}
 
-{% block title %}Database Management - Admin - Bibliotheca{% endblock %}
+{% block title %}Database Management - Admin - MyBibliotheca{% endblock %}
 
 {% block content %}
 <div class="container mt-4">
@@ -16,7 +16,7 @@
                 </div>
                 <div class="card-body">
                     <p class="lead">
-                        Manage SQLite databases and migration options for your Bibliotheca installation.
+                        Manage SQLite databases and migration options for your MyBibliotheca installation.
                     </p>
                     
                     {% if databases %}
@@ -127,7 +127,7 @@
                     <div class="alert alert-success">
                         <h5><i class="fas fa-check-circle"></i> No Migration Needed</h5>
                         <p class="mb-0">
-                            No SQLite databases found that require migration. Your Bibliotheca installation 
+                            No SQLite databases found that require migration. Your MyBibliotheca installation 
                             is running purely on Redis.
                         </p>
                     </div>
@@ -143,7 +143,7 @@
                         <div class="card-body">
                             <h6>Database Types:</h6>
                             <ul>
-                                <li><strong>Single-user:</strong> Older Bibliotheca databases without user management</li>
+                                <li><strong>Single-user:</strong> Older MyBibliotheca databases without user management</li>
                                 <li><strong>Multi-user:</strong> Newer databases with multiple user accounts</li>
                             </ul>
                             

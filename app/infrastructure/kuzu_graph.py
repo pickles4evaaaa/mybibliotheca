@@ -1157,16 +1157,16 @@ class KuzuGraphStorage:
             # Filter out None values that can cause type issues
             processed_props = {k: v for k, v in processed_props.items() if v is not None}
             
-            # Ensure created_at is set as datetime object
+            # Ensure created_at is set as datetime object (not ISO string)
             if 'created_at' not in processed_props:
-                processed_props['created_at'] = datetime.utcnow().isoformat()
+                processed_props['created_at'] = datetime.utcnow()
             elif isinstance(processed_props['created_at'], str):
                 try:
                     if processed_props['created_at'].endswith('Z'):
                         processed_props['created_at'] = processed_props['created_at'][:-1] + '+00:00'
-                    processed_props['created_at'] = datetime.fromisoformat(processed_props['created_at']).isoformat()
+                    processed_props['created_at'] = datetime.fromisoformat(processed_props['created_at'])
                 except (ValueError, TypeError):
-                    processed_props['created_at'] = datetime.utcnow().isoformat()
+                    processed_props['created_at'] = datetime.utcnow()
             
             # Build properties clause
             if processed_props:

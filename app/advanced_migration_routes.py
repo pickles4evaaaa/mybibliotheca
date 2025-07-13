@@ -311,6 +311,9 @@ def migrate_v2():
     if request.method == 'POST':
         if request.form.get('action') == 'migrate':
             try:
+                # Get user choice for API metadata enhancement
+                fetch_api_metadata = request.form.get('api_metadata', 'false').lower() == 'true'
+                
                 migration_system = AdvancedMigrationSystem()
                 
                 # Create backup
@@ -322,8 +325,8 @@ def migrate_v2():
                 # Convert string keys back to integers for user mapping
                 int_user_mapping = {int(k): v for k, v in user_mapping.items()}
                 
-                # Perform migration
-                success = migration_system.migrate_v2_database(db_path, int_user_mapping)
+                # Perform migration with user's choice for API enhancement
+                success = migration_system.migrate_v2_database(db_path, int_user_mapping, fetch_api_metadata=fetch_api_metadata)
                 
                 if success:
                     # Store migration results

@@ -403,26 +403,31 @@ class AdvancedMigrationSystem:
         try:
             self._log_action(f"Starting V1 database migration: {db_path}")
             
-            # Get the default location for the admin user
+            # Ensure default locations exist for the admin user
+            # Check if admin user has any default location, if not create one
             default_location = self.location_service.get_default_location(admin_user_id)
             default_location_id = None
+            
             if not default_location:
-                self._log_error("No default location found for admin user. Books will be created without location assignment.")
-                # Debug: List all locations for this user
-                all_locations = self.location_service.get_user_locations(admin_user_id, active_only=False)
-                self._log_action(f"DEBUG: Found {len(all_locations)} locations for user {admin_user_id}")
-                for loc in all_locations:
-                    # Safely extract location attributes
-                    loc_name = getattr(loc, 'name', 'Unknown')
-                    loc_id = getattr(loc, 'id', 'Unknown')
-                    loc_default = getattr(loc, 'is_default', False)
-                    loc_active = getattr(loc, 'is_active', False)
-                    self._log_action(f"DEBUG: Location {loc_name} (ID: {loc_id}, default: {loc_default}, active: {loc_active})")
+                self._log_action("No default location found for admin user. Creating default location...")
+                # Setup default locations (this will create a "Home" location)
+                created_locations = self.location_service.setup_default_locations()
+                if created_locations:
+                    # Get the newly created default location
+                    default_location = self.location_service.get_default_location(admin_user_id)
+                    if default_location:
+                        default_location_id = getattr(default_location, 'id', None)
+                        loc_name = getattr(default_location, 'name', 'Unknown')
+                        self._log_action(f"✅ Created and using default location: {loc_name} (ID: {default_location_id})")
+                    else:
+                        self._log_error("Failed to get default location after creation")
+                else:
+                    self._log_error("Failed to create default locations")
             else:
                 # Safely extract location attributes
                 loc_name = getattr(default_location, 'name', 'Unknown')
                 default_location_id = getattr(default_location, 'id', None)
-                self._log_action(f"Using default location: {loc_name} (ID: {default_location_id})")
+                self._log_action(f"Using existing default location: {loc_name} (ID: {default_location_id})")
             
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
@@ -434,14 +439,15 @@ class AdvancedMigrationSystem:
             
             for book_row in books:
                 try:
-                    # Convert SQLite row to Book object
-                    book = self._sqlite_row_to_book(book_row)
+                    # Convert SQLite row to Book object with API metadata enhancement
+                    # For v1 databases, always fetch API metadata since they lack categories
+                    book = self._sqlite_row_to_book(book_row, fetch_api_metadata=True)
                     
                     # Create book in Kuzu using service with a proper Book domain object
-                    created_book = run_async(self.book_service.create_book(
+                    created_book = self.book_service.create_book_sync(
                         domain_book=book,
                         user_id=admin_user_id
-                    ))
+                    )
                     
                     # Add book to admin user's library with appropriate status
                     created_book_id = getattr(created_book, 'id', None) if created_book else None
@@ -509,19 +515,47 @@ class AdvancedMigrationSystem:
             self.current_status = MigrationStatus.FAILED
             return False
     
-    def migrate_v2_database(self, db_path: Path, user_mapping: Dict[int, str]) -> bool:
+    def migrate_v2_database(self, db_path: Path, user_mapping: Dict[int, str], fetch_api_metadata: bool = False) -> bool:
         """
         Migrate a V2 (multi-user) database with user mapping.
         
         Args:
             db_path: Path to the V2 SQLite database
             user_mapping: Dictionary mapping old user IDs to new user IDs
+            fetch_api_metadata: Whether to fetch fresh metadata from APIs or use existing SQLite data
             
         Returns:
             True if migration successful, False otherwise
         """
         try:
             self._log_action(f"Starting V2 database migration: {db_path}")
+            
+            # Setup default locations for all users in the mapping
+            # This ensures every user has a default location for book assignment
+            user_default_locations = {}
+            for old_user_id, new_user_id in user_mapping.items():
+                default_location = self.location_service.get_default_location(new_user_id)
+                if not default_location:
+                    self._log_action(f"No default location found for user {new_user_id}. Creating default location...")
+                    created_locations = self.location_service.setup_default_locations()
+                    if created_locations:
+                        default_location = self.location_service.get_default_location(new_user_id)
+                        if default_location:
+                            default_location_id = getattr(default_location, 'id', None)
+                            loc_name = getattr(default_location, 'name', 'Unknown')
+                            user_default_locations[new_user_id] = default_location_id
+                            self._log_action(f"✅ Created default location for user {new_user_id}: {loc_name} (ID: {default_location_id})")
+                        else:
+                            self._log_error(f"Failed to get default location after creation for user {new_user_id}")
+                            user_default_locations[new_user_id] = None
+                    else:
+                        self._log_error(f"Failed to create default locations for user {new_user_id}")
+                        user_default_locations[new_user_id] = None
+                else:
+                    default_location_id = getattr(default_location, 'id', None)
+                    loc_name = getattr(default_location, 'name', 'Unknown')
+                    user_default_locations[new_user_id] = default_location_id
+                    self._log_action(f"Using existing default location for user {new_user_id}: {loc_name} (ID: {default_location_id})")
             
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
@@ -583,14 +617,13 @@ class AdvancedMigrationSystem:
                     book_identifier = safe_get(book_row, 'isbn') or f"{safe_get(book_row, 'title', '')}|{safe_get(book_row, 'author', '')}"
                     
                     if book_identifier not in created_books:
-                        # Convert SQLite row to Book object
-                        book = self._sqlite_row_to_book(book_row)
+                        # Convert SQLite row to Book object with optional API enhancement
+                        book = self._sqlite_row_to_book(book_row, fetch_api_metadata=fetch_api_metadata)
                         
                         # Create book as global entity (no user association)
-                        created_book = run_async(self.book_service.create_book(
-                            domain_book=book,
-                            user_id=""  # Empty user_id for global books
-                        ))
+                        created_book = self.book_service.book_service.create_book_sync(
+                            domain_book=book
+                        )
                         
                         created_book_id = getattr(created_book, 'id', None) if created_book else None
                         if created_book and created_book_id:
@@ -650,6 +683,12 @@ class AdvancedMigrationSystem:
                             # Determine reading status from the book data
                             reading_status = ReadingStatus.READ if safe_get(book_row, 'finish_date') else ReadingStatus.PLAN_TO_READ
                             
+                            # Get default location for this user
+                            user_default_location_id = user_default_locations.get(new_user_id)
+                            
+                            # Debug location assignment
+                            self._log_action(f"DEBUG: Assigning book to user {new_user_id} with location: {user_default_location_id}")
+                            
                             # Create user ownership relationship
                             from app.infrastructure.kuzu_repositories import KuzuUserBookRepository
                             user_book_repo = KuzuUserBookRepository()
@@ -661,7 +700,7 @@ class AdvancedMigrationSystem:
                                 ownership_status="owned",
                                 media_type="physical",
                                 notes=safe_get(book_row, 'notes') or "",
-                                location_id=None
+                                location_id=user_default_location_id
                             ))
                             
                             if success:
@@ -716,8 +755,13 @@ class AdvancedMigrationSystem:
             self.current_status = MigrationStatus.FAILED
             return False
     
-    def _sqlite_row_to_book(self, row) -> Book:
-        """Convert a SQLite row to a Book domain object."""
+    def _sqlite_row_to_book(self, row, fetch_api_metadata: bool = True) -> Book:
+        """Convert a SQLite row to a Book domain object with optional API metadata enhancement.
+        
+        Args:
+            row: SQLite row data
+            fetch_api_metadata: Whether to fetch metadata from APIs (used for v2 migration user choice)
+        """
         # Helper function to safely get values from sqlite3.Row
         def safe_get(row, key, default=None):
             try:
@@ -740,77 +784,178 @@ class AdvancedMigrationSystem:
                 # Default to isbn13 if unclear
                 isbn13 = isbn
         
-        # Create the book object
+        # Determine if we should fetch API metadata
+        api_data = None
+        should_fetch_api = False
+        
+        if isbn and fetch_api_metadata:
+            # For v1 databases: Always fetch if no metadata exists, prioritize API for categories
+            # For v2 databases: Fetch based on user choice
+            has_existing_metadata = bool(safe_get(row, 'categories') or safe_get(row, 'description'))
+            
+            # For V1 databases, always fetch API data to get proper categories
+            # since V1 databases typically lack category information
+            if not has_existing_metadata or not safe_get(row, 'categories'):
+                should_fetch_api = True
+                logger.info(f"📡 Fetching API metadata for ISBN {isbn} (V1 migration or missing categories)")
+            elif fetch_api_metadata:
+                # Has existing metadata but user chose to fetch fresh API data (v2 option)
+                should_fetch_api = True
+                logger.info(f"📡 User chose fresh API metadata for ISBN {isbn} - fetching from APIs")
+        
+        if should_fetch_api:
+            try:
+                from app.utils import get_google_books_cover, fetch_book_data
+                import time
+                import random
+                
+                # Add small random delay for migration to avoid overwhelming APIs
+                delay = random.uniform(0.4, 0.8)  # Random delay between 400-800ms
+                time.sleep(delay)
+                
+                # Try Google Books first (usually more complete)
+                google_data = None
+                try:
+                    google_data = get_google_books_cover(isbn, fetch_title_author=True)
+                    if google_data:
+                        logger.info(f"✅ Got Google Books data for {isbn}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Google Books failed for {isbn}: {e}")
+                
+                # Try OpenLibrary as backup/supplement
+                openlibrary_data = None
+                try:
+                    openlibrary_data = fetch_book_data(isbn)
+                    if openlibrary_data:
+                        logger.info(f"✅ Got OpenLibrary data for {isbn}")
+                except Exception as e:
+                    logger.warning(f"⚠️ OpenLibrary failed for {isbn}: {e}")
+                
+                # Merge API data intelligently
+                if google_data or openlibrary_data:
+                    api_data = {}
+                    
+                    if google_data:
+                        api_data.update(google_data)
+                    
+                    if openlibrary_data:
+                        # Merge categories intelligently
+                        if google_data and google_data.get('categories') and openlibrary_data.get('categories'):
+                            google_cats = set(google_data.get('categories', []))
+                            ol_cats = set(openlibrary_data.get('categories', []))
+                            api_data['categories'] = list(google_cats.union(ol_cats))[:10]  # Limit to 10
+                        elif openlibrary_data.get('categories') and not api_data.get('categories'):
+                            api_data['categories'] = openlibrary_data.get('categories', [])
+                        
+                        # Use OpenLibrary data for missing fields
+                        for field in ['description', 'publisher', 'page_count', 'published_date']:
+                            if not api_data.get(field) and openlibrary_data.get(field):
+                                api_data[field] = openlibrary_data[field]
+                        
+                        if openlibrary_data.get('openlibrary_id'):
+                            api_data['openlibrary_id'] = openlibrary_data['openlibrary_id']
+                        
+                        logger.info(f"✅ Merged OpenLibrary data for {isbn}")
+                    
+                    # Log category information
+                    if api_data.get('categories'):
+                        logger.info(f"📚 Categories for {isbn}: {api_data['categories']}")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to fetch API metadata for {isbn}: {e}")
+                api_data = None
+        
+        # Create the book object with intelligent data prioritization
+        # Priority: SQLite data (if exists) > API data > defaults
         book = Book(
             id=str(uuid.uuid4()),  # Generate new ID
-            title=safe_get(row, 'title') or '',
-            isbn13=isbn13,
-            isbn10=isbn10,
-            cover_url=safe_get(row, 'cover_url'),
-            description=safe_get(row, 'description'),
-            published_date=safe_get(row, 'published_date'),
-            page_count=safe_get(row, 'page_count'),
-            language=safe_get(row, 'language') or 'en',
-            average_rating=safe_get(row, 'average_rating'),
-            rating_count=safe_get(row, 'rating_count'),
+            title=safe_get(row, 'title') or (api_data.get('title') if api_data else '') or '',
+            isbn13=isbn13 or (api_data.get('isbn13') if api_data else None),
+            isbn10=isbn10 or (api_data.get('isbn10') if api_data else None),
+            cover_url=safe_get(row, 'cover_url') or (api_data.get('cover') if api_data else None),
+            description=safe_get(row, 'description') or (api_data.get('description') if api_data else None),
+            published_date=safe_get(row, 'published_date') or (api_data.get('published_date') if api_data else None),
+            page_count=safe_get(row, 'page_count') or (api_data.get('page_count') if api_data else None),
+            language=safe_get(row, 'language') or (api_data.get('language') if api_data else 'en') or 'en',
+            average_rating=safe_get(row, 'average_rating') or (api_data.get('average_rating') if api_data else None),
+            rating_count=safe_get(row, 'rating_count') or (api_data.get('rating_count') if api_data else None),
+            asin=api_data.get('asin') if api_data else None,
+            google_books_id=api_data.get('google_books_id') if api_data else None,
+            openlibrary_id=api_data.get('openlibrary_id') if api_data else None,
             created_at=self._parse_datetime(safe_get(row, 'created_at')) or datetime.now(),
             updated_at=datetime.now()
         )
         
-        # Handle authors - convert single author string to Person/Contributor
+        # Handle authors - convert single author string to Person/Contributor with API enhancement
         author_name = safe_get(row, 'author')
+        api_authors = api_data.get('authors_list', []) if api_data else []
+        
+        # Use SQLite author if available, otherwise use API authors
         if author_name:
-            # Create Person for the author
-            person = Person(
-                id=str(uuid.uuid4()),
-                name=author_name.strip(),
-                created_at=datetime.now(),
-                updated_at=datetime.now()
-            )
-            
-            # Create BookContribution only if we have valid IDs
-            if person.id and book.id:
+            authors_to_process = [author_name.strip()]
+        elif api_authors:
+            authors_to_process = api_authors
+        else:
+            authors_to_process = []
+        
+        contributors = []
+        for author in authors_to_process:
+            if author and author.strip():
+                # Create Person for the author
+                person = Person(
+                    name=author.strip(),
+                    normalized_name=author.strip().lower(),
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
+                
+                # Create BookContribution
                 contribution = BookContribution(
-                    person_id=person.id,
-                    book_id=book.id,
-                    contribution_type=ContributionType.AUTHORED,
                     person=person,
+                    contribution_type=ContributionType.AUTHORED,
+                    order=0,
                     created_at=datetime.now()
                 )
-                book.contributors = [contribution]
+                contributors.append(contribution)
         
-        # Handle categories - convert SQLite categories to Category objects
-        categories_str = safe_get(row, 'categories')
-        categories = []
-        if categories_str:
-            # Categories might be comma-separated or semicolon-separated
+        book.contributors = contributors
+        
+        # Handle categories with intelligent prioritization
+        # Always prioritize API categories for proper genre/category data
+        categories_str = safe_get(row, 'categories')  # From SQLite (v2 databases may have this)
+        api_categories = api_data.get('categories', []) if api_data else []
+        
+        categories_to_use = []
+        
+        # ALWAYS prioritize API categories when available, since they're more accurate
+        if api_categories:
+            categories_to_use = api_categories
+            if categories_str:
+                logger.info(f"📚 Using API categories over existing SQLite categories for {book.title}")
+            else:
+                logger.info(f"📚 Using API categories for {book.title}: {categories_to_use}")
+        elif categories_str:
+            # Only use existing SQLite categories if no API data available
             for sep in [',', ';', '|']:
                 if sep in categories_str:
-                    category_names = [name.strip() for name in categories_str.split(sep)]
+                    categories_to_use = [name.strip() for name in categories_str.split(sep)]
                     break
             else:
                 # Single category
-                category_names = [categories_str.strip()]
-            
-            for category_name in category_names:
-                if category_name:
-                    category = Category(
-                        id=str(uuid.uuid4()),
-                        name=category_name,
-                        normalized_name=Category._normalize_name(category_name),
-                        created_at=datetime.now(),
-                        updated_at=datetime.now()
-                    )
-                    categories.append(category)
+                categories_to_use = [categories_str.strip()]
+            logger.info(f"📚 Using existing SQLite categories (no API data) for {book.title}: {categories_to_use}")
+        else:
+            logger.info(f"📚 No categories available for {book.title}")
         
-        # Store categories for later processing (we'll handle these after creating the book)
-        book.categories = categories
+        # Convert category names to raw_categories for processing by repository
+        if categories_to_use:
+            book.raw_categories = categories_to_use
+            logger.info(f"📚 Set raw_categories for {book.title}: {book.raw_categories}")
         
-        # Handle publisher
-        publisher_name = safe_get(row, 'publisher')
+        # Handle publisher with intelligent prioritization
+        publisher_name = safe_get(row, 'publisher') or (api_data.get('publisher') if api_data else None)
         if publisher_name:
             publisher = Publisher(
-                id=str(uuid.uuid4()),
                 name=publisher_name.strip(),
                 created_at=datetime.now()
             )

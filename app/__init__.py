@@ -199,7 +199,7 @@ def _initialize_default_templates():
                         "Original Publication Year": {"action": "map_existing", "target_field": "original_publication_year"},
                         "Date Read": {"action": "map_existing", "target_field": "date_read"},
                         "Date Added": {"action": "map_existing", "target_field": "date_added"},
-                        "Bookshelves": {"action": "map_existing", "target_field": "reading_status"},
+                        "Bookshelves": {"action": "map_existing", "target_field": "custom_global_bookshelves"},
                         "Exclusive Shelf": {"action": "map_existing", "target_field": "reading_status"},
                         "My Review": {"action": "map_existing", "target_field": "notes"},
                         "Private Notes": {"action": "map_existing", "target_field": "private_notes"}
@@ -386,6 +386,15 @@ def create_app():
             # In case of error, fallback to session or default
             theme = session.get('theme', 'light')
         return dict(current_theme=theme)
+
+    # Add custom template filters
+    @app.template_filter('basename')
+    def basename_filter(path):
+        """Extract the basename from a file path."""
+        import os
+        if not path:
+            return ''
+        return os.path.basename(str(path))
 
     # CSRF error handler
     @app.errorhandler(400)

@@ -1,7 +1,7 @@
 <!-- migration/migrate_v2.html -->
 {% extends "base.html" %}
 
-{% block title %}Migrate Multi-User Library - Bibliotheca{% endblock %}
+{% block title %}Migrate Multi-User Library - MyBibliotheca{% endblock %}
 
 {% block content %}
 <div class="container mt-5">
@@ -99,14 +99,39 @@
                         </p>
                     </div>
                     
-                    <!-- Migration Form -->
-                    <form method="POST" onsubmit="return confirmMigration()">
-                        <div class="text-center">
-                            <button type="submit" name="action" value="migrate" class="btn btn-success btn-lg px-5">
-                                <i class="fas fa-play"></i> Start Multi-User Migration
-                            </button>
+                    <!-- Migration Options -->
+                    <div class="card border-info mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="fas fa-cog"></i> Migration Options</h6>
                         </div>
-                    </form>
+                        <div class="card-body">
+                            <form method="POST" onsubmit="return confirmMigration()">
+                                <div class="form-group">
+                                    <label class="form-label font-weight-bold">Book Metadata Enhancement</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="api_metadata" id="use_existing" value="false" checked>
+                                        <label class="form-check-label" for="use_existing">
+                                            <strong>Use Existing Data</strong>
+                                            <small class="text-muted d-block">Migrate books with current metadata only (faster)</small>
+                                        </label>
+                                    </div>
+                                    <div class="form-check mt-2">
+                                        <input class="form-check-input" type="radio" name="api_metadata" id="fetch_api" value="true">
+                                        <label class="form-check-label" for="fetch_api">
+                                            <strong>Enhance with Fresh API Data</strong>
+                                            <small class="text-muted d-block">Fetch updated categories, descriptions, and metadata from online sources (slower but more complete)</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div class="text-center">
+                                    <button type="submit" name="action" value="migrate" class="btn btn-success btn-lg px-5">
+                                        <i class="fas fa-play"></i> Start Multi-User Migration
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
                     
                     <div class="text-center mt-3">
                         <a href="{{ url_for('advanced_migration.setup_v2_migration') }}" class="btn btn-outline-secondary">

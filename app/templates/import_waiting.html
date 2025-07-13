@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Importing Your Library - MyBibliotheca{% endblock %}
+
+{% block content %}
+<style>
+/* Waiting screen styling */
+.waiting-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    text-align: center;
+}
+
+.spinner {
+    width: 80px;
+    height: 80px;
+    border: 8px solid #f3f3f3;
+    border-top: 8px solid #6f42c1;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 2rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Dark mode support */
+[data-theme="dark"] .spinner {
+    border-color: #404040;
+    border-top-color: #8b5cf6;
+}
+
+[data-theme="dark"] .card {
+    background-color: rgba(40, 40, 40, 0.9);
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+</style>
+
+<div class="container mt-4">
+    <!-- Header -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h1 class="h3 mb-0">
+                            <i class="bi bi-upload me-2"></i>Import in Progress
+                        </h1>
+                        <span class="badge bg-primary">{{ import_type|title }} Import</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="waiting-container">
+        <div class="spinner"></div>
+        
+        <h2 class="mb-4 pulse">📚 Importing Your {{ import_type|title }} Library</h2>
+        
+        <div class="card" style="max-width: 500px; margin: 0 auto;">
+            <div class="card-body">
+                <h5 class="card-title">Please Be Patient</h5>
+                <p class="card-text">
+                    We're importing your books from {{ import_type|title }} and setting up your library. 
+                    This process may take a few minutes depending on the size of your collection.
+                </p>
+                <p class="text-muted">
+                    <small>
+                        💡 We're fetching book details, organizing categories, 
+                        and creating custom fields for platform-specific data. 
+                        You'll be redirected automatically when complete.
+                    </small>
+                </p>
+            </div>
+        </div>
+        
+        <div class="mt-4">
+            <div class="progress" style="width: 300px; height: 6px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 100%"></div>
+            </div>
+            <p class="text-muted mt-2">
+                <small>Processing {{ filename }}...</small>
+            </p>
+        </div>
+
+        <div class="mt-4">
+            <p class="text-muted">
+                <small>Task ID: {{ task_id }}</small>
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-check for completion and redirect
+let checkInterval;
+let maxWaitTime = 300000; // 5 minutes max wait
+let checkStartTime = Date.now();
+
+function checkImportStatus() {
+    // Check if we've been waiting too long
+    if (Date.now() - checkStartTime > maxWaitTime) {
+        console.log('Max wait time reached, redirecting to library');
+        clearInterval(checkInterval);
+        window.location.href = '{{ url_for("main.library") }}';
+        return;
+    }
+    
+    fetch(`{{ url_for("import.api_import_progress", task_id=task_id) }}`)
+        .then(response => response.json())
+        .then(data => {
+            console.log('Import status:', data);
+            
+            // Check if import is complete
+            if (data.status === 'completed' || data.status === 'success') {
+                console.log('Import completed, redirecting to library');
+                clearInterval(checkInterval);
+                
+                // Show success message and redirect
+                document.querySelector('.card-title').textContent = 'Import Complete!';
+                document.querySelector('.card-text').innerHTML = 
+                    `✅ Successfully imported ${data.success || 0} books from your {{ import_type }} library!`;
+                document.querySelector('.spinner').style.display = 'none';
+                document.querySelector('.pulse').textContent = '🎉 Import Complete!';
+                
+                setTimeout(() => {
+                    window.location.href = '{{ url_for("main.library") }}';
+                }, 3000);
+            } else if (data.status === 'failed' || data.status === 'error') {
+                console.log('Import failed, showing error and redirecting');
+                clearInterval(checkInterval);
+                
+                // Show error message and redirect
+                document.querySelector('.card-title').textContent = 'Import Issues';
+                document.querySelector('.card-text').innerHTML = 
+                    `⚠️ Import completed with some issues. ${data.success || 0} books imported, ${data.errors || 0} errors.`;
+                document.querySelector('.spinner').style.display = 'none';
+                document.querySelector('.pulse').textContent = '⚠️ Import Complete';
+                
+                setTimeout(() => {
+                    window.location.href = '{{ url_for("main.library") }}';
+                }, 5000);
+            }
+            // If status is still 'pending' or 'running', keep checking
+        })
+        .catch(error => {
+            console.log('Error checking import status:', error);
+            // Continue checking - network errors happen
+        });
+}
+
+// Start checking import status every 3 seconds
+checkInterval = setInterval(checkImportStatus, 3000);
+
+// Initial check after 2 seconds
+setTimeout(checkImportStatus, 2000);
+
+// Fallback: redirect to library after max wait time
+setTimeout(() => {
+    console.log('Fallback timeout reached, redirecting to library');
+    clearInterval(checkInterval);
+    window.location.href = '{{ url_for("main.library") }}';
+}, maxWaitTime + 10000); // 10 seconds after max wait time
+</script>
+{% endblock %}

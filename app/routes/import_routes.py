@@ -199,12 +199,13 @@ def auto_detect_fields(headers, user_id):
         'comments': 'notes',
         'description': 'description',
         
-        # Categories/Tags
+        # Categories/Tags (Note: In proper imports, these should be moved to custom fields)
         'categories': 'categories',
         'tags': 'categories',
         'genre': 'categories',
         'genres': 'categories',
-        'bookshelves': 'categories',
+        # Bookshelves should be mapped to custom fields in proper imports
+        'bookshelves': 'custom_personal_goodreads_shelves',
         
         # Goodreads-specific fields (mapped to custom fields)
         'average rating': 'custom_global_average_rating',
@@ -362,7 +363,11 @@ def auto_create_custom_fields(field_mappings, user_id):
                     print(f"❌ Error creating generic custom field {field_name}: {e}")
 
 def get_goodreads_field_mappings():
-    """Get predefined field mappings for Goodreads CSV format with custom field support."""
+    """Get predefined field mappings for Goodreads CSV format with custom field support.
+    
+    NOTE: Goodreads 'Bookshelves' are moved to custom fields since they're user-specific
+    tags/shelves, not actual genres. Real genres/categories will be fetched from APIs.
+    """
     # Base mappings
     base_mappings = {
         'Title': 'title',
@@ -378,7 +383,6 @@ def get_goodreads_field_mappings():
         'Original Publication Year': 'original_publication_year',
         'Date Read': 'date_read',
         'Date Added': 'date_added',
-        'Bookshelves': 'categories',
         'Exclusive Shelf': 'reading_status',
         'My Review': 'personal_notes',
         'Private Notes': 'private_notes',
@@ -391,7 +395,8 @@ def get_goodreads_field_mappings():
         'Binding': 'custom_global_binding_type',
         'Bookshelves with positions': 'custom_global_shelf_positions',
         
-        # Personal custom fields (per-user)
+        # Personal custom fields (per-user) - Goodreads bookshelves moved here
+        'Bookshelves': 'custom_personal_goodreads_shelves',  # Moved from categories to custom field
         'Spoiler': 'custom_personal_spoiler_flag', 
         'Read Count': 'custom_personal_read_count',
         'Owned Copies': 'custom_personal_owned_copies',
@@ -400,7 +405,11 @@ def get_goodreads_field_mappings():
     return enhanced_mappings
 
 def get_storygraph_field_mappings():
-    """Get predefined field mappings for StoryGraph CSV format with custom field support."""
+    """Get predefined field mappings for StoryGraph CSV format with custom field support.
+    
+    NOTE: StoryGraph 'Tags' are moved to custom fields since they're user-specific
+    tags, not actual genres. Real genres/categories will be fetched from APIs.
+    """
     # Base mappings
     base_mappings = {
         'Title': 'title',
@@ -416,7 +425,6 @@ def get_storygraph_field_mappings():
         'Read Status': 'reading_status',
         'Star Rating': 'user_rating',
         'Review': 'personal_notes',
-        'Tags': 'categories',
         'Format': 'format',
     }
     
@@ -428,7 +436,8 @@ def get_storygraph_field_mappings():
         'Pace': 'custom_global_pace', 
         'Character- or Plot-Driven?': 'custom_global_character_plot_driven',
         
-        # Personal custom fields (per-user)
+        # Personal custom fields (per-user) - StoryGraph tags moved here
+        'Tags': 'custom_personal_storygraph_tags',  # Moved from categories to custom field
         'Strong Character Development?': 'custom_personal_character_development',
         'Loveable Characters?': 'custom_personal_loveable_characters',
         'Diverse Characters?': 'custom_personal_diverse_characters',
@@ -1076,7 +1085,14 @@ def direct_import():
             temp_path = temp_file.name
             original_filename = filename
         
-        # Process the import
+        # Detect import type based on file content
+        detected_format, confidence = detect_csv_format(temp_path)
+        if detected_format in ['goodreads', 'storygraph']:
+            import_type = detected_format
+        else:
+            # Default to goodreads if not detected
+            import_type = 'goodreads'
+        
         print(f"📋 [DIRECT_IMPORT] Starting {import_type} import processing...")
         
         # Get predefined mappings based on import type
@@ -1101,84 +1117,97 @@ def direct_import():
         
         print(f"📋 [DIRECT_IMPORT] Using mappings: {list(mappings.keys())}")
         
-        # Initialize service
-        from app.simplified_book_service import SimplifiedBookService
-        simplified_service = SimplifiedBookService()
+        # Create import job for background processing
+        task_id = str(uuid.uuid4())
         
-        # Initialize counters
-        processed_count = 0
-        success_count = 0
-        error_count = 0
+        # Count total rows
+        try:
+            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+                import csv
+                reader = csv.DictReader(csvfile)
+                total_rows = sum(1 for _ in reader)
+        except:
+            total_rows = 0
         
-        # Parse CSV and process rows
-        with open(temp_path, 'r', encoding='utf-8') as csvfile:
-            import csv
-            
-            # Goodreads/StoryGraph files typically have headers
-            reader = csv.DictReader(csvfile)
-            rows_list = list(reader)
-            
-            print(f"📋 [DIRECT_IMPORT] Found {len(rows_list)} rows to process")
-            
-            # Process each row
-            for row_num, row in enumerate(rows_list, 1):
-                try:
-                    print(f"📖 [DIRECT_IMPORT] Processing row {row_num}/{len(rows_list)}")
-                    
-                    # Build book data using the service's mapping logic
-                    simplified_book = simplified_service.build_book_data_from_row(row, mappings)
-                    
-                    if not simplified_book:
-                        print(f"⚠️ [DIRECT_IMPORT] Row {row_num}: Could not build book data")
-                        processed_count += 1
-                        error_count += 1
-                        continue
-                    
-                    print(f"📚 [DIRECT_IMPORT] Processing: {simplified_book.title}")
-                    
-                    # Add book to user's library using sync method
-                    result = simplified_service.add_book_to_user_library_sync(
-                        book_data=simplified_book,
-                        user_id=str(current_user.id),
-                        reading_status=simplified_book.reading_status or 'plan_to_read',
-                        ownership_status='owned',
-                        media_type='physical'
-                    )
-                    
-                    processed_count += 1
-                    if result:
-                        success_count += 1
-                        print(f"✅ [DIRECT_IMPORT] Successfully added: {simplified_book.title}")
-                    else:
-                        error_count += 1
-                        print(f"❌ [DIRECT_IMPORT] Failed to add: {simplified_book.title}")
-                        
-                except Exception as row_error:
-                    processed_count += 1
-                    error_count += 1
-                    print(f"❌ [DIRECT_IMPORT] Error processing row {row_num}: {row_error}")
-                    continue
+        job_data = {
+            'task_id': task_id,
+            'user_id': current_user.id,
+            'csv_file_path': temp_path,
+            'field_mappings': mappings,
+            'default_reading_status': 'plan_to_read',
+            'duplicate_handling': 'skip',
+            'custom_fields_enabled': True,
+            'format_type': import_type,
+            'enable_api_enrichment': True,  # Enable API enrichment for better data
+            'status': 'pending',
+            'processed': 0,
+            'success': 0,
+            'errors': 0,
+            'skipped': 0,
+            'total': total_rows,
+            'start_time': datetime.utcnow().isoformat(),
+            'current_book': None,
+            'error_messages': [],
+            'recent_activity': []
+        }
         
-        # Clean up temporary file if we created it
-        if not use_suggested_file:
+        # Store job data in memory and Kuzu
+        print(f"🏗️ [DIRECT_IMPORT] Creating job {task_id} for user {current_user.id}")
+        import_jobs[task_id] = job_data
+        store_job_in_kuzu(task_id, job_data)
+        
+        # Auto-create any custom fields referenced in the mappings
+        auto_create_custom_fields(mappings, current_user.id)
+        
+        # Start the import in background thread
+        import_config = {
+            'task_id': task_id,
+            'csv_file_path': temp_path,
+            'field_mappings': mappings,
+            'user_id': current_user.id,
+            'default_reading_status': 'plan_to_read',
+            'format_type': import_type,
+            'enable_api_enrichment': True
+        }
+        
+        def run_import():
             try:
-                import os
-                os.unlink(temp_path)
-            except Exception as cleanup_error:
-                print(f"⚠️ [DIRECT_IMPORT] Could not clean up temp file: {cleanup_error}")
+                print(f"🚀 [DIRECT_IMPORT] Starting import job {task_id} in background thread")
+                
+                # Call the async import function with an event loop
+                asyncio.run(process_simple_import(import_config))
+                
+            except Exception as e:
+                print(f"❌ [DIRECT_IMPORT] Error in background thread: {e}")
+                import traceback
+                traceback.print_exc()
+                # Update job with error
+                try:
+                    error_update = {
+                        'status': 'failed',
+                        'error_messages': [str(e)]
+                    }
+                    update_job_in_kuzu(task_id, error_update)
+                    if task_id in import_jobs:
+                        import_jobs[task_id].update(error_update)
+                except Exception as update_error:
+                    print(f"❌ [DIRECT_IMPORT] Failed to update job with error: {update_error}")
         
-        # Clear session data
+        # Start the import process in background
+        import threading
+        thread = threading.Thread(target=run_import)
+        thread.daemon = True
+        thread.start()
+        
+        # Clear session data  
         session.pop('direct_import_file', None)
         session.pop('direct_import_filename', None)
         
-        print(f"🎉 [DIRECT_IMPORT] Import completed! {success_count} success, {error_count} errors out of {processed_count} processed")
+        print(f"🚀 [DIRECT_IMPORT] Background thread started for job {task_id}")
         
-        if success_count > 0:
-            flash(f'Import completed! Successfully imported {success_count} books. {error_count} errors.', 'success')
-        else:
-            flash(f'Import completed with {error_count} errors. No books were successfully imported.', 'warning')
-        
-        return redirect(url_for('main.library'))
+        # Redirect to waiting page instead of library
+        return redirect(url_for('import.import_waiting', task_id=task_id, 
+                               import_type=import_type, filename=original_filename))
         
     except Exception as e:
         current_app.logger.error(f"Error in direct import: {e}")
@@ -1568,6 +1597,11 @@ async def process_simple_import(import_config):
     enable_api_enrichment = import_config.get('enable_api_enrichment', True)
     format_type = import_config.get('format_type', 'unknown')
     
+    # Force API enrichment for Goodreads and Storygraph imports to get proper categories
+    if format_type in ['goodreads', 'storygraph']:
+        enable_api_enrichment = True
+        print(f"🌐 [PROCESS_SIMPLE] Forcing API enrichment for {format_type} import to get proper genres/categories")
+    
     print(f"🔄 [PROCESS_SIMPLE] Starting import for task {task_id}")
     print(f"🔄 [PROCESS_SIMPLE] Format: {format_type}, API enrichment: {enable_api_enrichment}")
     
@@ -1805,25 +1839,25 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
         simplified_book.language = api_data['language']
         print(f"📚 [ENRICH] Added language from API: {simplified_book.language}")
     
-    # Merge categories (merge API categories with CSV categories)
+    # Merge categories - ALWAYS prefer API categories over CSV data
+    # CSV categories are often user tags rather than real book genres
     if api_data.get('categories'):
         api_categories = api_data['categories']
-        if isinstance(api_categories, list):
-            if simplified_book.categories:
-                # Merge with existing categories
-                existing_categories = simplified_book.categories.split(', ') if isinstance(simplified_book.categories, str) else simplified_book.categories
-                all_categories = existing_categories + api_categories
-                # Remove duplicates while preserving order
-                seen = set()
-                unique_categories = []
-                for cat in all_categories:
-                    if cat.lower() not in seen:
-                        unique_categories.append(cat)
-                        seen.add(cat.lower())
-                simplified_book.categories = ', '.join(unique_categories)
-            else:
-                simplified_book.categories = ', '.join(api_categories)
-            print(f"📚 [ENRICH] Added categories from API: {simplified_book.categories}")
+        if isinstance(api_categories, list) and api_categories:
+            # Always use API categories, don't merge with CSV "categories"
+            # Keep as list since SimplifiedBook.categories is List[str]
+            simplified_book.categories = api_categories
+            print(f"📚 [ENRICH] Using API categories (overriding CSV): {simplified_book.categories}")
+        elif isinstance(api_categories, str) and api_categories.strip():
+            # Split string categories by comma and clean them
+            simplified_book.categories = [cat.strip() for cat in api_categories.split(',') if cat.strip()]
+            print(f"📚 [ENRICH] Using API categories (overriding CSV): {simplified_book.categories}")
+    else:
+        # If no API categories available, clear any existing CSV categories
+        # since they're usually incorrect (user tags instead of real genres)
+        if simplified_book.categories:
+            print(f"📚 [ENRICH] No API categories found, clearing CSV categories: {simplified_book.categories}")
+            simplified_book.categories = []
     
     # Merge cover URL (prefer API cover)
     if api_data.get('cover') and not simplified_book.cover_url:
@@ -1894,13 +1928,15 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
     return task_id
 
 def batch_fetch_book_metadata(isbns):
-    """Batch fetch metadata from Google Books and OpenLibrary APIs."""
+    """Batch fetch metadata from Google Books and OpenLibrary APIs with improved error handling."""
     print(f"🌐 [API] Fetching metadata for {len(isbns)} ISBNs")
     
     from app.utils import fetch_book_data, get_google_books_cover
     import time
+    import random
     
     metadata = {}
+    failed_isbns = []
     
     for i, isbn in enumerate(isbns):
         if not isbn:
@@ -1909,11 +1945,28 @@ def batch_fetch_book_metadata(isbns):
         print(f"🌐 [API] Processing {i+1}/{len(isbns)}: {isbn}")
         
         try:
+            # Add small random delay to avoid hitting rate limits too hard
+            if i > 0:  # Don't delay the first request
+                delay = random.uniform(0.3, 0.7)  # Random delay between 300-700ms
+                time.sleep(delay)
+            
             # Try Google Books first (usually faster and more complete)
-            google_data = get_google_books_cover(isbn, fetch_title_author=True)
+            google_data = None
+            try:
+                google_data = get_google_books_cover(isbn, fetch_title_author=True)
+                if google_data:
+                    print(f"✅ [API] Got Google Books data for {isbn}")
+            except Exception as e:
+                print(f"⚠️ [API] Google Books failed for {isbn}: {e}")
             
             # Try OpenLibrary as backup/additional source
-            openlibrary_data = fetch_book_data(isbn)
+            openlibrary_data = None
+            try:
+                openlibrary_data = fetch_book_data(isbn)
+                if openlibrary_data:
+                    print(f"✅ [API] Got OpenLibrary data for {isbn}")
+            except Exception as e:
+                print(f"⚠️ [API] OpenLibrary failed for {isbn}: {e}")
             
             # Merge the data, preferring Google Books for most fields
             combined_data = {}
@@ -1921,13 +1974,20 @@ def batch_fetch_book_metadata(isbns):
             if google_data:
                 combined_data.update(google_data)
                 combined_data['source'] = 'google_books'
-                print(f"✅ [API] Got Google Books data for {isbn}")
             
             if openlibrary_data:
                 # Add OpenLibrary data for missing fields
                 for key, value in openlibrary_data.items():
                     if value and (key not in combined_data or not combined_data[key]):
                         combined_data[key] = value
+                
+                # Merge categories intelligently
+                if google_data and google_data.get('categories') and openlibrary_data.get('categories'):
+                    # Combine categories from both sources
+                    google_cats = set(google_data.get('categories', []))
+                    ol_cats = set(openlibrary_data.get('categories', []))
+                    all_cats = list(google_cats.union(ol_cats))
+                    combined_data['categories'] = all_cats[:12]  # Limit to 12 total categories
                 
                 # Add OpenLibrary specific fields
                 if openlibrary_data.get('openlibrary_id'):
@@ -1937,8 +1997,6 @@ def batch_fetch_book_metadata(isbns):
                     combined_data['source'] = 'google_books,openlibrary'
                 else:
                     combined_data['source'] = 'openlibrary'
-                
-                print(f"✅ [API] Got OpenLibrary data for {isbn}")
             
             if combined_data:
                 metadata[isbn] = {
@@ -1946,18 +2004,25 @@ def batch_fetch_book_metadata(isbns):
                     'source': combined_data.get('source', 'unknown')
                 }
                 print(f"📚 [API] Combined data for {isbn}: {list(combined_data.keys())}")
+                
+                # Log category info specifically
+                if combined_data.get('categories'):
+                    print(f"📚 [API] Categories for {isbn}: {combined_data['categories']}")
             else:
                 print(f"⚠️ [API] No data found for {isbn}")
-            
-            # Rate limiting: small delay between requests to be respectful
-            if i < len(isbns) - 1:  # Don't delay after the last request
-                time.sleep(0.5)  # 500ms between requests
+                failed_isbns.append(isbn)
                 
         except Exception as e:
             print(f"❌ [API] Error fetching data for {isbn}: {e}")
+            failed_isbns.append(isbn)
             continue
     
-    print(f"🎉 [API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs")
+    success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
+    print(f"🎉 [API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs ({success_rate:.1f}% success rate)")
+    
+    if failed_isbns:
+        print(f"⚠️ [API] Failed ISBNs: {failed_isbns[:10]}{'...' if len(failed_isbns) > 10 else ''}")
+    
     return metadata
 
 def store_job_in_kuzu(task_id, job_data):
@@ -2477,3 +2542,15 @@ def infer_field_type_from_samples(samples):
     
     # Default to text
     return 'text'
+
+@import_bp.route('/import-waiting/<task_id>')
+@login_required
+def import_waiting(task_id):
+    """Show waiting page for import process (similar to onboarding splash screen)."""
+    import_type = request.args.get('import_type', 'goodreads')
+    filename = request.args.get('filename', 'import.csv')
+    
+    return render_template('import_waiting.html',
+                         task_id=task_id,
+                         import_type=import_type,
+                         filename=filename)

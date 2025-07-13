@@ -1,6 +1,6 @@
-{% extends "base.html" %}
-{% block title %}Setting Up Your Library - Bibliotheca{% endblock %}
-{% block content %}
+{% extends "onboarding/base_onboarding.html" %}
+{% block title %}Setting Up Your Library - MyBibliotheca{% endblock %}
+{% block onboarding_content %}
 <style>
 /* Dark mode enhancements for Import Books Progress */
 [data-theme="dark"] .text-muted {
@@ -68,18 +68,17 @@
     color: #e0e0e0 !important;
 }
 </style>
-<div class="container mt-4">
-    <!-- Progress Indicator -->
-    <div class="card mb-4">
-        <div class="card-body">
-            <div class="progress mb-2">
-                <div class="progress-bar" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
-            </div>
-            <small class="text-muted">Step {{ step }} of {{ total_steps }}: Setting Up Your Library</small>
+<!-- Progress Indicator -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="progress mb-2">
+            <div class="progress-bar" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
         </div>
+        <small class="text-muted">Step {{ step }} of {{ total_steps }}: Setting Up Your Library</small>
     </div>
+</div>
 
-    <h2>📚 Setting Up Your Library</h2>
+<h2>📚 Setting Up Your Library</h2>
     
     <div class="row">
         <div class="col-lg-8">
@@ -157,7 +156,6 @@
                     
                     <h6>📝 Recent Activity</h6>
                     <div id="activityLog" class="small" style="max-height: 200px; overflow-y: auto;">
-                        <!-- Activity log will be populated by JavaScript -->
                     </div>
                     
                     <hr>
@@ -171,7 +169,6 @@
             </div>
         </div>
     </div>
-</div>
 
 <script>
 let taskId = '{{ task_id }}';
@@ -212,7 +209,7 @@ function updateProgress() {
                 progressBar.className = 'progress-bar bg-success';
                 
                 document.getElementById('statusMessage').innerHTML = 
-                    `<i class="fas fa-check-circle"></i> Welcome to Bibliotheca! Your library is ready with ${data.success} books.`;
+                    `<i class="fas fa-check-circle"></i> Welcome to MyBibliotheca! Your library is ready with ${data.success} books.`;
                 document.getElementById('statusMessage').className = 'alert alert-success';
                 
                 document.getElementById('completionButtons').classList.remove('d-none');

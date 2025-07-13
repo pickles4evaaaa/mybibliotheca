@@ -648,6 +648,18 @@ class SimplifiedBookService:
                         book_data['rating_count'] = int(value) if value else None
                     except (ValueError, TypeError):
                         book_data['rating_count'] = None
+                elif book_field == 'categories':
+                    # Handle categories field - ensure it's always a list
+                    if value:
+                        if isinstance(value, list):
+                            book_data['categories'] = value
+                        elif isinstance(value, str):
+                            # Split comma-separated categories and clean them
+                            book_data['categories'] = [cat.strip() for cat in value.split(',') if cat.strip()]
+                        else:
+                            book_data['categories'] = [str(value)]
+                    else:
+                        book_data['categories'] = []
                 elif book_field not in ['ignore', 'reading_status', 'rating', 'finish_date', 'personal_notes']:
                     # Map other standard fields
                     if book_field in book_data:

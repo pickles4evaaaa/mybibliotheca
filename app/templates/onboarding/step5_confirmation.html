@@ -461,8 +461,18 @@ function confirmSetupAndDisable(button) {
             navigator.vibrate(50);
         }
         
-        // Show progress indicator
+        // Show progress indicator based on data option
+        const dataOption = '{{ onboarding_data.data_options.option if onboarding_data.data_options else "fresh" }}';
+        let progressMessage = '<i class="bi bi-gear"></i> Setting up your library...';
+        
+        if (dataOption === 'import') {
+            progressMessage = '<i class="bi bi-download"></i> Importing your books...';
+        } else if (dataOption === 'migrate') {
+            progressMessage = '<i class="bi bi-database-gear"></i> Migrating your database...';
+        }
+        
         const progressText = document.createElement('div');
+        progressText.id = 'onboarding-progress';
         progressText.style.cssText = `
             position: fixed;
             top: 20px;
@@ -475,8 +485,9 @@ function confirmSetupAndDisable(button) {
             z-index: 1000;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             animation: slideIn 0.3s ease-out;
+            max-width: 300px;
         `;
-        progressText.innerHTML = '<i class="bi bi-gear"></i> Setting up your library...';
+        progressText.innerHTML = progressMessage;
         document.body.appendChild(progressText);
         
         // Add CSS animation for progress indicator
@@ -486,8 +497,18 @@ function confirmSetupAndDisable(button) {
                 from { transform: translateX(100%); opacity: 0; }
                 to { transform: translateX(0); opacity: 1; }
             }
+            .progress-pulse {
+                animation: pulse 1.5s ease-in-out infinite;
+            }
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.7; }
+            }
         `;
         document.head.appendChild(style);
+        
+        // Add pulsing animation to progress indicator
+        progressText.classList.add('progress-pulse');
         
         console.log('🚨 About to allow form submission - returning true');
         

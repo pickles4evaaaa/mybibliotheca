@@ -10,9 +10,12 @@ from flask import current_app
 
 def fetch_book_data(isbn):
     """Enhanced OpenLibrary API lookup with comprehensive field mapping and timeout handling."""
+    if not isbn:
+        return None
+        
     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
     try:
-        response = requests.get(url, timeout=10)  # 10 second timeout
+        response = requests.get(url, timeout=15)  # Increased timeout
         response.raise_for_status()
         data = response.json()
         
@@ -61,16 +64,42 @@ def fetch_book_data(isbn):
             published_date = book.get('publish_date', '')
             page_count = book.get('number_of_pages')
             
-            # Enhanced subjects/categories processing
+            # Enhanced subjects/categories processing with better filtering
             subjects = book.get('subjects', [])
             categories = []
-            for subject in subjects[:10]:  # Limit to 10 most relevant categories
+            # Filter out overly generic or unhelpful categories
+            exclude_categories = {
+                'accessible book', 'protected daisy', 'lending library',
+                'in library', 'fiction', 'non-fiction', 'literature',
+                'reading level-adult', 'adult', 'juvenile', 'young adult',
+                'large type books', 'large print books'
+            }
+            
+            for subject in subjects[:15]:  # Limit to 15 most relevant categories
+                category_name = ''
                 if isinstance(subject, dict):
-                    categories.append(subject.get('name', ''))
+                    category_name = subject.get('name', '')
                 else:
-                    categories.append(str(subject))
-            # Remove empty categories and join
-            categories = [cat for cat in categories if cat.strip()]
+                    category_name = str(subject)
+                
+                # Clean and filter categories
+                category_name = category_name.strip().lower()
+                if (category_name and 
+                    len(category_name) > 2 and 
+                    category_name not in exclude_categories and
+                    not category_name.startswith('places--') and
+                    not category_name.startswith('people--')):
+                    # Capitalize properly
+                    categories.append(category_name.title())
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_categories = []
+            for cat in categories:
+                if cat.lower() not in seen:
+                    unique_categories.append(cat)
+                    seen.add(cat.lower())
+            categories = unique_categories[:10]  # Final limit of 10 categories
             
             # Publisher info
             publishers = book.get('publishers', [])
@@ -104,7 +133,7 @@ def fetch_book_data(isbn):
                 'description': description,
                 'published_date': published_date,
                 'page_count': page_count,
-                'categories': categories,  # Enhanced: List of categories instead of comma-separated string
+                'categories': categories,  # Enhanced: Filtered and cleaned categories list
                 'publisher': publisher,
                 'language': language,
                 'openlibrary_id': openlibrary_id,
@@ -218,9 +247,12 @@ def search_author_by_name(author_name):
 
 def get_google_books_cover(isbn, fetch_title_author=False):
     """Enhanced Google Books API lookup with comprehensive field mapping."""
+    if not isbn:
+        return None
+        
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
     try:
-        resp = requests.get(url, timeout=10)  # Increased timeout
+        resp = requests.get(url, timeout=15)  # Increased timeout
         resp.raise_for_status()  # Raise exception for bad status codes
         data = resp.json()
         items = data.get("items")
@@ -252,8 +284,38 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 rating_count = volume_info.get('ratingsCount')
                 publisher = volume_info.get('publisher', '')
                 
-                # Enhanced category processing
-                categories = volume_info.get('categories', [])
+                # Enhanced category processing with better filtering
+                raw_categories = volume_info.get('categories', [])
+                categories = []
+                
+                # Filter and clean Google Books categories
+                exclude_categories = {
+                    'fiction', 'non-fiction', 'literature', 'general',
+                    'juvenile fiction', 'juvenile nonfiction', 'young adult fiction',
+                    'literary criticism', 'criticism', 'biography & autobiography'
+                }
+                
+                for cat in raw_categories:
+                    if isinstance(cat, str):
+                        # Split complex categories (e.g., "Fiction / Science Fiction / General")
+                        parts = [part.strip() for part in cat.split('/')]
+                        for part in parts:
+                            clean_part = part.strip().lower()
+                            if (clean_part and 
+                                len(clean_part) > 2 and 
+                                clean_part not in exclude_categories and
+                                not clean_part.startswith('general')):
+                                # Capitalize properly
+                                categories.append(part.strip().title())
+                
+                # Remove duplicates while preserving order
+                seen = set()
+                unique_categories = []
+                for cat in categories:
+                    if cat.lower() not in seen:
+                        unique_categories.append(cat)
+                        seen.add(cat.lower())
+                categories = unique_categories[:10]  # Limit to 10 most relevant
                 
                 # Enhanced ISBN extraction from industryIdentifiers
                 isbn10 = None
@@ -284,7 +346,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     'description': description,
                     'published_date': published_date,
                     'page_count': page_count,
-                    'categories': categories,
+                    'categories': categories,  # Enhanced: Filtered and cleaned categories
                     'publisher': publisher,
                     'language': language,
                     'average_rating': average_rating,
@@ -297,7 +359,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
             return cover_url
     except Exception as e:
         current_app.logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {e}")
-        pass
+        return None
     if fetch_title_author:
         return None
     return None

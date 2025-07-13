@@ -1,0 +1,154 @@
+{% extends "onboarding/base_onboarding.html" %}
+{% block title %}Importing Your Library - {{ site_name }}{% endblock %}
+{% block onboarding_content %}
+<style>
+/* Splash screen styling */
+.splash-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    text-align: center;
+}
+
+.spinner {
+    width: 80px;
+    height: 80px;
+    border: 8px solid #f3f3f3;
+    border-top: 8px solid #6f42c1;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 2rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Dark mode support */
+[data-theme="dark"] .spinner {
+    border-color: #404040;
+    border-top-color: #8b5cf6;
+}
+
+[data-theme="dark"] .card {
+    background-color: rgba(40, 40, 40, 0.9);
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+[data-theme="dark"] .text-muted {
+    color: #b0b0b0 !important;
+}
+</style>
+
+<!-- Progress Indicator -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="progress mb-2">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                 role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <small class="text-muted">Step 5 of 5: Importing Your Books</small>
+    </div>
+</div>
+
+<div class="splash-container">
+    <div class="spinner"></div>
+    
+    <h2 class="mb-4 pulse">📚 Importing Your Library</h2>
+    
+    <div class="card" style="max-width: 500px;">
+        <div class="card-body">
+            <h5 class="card-title">Please Be Patient</h5>
+            <p class="card-text">
+                We're setting up your personal library and importing your books. 
+                This process may take a few minutes depending on the size of your collection.
+            </p>
+            <p class="text-muted">
+                <small>
+                    💡 We're fetching book details, creating your default locations, 
+                    and organizing everything for you. You'll be redirected automatically when complete.
+                </small>
+            </p>
+        </div>
+    </div>
+    
+    <div class="mt-4">
+        <p class="text-muted">
+            <small>Task ID: {{ task_id }}</small>
+        </p>
+    </div>
+</div>
+
+<script>
+// Auto-check for completion and redirect
+let checkInterval;
+let maxWaitTime = 60000; // 1 minute max wait
+let checkStartTime = Date.now();
+
+function checkImportStatus() {
+    // Check if we've been waiting too long
+    if (Date.now() - checkStartTime > maxWaitTime) {
+        console.log('Max wait time reached, redirecting to library');
+        clearInterval(checkInterval);
+        window.location.href = '/library';
+        return;
+    }
+    
+    fetch(`/onboarding/import-progress-json/{{ task_id }}`)
+        .then(response => response.json())
+        .then(data => {
+            console.log('Import status:', data);
+            
+            // Check if import is complete
+            if (data.status === 'completed' || data.status === 'success') {
+                console.log('Import completed, redirecting to library');
+                clearInterval(checkInterval);
+                
+                // Short delay for user to see completion, then redirect
+                setTimeout(() => {
+                    window.location.href = '/library';
+                }, 2000);
+            } else if (data.status === 'failed' || data.status === 'error') {
+                console.log('Import failed, redirecting to library anyway');
+                clearInterval(checkInterval);
+                
+                // Even if import failed, redirect to library (user account was created)
+                setTimeout(() => {
+                    window.location.href = '/library';
+                }, 3000);
+            }
+            // If status is still 'pending' or 'running', keep checking
+        })
+        .catch(error => {
+            console.log('Error checking import status:', error);
+            // Continue checking - network errors happen
+        });
+}
+
+// Start checking import status every 2 seconds
+checkInterval = setInterval(checkImportStatus, 2000);
+
+// Initial check after 1 second
+setTimeout(checkImportStatus, 1000);
+
+// Fallback: redirect to library after 2 minutes no matter what
+setTimeout(() => {
+    console.log('Fallback timeout reached, redirecting to library');
+    clearInterval(checkInterval);
+    window.location.href = '/library';
+}, 120000); // 2 minutes
+</script>
+{% endblock %}

@@ -33,7 +33,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 1rem;
+            padding: 3rem 1rem;
         }
         
         /* Main onboarding container - responsive design */
@@ -56,9 +56,19 @@
         }
         
         @media (max-width: 576px) {
+            body {
+                padding: 2rem 0.5rem;
+            }
+            
             .onboarding-container {
                 max-width: 100%;
                 margin: 0 0.5rem;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 2.5rem 1rem;
             }
         }
         
