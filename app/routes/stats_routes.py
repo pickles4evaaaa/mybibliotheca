@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, render_template, current_app
 from flask_login import login_required, current_user
-from app.services import book_service, reading_log_service
+from app.services import book_service, reading_log_service, user_service
 from datetime import datetime, date, timedelta
 
 stats_bp = Blueprint('stats', __name__)
@@ -78,23 +78,70 @@ def index():
     recent_logs = []  # Initialize as empty list
 
     try:
-        # TODO: Implement community features via Kuzu
-        month_finished_books = []
-        # Helper for community finish date
-        def get_finish_date_community(book):
-            fd = getattr(book, 'finish_date', None)
-            if fd is None:
-                return None
-            if isinstance(fd, datetime):
-                return fd.date()
-            return fd
-        month_start_comm = datetime.now().date().replace(day=1)
-        total_books_this_month = len([book for book in month_finished_books if (fd := get_finish_date_community(book)) and fd >= month_start_comm])
+        # Get all users and filter those with sharing enabled
+        all_users = user_service.get_all_users_sync()
+        sharing_users = [user for user in all_users if getattr(user, 'share_reading_activity', False)]
         total_active_readers = len(sharing_users)
+        
+        # Get community books data
+        month_start_comm = datetime.now().date().replace(day=1)
+        month_finished_books = []
+        
+        for user in sharing_users:
+            user_books = book_service.get_all_books_with_user_overlay_sync(str(user.id))
+            if not user_books:
+                continue
+                
+            for book in user_books:
+                finish_date = getattr(book, 'finish_date', None)
+                if finish_date:
+                    # Handle datetime conversion
+                    if isinstance(finish_date, datetime):
+                        finish_date = finish_date.date()
+                    
+                    # Books finished this month
+                    if finish_date >= month_start_comm:
+                        book_data = {
+                            'title': getattr(book, 'title', 'Unknown'),
+                            'author': getattr(book, 'author', 'Unknown'),
+                            'cover_url': getattr(book, 'cover_url', None),
+                            'finish_date': getattr(book, 'finish_date', None),
+                            'user': user
+                        }
+                        month_finished_books.append(book_data)
+                    
+                    # Recent finished books (last 30 days)
+                    if finish_date >= (today - timedelta(days=30)):
+                        recent_book_data = {
+                            'title': getattr(book, 'title', 'Unknown'),
+                            'author': getattr(book, 'author', 'Unknown'),
+                            'cover_url': getattr(book, 'cover_url', None),
+                            'finish_date': getattr(book, 'finish_date', None),
+                            'user': user
+                        }
+                        recent_finished_books.append(recent_book_data)
+                
+                # Currently reading books
+                elif (getattr(user, 'share_current_reading', False) and
+                      getattr(book, 'start_date', None) and 
+                      not getattr(book, 'want_to_read', False) and 
+                      not getattr(book, 'library_only', False)):
+                    book_data = {
+                        'title': getattr(book, 'title', 'Unknown'),
+                        'author': getattr(book, 'author', 'Unknown'),
+                        'cover_url': getattr(book, 'cover_url', None),
+                        'start_date': getattr(book, 'start_date', None),
+                        'user': user
+                    }
+                    community_currently_reading.append(book_data)
+        
+        total_books_this_month = len(month_finished_books)
+        
+        # Get recent shared reading logs
         if hasattr(reading_log_service, 'get_recent_shared_logs_sync'):
             recent_logs_result = reading_log_service.get_recent_shared_logs_sync(days_back=7, limit=50)
-            # Ensure recent_logs is always a list
             recent_logs = recent_logs_result if recent_logs_result is not None else []
+            
     except Exception as e:
         current_app.logger.error(f"Error loading community stats: {e}")
         # Ensure recent_logs is always a list even on error
@@ -115,3 +162,158 @@ def index():
         recent_logs=recent_logs,
         sharing_users=sharing_users
     )
+
+@stats_bp.route('/community_stats/active-readers')
+@login_required
+def community_active_readers():
+    """Get active readers data for community stats"""
+    try:
+        # Get all users and filter those with sharing enabled
+        all_users = user_service.get_all_users_sync()
+        sharing_users = [user for user in all_users if getattr(user, 'share_reading_activity', False)]
+        
+        # Calculate stats for each user
+        user_stats = []
+        for user in sharing_users:
+            user_books = book_service.get_all_books_with_user_overlay_sync(str(user.id))
+            if not user_books:
+                continue
+                
+            # Count books this month
+            month_start = datetime.now().date().replace(day=1)
+            books_this_month = 0
+            total_books = 0
+            currently_reading = 0
+            
+            for book in user_books:
+                finish_date = getattr(book, 'finish_date', None)
+                if finish_date:
+                    # Handle datetime conversion
+                    if isinstance(finish_date, datetime):
+                        finish_date = finish_date.date()
+                    
+                    total_books += 1
+                    if finish_date >= month_start:
+                        books_this_month += 1
+                elif (not getattr(book, 'want_to_read', False) and 
+                      not getattr(book, 'library_only', False)):
+                    currently_reading += 1
+            
+            user_stats.append({
+                'user': user,
+                'books_this_month': books_this_month,
+                'total_books': total_books,
+                'currently_reading': currently_reading
+            })
+        
+        # Sort by books this month, then total books
+        user_stats.sort(key=lambda x: (x['books_this_month'], x['total_books']), reverse=True)
+        
+        return render_template('community_stats/active_readers.html', user_stats=user_stats)
+    except Exception as e:
+        current_app.logger.error(f"Error loading active readers: {e}")
+        return render_template('community_stats/active_readers.html', user_stats=[])
+
+@stats_bp.route('/community_stats/books-this-month')
+@login_required
+def community_books_this_month():
+    """Get books finished this month by community"""
+    try:
+        # Get all users and filter those with sharing enabled
+        all_users = user_service.get_all_users_sync()
+        sharing_users = [user for user in all_users if getattr(user, 'share_reading_activity', False)]
+        
+        month_start = datetime.now().date().replace(day=1)
+        books_this_month = []
+        
+        for user in sharing_users:
+            user_books = book_service.get_all_books_with_user_overlay_sync(str(user.id))
+            if not user_books:
+                continue
+                
+            for book in user_books:
+                finish_date = getattr(book, 'finish_date', None)
+                if finish_date:
+                    # Handle both datetime and date objects
+                    if isinstance(finish_date, datetime):
+                        finish_date = finish_date.date()
+                    
+                    if finish_date >= month_start:
+                        # Create book dict with user info for template
+                        book_data = {
+                            'title': getattr(book, 'title', 'Unknown'),
+                            'author': getattr(book, 'author', 'Unknown'),
+                            'cover_url': getattr(book, 'cover_url', None),
+                            'finish_date': getattr(book, 'finish_date', None),
+                            'user': user
+                        }
+                        books_this_month.append(book_data)
+        
+        # Sort by finish date, most recent first
+        books_this_month.sort(key=lambda b: b.get('finish_date', date.min), reverse=True)
+        
+        return render_template('community_stats/books_this_month.html', books=books_this_month)
+    except Exception as e:
+        current_app.logger.error(f"Error loading books this month: {e}")
+        return render_template('community_stats/books_this_month.html', books=[])
+
+@stats_bp.route('/community_stats/currently-reading')
+@login_required
+def community_currently_reading():
+    """Get books currently being read by community"""
+    try:
+        # Get all users and filter those with sharing enabled
+        all_users = user_service.get_all_users_sync()
+        sharing_users = [user for user in all_users if 
+                        getattr(user, 'share_reading_activity', False) and 
+                        getattr(user, 'share_current_reading', False)]
+        
+        currently_reading = []
+        
+        for user in sharing_users:
+            user_books = book_service.get_all_books_with_user_overlay_sync(str(user.id))
+            if not user_books:
+                continue
+                
+            for book in user_books:
+                # Currently reading: has start date but no finish date
+                if (getattr(book, 'start_date', None) and 
+                    not getattr(book, 'finish_date', None) and
+                    not getattr(book, 'want_to_read', False) and 
+                    not getattr(book, 'library_only', False)):
+                    
+                    # Create book dict with user info for template
+                    book_data = {
+                        'title': getattr(book, 'title', 'Unknown'),
+                        'author': getattr(book, 'author', 'Unknown'),
+                        'cover_url': getattr(book, 'cover_url', None),
+                        'start_date': getattr(book, 'start_date', None),
+                        'user': user
+                    }
+                    currently_reading.append(book_data)
+        
+        # Sort by start date, most recent first
+        currently_reading.sort(key=lambda b: b.get('start_date', date.min), reverse=True)
+        
+        return render_template('community_stats/currently_reading.html', books=currently_reading)
+    except Exception as e:
+        current_app.logger.error(f"Error loading currently reading: {e}")
+        return render_template('community_stats/currently_reading.html', books=[])
+
+@stats_bp.route('/community_stats/recent-activity')
+@login_required
+def community_recent_activity():
+    """Get recent reading activity from community"""
+    try:
+        # Get recent shared reading logs
+        if hasattr(reading_log_service, 'get_recent_shared_logs_sync'):
+            recent_logs = reading_log_service.get_recent_shared_logs_sync(days_back=7, limit=50)
+            if recent_logs is None:
+                recent_logs = []
+        else:
+            recent_logs = []
+        
+        return render_template('community_stats/recent_activity.html', logs=recent_logs)
+    except Exception as e:
+        current_app.logger.error(f"Error loading recent activity: {e}")
+        return render_template('community_stats/recent_activity.html', logs=[])

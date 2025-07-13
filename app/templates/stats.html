@@ -418,7 +418,7 @@ function showCommunityDetail(type) {
   container.scrollIntoView({ behavior: 'smooth' });
   
   // Fetch content via AJAX
-  fetch(`/community_stats/${type}`)
+  fetch(`/stats/community_stats/${type}`)
     .then(response => response.text())
     .then(html => {
       content.innerHTML = html;
