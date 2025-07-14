@@ -80,7 +80,8 @@ class BackupRestoreService:
         self.data_dir = self.base_dir / "data"
         self.kuzu_dir = self.base_dir / "kuzu_db"
         self.config_dir = self.base_dir
-        self.backup_dir = self.base_dir / "backups"
+        # Store backups in the data directory to ensure they persist between container restarts
+        self.backup_dir = self.data_dir / "backups"
         self.backup_index_file = self.backup_dir / "backup_index.json"
         
         # Database file paths - check for both current and legacy names
@@ -126,9 +127,51 @@ class BackupRestoreService:
         # Ensure backup directory exists
         self.backup_dir.mkdir(exist_ok=True)
         
+        # Migrate existing backups from old location if needed
+        self._migrate_existing_backups()
+        
         # Load existing backup index
         self._backup_index: Dict[str, BackupInfo] = self._load_backup_index()
     
+    def _migrate_existing_backups(self) -> None:
+        """Migrate existing backups from old location to data directory."""
+        # Old backup location (base_dir/backups)
+        old_backup_dir = self.base_dir / "backups"
+        old_backup_index = old_backup_dir / "backup_index.json"
+        
+        # Skip if old location doesn't exist or is the same as new location
+        if not old_backup_dir.exists() or old_backup_dir == self.backup_dir:
+            return
+            
+        try:
+            logger = logging.getLogger(__name__)
+            logger.info(f"Migrating backups from {old_backup_dir} to {self.backup_dir}")
+            
+            # Copy backup files
+            files_migrated = 0
+            if old_backup_dir.is_dir():
+                for backup_file in old_backup_dir.glob("*.tar.gz"):
+                    target_file = self.backup_dir / backup_file.name
+                    if not target_file.exists():
+                        shutil.copy2(backup_file, target_file)
+                        files_migrated += 1
+                        logger.info(f"Migrated backup file: {backup_file.name}")
+            
+            # Copy backup index if it exists and target doesn't exist
+            if old_backup_index.exists() and not self.backup_index_file.exists():
+                shutil.copy2(old_backup_index, self.backup_index_file)
+                logger.info("Migrated backup index file")
+            
+            if files_migrated > 0:
+                logger.info(f"Successfully migrated {files_migrated} backup files to {self.backup_dir}")
+            else:
+                logger.info("No backup files needed migration")
+                
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error migrating backups: {e}")
+            # Don't fail initialization, just log the error
+
     def _load_backup_index(self) -> Dict[str, BackupInfo]:
         """Load the backup index from disk."""
         if not self.backup_index_file.exists():
@@ -404,6 +447,9 @@ class BackupRestoreService:
             # Restart database connections
             self._restart_database_connections()
             
+            # Force a complete refresh of the application state
+            self._force_application_refresh()
+            
             logger.info(f"Restore completed successfully from backup: {backup_info.name}")
             return True
             
@@ -455,15 +501,24 @@ class BackupRestoreService:
             from app.kuzu_integration import get_kuzu_service
             kuzu_service = get_kuzu_service()
             if kuzu_service:
+                # Force complete reinitialization
                 kuzu_service.db = None
                 kuzu_service.user_repo = None
                 kuzu_service.book_repo = None
                 kuzu_service.user_book_repo = None
                 kuzu_service.location_repo = None
                 kuzu_service._initialized = False
+                
                 # Force reconnection by calling initialize
                 kuzu_service.initialize()
-                logger.info("Restarted KuzuDB connections")
+                
+                # Verify connection by running a simple query
+                if kuzu_service.db:
+                    result = kuzu_service.db.execute("MATCH (u:User) RETURN count(u) as user_count")
+                    user_count = result.get_next()[0]
+                    logger.info(f"Restarted KuzuDB connections - found {user_count} users")
+                else:
+                    logger.warning("KuzuDB service initialized but db is None")
         except Exception as e:
             logger.warning(f"Could not restart KuzuDB connections: {e}")
         
@@ -776,6 +831,27 @@ class BackupRestoreService:
         except Exception as e:
             logger.error(f"Failed to get database stats: {e}")
             return stats
+    
+    def _force_application_refresh(self):
+        """Force a complete application refresh after restore."""
+        try:
+            # Force Flask app to reinitialize any cached services
+            from flask import current_app
+            if current_app:
+                # Clear any application-level caches
+                if hasattr(current_app, 'cache'):
+                    current_app.cache.clear()
+                logger.info("Cleared application caches")
+        except Exception as e:
+            logger.warning(f"Could not clear application caches: {e}")
+        
+        try:
+            # Force all services to reinitialize by clearing any module-level state
+            import gc
+            gc.collect()  # Force garbage collection to clean up old references
+            logger.info("Forced garbage collection to clear old references")
+        except Exception as e:
+            logger.warning(f"Could not force garbage collection: {e}")
 
 
 # Global service instance

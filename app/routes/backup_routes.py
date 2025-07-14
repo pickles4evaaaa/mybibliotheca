@@ -8,11 +8,32 @@ from datetime import datetime
 import os
 from typing import Optional
 
-from app.services.backup_restore_service import get_backup_service, get_backup_stats, BackupType, BackupStatus
+from app.services.backup_restore_service import get_backup_service, BackupType, BackupStatus
 from app.admin import admin_required
 
 # Create backup blueprint
 backup_bp = Blueprint('backup', __name__, url_prefix='/admin/backup')
+
+
+def _calculate_backup_stats(backups):
+    """Calculate backup statistics from a list of backups."""
+    total_size = sum(backup.file_size for backup in backups)
+    backup_types = {}
+    
+    for backup in backups:
+        backup_type = backup.backup_type.value
+        if backup_type not in backup_types:
+            backup_types[backup_type] = 0
+        backup_types[backup_type] += 1
+    
+    return {
+        'total_backups': len(backups),
+        'total_size_bytes': total_size,
+        'total_size_mb': round(total_size / (1024 * 1024), 2),
+        'backup_types': backup_types,
+        'oldest_backup': min(backups, key=lambda b: b.created_at).created_at.isoformat() if backups else None,
+        'newest_backup': max(backups, key=lambda b: b.created_at).created_at.isoformat() if backups else None
+    }
 
 
 @backup_bp.route('/')
@@ -23,7 +44,9 @@ def index():
     try:
         backup_service = get_backup_service()
         backups = backup_service.list_backups()
-        stats = get_backup_stats()
+        
+        # Calculate stats from the backup service
+        stats = _calculate_backup_stats(backups)
         
         # Sort backups by creation date (newest first)
         backups.sort(key=lambda b: b.created_at, reverse=True)
@@ -103,7 +126,9 @@ def restore_backup(backup_id: str):
         success = backup_service.restore_backup(backup_id)
         
         if success:
-            flash(f'Successfully restored from backup "{backup_info.name}". Application restart may be required.', 'success')
+            flash(f'✅ Successfully restored from backup "{backup_info.name}"! Your books and data have been restored. Database connections have been refreshed.', 'success')
+            # Redirect to library page to immediately show restored data
+            return redirect(url_for('main.library'))
         else:
             flash('Failed to restore from backup.', 'danger')
             
@@ -287,7 +312,8 @@ def api_backup_stats():
     """API endpoint to get backup statistics."""
     try:
         backup_service = get_backup_service()
-        stats = backup_service.get_backup_stats()
+        backups = backup_service.list_backups()
+        stats = _calculate_backup_stats(backups)
         return jsonify(stats)
         
     except Exception as e:

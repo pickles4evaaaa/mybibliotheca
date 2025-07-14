@@ -7,7 +7,7 @@ services:
     ports:
       - "5054:5054"
     volumes:
-      - ./data:/app/data  # Bind mount for development
+      - ./data:/app/data  # Bind mount for development (includes backups)
     environment:
       # Development settings
       - SECRET_KEY=dev-secret-key-change-in-production

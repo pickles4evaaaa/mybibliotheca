@@ -47,7 +47,7 @@ The Bibliotheca backup and restore system provides comprehensive data protection
 3. Add optional name and description
 4. Click **Create Backup**
 
-The backup will be created in the background and saved to the `backups/` directory.
+The backup will be created in the background and saved to the `data/backups/` directory.
 
 ## Web Interface
 
@@ -284,8 +284,8 @@ For Docker deployments:
 **Permission Errors**
 ```bash
 # Fix file permissions
-sudo chown -R bibliotheca:bibliotheca /path/to/bibliotheca/backups
-chmod 755 /path/to/bibliotheca/backups
+sudo chown -R bibliotheca:bibliotheca /path/to/bibliotheca/data/backups
+chmod 755 /path/to/bibliotheca/data/backups
 ```
 
 **Disk Space Issues**
@@ -363,7 +363,7 @@ stats = service.get_backup_stats()
 ### Environment Variables
 
 ```bash
-# Backup directory (default: ./backups)
+# Backup directory (default: ./data/backups)
 BIBLIOTHECA_BACKUP_DIR=/path/to/backups
 
 # Maximum backup age in days (default: 30)  
@@ -386,7 +386,7 @@ Edit `config.py` to customize backup behavior:
 ```python
 class Config:
     # Backup settings
-    BACKUP_DIRECTORY = os.environ.get('BIBLIOTHECA_BACKUP_DIR', './backups')
+    BACKUP_DIRECTORY = os.environ.get('BIBLIOTHECA_BACKUP_DIR', './data/backups')
     BACKUP_MAX_AGE_DAYS = int(os.environ.get('BIBLIOTHECA_BACKUP_MAX_AGE', 30))
     BACKUP_MAX_COUNT = int(os.environ.get('BIBLIOTHECA_BACKUP_MAX_COUNT', 50))
     BACKUP_ENABLED = os.environ.get('BIBLIOTHECA_BACKUP_ENABLED', 'true').lower() == 'true'

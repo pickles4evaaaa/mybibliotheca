@@ -223,8 +223,8 @@ def export_data(args):
 def show_stats(args):
     """Show backup statistics."""
     try:
-        service = BackupRestoreService(args.base_dir)
-        stats = service.get_backup_stats()
+        from app.services.backup_restore_service import get_backup_stats
+        stats = get_backup_stats()
         
         print("Backup Statistics:")
         print(f"  Total Backups: {stats['total_backups']}")
