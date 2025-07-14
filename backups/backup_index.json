@@ -1,0 +1,24 @@
+{
+  "ca38aa09-1026-40e0-a0b6-60f418951fc5": {
+    "id": "ca38aa09-1026-40e0-a0b6-60f418951fc5",
+    "name": "test_with_sqlite",
+    "backup_type": "full",
+    "created_at": "2025-07-14T05:39:26.502608",
+    "file_path": "/Users/jeremiah/Documents/Python Projects/bibliotheca/backups/test_with_sqlite.tar.gz",
+    "file_size": 281483,
+    "status": "completed",
+    "description": "",
+    "metadata": {}
+  },
+  "d00d1023-5263-4d40-b83f-27567a8da66f": {
+    "id": "d00d1023-5263-4d40-b83f-27567a8da66f",
+    "name": "corrected_backup_test",
+    "backup_type": "full",
+    "created_at": "2025-07-14T05:59:10.300766",
+    "file_path": "/Users/jeremiah/Documents/Python Projects/bibliotheca/backups/corrected_backup_test.tar.gz",
+    "file_size": 191777,
+    "status": "completed",
+    "description": "Test backup with prioritized data-rich KuzuDB",
+    "metadata": {}
+  }
+}

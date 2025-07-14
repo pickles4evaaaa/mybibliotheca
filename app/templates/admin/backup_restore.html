@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+
+{% block title %}Backup & Restore - Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1><i class="fas fa-shield-alt me-2"></i>Backup & Restore</h1>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createBackupModal">
+                        <i class="fas fa-plus me-1"></i>Create Backup
+                    </button>
+                    <a href="{{ url_for('backup.export_data') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-download me-1"></i>Export Data
+                    </a>
+                    <a href="{{ url_for('backup.schedule_backups') }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-clock me-1"></i>Schedule
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Row -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Total Backups</h6>
+                            <h4 class="mb-0">{{ stats.total_backups }}</h4>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-archive fa-2x opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Total Size</h6>
+                            <h4 class="mb-0">{{ stats.total_size_mb }} MB</h4>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-hdd fa-2x opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Latest Backup</h6>
+                            <h6 class="mb-0">
+                                {% if stats.newest_backup %}
+                                    <span id="latest-backup-time" data-timestamp="{{ stats.newest_backup }}">
+                                        {{ stats.newest_backup.split('T')[0] }} {{ stats.newest_backup.split('T')[1].split('.')[0] }}
+                                    </span>
+                                {% else %}
+                                    Never
+                                {% endif %}
+                            </h6>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-clock fa-2x opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-dark">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Backup Types</h6>
+                            <small>
+                                {% for type, count in stats.backup_types.items() %}
+                                    {{ type }}: {{ count }}<br>
+                                {% endfor %}
+                            </small>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-list fa-2x opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cleanup Options -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-broom me-2"></i>Backup Maintenance</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('backup.cleanup_backups') }}" class="row g-3">
+                        <div class="col-md-3">
+                            <label for="max_age_days" class="form-label">Max Age (days)</label>
+                            <input type="number" class="form-control" id="max_age_days" name="max_age_days" value="30" min="1">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="max_count" class="form-label">Max Count</label>
+                            <input type="number" class="form-control" id="max_count" name="max_count" value="50" min="1">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">&nbsp;</label>
+                            <div>
+                                <button type="submit" class="btn btn-warning" onclick="return confirm('Are you sure you want to clean up old backups?')">
+                                    <i class="fas fa-broom me-1"></i>Clean Up Old Backups
+                                </button>
+                                <small class="text-muted ms-2">Removes backups older than specified age or exceeding max count</small>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backups List -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-list me-2"></i>Available Backups</h5>
+                </div>
+                <div class="card-body">
+                    {% if backups %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Created</th>
+                                        <th>Size</th>
+                                        <th>Status</th>
+                                        <th>Description</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for backup in backups %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ backup.name }}</strong>
+                                            {% if backup.backup_type.value == 'full' %}
+                                                <span class="badge bg-primary ms-1">Full</span>
+                                            {% elif backup.backup_type.value == 'data_only' %}
+                                                <span class="badge bg-info ms-1">Data</span>
+                                            {% elif backup.backup_type.value == 'kuzu_only' %}
+                                                <span class="badge bg-success ms-1">DB</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary ms-1">Config</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <span class="text-capitalize">{{ backup.backup_type.value.replace('_', ' ') }}</span>
+                                        </td>
+                                        <td>
+                                            <small>{{ backup.created_at.strftime('%Y-%m-%d %H:%M') }}</small><br>
+                                            <small class="text-muted" data-timestamp="{{ backup.created_at.isoformat() }}">
+                                                {{ backup.created_at.strftime('%Y-%m-%d') }}
+                                            </small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-light text-dark">
+                                                {{ "%.1f"|format(backup.file_size / 1024 / 1024) }} MB
+                                            </span>
+                                        </td>
+                                        <td>
+                                            {% if backup.status.value == 'completed' %}
+                                                <span class="badge bg-success">Completed</span>
+                                            {% elif backup.status.value == 'running' %}
+                                                <span class="badge bg-warning">Running</span>
+                                            {% elif backup.status.value == 'failed' %}
+                                                <span class="badge bg-danger">Failed</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ backup.status.value|title }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">{{ backup.description[:50] }}{% if backup.description|length > 50 %}...{% endif %}</small>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group" role="group">
+                                                {% if backup.status.value == 'completed' %}
+                                                    <a href="{{ url_for('backup.download_backup', backup_id=backup.id) }}" 
+                                                       class="btn btn-sm btn-outline-primary">
+                                                        <i class="fas fa-download me-1"></i>Download
+                                                    </a>
+                                                    <button type="button" class="btn btn-sm btn-outline-success" 
+                                                            onclick="showRestoreModal('{{ backup.id }}', '{{ backup.name }}')">
+                                                        <i class="fas fa-undo me-1"></i>Restore
+                                                    </button>
+                                                {% endif %}
+                                                <button type="button" class="btn btn-sm btn-outline-danger" 
+                                                        onclick="deleteBackup('{{ backup.id }}', '{{ backup.name }}')">
+                                                    <i class="fas fa-trash me-1"></i>Delete
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5">
+                            <i class="fas fa-archive fa-3x text-muted mb-3"></i>
+                            <h5 class="text-muted">No backups found</h5>
+                            <p class="text-muted">Create your first backup to get started</p>
+                            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createBackupModal">
+                                <i class="fas fa-plus me-1"></i>Create Backup
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Backup Modal -->
+<div class="modal fade" id="createBackupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-plus me-2"></i>Create New Backup</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('backup.create_backup') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="backup_type" class="form-label">Backup Type</label>
+                        <select class="form-select" id="backup_type" name="backup_type" required>
+                            <option value="full">Full Backup (Recommended)</option>
+                            <option value="data_only">Data Only</option>
+                            <option value="kuzu_only">Database Only</option>
+                            <option value="config_only">Configuration Only</option>
+                        </select>
+                        <div class="form-text">
+                            <strong>Full:</strong> Everything including data, database, and config<br>
+                            <strong>Data:</strong> User data and files only<br>
+                            <strong>Database:</strong> KuzuDB files only<br>
+                            <strong>Config:</strong> Configuration files only
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="custom_name" class="form-label">Custom Name (Optional)</label>
+                        <input type="text" class="form-control" id="custom_name" name="custom_name" 
+                               placeholder="Leave blank for auto-generated name">
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description (Optional)</label>
+                        <textarea class="form-control" id="description" name="description" rows="3"
+                                  placeholder="Describe the purpose of this backup"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-play me-1"></i>Create Backup
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Restore Confirmation Modal -->
+<div class="modal fade" id="restoreModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-exclamation-triangle text-warning me-2"></i>Confirm Restore</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" id="restoreForm">
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <h6 class="alert-heading">⚠️ Important Warning</h6>
+                        <p class="mb-0">This will restore the entire application to the state of backup "<strong id="restoreBackupName"></strong>". 
+                        Current data will be backed up automatically, but you may need to restart the application.</p>
+                    </div>
+                    <div class="mb-3">
+                        <label for="restore_confirm" class="form-label">Type "yes" to confirm:</label>
+                        <input type="text" class="form-control" id="restore_confirm" name="confirm" required 
+                               placeholder="Type 'yes' to confirm">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fas fa-undo me-1"></i>Restore Backup
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function showRestoreModal(backupId, backupName) {
+    document.getElementById('restoreBackupName').textContent = backupName;
+    document.getElementById('restoreForm').action = `/admin/backup/restore/${backupId}`;
+    document.getElementById('restore_confirm').value = '';
+    new bootstrap.Modal(document.getElementById('restoreModal')).show();
+}
+
+function deleteBackup(backupId, backupName) {
+    if (confirm(`Are you sure you want to delete backup "${backupName}"? This cannot be undone.`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/admin/backup/delete/${backupId}`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Auto-refresh backup status every 5 seconds
+setInterval(function() {
+    const runningBackups = document.querySelectorAll('.badge.bg-warning');
+    if (runningBackups.length > 0) {
+        location.reload();
+    }
+}, 5000);
+
+// Format timestamps to show "time ago"
+function formatTimeAgo() {
+    const timestamps = document.querySelectorAll('[data-timestamp]');
+    timestamps.forEach(element => {
+        const timestamp = new Date(element.getAttribute('data-timestamp'));
+        const now = new Date();
+        const diffMs = now - timestamp;
+        const diffMins = Math.round(diffMs / 60000);
+        const diffHours = Math.round(diffMs / 3600000);
+        const diffDays = Math.round(diffMs / 86400000);
+        
+        let timeAgo;
+        if (diffMins < 1) {
+            timeAgo = 'just now';
+        } else if (diffMins < 60) {
+            timeAgo = `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+        } else if (diffHours < 24) {
+            timeAgo = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+        } else {
+            timeAgo = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+        }
+        
+        element.textContent = timeAgo;
+    });
+}
+
+// Format timestamps on page load
+document.addEventListener('DOMContentLoaded', formatTimeAgo);
+</script>
+{% endblock %}
