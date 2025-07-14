@@ -200,8 +200,7 @@ backups/
 ### Archive Contents
 
 **Full Backup** includes:
-- `data/` - User data and uploaded files
-- `kuzu_db/` - KuzuDB database files
+- `data/` - User data and uploaded files (including KuzuDB at `data/kuzu/`)
 - `config.py` - Application configuration
 - `.env` - Environment variables
 - `docker-compose.yml` - Docker configuration

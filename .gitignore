@@ -256,7 +256,8 @@ flask_session/
 *.db
 *.sqlite
 *.sqlite3
-kuzu_db/
+# KuzuDB files are stored in data/kuzu/ now
+data/kuzu/
 
 # Temporary editor files
 .DS_Store

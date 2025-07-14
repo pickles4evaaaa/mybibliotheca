@@ -49,15 +49,18 @@ class KuzuGraphDB:
                 
                 if db_path.exists():
                     files = list(db_path.glob("*"))
-                    for file in files[:10]:  # Limit to first 10 files
-                        print(f"📁 DB file: {file.name} ({file.stat().st_size} bytes)")
-                    if len(files) > 10:
-                        print(f"... and {len(files) - 10} more files")
+                    # Log file info only in debug mode
+                    debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+                    if debug_mode:
+                        for file in files[:10]:  # Limit to first 10 files
+                            print(f"📁 DB file: {file.name} ({file.stat().st_size} bytes)")
+                        if len(files) > 10:
+                            print(f"... and {len(files) - 10} more files")
                 
                 Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
                 self._database = kuzu.Database(self.database_path)
                 self._connection = kuzu.Connection(self._database)
-                print("🔌 [KUZU_CONNECT] Database connection established, initializing schema...")
+                logger.info("Database connection established, initializing schema...")
                 self._initialize_schema()
                 logger.info(f"Kuzu connected at {self.database_path}")
                 
@@ -78,64 +81,60 @@ class KuzuGraphDB:
         try:
             # Skip if already initialized
             if self._is_initialized:
-                print("🔍 [KUZU_INIT] Already initialized, skipping")
+                logger.debug("Already initialized, skipping")
                 return
             
-            print("🔍 [KUZU_INIT] Starting schema initialization...")
+            logger.info("Starting schema initialization...")
             
             # Check environment variable for forced reset
             force_reset = os.getenv('KUZU_FORCE_RESET', 'false').lower() == 'true'
+            debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
             
-            # Log database file state before initialization
-            db_path = Path(self.database_path)
-            if db_path.exists():
-                files = list(db_path.glob("*"))
-                for file in files[:5]:  # Show first 5 files
-                    print(f"📁 DB file: {file.name} ({file.stat().st_size} bytes)")
+            # Log database file state before initialization (only in debug mode)
+            if debug_mode:
+                db_path = Path(self.database_path)
+                if db_path.exists():
+                    files = list(db_path.glob("*"))
+                    for file in files[:5]:  # Show first 5 files
+                        print(f"📁 DB file: {file.name} ({file.stat().st_size} bytes)")
             
             # Check if database already has User table and determine initialization strategy
             has_existing_users = False
             if not force_reset:
                 try:
-                    print("🔍 [KUZU_INIT] Checking for existing users...")
+                    logger.debug("Checking for existing users...")
                     result = self._execute_query("MATCH (u:User) RETURN COUNT(u) as count LIMIT 1")
                     if result and result.has_next():
                         user_count = result.get_next()[0]
                         if user_count > 0:
                             # Database has existing users - ensure all tables exist but preserve data
                             has_existing_users = True
-                            logger.info(f"🗄️ Database contains {user_count} users - will ensure all tables exist")
-                            print(f"🗄️ Database contains {user_count} users - will ensure all tables exist")
+                            logger.info(f"Database contains {user_count} users - will ensure all tables exist")
                             
                             # Check for books too
                             try:
                                 book_result = self._execute_query("MATCH (b:Book) RETURN COUNT(b) as count LIMIT 1")
                                 if book_result and book_result.has_next():
                                     book_count = book_result.get_next()[0]
-                                    print(f"🗄️ Database also contains {book_count} books")
+                                    logger.info(f"Database also contains {book_count} books")
                             except Exception as book_e:
-                                print(f"Error checking book count: {book_e}")
+                                logger.debug(f"Error checking book count: {book_e}")
                         else:
-                            logger.info("🗄️ Database exists but is empty - will initialize schema")
-                            print("🗄️ Database exists but is empty - will initialize schema")
+                            logger.info("Database exists but is empty - will initialize schema")
                     else:
-                        logger.info("🗄️ Database is empty - will initialize schema")
-                        print("🗄️ Database is empty - will initialize schema")
+                        logger.info("Database is empty - will initialize schema")
                 except Exception as e:
                     # If User table doesn't exist, we need to initialize schema
-                    logger.info(f"🗄️ User table doesn't exist - will initialize schema: {e}")
-                    print(f"🗄️ User table doesn't exist - will initialize schema: {e}")
+                    logger.debug(f"User table doesn't exist - will initialize schema: {e}")
             else:
-                logger.warning("⚠️ KUZU_FORCE_RESET=true - forcing schema reset (all data will be lost)")
-                print("⚠️ KUZU_FORCE_RESET=true - forcing schema reset (all data will be lost)")
+                logger.warning("KUZU_FORCE_RESET=true - forcing schema reset (all data will be lost)")
             
             # If we reach here, we need to initialize the schema
             logger.info("🔧 Initializing Kuzu schema...")
             
             # Only drop tables if we're forcing a reset
             if force_reset:
-                logger.info("🗑️ Dropping existing tables due to forced reset...")
-                print("🗑️ Dropping existing tables due to forced reset...")
+                logger.info("Dropping existing tables due to forced reset...")
                 drop_tables = ["OWNS", "WRITTEN_BY", "CONTRIBUTED", "AUTHORED", "PUBLISHED_BY", "PUBLISHED", "CATEGORIZED_AS", "PART_OF_SERIES", "IN_SERIES", "LOGGED", "PARENT_CATEGORY", "STORED_AT", "HAS_CUSTOM_FIELD",
                               "Book", "User", "Author", "Person", "Publisher", "Category", "Series", "ReadingLog", 
                               "Location", "ImportMapping", "ImportJob", "CustomFieldDefinition", "ImportTask"]
@@ -144,7 +143,6 @@ class KuzuGraphDB:
                     try:
                         self._execute_query(f"DROP TABLE {table}")
                         logger.debug(f"Dropped table: {table}")
-                        print(f"🗑️ Dropped table: {table}")
                     except Exception as e:
                         logger.debug(f"Table {table} doesn't exist or couldn't be dropped: {e}")
             elif has_existing_users:
@@ -155,20 +153,20 @@ class KuzuGraphDB:
                     # Test if openlibrary_id column exists
                     if self._connection:
                         self._connection.execute("MATCH (p:Person) RETURN p.openlibrary_id LIMIT 1")
-                        print("🔍 [MIGRATION] Person.openlibrary_id column already exists")
+                        logger.debug("Person.openlibrary_id column already exists")
                 except Exception as e:
                     if "Cannot find property openlibrary_id" in str(e):
                         try:
                             if self._connection:
                                 self._connection.execute("ALTER TABLE Person ADD openlibrary_id STRING")
-                                print("✅ [MIGRATION] Added openlibrary_id column to Person table")
+                                logger.debug("Added openlibrary_id column to Person table")
                         except Exception as alter_e:
                             print(f"Note: Could not add image_url to Book table: {alter_e}")
                         
                         try:
                             if self._connection:
                                 self._connection.execute("ALTER TABLE Person ADD image_url STRING")
-                                print("✅ [MIGRATION] Added image_url column to Person table")
+                                logger.debug("Added image_url column to Person table")
                         except Exception as alter_e:
                             print(f"Note: Could not add image_url to Person table: {alter_e}")
                     else:
@@ -695,7 +693,11 @@ class KuzuGraphDB:
                         rows.append(row_dict)
             return rows
         except Exception as e:
-            logger.error(f"Query execution failed: {e}")
+            # Don't log expected "already exists" errors as errors
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                logger.debug(f"Query execution - table/relationship already exists: {e}")
+            else:
+                logger.error(f"Query execution failed: {e}")
             return []
     
     def create_relationship(self, from_type: str, from_id: str, rel_type: str,
@@ -772,7 +774,11 @@ class KuzuGraphStorage:
             return rows
             
         except Exception as e:
-            logger.error(f"Query execution failed: {e}")
+            # Don't log expected "already exists" errors as errors
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                logger.debug(f"Query execution - table/relationship already exists: {e}")
+            else:
+                logger.error(f"Query execution failed: {e}")
             return []
     
     # Node Operations
@@ -1440,9 +1446,8 @@ def get_kuzu_database() -> 'KuzuGraphDB':
     if _kuzu_database is None:
         _kuzu_database = KuzuGraphDB()
         _kuzu_database.connect()
-        print(f"🔧 [CRITICAL_FIX] Single global KuzuDB instance established: {id(_kuzu_database)}")
-    else:
-        print(f"🔧 [CRITICAL_FIX] Reusing existing KuzuDB instance: {id(_kuzu_database)}")
+        logger.info(f"Single global KuzuDB instance established")
+    # Suppress repeated reuse messages - only log once
     return _kuzu_database
 
 

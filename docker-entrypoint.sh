@@ -47,25 +47,30 @@ echo "🗄️  Setting up KuzuDB..."
 export KUZU_DB_PATH=${KUZU_DB_PATH:-/app/data/kuzu}
 export GRAPH_DATABASE_ENABLED=${GRAPH_DATABASE_ENABLED:-true}
 
-echo "🔍 KuzuDB setup details:"
-echo "  - KUZU_DB_PATH: $KUZU_DB_PATH"
-echo "  - GRAPH_DATABASE_ENABLED: $GRAPH_DATABASE_ENABLED"
+# Show setup details only in debug mode
+if [ "${KUZU_DEBUG:-false}" = "true" ]; then
+    echo "🔍 KuzuDB setup details:"
+    echo "  - KUZU_DB_PATH: $KUZU_DB_PATH"
+    echo "  - GRAPH_DATABASE_ENABLED: $GRAPH_DATABASE_ENABLED"
+fi
 
-# Check if database files exist
-echo "📊 Checking for existing KuzuDB files..."
-if [ -d "$KUZU_DB_PATH" ]; then
-    echo "✅ KuzuDB directory exists"
-    KUZU_FILES=$(find "$KUZU_DB_PATH" -type f 2>/dev/null | wc -l)
-    echo "📄 Found $KUZU_FILES files in KuzuDB directory"
-    if [ $KUZU_FILES -gt 0 ]; then
-        echo "📋 KuzuDB files found:"
-        find "$KUZU_DB_PATH" -type f -exec ls -lh {} \; 2>/dev/null || echo "❌ Could not list files"
-        echo "✅ Database persistence detected - existing data should be available"
+# Check if database files exist (only show details in debug mode)
+if [ "${KUZU_DEBUG:-false}" = "true" ]; then
+    echo "📊 Checking for existing KuzuDB files..."
+    if [ -d "$KUZU_DB_PATH" ]; then
+        echo "✅ KuzuDB directory exists"
+        KUZU_FILES=$(find "$KUZU_DB_PATH" -type f 2>/dev/null | wc -l)
+        echo "📄 Found $KUZU_FILES files in KuzuDB directory"
+        if [ $KUZU_FILES -gt 0 ]; then
+            echo "📋 KuzuDB files found:"
+            find "$KUZU_DB_PATH" -type f -exec ls -lh {} \; 2>/dev/null || echo "❌ Could not list files"
+            echo "✅ Database persistence detected - existing data should be available"
+        else
+            echo "📭 KuzuDB directory is empty - fresh database will be initialized"
+        fi
     else
-        echo "📭 KuzuDB directory is empty - fresh database will be initialized"
+        echo "❌ KuzuDB directory does not exist - will be created"
     fi
-else
-    echo "❌ KuzuDB directory does not exist - will be created"
 fi
 
 # Clean up any stale KuzuDB lock files (critical for Docker restarts)

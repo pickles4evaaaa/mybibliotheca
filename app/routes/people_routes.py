@@ -634,25 +634,23 @@ def bulk_delete_persons():
     
     for person_id in selected_person_ids:
         try:
-            # Get person details
+            # Get person details (but don't fail if person not found in service layer)
             person = book_service.get_person_by_id_sync(person_id)
-            if not person:
-                failed_count += 1
-                failed_persons.append(f"Person {person_id} (not found)")
-                continue
-            
-            person_name = getattr(person, 'name', 'Unknown Person')
+            person_name = getattr(person, 'name', 'Unknown Person') if person else f"Person {person_id[:8]}..."
             
             # Check if person has associated books (simplified check for bulk operation)
-            books_by_type = book_service.get_books_by_person_sync(person_id, str(current_user.id))
-            total_books = sum(len(books) for books in books_by_type.values()) if books_by_type else 0
+            # Only check if person exists in service layer
+            total_books = 0
+            if person:
+                books_by_type = book_service.get_books_by_person_sync(person_id, str(current_user.id))
+                total_books = sum(len(books) for books in books_by_type.values()) if books_by_type else 0
+                
+                if total_books > 0 and not force_delete:
+                    failed_count += 1
+                    failed_persons.append(f"{person_name} ({total_books} books)")
+                    continue
             
-            if total_books > 0 and not force_delete:
-                failed_count += 1
-                failed_persons.append(f"{person_name} ({total_books} books)")
-                continue
-            
-            # Delete the person
+            # Delete the person from graph database
             from app.infrastructure.kuzu_graph import get_graph_storage
             storage = get_graph_storage()
             
@@ -671,17 +669,25 @@ def bulk_delete_persons():
                         if rel.get('target_id') == person_id and rel.get('target_type') in ['person', 'author']:
                             storage.delete_relationship('book', book_id, rel.get('relationship_type', 'WRITTEN_BY'), 'person', person_id)
             
-            # Delete person and author nodes
+            # Attempt to delete person and author nodes from graph database
+            # This will clean up any orphaned nodes even if person wasn't found by service layer
+            deletion_success = False
             try:
-                storage.delete_node('person', person_id)
+                if storage.delete_node('person', person_id):
+                    deletion_success = True
             except:
                 pass
             try:
-                storage.delete_node('author', person_id)  
+                if storage.delete_node('author', person_id):
+                    deletion_success = True
             except:
                 pass
             
-            deleted_count += 1
+            if deletion_success or person:  # Count as success if we deleted something OR if person was found
+                deleted_count += 1
+            else:
+                failed_count += 1
+                failed_persons.append(f"{person_name} (not found)")
             
         except Exception as e:
             failed_count += 1

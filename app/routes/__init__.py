@@ -3,7 +3,11 @@ Routes package initialization.
 Registers all blueprint modules for the Bibliotheca application.
 """
 
+import logging
+import os
 from flask import Blueprint
+
+logger = logging.getLogger(__name__)
 
 # Import all blueprint modules
 from .book_routes import book_bp
@@ -285,7 +289,10 @@ def register_blueprints(app):
     app.register_blueprint(genres_bp, url_prefix='/genres')
     app.register_blueprint(debug_import_bp, url_prefix='/debug')  # Available at /debug/test-import
     
-    print("✅ Test import routes registered at /debug/test-import")
+    # Only log route registration in debug mode
+    debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+    if debug_mode:
+        logger.debug("Test import routes registered at /debug/test-import")
     
     # Note: The original routes.py had routes at the root level
     # We may need to adjust URL prefixes to maintain compatibility

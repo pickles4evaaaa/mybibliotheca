@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import atexit
+import logging
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
@@ -15,6 +16,8 @@ from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
 from flask_session import Session
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 login_manager = LoginManager()
 csrf = CSRFProtect()
@@ -682,7 +685,10 @@ def create_app():
     try:
         from .routes.test_import_routes import test_import_bp
         app.register_blueprint(test_import_bp, url_prefix='/test-import')
-        print("✅ Test import routes registered at /test-import")
+        # Only log route registration in debug mode
+        debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+        if debug_mode:
+            logger.debug("Test import routes registered at /test-import")
     except ImportError as e:
         print(f"Could not import test import blueprint: {e}")
     
@@ -797,6 +803,9 @@ def create_app():
     signal.signal(signal.SIGTERM, signal_shutdown_handler)  # Docker stop
     signal.signal(signal.SIGINT, signal_shutdown_handler)   # Ctrl+C
     
-    print("🔥 [CRITICAL_FIX] Signal handlers registered for SIGTERM/SIGINT - KuzuDB persistence fixed!")
+    # Only log signal handler registration in debug mode
+    debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+    if debug_mode:
+        logger.debug("Signal handlers registered for SIGTERM/SIGINT - KuzuDB persistence fixed!")
 
     return app

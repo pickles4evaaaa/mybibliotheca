@@ -78,7 +78,6 @@ class BackupRestoreService:
         """Initialize the backup service."""
         self.base_dir = Path(base_dir) if base_dir else Path.cwd()
         self.data_dir = self.base_dir / "data"
-        self.kuzu_dir = self.base_dir / "kuzu_db"
         self.config_dir = self.base_dir
         # Store backups in the data directory to ensure they persist between container restarts
         self.backup_dir = self.data_dir / "backups"
@@ -95,10 +94,9 @@ class BackupRestoreService:
             if db_path.exists():
                 self.sqlite_db_paths.append(db_path)
         
-        # KuzuDB paths - check multiple possible locations and prioritize by data content
+        # KuzuDB paths - check for the configured location
         kuzu_candidates = [
-            self.data_dir / "kuzu",         # Config expected location - check first
-            self.base_dir / "kuzu_db",      # Current location
+            self.data_dir / "kuzu",         # Standard config location
         ]
         self.kuzu_paths = []
         for kuzu_path in kuzu_candidates:
@@ -347,10 +345,7 @@ class BackupRestoreService:
                 for item in kuzu_dir.rglob('*'):
                     if item.is_file():
                         # Preserve the directory structure in the backup
-                        if kuzu_dir.name == "kuzu_db":
-                            arcname = f"kuzu_db/{item.relative_to(kuzu_dir)}"
-                        else:
-                            arcname = f"data/kuzu/{item.relative_to(kuzu_dir)}"
+                        arcname = f"data/kuzu/{item.relative_to(kuzu_dir)}"
                         tar.add(item, arcname=arcname)
                 logger.info(f"Added KuzuDB directory to backup: {kuzu_dir}")
     
@@ -546,14 +541,11 @@ class BackupRestoreService:
                     logger.info(f"Restored SQLite database: {target_path}")
             
             # Restore KuzuDB files
-            kuzu_dirs = ["kuzu_db", "data/kuzu"]
+            kuzu_dirs = ["data/kuzu"]
             for kuzu_dir_name in kuzu_dirs:
                 kuzu_backup_dir = temp_path / kuzu_dir_name
                 if kuzu_backup_dir.exists():
-                    if kuzu_dir_name == "kuzu_db":
-                        target_dir = restore_dir / "kuzu_db"
-                    else:
-                        target_dir = restore_dir / "data" / "kuzu"
+                    target_dir = restore_dir / "data" / "kuzu"
                     
                     # Remove existing KuzuDB directory
                     if target_dir.exists():

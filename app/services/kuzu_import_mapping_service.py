@@ -6,12 +6,15 @@ Handles import mapping templates for CSV import functionality using KuzuDB.
 
 import traceback
 import json
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from ..infrastructure.kuzu_graph import KuzuGraphStorage
 from ..domain.models import ImportMappingTemplate
 from .kuzu_async_helper import run_async
+
+logger = logging.getLogger(__name__)
 
 
 class KuzuImportMappingService:
@@ -45,10 +48,10 @@ class KuzuImportMappingService:
             """
             try:
                 self.graph_storage.query(create_table_query)
-                print("📋 [IMPORT_MAPPING] Created ImportMappingTemplate table")
+                logger.debug("Created ImportMappingTemplate table")
             except Exception as e:
                 if "already exists" in str(e):
-                    print("📋 [IMPORT_MAPPING] ImportMappingTemplate table already exists")
+                    logger.debug("ImportMappingTemplate table already exists")
                 else:
                     raise e
                 
