@@ -1648,17 +1648,23 @@ async def process_simple_import(import_config):
                     # Build book data using mappings
                     simplified_book = simplified_service.build_book_data_from_row(row, mappings)
                     
-                    if not simplified_book or not simplified_book.title:
+                    if not simplified_book:
                         processed_count += 1
                         skipped_count += 1
                         continue
                     
-                    
-                    # Apply API enrichment if enabled
+                    # Apply API enrichment if enabled BEFORE validation
                     if enable_api_enrichment and book_metadata:
                         simplified_book = merge_api_data_into_simplified_book(
                             simplified_book, book_metadata, {}
                         )
+                    
+                    # Now check if we have enough data after API enrichment
+                    if not simplified_book.title:
+                        print(f"⚠️ [PROCESS_SIMPLE] Skipping row {row_num}: No title found even after API enrichment")
+                        processed_count += 1
+                        skipped_count += 1
+                        continue
                     
                     # Set default reading status if not provided
                     if not simplified_book.reading_status:
@@ -2183,7 +2189,31 @@ def simple_upload():
             field_mappings = get_storygraph_field_mappings()
             print(f"📋 [SIMPLE_UPLOAD] Using StoryGraph mappings: {len(field_mappings)} fields")
         else:
+            # For unknown format, try to auto-detect column mappings
             field_mappings = {}
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    headers = reader.fieldnames or []
+                    print(f"📋 [SIMPLE_UPLOAD] CSV headers detected: {headers}")
+                    
+                    # Auto-detect basic mappings for common column names
+                    for header in headers:
+                        header_lower = header.lower().strip()
+                        if header_lower in ['isbn', 'isbn13', 'isbn10', 'isbn_13', 'isbn_10']:
+                            field_mappings[header] = 'isbn'
+                            print(f"📋 [SIMPLE_UPLOAD] Mapped '{header}' -> 'isbn'")
+                        elif header_lower in ['title', 'book title', 'name', 'book name']:
+                            field_mappings[header] = 'title'
+                            print(f"📋 [SIMPLE_UPLOAD] Mapped '{header}' -> 'title'")
+                        elif header_lower in ['author', 'author name', 'authors']:
+                            field_mappings[header] = 'author'
+                            print(f"📋 [SIMPLE_UPLOAD] Mapped '{header}' -> 'author'")
+                    
+                    print(f"📋 [SIMPLE_UPLOAD] Auto-detected {len(field_mappings)} field mappings")
+            except Exception as e:
+                print(f"⚠️ [SIMPLE_UPLOAD] Could not auto-detect mappings: {e}")
+                field_mappings = {}
         
         # Count total books in CSV for progress tracking
         try:
