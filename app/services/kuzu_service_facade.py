@@ -338,7 +338,7 @@ class KuzuServiceFacade:
                 else:
                     # Convert category object to dictionary
                     category_dict = {}
-                    for attr in ['id', 'name', 'normalized_name', 'parent_id', 'created_at', 'updated_at']:
+                    for attr in ['id', 'name', 'normalized_name', 'parent_id', 'color', 'icon', 'aliases', 'description', 'level', 'book_count', 'user_book_count', 'created_at', 'updated_at']:
                         if hasattr(category, attr):
                             value = getattr(category, attr)
                             if isinstance(value, datetime):

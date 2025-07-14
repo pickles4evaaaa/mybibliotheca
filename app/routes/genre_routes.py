@@ -10,6 +10,7 @@ from flask_login import login_required, current_user
 from datetime import datetime
 import uuid
 import traceback
+import random
 
 from app.services import book_service
 from app.domain.models import Category, ReadingStatus
@@ -27,6 +28,18 @@ def debug_log(message, category="DEBUG"):
         current_app.logger.debug(f"[{category}] {message}")
     else:
         print(f"[{category}] {message}")
+
+def generate_random_color():
+    """Generate a random pleasant color for categories."""
+    colors = [
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
+        '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#F9E79F',
+        '#D2B4DE', '#AED6F1', '#A9DFBF', '#F5B7B1', '#D5DBDB',
+        '#FF7675', '#74B9FF', '#00B894', '#FDCB6E', '#E17055',
+        '#6C5CE7', '#FD79A8', '#00CEC9', '#55A3FF', '#A29BFE'
+    ]
+    return random.choice(colors)
 
 def calculate_category_level(category, book_service):
     """Calculate the hierarchy level of a category (0 = root, 1 = first level child, etc.)"""
@@ -359,7 +372,10 @@ def add_category():
             category_data = {
                 'name': form.name.data,
                 'description': form.description.data,
-                'parent_id': form.parent_id.data if form.parent_id.data else None
+                'parent_id': form.parent_id.data if form.parent_id.data else None,
+                'color': form.color.data if form.color.data else generate_random_color(),
+                'icon': form.icon.data if form.icon.data else None,
+                'aliases': [alias.strip() for alias in form.aliases.data.split('\n') if alias.strip()] if form.aliases.data else []
             }
             
             new_category = book_service.create_category_sync(category_data)
@@ -390,11 +406,13 @@ def edit_category(category_id):
             return redirect(url_for('genres.index'))
         
         if request.method == 'GET':
-            form = CategoryForm(obj=category)
+            form = CategoryForm(current_category_id=category_id, obj=category)
             return render_template('genres/add_edit.html', form=form, category=category)
         
         # POST - update category
-        form = CategoryForm()
+        form = CategoryForm(current_category_id=category_id)
+        
+        # Populate form with submitted data
         if form.validate_on_submit():
             # Create updated category data
             updated_category_data = {
@@ -405,9 +423,9 @@ def edit_category(category_id):
                 # Preserve existing values
                 'normalized_name': getattr(category, 'normalized_name', ''),
                 'level': getattr(category, 'level', 0),
-                'color': getattr(category, 'color', None),
-                'icon': getattr(category, 'icon', None),
-                'aliases': getattr(category, 'aliases', []),
+                'color': form.color.data if form.color.data else getattr(category, 'color', None),
+                'icon': form.icon.data if form.icon.data else getattr(category, 'icon', None),
+                'aliases': [alias.strip() for alias in form.aliases.data.split('\n') if alias.strip()] if form.aliases.data else getattr(category, 'aliases', []),
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
                 'created_at': getattr(category, 'created_at', None),
@@ -616,7 +634,10 @@ def api_create_category():
         category_data = {
             'name': data['name'].strip(),
             'description': data.get('description', '').strip() or None,
-            'parent_id': data.get('parent_id') or None
+            'parent_id': data.get('parent_id') or None,
+            'color': data.get('color', '').strip() or generate_random_color(),
+            'icon': data.get('icon', '').strip() or None,
+            'aliases': []
         }
         
         new_category = book_service.create_category_sync(category_data)

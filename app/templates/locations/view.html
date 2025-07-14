@@ -175,7 +175,9 @@
                                 {% if book.categories %}
                                     <div class="mb-2">
                                         {% for category in book.categories[:2] %}
-                                            <span class="badge bg-primary" style="font-size: 0.7rem;">
+                                            <span class="badge" 
+                                                  {% if category.color %}style="background-color: {{ category.color }}; font-size: 0.7rem;"{% else %}style="background-color: #6c757d; font-size: 0.7rem;"{% endif %}>
+                                                {% if category.icon %}<span class="me-1">{{ category.icon }}</span>{% endif %}
                                                 {{ category.name }}
                                             </span>
                                         {% endfor %}

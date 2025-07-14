@@ -585,14 +585,18 @@
                                             <div class="categories-display mb-2">
                                                 {% if book_categories %}
                                                     {% for category in book_categories %}
-                                                    <div class="category-tag" data-id="{{ category.id or '' }}" data-name="{{ category.name }}">
+                                                    <div class="category-tag" data-id="{{ category.id or '' }}" data-name="{{ category.name }}"
+                                                         {% if category.color %}style="background-color: {{ category.color }}20; border-color: {{ category.color }}; color: {{ category.color }}"{% endif %}>
+                                                        {% if category.icon %}<span class="me-1">{{ category.icon }}</span>{% endif %}
                                                         {{ category.name }}
                                                         <span class="remove" onclick="removeCategory(this)">×</span>
                                                     </div>
                                                     {% endfor %}
                                                 {% elif book.categories %}
                                                     {% for category in book.categories %}
-                                                    <div class="category-tag" data-id="{{ category.id or '' }}" data-name="{{ category.name }}">
+                                                    <div class="category-tag" data-id="{{ category.id or '' }}" data-name="{{ category.name }}"
+                                                         {% if category.color %}style="background-color: {{ category.color }}20; border-color: {{ category.color }}; color: {{ category.color }}"{% endif %}>
+                                                        {% if category.icon %}<span class="me-1">{{ category.icon }}</span>{% endif %}
                                                         {{ category.name }}
                                                         <span class="remove" onclick="removeCategory(this)">×</span>
                                                     </div>
@@ -3491,11 +3495,13 @@ document.addEventListener('DOMContentLoaded', function() {
     position: relative;
     transition: all 0.15s ease-in-out;
     color: #0066cc;
+    font-weight: 500;
 }
 
 .category-tag:hover {
-    background-color: #d1ecff;
-    border-color: #80c7ff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 1;
 }
 
 .category-tag .remove {
@@ -3504,10 +3510,12 @@ document.addEventListener('DOMContentLoaded', function() {
     cursor: pointer;
     font-weight: bold;
     transition: color 0.15s ease;
+    opacity: 0.7;
 }
 
 .category-tag .remove:hover {
     color: #b02a37;
+    opacity: 1;
 }
 
 .categories-display {
@@ -3537,22 +3545,53 @@ document.addEventListener('DOMContentLoaded', function() {
     font-size: 0.875rem;
     transition: all 0.15s ease-in-out;
     color: #0066cc;
+    position: relative;
+    overflow: hidden;
+}
+
+.category-tag-display::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: inherit;
+    opacity: 0.15;
+    z-index: -1;
 }
 
 .category-tag-display:hover {
-    background-color: #d1ecff;
-    border-color: #80c7ff;
     transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 1;
 }
 
 .category-tag-display a {
-    color: #0066cc;
+    color: inherit;
     text-decoration: none;
+    font-weight: 500;
 }
 
 .category-tag-display a:hover {
-    color: #004d99;
+    color: inherit;
+}
+
+.category-tag-compact {
+    display: inline-block;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    margin: 0.125rem;
+    font-size: 0.75rem;
+    transition: all 0.15s ease-in-out;
+    color: #6c757d;
+}
+
+.category-tag-compact:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
 /* Dark theme support for categories */

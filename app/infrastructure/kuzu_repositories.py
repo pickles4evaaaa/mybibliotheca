@@ -1040,7 +1040,11 @@ class KuzuBookRepository:
         try:
             query = """
             MATCH (b:Book {id: $book_id})-[:CATEGORIZED_AS]->(c:Category)
-            RETURN c.name as name, c.id as id, c.description as description
+            RETURN c.name as name, c.id as id, c.description as description, 
+                   c.color as color, c.icon as icon, c.aliases as aliases,
+                   c.normalized_name as normalized_name, c.parent_id as parent_id,
+                   c.level as level, c.book_count as book_count, c.user_book_count as user_book_count,
+                   c.created_at as created_at, c.updated_at as updated_at
             ORDER BY c.name ASC
             """
             
@@ -1052,7 +1056,17 @@ class KuzuBookRepository:
                     categories.append({
                         'name': result.get('col_0', ''),
                         'id': result.get('col_1', ''),
-                        'description': result.get('col_2', '')
+                        'description': result.get('col_2', ''),
+                        'color': result.get('col_3', ''),
+                        'icon': result.get('col_4', ''),
+                        'aliases': result.get('col_5', []),
+                        'normalized_name': result.get('col_6', ''),
+                        'parent_id': result.get('col_7', None),
+                        'level': result.get('col_8', 0),
+                        'book_count': result.get('col_9', 0),
+                        'user_book_count': result.get('col_10', 0),
+                        'created_at': result.get('col_11', None),
+                        'updated_at': result.get('col_12', None)
                     })
             
             logger.debug(f"Found {len(categories)} categories for book {book_id}")
@@ -1612,10 +1626,11 @@ class KuzuCategoryRepository:
                 'level': getattr(category, 'level', 0),  # Default to root level
                 'color': getattr(category, 'color', ''),
                 'icon': getattr(category, 'icon', ''),
+                'aliases': getattr(category, 'aliases', []),
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
-                'created_at': getattr(category, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(category, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
-                'updated_at': getattr(category, 'updated_at', datetime.utcnow()).isoformat() if hasattr(getattr(category, 'updated_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at': getattr(category, 'created_at', datetime.utcnow()),
+                'updated_at': getattr(category, 'updated_at', datetime.utcnow())
             }
             # Note: parent_id and aliases need special handling
             
@@ -1719,6 +1734,56 @@ class KuzuCategoryRepository:
         except Exception as e:
             logger.error(f"❌ Failed to get all categories: {e}")
             return []
+
+    async def update(self, category: Any) -> Optional[Any]:
+        """Update an existing category."""
+        try:
+            category_id = getattr(category, 'id', '')
+            if not category_id:
+                logger.error("❌ Category ID is required for update")
+                return None
+            
+            # Prepare update data
+            category_data = {
+                'id': category_id,
+                'name': getattr(category, 'name', ''),
+                'normalized_name': getattr(category, 'name', '').strip().lower(),
+                'description': getattr(category, 'description', ''),
+                'parent_id': getattr(category, 'parent_id', None),
+                'level': getattr(category, 'level', 0),
+                'color': getattr(category, 'color', ''),
+                'icon': getattr(category, 'icon', ''),
+                'aliases': getattr(category, 'aliases', []),
+                'updated_at': datetime.utcnow()  # KuzuDB requires datetime objects for TIMESTAMP fields
+            }
+            
+            # Update using Kuzu query
+            query = """
+            MATCH (c:Category {id: $id})
+            SET c.name = $name,
+                c.normalized_name = $normalized_name,
+                c.description = $description,
+                c.parent_id = $parent_id,
+                c.level = $level,
+                c.color = $color,
+                c.icon = $icon,
+                c.aliases = $aliases,
+                c.updated_at = $updated_at
+            RETURN c
+            """
+            
+            results = self.db.query(query, category_data)
+            
+            if results:
+                logger.info(f"✅ Updated category: {getattr(category, 'name', 'unknown')} (ID: {category_id})")
+                return category
+            else:
+                logger.error(f"❌ Failed to update category: {getattr(category, 'name', 'unknown')}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to update category: {e}")
+            return None
 
 
 class KuzuCustomFieldRepository:

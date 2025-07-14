@@ -288,38 +288,11 @@ class KuzuCategoryService:
         try:
             print(f"📁 [UPDATE_CATEGORY] Updating category: {category.name}")
             
-            # Convert category to dict format for update
-            category_data = {
-                'id': category.id,
-                'name': category.name,
-                'normalized_name': category.name.strip().lower(),
-                'description': category.description,
-                'parent_id': category.parent_id,
-                'level': category.level,
-                'color': category.color,
-                'icon': category.icon,
-                'aliases': category.aliases or [],
-                'updated_at': datetime.utcnow().isoformat()
-            }
+            # Use the repository to update the category
+            updated_category = await self.category_repo.update(category)
             
-            # Update using Kuzu query
-            query = """
-            MATCH (c:Category {id: $id})
-            SET c.name = $name,
-                c.normalized_name = $normalized_name,
-                c.description = $description,
-                c.parent_id = $parent_id,
-                c.level = $level,
-                c.color = $color,
-                c.icon = $icon,
-                c.updated_at = $updated_at
-            RETURN c
-            """
-            
-            results = self.graph_storage.query(query, category_data)
-            
-            if results:
-                return category
+            if updated_category:
+                return updated_category
             else:
                 return None
                 

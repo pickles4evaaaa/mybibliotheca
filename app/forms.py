@@ -274,7 +274,7 @@ class CategoryForm(FlaskForm):
                 
                 if (category_name and category_name.lower() == name.data.lower() and 
                     category_parent_id == parent_id and
-                    (not self.current_category_id or category_id != self.current_category_id)):
+                    (not self.current_category_id or str(category_id) != str(self.current_category_id))):
                     if parent_id:
                         raise ValidationError(f'A category named "{name.data}" already exists under the selected parent.')
                     else:

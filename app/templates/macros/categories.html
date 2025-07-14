@@ -8,10 +8,12 @@
       <!-- Compact display for library cards -->
       <div class="category-tags d-inline-flex flex-wrap gap-1">
         {% for category in categories[:max_display] %}
-          <span class="category-tag-compact">
+          <span class="category-tag-compact" 
+                {% if category.color %}style="background-color: {{ category.color }}20; border-color: {{ category.color }}80; color: {{ category.color }}"{% endif %}>
             {% if show_icon %}<i class="bi bi-tag-fill me-1"></i>{% endif %}
-            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
-              <span class="{{ style_class or 'text-secondary' }}">{{ category.name }}</span>
+            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none" 
+               {% if category.color %}style="color: {{ category.color }}"{% endif %}>
+              <span class="{{ style_class if not category.color else '' }}">{{ category.name }}</span>
             </a>
           </span>
         {% endfor %}
@@ -23,10 +25,18 @@
       <!-- Full display for book details -->
       <div class="category-tags d-inline-flex flex-wrap gap-1">
         {% for category in categories %}
-          <span class="category-tag-display">
+          <span class="category-tag-display" 
+                {% if category.color %}style="background-color: {{ category.color }}20; border-color: {{ category.color }}; color: {{ category.color }}"{% endif %}>
             <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
-               class="text-decoration-none d-flex align-items-center">
-              {% if show_icon %}<i class="bi bi-tag-fill me-1"></i>{% endif %}
+               class="text-decoration-none d-flex align-items-center"
+               {% if category.color %}style="color: {{ category.color }}"{% endif %}>
+              {% if show_icon %}
+                {% if category.icon %}
+                  <span class="me-1">{{ category.icon }}</span>
+                {% else %}
+                  <i class="bi bi-tag-fill me-1"></i>
+                {% endif %}
+              {% endif %}
               {{ category.name }}
             </a>
           </span>
@@ -43,8 +53,15 @@
     <div class="d-flex flex-wrap gap-1">
       {% for category in categories %}
         <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
-          <span class="badge bg-secondary">
-            {% if show_icon %}<i class="bi bi-tag-fill me-1"></i>{% endif %}
+          <span class="badge" 
+                {% if category.color %}style="background-color: {{ category.color }}; border-color: {{ category.color }}"{% else %}style="background-color: #6c757d"{% endif %}>
+            {% if show_icon %}
+              {% if category.icon %}
+                <span class="me-1">{{ category.icon }}</span>
+              {% else %}
+                <i class="bi bi-tag-fill me-1"></i>
+              {% endif %}
+            {% endif %}
             {{ category.name }}
           </span>
         </a>
@@ -59,9 +76,12 @@
   {% if categories %}
     <div class="category-tags d-inline-flex flex-wrap gap-1">
       {% for category in categories[:max_display] %}
-        <span class="category-tag-compact">
-          <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
-            <small class="text-muted">{{ category.name }}</small>
+        <span class="category-tag-compact"
+              {% if category.color %}style="background-color: {{ category.color }}20; border-color: {{ category.color }}80; color: {{ category.color }}"{% endif %}>
+          <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none"
+             {% if category.color %}style="color: {{ category.color }}"{% endif %}>
+            {% if category.icon %}<span class="me-1">{{ category.icon }}</span>{% endif %}
+            <small>{{ category.name }}</small>
           </a>
         </span>
       {% endfor %}

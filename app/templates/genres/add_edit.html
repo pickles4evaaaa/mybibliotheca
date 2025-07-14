@@ -57,6 +57,84 @@
                                 </div>
                             </div>
 
+                            <!-- Appearance Section -->
+                            <div class="mb-4">
+                                <h6 class="border-bottom pb-2 mb-3">
+                                    <i class="bi bi-palette"></i> Appearance
+                                </h6>
+                                
+                                <div class="row">
+                                    <!-- Icon Field -->
+                                    <div class="col-md-6 mb-3">
+                                        {{ form.icon.label(class="form-label") }}
+                                        <div class="input-group">
+                                            {{ form.icon(class="form-control", placeholder="📚") }}
+                                            <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#iconPicker">
+                                                <i class="bi bi-emoji-smile"></i>
+                                            </button>
+                                        </div>
+                                        {% if form.icon.errors %}
+                                            <div class="invalid-feedback d-block">
+                                                {% for error in form.icon.errors %}
+                                                    {{ error }}
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
+                                        <div class="form-text">
+                                            An emoji or icon to represent this category.
+                                        </div>
+                                        
+                                        <!-- Icon Preview -->
+                                        <div id="icon-preview" class="mt-2 {% if not form.icon.data %}d-none{% endif %}">
+                                            <small class="text-muted">Preview:</small>
+                                            <span id="icon-display" class="ms-2 fs-4">{{ form.icon.data or '' }}</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Color Field -->
+                                    <div class="col-md-6 mb-3">
+                                        {{ form.color.label(class="form-label") }}
+                                        <div class="input-group">
+                                            {{ form.color(class="form-control form-control-color", style="width: 60px;") }}
+                                            <input type="text" class="form-control" id="color-hex" value="{{ form.color.data or '#6c757d' }}" 
+                                                   placeholder="#000000" pattern="^#[0-9A-Fa-f]{6}$">
+                                            <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#colorPicker">
+                                                <i class="bi bi-palette"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-outline-secondary" onclick="randomColor()">
+                                                <i class="bi bi-shuffle"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-outline-secondary" onclick="clearColor()">
+                                                <i class="bi bi-x"></i>
+                                            </button>
+                                        </div>
+                                        {% if form.color.errors %}
+                                            <div class="invalid-feedback d-block">
+                                                {% for error in form.color.errors %}
+                                                    {{ error }}
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
+                                        <div class="form-text">
+                                            A color to help visually distinguish this category. Use the palette button for more options.
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Appearance Preview -->
+                                <div class="alert alert-light border">
+                                    <strong>Preview:</strong>
+                                    <div class="mt-2">
+                                        <div class="d-inline-flex align-items-center border rounded p-2" id="category-preview">
+                                            <span id="preview-icon">{{ form.icon.data or '🏷️' }}</span>
+                                            <span class="ms-2 fw-bold" id="preview-name">{{ form.name.data or 'Category Name' }}</span>
+                                            <div class="ms-2 color-indicator" id="preview-color" 
+                                                 style="background-color: {{ form.color.data or '#6c757d' }};"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Description Field -->
                             <div class="mb-3">
                                 {{ form.description.label(class="form-label") }}
@@ -140,77 +218,6 @@
                             </div>
                         </div>
 
-                        <!-- Appearance Section -->
-                        <div class="mb-4">
-                            <h5 class="border-bottom pb-2 mb-3">
-                                <i class="bi bi-palette"></i> Appearance
-                            </h5>
-                            
-                            <div class="row">
-                                <!-- Icon Field -->
-                                <div class="col-md-6 mb-3">
-                                    {{ form.icon.label(class="form-label") }}
-                                    <div class="input-group">
-                                        {{ form.icon(class="form-control", placeholder="📚") }}
-                                        <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#iconPicker">
-                                            <i class="bi bi-emoji-smile"></i>
-                                        </button>
-                                    </div>
-                                    {% if form.icon.errors %}
-                                        <div class="invalid-feedback d-block">
-                                            {% for error in form.icon.errors %}
-                                                {{ error }}
-                                            {% endfor %}
-                                        </div>
-                                    {% endif %}
-                                    <div class="form-text">
-                                        An emoji or icon to represent this category.
-                                    </div>
-                                    
-                                    <!-- Icon Preview -->
-                                    <div id="icon-preview" class="mt-2 {% if not form.icon.data %}d-none{% endif %}">
-                                        <small class="text-muted">Preview:</small>
-                                        <span id="icon-display" class="ms-2 fs-4">{{ form.icon.data or '' }}</span>
-                                    </div>
-                                </div>
-
-                                <!-- Color Field -->
-                                <div class="col-md-6 mb-3">
-                                    {{ form.color.label(class="form-label") }}
-                                    <div class="input-group">
-                                        {{ form.color(class="form-control form-control-color", style="width: 60px;") }}
-                                        <input type="text" class="form-control" id="color-hex" value="{{ form.color.data or '#6c757d' }}" readonly>
-                                        <button type="button" class="btn btn-outline-secondary" onclick="clearColor()">
-                                            <i class="bi bi-x"></i>
-                                        </button>
-                                    </div>
-                                    {% if form.color.errors %}
-                                        <div class="invalid-feedback d-block">
-                                            {% for error in form.color.errors %}
-                                                {{ error }}
-                                            {% endfor %}
-                                        </div>
-                                    {% endif %}
-                                    <div class="form-text">
-                                        A color to help visually distinguish this category.
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Appearance Preview -->
-                            <div class="alert alert-light border">
-                                <strong>Preview:</strong>
-                                <div class="mt-2">
-                                    <div class="d-inline-flex align-items-center border rounded p-2" id="category-preview">
-                                        <span id="preview-icon">{{ form.icon.data or '🏷️' }}</span>
-                                        <span class="ms-2 fw-bold" id="preview-name">{{ form.name.data or 'Category Name' }}</span>
-                                        <div class="ms-2 color-indicator" id="preview-color" 
-                                             style="background-color: {{ form.color.data or '#6c757d' }};"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- Form Actions -->
                         <div class="d-flex justify-content-between">
                             <div>
@@ -291,6 +298,72 @@
     </div>
 </div>
 
+<!-- Enhanced Color Picker Modal -->
+<div class="modal fade" id="colorPicker" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Choose a Color</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-4">
+                    <h6>Preset Colors</h6>
+                    <div class="row g-2" id="preset-colors">
+                        <!-- Preset colors will be populated by JavaScript -->
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Color Wheel</h6>
+                        <div class="color-wheel-container">
+                            <input type="color" id="color-wheel" class="form-control form-control-color w-100" style="height: 200px;">
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <h6>RGB / Hex Input</h6>
+                        <div class="mb-3">
+                            <label for="color-hex-input" class="form-label">Hex Color</label>
+                            <input type="text" class="form-control" id="color-hex-input" placeholder="#FF5733" pattern="^#[0-9A-Fa-f]{6}$">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">RGB Values</label>
+                            <div class="row g-2">
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="rgb-r" placeholder="Red" min="0" max="255">
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="rgb-g" placeholder="Green" min="0" max="255">
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="rgb-b" placeholder="Blue" min="0" max="255">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Preview</label>
+                            <div class="color-preview" id="color-preview" style="height: 60px; border: 1px solid #ccc; border-radius: 4px; background-color: #6c757d;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-outline-warning" onclick="randomColor()">
+                    <i class="bi bi-shuffle"></i> Random Color
+                </button>
+                <button type="button" class="btn btn-primary" onclick="applySelectedColor()">
+                    <i class="bi bi-check"></i> Apply Color
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 .required::after {
     content: " *";
@@ -320,6 +393,35 @@
 
 .form-control-color {
     height: 38px;
+}
+
+.color-preset-btn {
+    border: 2px solid #dee2e6;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.color-preset-btn:hover {
+    border-color: #007bff;
+    transform: scale(1.1);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.color-wheel-container {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 0.5rem;
+}
+
+.category-tag-display,
+.category-tag {
+    transition: all 0.2s ease;
+}
+
+.category-tag-display:hover,
+.category-tag:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 </style>
 
@@ -365,6 +467,15 @@ document.addEventListener('DOMContentLoaded', function() {
         colorHex.value = this.value;
     });
     
+    // Make color hex input editable and sync with color picker
+    colorHex.addEventListener('input', function() {
+        const hexValue = this.value;
+        if (/^#[0-9A-Fa-f]{6}$/.test(hexValue)) {
+            colorField.value = hexValue;
+            previewColor.style.backgroundColor = hexValue;
+        }
+    });
+    
     // Alias field updates
     aliasField.addEventListener('input', function() {
         const aliases = this.value.split('\n').filter(alias => alias.trim());
@@ -408,6 +519,164 @@ function clearIcon() {
     const modal = bootstrap.Modal.getInstance(document.getElementById('iconPicker'));
     modal.hide();
 }
+
+// Enhanced Color Picker Functions
+function initializeColorPicker() {
+    // Preset colors (same as server-side random colors)
+    const presetColors = [
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
+        '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#F9E79F',
+        '#D2B4DE', '#AED6F1', '#A9DFBF', '#F5B7B1', '#D5DBDB',
+        '#FF7675', '#74B9FF', '#00B894', '#FDCB6E', '#E17055',
+        '#6C5CE7', '#FD79A8', '#00CEC9', '#55A3FF', '#A29BFE'
+    ];
+    
+    // Populate preset colors
+    const presetContainer = document.getElementById('preset-colors');
+    presetColors.forEach(color => {
+        const colorBtn = document.createElement('div');
+        colorBtn.className = 'col-2 col-sm-1';
+        colorBtn.innerHTML = `
+            <button type="button" class="btn p-2 w-100 color-preset-btn" 
+                    style="background-color: ${color}; height: 40px;" 
+                    onclick="selectPresetColor('${color}')" 
+                    title="${color}"></button>
+        `;
+        presetContainer.appendChild(colorBtn);
+    });
+    
+    // Initialize color wheel
+    const colorWheel = document.getElementById('color-wheel');
+    const colorHexInput = document.getElementById('color-hex-input');
+    const rgbR = document.getElementById('rgb-r');
+    const rgbG = document.getElementById('rgb-g');
+    const rgbB = document.getElementById('rgb-b');
+    const colorPreview = document.getElementById('color-preview');
+    
+    // Sync color wheel with inputs
+    colorWheel.addEventListener('input', function() {
+        const color = this.value;
+        updateColorInputs(color);
+    });
+    
+    // Sync hex input
+    colorHexInput.addEventListener('input', function() {
+        const hex = this.value;
+        if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+            colorWheel.value = hex;
+            updateColorInputs(hex);
+        }
+    });
+    
+    // Sync RGB inputs
+    [rgbR, rgbG, rgbB].forEach(input => {
+        input.addEventListener('input', function() {
+            const r = parseInt(rgbR.value) || 0;
+            const g = parseInt(rgbG.value) || 0;
+            const b = parseInt(rgbB.value) || 0;
+            const hex = rgbToHex(r, g, b);
+            colorWheel.value = hex;
+            colorHexInput.value = hex;
+            updateColorInputs(hex);
+        });
+    });
+    
+    // Initialize with current color
+    const currentColor = document.getElementById('{{ form.color.id }}').value || '#6c757d';
+    updateColorInputs(currentColor);
+}
+
+function updateColorInputs(color) {
+    const colorPreview = document.getElementById('color-preview');
+    const colorHexInput = document.getElementById('color-hex-input');
+    const rgbR = document.getElementById('rgb-r');
+    const rgbG = document.getElementById('rgb-g');
+    const rgbB = document.getElementById('rgb-b');
+    
+    colorPreview.style.backgroundColor = color;
+    colorHexInput.value = color;
+    
+    // Convert to RGB
+    const rgb = hexToRgb(color);
+    if (rgb) {
+        rgbR.value = rgb.r;
+        rgbG.value = rgb.g;
+        rgbB.value = rgb.b;
+    }
+}
+
+function selectPresetColor(color) {
+    document.getElementById('color-wheel').value = color;
+    updateColorInputs(color);
+}
+
+function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : null;
+}
+
+function rgbToHex(r, g, b) {
+    r = Math.max(0, Math.min(255, r));
+    g = Math.max(0, Math.min(255, g));
+    b = Math.max(0, Math.min(255, b));
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+function randomColor() {
+    const colors = [
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
+        '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#F9E79F',
+        '#D2B4DE', '#AED6F1', '#A9DFBF', '#F5B7B1', '#D5DBDB',
+        '#FF7675', '#74B9FF', '#00B894', '#FDCB6E', '#E17055',
+        '#6C5CE7', '#FD79A8', '#00CEC9', '#55A3FF', '#A29BFE'
+    ];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    
+    // Update main form
+    const colorField = document.getElementById('{{ form.color.id }}');
+    const colorHex = document.getElementById('color-hex');
+    const previewColor = document.getElementById('preview-color');
+    
+    colorField.value = randomColor;
+    colorHex.value = randomColor;
+    previewColor.style.backgroundColor = randomColor;
+    
+    // Update modal if open
+    const colorWheel = document.getElementById('color-wheel');
+    if (colorWheel) {
+        updateColorInputs(randomColor);
+        colorWheel.value = randomColor;
+    }
+}
+
+function applySelectedColor() {
+    const selectedColor = document.getElementById('color-wheel').value;
+    const colorField = document.getElementById('{{ form.color.id }}');
+    const colorHex = document.getElementById('color-hex');
+    const previewColor = document.getElementById('preview-color');
+    
+    colorField.value = selectedColor;
+    colorHex.value = selectedColor;
+    previewColor.style.backgroundColor = selectedColor;
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('colorPicker'));
+    modal.hide();
+}
+
+// Initialize color picker when modal is shown
+document.getElementById('colorPicker').addEventListener('shown.bs.modal', function() {
+    if (!this.hasAttribute('data-initialized')) {
+        initializeColorPicker();
+        this.setAttribute('data-initialized', 'true');
+    }
+});
 
 function clearColor() {
     const colorField = document.getElementById('{{ form.color.id }}');
