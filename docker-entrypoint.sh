@@ -110,9 +110,7 @@ echo "✅ Initialization complete, starting application..."
 echo "📝 Visit the application to complete setup using the interactive setup page"
 echo "🕒 Application startup time: $(date)"
 
-# Run persistence diagnostics
-echo "🔍 Running persistence diagnostics..."
-python3 log_persistence_diagnostics.py || echo "⚠️ Diagnostics script failed but continuing..."
+# Persistence diagnostics script removed - no longer needed
 
 # Log final state before starting app
 echo "🏁 Final pre-startup state:"

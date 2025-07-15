@@ -14,7 +14,7 @@ services:
       - SECURITY_PASSWORD_SALT=${SECURITY_PASSWORD_SALT}
       
       # Database configuration - KuzuDB
-      - KUZU_DB_PATH=/app/data/kuzu
+      - KUZU_DB_PATH=/app/data/kuzu/bibliotheca.db
       - GRAPH_DATABASE_ENABLED=true
       
       # Application settings

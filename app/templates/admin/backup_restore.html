@@ -108,6 +108,7 @@
                 </div>
                 <div class="card-body">
                     <form method="POST" action="{{ url_for('backup.cleanup_backups') }}" class="row g-3">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <div class="col-md-3">
                             <label for="max_age_days" class="form-label">Max Age (days)</label>
                             <input type="number" class="form-control" id="max_age_days" name="max_age_days" value="30" min="1">
@@ -122,7 +123,10 @@
                                 <button type="submit" class="btn btn-warning" onclick="return confirm('Are you sure you want to clean up old backups?')">
                                     <i class="fas fa-broom me-1"></i>Clean Up Old Backups
                                 </button>
-                                <small class="text-muted ms-2">Removes backups older than specified age or exceeding max count</small>
+                                <button type="button" class="btn btn-outline-warning ms-2" onclick="cleanupStuckBackups()">
+                                    <i class="fas fa-tools me-1"></i>Fix Stuck Backups
+                                </button>
+                                <br><small class="text-muted">Clean up removes old backups. Fix stuck repairs backups with wrong status.</small>
                             </div>
                         </div>
                     </form>
@@ -207,6 +211,11 @@
                                                             onclick="showRestoreModal('{{ backup.id }}', '{{ backup.name }}')">
                                                         <i class="fas fa-undo me-1"></i>Restore
                                                     </button>
+                                                {% elif backup.status.value in ['running', 'pending'] %}
+                                                    <button type="button" class="btn btn-sm btn-outline-warning" 
+                                                            onclick="cancelBackup('{{ backup.id }}', '{{ backup.name }}')">
+                                                        <i class="fas fa-stop me-1"></i>Cancel
+                                                    </button>
                                                 {% endif %}
                                                 <button type="button" class="btn btn-sm btn-outline-danger" 
                                                         onclick="deleteBackup('{{ backup.id }}', '{{ backup.name }}')">
@@ -244,6 +253,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" action="{{ url_for('backup.create_backup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="backup_type" class="form-label">Backup Type</label>
@@ -291,6 +301,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" id="restoreForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="modal-body">
                     <div class="alert alert-warning">
                         <h6 class="alert-heading">⚠️ Important Warning</h6>
@@ -327,6 +338,50 @@ function deleteBackup(backupId, backupName) {
         const form = document.createElement('form');
         form.method = 'POST';
         form.action = `/admin/backup/delete/${backupId}`;
+        
+        // Add CSRF token
+        const csrfToken = document.createElement('input');
+        csrfToken.type = 'hidden';
+        csrfToken.name = 'csrf_token';
+        csrfToken.value = '{{ csrf_token() }}';
+        form.appendChild(csrfToken);
+        
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+function cleanupStuckBackups() {
+    if (confirm('This will fix any backups that are stuck in "running" or "pending" state. Are you sure?')) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/admin/backup/cleanup-stuck';
+        
+        // Add CSRF token
+        const csrfToken = document.createElement('input');
+        csrfToken.type = 'hidden';
+        csrfToken.name = 'csrf_token';
+        csrfToken.value = '{{ csrf_token() }}';
+        form.appendChild(csrfToken);
+        
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+function cancelBackup(backupId, backupName) {
+    if (confirm(`Are you sure you want to cancel backup "${backupName}"? This will stop the backup process.`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/admin/backup/cancel/${backupId}`;
+        
+        // Add CSRF token
+        const csrfToken = document.createElement('input');
+        csrfToken.type = 'hidden';
+        csrfToken.name = 'csrf_token';
+        csrfToken.value = '{{ csrf_token() }}';
+        form.appendChild(csrfToken);
+        
         document.body.appendChild(form);
         form.submit();
     }

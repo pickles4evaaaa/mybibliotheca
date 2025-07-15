@@ -22,7 +22,7 @@ class KuzuGraphDB:
     """Simplified Kuzu graph database with clean schema design."""
     
     def __init__(self, database_path: Optional[str] = None):
-        self.database_path = database_path or os.getenv('KUZU_DB_PATH', 'data/kuzu')
+        self.database_path = database_path or os.getenv('KUZU_DB_PATH', 'data/kuzu/bibliotheca.db')
         self._database: Optional[kuzu.Database] = None
         self._connection: Optional[kuzu.Connection] = None
         self._is_initialized = False
@@ -698,6 +698,15 @@ class KuzuGraphDB:
                 logger.debug(f"Query execution - table/relationship already exists: {e}")
             else:
                 logger.error(f"Query execution failed: {e}")
+                
+                # Try to recover from connection errors
+                try:
+                    from app.utils.connection_recovery import handle_connection_error
+                    if handle_connection_error(str(e)):
+                        logger.info("🔄 Connection recovered, but original query still failed")
+                except Exception as recovery_error:
+                    logger.debug(f"Connection recovery attempt failed: {recovery_error}")
+                    
             return []
     
     def create_relationship(self, from_type: str, from_id: str, rel_type: str,
@@ -779,6 +788,15 @@ class KuzuGraphStorage:
                 logger.debug(f"Query execution - table/relationship already exists: {e}")
             else:
                 logger.error(f"Query execution failed: {e}")
+                
+                # Try to recover from connection errors
+                try:
+                    from app.utils.connection_recovery import handle_connection_error
+                    if handle_connection_error(str(e)):
+                        logger.info("🔄 Connection recovered, but original query still failed")
+                except Exception as recovery_error:
+                    logger.debug(f"Connection recovery attempt failed: {recovery_error}")
+                    
             return []
     
     # Node Operations

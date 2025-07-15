@@ -321,6 +321,69 @@ def api_backup_stats():
         return jsonify({'error': 'Internal server error'}), 500
 
 
+@backup_bp.route('/cleanup-stuck', methods=['POST'])
+@login_required
+@admin_required
+def cleanup_stuck_backups():
+    """Clean up stuck backups."""
+    try:
+        backup_service = get_backup_service()
+        cleaned_count = backup_service.cleanup_stuck_backups()
+        
+        if cleaned_count > 0:
+            flash(f'✅ Cleaned up {cleaned_count} stuck backup(s).', 'success')
+        else:
+            flash('No stuck backups found.', 'info')
+            
+    except Exception as e:
+        current_app.logger.error(f"Error cleaning up stuck backups: {e}")
+        flash('Error cleaning up stuck backups.', 'danger')
+    
+    return redirect(url_for('backup.index'))
+
+
+@backup_bp.route('/cancel/<backup_id>', methods=['POST'])
+@login_required
+@admin_required
+def cancel_backup(backup_id: str):
+    """Cancel a running backup."""
+    try:
+        backup_service = get_backup_service()
+        
+        backup_info = backup_service.get_backup(backup_id)
+        if not backup_info:
+            flash('Backup not found.', 'danger')
+            return redirect(url_for('backup.index'))
+        
+        success = backup_service.cancel_backup(backup_id)
+        
+        if success:
+            flash(f'Backup "{backup_info.name}" cancelled successfully.', 'success')
+        else:
+            flash('Failed to cancel backup or backup is not running.', 'warning')
+            
+    except Exception as e:
+        current_app.logger.error(f"Error cancelling backup {backup_id}: {e}")
+        flash('Error cancelling backup.', 'danger')
+    
+    return redirect(url_for('backup.index'))
+
+
+@backup_bp.route('/api/running')
+@login_required
+@admin_required
+def api_running_backups():
+    """API endpoint to get running backups."""
+    try:
+        backup_service = get_backup_service()
+        running_backups = backup_service.get_running_backups()
+        return jsonify([backup.to_dict() for backup in running_backups])
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting running backups: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
 @backup_bp.route('/schedule')
 @login_required
 @admin_required
@@ -344,3 +407,18 @@ def save_backup_schedule():
         flash('Error saving backup schedule.', 'danger')
     
     return redirect(url_for('backup.schedule_backups'))
+
+
+@backup_bp.route('/api/status-summary')
+@login_required
+@admin_required
+def api_backup_status_summary():
+    """API endpoint to get a summary of backup statuses."""
+    try:
+        backup_service = get_backup_service()
+        summary = backup_service.get_backup_status_summary()
+        return jsonify(summary)
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting backup status summary: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
