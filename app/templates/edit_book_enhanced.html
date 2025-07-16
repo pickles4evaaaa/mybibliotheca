@@ -504,13 +504,13 @@
                     <!-- Contributors -->
                     <div class="accordion-item shadow-sm mb-2">
                         <h2 class="accordion-header">
-                            <button class="accordion-button bg-primary text-white" type="button" 
+                            <button class="accordion-button collapsed bg-primary text-white" type="button" 
                                     data-bs-toggle="collapse" data-bs-target="#collapseContributors" 
-                                    aria-expanded="true" aria-controls="collapseContributors">
+                                    aria-expanded="false" aria-controls="collapseContributors">
                                 <i class="bi bi-people me-2"></i>Contributors
                             </button>
                         </h2>
-                        <div id="collapseContributors" class="accordion-collapse collapse show" data-bs-parent="#editBookAccordion">
+                        <div id="collapseContributors" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
                             <div class="accordion-body">
                                 <div class="row">
                                     <div class="col-lg-6">
@@ -531,28 +531,6 @@
                                                 <div class="contributor-autocomplete">
                                                     <input type="text" class="form-control contributor-input" 
                                                            placeholder="Start typing author name..." data-type="authored">
-                                                    <div class="autocomplete-dropdown"></div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        <!-- Translators -->
-                                        <div class="mb-4">
-                                            <label class="form-label fw-medium">
-                                                <i class="bi bi-translate me-1"></i> Translators
-                                            </label>
-                                            <div class="contributor-section" data-type="translated">
-                                                <div class="contributors-display mb-2">
-                                                    {% for translator in book.translators %}
-                                                    <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
-                                                        {{ translator.name }}
-                                                        <span class="remove" onclick="removeContributor(this)">×</span>
-                                                    </div>
-                                                    {% endfor %}
-                                                </div>
-                                                <div class="contributor-autocomplete">
-                                                    <input type="text" class="form-control contributor-input" 
-                                                           placeholder="Start typing translator name..." data-type="translated">
                                                     <div class="autocomplete-dropdown"></div>
                                                 </div>
                                             </div>
@@ -599,6 +577,28 @@
                                                 <div class="contributor-autocomplete">
                                                     <input type="text" class="form-control contributor-input" 
                                                            placeholder="Start typing editor name..." data-type="edited">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Translators -->
+                                        <div class="mb-4">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-translate me-1"></i> Translators
+                                            </label>
+                                            <div class="contributor-section" data-type="translated">
+                                                <div class="contributors-display mb-2">
+                                                    {% for translator in book.translators %}
+                                                    <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
+                                                        {{ translator.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing translator name..." data-type="translated">
                                                     <div class="autocomplete-dropdown"></div>
                                                 </div>
                                             </div>

@@ -128,12 +128,13 @@
                                     </div>
                                     {% endif %}
                                     
-                                    <!-- Get translators using the property method -->
-                                    {% if book.translators %}
+                                    <!-- Get translators using the get_contributors_by_type method -->
+                                    {% set translators = book.get_contributors_by_type('TRANSLATED') if book.get_contributors_by_type else [] %}
+                                    {% if translators %}
                                     <div class="contributor-group mb-2">
                                         <small class="text-muted me-2">Translated by:</small>
                                         <div class="contributor-tags d-inline-flex flex-wrap gap-1">
-                                            {% for translator in book.translators %}
+                                            {% for translator in translators %}
                                             <span class="contributor-tag-display translator">
                                                 <a href="{{ url_for('people.person_details', person_id=translator.id) }}" 
                                                    class="text-decoration-none d-flex align-items-center">
@@ -146,12 +147,13 @@
                                     </div>
                                     {% endif %}
                                     
-                                    <!-- Get illustrators using the property method -->
-                                    {% if book.illustrators %}
+                                    <!-- Get illustrators -->
+                                    {% set illustrators = book.get_contributors_by_type('ILLUSTRATED') if book.get_contributors_by_type else [] %}
+                                    {% if illustrators %}
                                     <div class="contributor-group mb-2">
                                         <small class="text-muted me-2">Illustrated by:</small>
                                         <div class="contributor-tags d-inline-flex flex-wrap gap-1">
-                                            {% for illustrator in book.illustrators %}
+                                            {% for illustrator in illustrators %}
                                             <span class="contributor-tag-display illustrator">
                                                 <a href="{{ url_for('people.person_details', person_id=illustrator.id) }}" 
                                                    class="text-decoration-none d-flex align-items-center">
@@ -532,7 +534,8 @@
                                                     </label>
                                                     <div class="contributor-section" data-type="translated">
                                                         <div class="contributors-display mb-2">
-                                                            {% for translator in book.translators %}
+                                                            {% set translators = book.get_contributors_by_type('TRANSLATED') if book.get_contributors_by_type else [] %}
+                                                            {% for translator in translators %}
                                                             <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
                                                                 {{ translator.name }}
                                                                 <span class="remove" onclick="removeContributor(this)">×</span>
@@ -554,7 +557,8 @@
                                                     </label>
                                                     <div class="contributor-section" data-type="illustrated">
                                                         <div class="contributors-display mb-2">
-                                                            {% for illustrator in book.illustrators %}
+                                                            {% set illustrators = book.get_contributors_by_type('ILLUSTRATED') if book.get_contributors_by_type else [] %}
+                                                            {% for illustrator in illustrators %}
                                                             <div class="contributor-tag" data-id="{{ illustrator.id or '' }}" data-name="{{ illustrator.name }}">
                                                                 {{ illustrator.name }}
                                                                 <span class="remove" onclick="removeContributor(this)">×</span>
