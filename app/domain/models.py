@@ -490,6 +490,18 @@ class Book:
         editor_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.EDITED]
         return [c.person for c in editor_contributors if c.person]
     
+    @property
+    def translators(self) -> List['Person']:
+        """Get translators from contributors."""
+        translator_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.TRANSLATED]
+        return [c.person for c in translator_contributors if c.person]
+    
+    @property
+    def illustrators(self) -> List['Person']:
+        """Get illustrators from contributors."""
+        illustrator_contributors = [c for c in self.contributors if c.contribution_type == ContributionType.ILLUSTRATED]
+        return [c.person for c in illustrator_contributors if c.person]
+    
     def get_contributors_by_type(self, contribution_type: ContributionType) -> List['Person']:
         """Get contributors by contribution type."""
         type_contributors = [c for c in self.contributors if c.contribution_type == contribution_type]

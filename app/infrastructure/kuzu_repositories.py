@@ -516,6 +516,8 @@ class KuzuBookRepository:
                 'order_index': getattr(contribution, 'order', order_index)
             }
             
+            logger.info(f"🔍 [DEBUG] Creating relationship with role: {role}, contribution_str: {contribution_str}")
+            
             success = self.db.create_relationship(
                 'Person', person_id, rel_type, 'Book', book_id, rel_props
             )

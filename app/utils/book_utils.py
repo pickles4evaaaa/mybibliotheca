@@ -8,19 +8,95 @@ import requests
 import os
 from flask import current_app
 
-def fetch_book_data(isbn):
-    """Enhanced OpenLibrary API lookup with comprehensive field mapping and timeout handling."""
-    if not isbn:
+def search_author_by_name(author_name):
+    """Search for authors on OpenLibrary by name and return the best match."""
+    if not author_name:
         return None
-        
-    url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
+    
+    # OpenLibrary search API endpoint for authors
+    url = f"https://openlibrary.org/search/authors.json?q={author_name}"
     try:
-        response = requests.get(url, timeout=15)  # Increased timeout
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         
+        docs = data.get('docs', [])
+        if not docs:
+            return None
+            
+        # Find the best match (usually the first result)
+        for doc in docs:
+            name = doc.get('name', '')
+            key = doc.get('key', '')
+            
+            # Basic name matching - could be enhanced with fuzzy matching
+            if name.lower().strip() == author_name.lower().strip():
+                author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
+                
+                # Fetch detailed data for this author
+                detailed_data = fetch_author_data(author_id)
+                if detailed_data:
+                    detailed_data['openlibrary_id'] = author_id
+                    detailed_data['name'] = name
+                    return detailed_data
+                else:
+                    # Return basic info if detailed fetch fails
+                    return {
+                        'openlibrary_id': author_id,
+                        'name': name,
+                        'birth_date': doc.get('birth_date'),
+                        'death_date': doc.get('death_date'),
+                        'bio': None,
+                        'photo_url': None
+                    }
+        
+        # If no exact match, return the first result as best match
+        first_match = docs[0]
+        name = first_match.get('name', '')
+        key = first_match.get('key', '')
+        author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
+        
+        detailed_data = fetch_author_data(author_id)
+        if detailed_data:
+            detailed_data['openlibrary_id'] = author_id
+            detailed_data['name'] = name
+            return detailed_data
+        else:
+            return {
+                'openlibrary_id': author_id,
+                'name': name,
+                'birth_date': first_match.get('birth_date'),
+                'death_date': first_match.get('death_date'),
+                'bio': None,
+                'photo_url': None
+            }
+            
+    except Exception as e:
+        current_app.logger.warning(f"Failed to search for author '{author_name}': {e}")
+        return None
+
+def fetch_book_data(isbn):
+    """Enhanced OpenLibrary API lookup with comprehensive field mapping and timeout handling."""
+    print(f"📖 [OPENLIBRARY] Fetching data for ISBN: {isbn}")
+    
+    if not isbn:
+        print(f"❌ [OPENLIBRARY] No ISBN provided")
+        return None
+        
+    url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
+    print(f"📖 [OPENLIBRARY] Request URL: {url}")
+    
+    try:
+        response = requests.get(url, timeout=15)  # Increased timeout
+        print(f"📖 [OPENLIBRARY] Response status: {response.status_code}")
+        response.raise_for_status()
+        data = response.json()
+        
+        print(f"📖 [OPENLIBRARY] Response data keys: {list(data.keys())}")
+        
         book_key = f"ISBN:{isbn}"
         if book_key in data:
+            print(f"📖 [OPENLIBRARY] Found book data for {book_key}")
             book = data[book_key]
             title = book.get('title', '')
             subtitle = book.get('subtitle', '')
@@ -54,11 +130,33 @@ def fetch_book_data(isbn):
                     break
             
             # Enhanced description handling
-            description = book.get('notes', {})
-            if isinstance(description, dict):
-                description = description.get('value', '')
-            elif not isinstance(description, str):
-                description = ''
+            description = ''
+            
+            # Try multiple sources for description
+            desc_sources = ['description', 'notes', 'summary', 'excerpt']
+            for source in desc_sources:
+                if source in book:
+                    desc_data = book.get(source)
+                    print(f"📖 [OPENLIBRARY] Found {source}: {type(desc_data)} - {str(desc_data)[:100] if desc_data else 'None'}...")
+                    
+                    if isinstance(desc_data, dict):
+                        if 'value' in desc_data:
+                            description = desc_data['value']
+                            print(f"📖 [OPENLIBRARY] Using description from {source}.value")
+                            break
+                        elif 'text' in desc_data:
+                            description = desc_data['text']
+                            print(f"📖 [OPENLIBRARY] Using description from {source}.text")
+                            break
+                    elif isinstance(desc_data, str) and desc_data.strip():
+                        description = desc_data.strip()
+                        print(f"📖 [OPENLIBRARY] Using description from {source}")
+                        break
+            
+            if not description:
+                print(f"📖 [OPENLIBRARY] No description found in any source")
+            else:
+                print(f"📖 [OPENLIBRARY] Final description: {description[:100]}...")
             
             # Publication info
             published_date = book.get('publish_date', '')
@@ -132,7 +230,7 @@ def fetch_book_data(isbn):
                 else:
                     publisher = str(pub)
             
-            return {
+            result = {
                 'title': title,
                 'subtitle': subtitle,
                 'authors': authors,  # Backward compatibility
@@ -148,13 +246,22 @@ def fetch_book_data(isbn):
                 'publisher': publisher,
                 'source': 'OpenLibrary'
             }
+            
+            print(f"✅ [OPENLIBRARY] Successfully retrieved data for ISBN {isbn}:")
+            print(f"    title='{title}'")
+            print(f"    authors={len(authors_list)} items")
+            print(f"    description='{description[:100] if description else None}...'")
+            print(f"    cover_url='{cover_url}'")
+            print(f"    categories={len(unique_categories)} items")
+            return result
         else:
+            print(f"❌ [OPENLIBRARY] No book data found for ISBN {isbn}")
             return None
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from OpenLibrary for ISBN {isbn}: {e}")
+        print(f"❌ [OPENLIBRARY] Request error for ISBN {isbn}: {e}")
         return None
     except Exception as e:
-        print(f"Unexpected error processing OpenLibrary data for ISBN {isbn}: {e}")
+        print(f"❌ [OPENLIBRARY] Unexpected error for ISBN {isbn}: {e}")
         return None
 
 def fetch_author_data(author_id):
@@ -228,17 +335,25 @@ def get_google_books_cover(isbn, fetch_title_author=False):
     Returns:
         dict: Contains cover_url and optionally title/author info
     """
+    print(f"📚 [GOOGLE_BOOKS] Fetching data for ISBN: {isbn}")
+    
     if not isbn:
+        print(f"❌ [GOOGLE_BOOKS] No ISBN provided")
         return None
         
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
+    print(f"📚 [GOOGLE_BOOKS] Request URL: {url}")
     
     try:
         response = requests.get(url, timeout=10)
+        print(f"📚 [GOOGLE_BOOKS] Response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
         
+        print(f"📚 [GOOGLE_BOOKS] Response data keys: {list(data.keys())}")
+        
         if 'items' in data and len(data['items']) > 0:
+            print(f"📚 [GOOGLE_BOOKS] Found {len(data['items'])} items")
             book_info = data['items'][0]['volumeInfo']
             
             result = {}
@@ -264,20 +379,91 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 subtitle = book_info.get('subtitle', '')
                 authors = book_info.get('authors', [])
                 
-                result['title'] = title
-                result['subtitle'] = subtitle
-                result['authors'] = ', '.join(authors) if authors else ''
-                result['source'] = 'Google Books'
+                # Get description
+                description = book_info.get('description', '')
+                
+                # Get categories/genres
+                categories = book_info.get('categories', [])
+                
+                # Get additional contributors
+                contributors = []
+                
+                # Google Books sometimes has contributors in different fields
+                if 'authors' in book_info and book_info['authors']:
+                    for author in book_info['authors']:
+                        contributors.append({'name': author, 'role': 'author'})
+                
+                # Check for other contributor types that might be in the data
+                if 'editors' in book_info and book_info['editors']:
+                    for editor in book_info['editors']:
+                        contributors.append({'name': editor, 'role': 'editor'})
+                
+                if 'translators' in book_info and book_info['translators']:
+                    for translator in book_info['translators']:
+                        contributors.append({'name': translator, 'role': 'translator'})
+                
+                # Get publisher and publication date
+                publisher = book_info.get('publisher', '')
+                published_date = book_info.get('publishedDate', '')
+                
+                # Get page count
+                page_count = book_info.get('pageCount')
+                
+                # Get language
+                language = book_info.get('language', 'en')
+                
+                # Get average rating and rating count
+                average_rating = book_info.get('averageRating')
+                rating_count = book_info.get('ratingsCount')
+                
+                # Get ISBN data from industryIdentifiers
+                isbn_10 = None
+                isbn_13 = None
+                if 'industryIdentifiers' in book_info:
+                    for identifier in book_info['industryIdentifiers']:
+                        if identifier.get('type') == 'ISBN_10':
+                            isbn_10 = identifier.get('identifier')
+                        elif identifier.get('type') == 'ISBN_13':
+                            isbn_13 = identifier.get('identifier')
+                
+                result.update({
+                    'title': title,
+                    'subtitle': subtitle,
+                    'authors': ', '.join(authors) if authors else '',
+                    'authors_list': authors,
+                    'description': description,
+                    'categories': categories,
+                    'contributors': contributors,
+                    'publisher': publisher,
+                    'published_date': published_date,
+                    'page_count': page_count,
+                    'language': language,
+                    'average_rating': average_rating,
+                    'rating_count': rating_count,
+                    'isbn_10': isbn_10,
+                    'isbn_13': isbn_13,
+                    'source': 'Google Books'
+                })
+                
+                print(f"✅ [GOOGLE_BOOKS] Enhanced data for ISBN {isbn}:")
+                print(f"    title='{title}'")
+                print(f"    authors={len(authors)} items")
+                print(f"    description='{description[:100] if description else None}...'")
+                print(f"    categories={len(categories)} items")
+                print(f"    contributors={len(contributors)} items")
+                print(f"    publisher='{publisher}'")
             
+            print(f"✅ [GOOGLE_BOOKS] Successfully retrieved data for ISBN {isbn}: {list(result.keys())}")
             return result
         else:
+            print(f"❌ [GOOGLE_BOOKS] No items found for ISBN {isbn}")
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching cover from Google Books for ISBN {isbn}: {e}")
+        print(f"❌ [GOOGLE_BOOKS] Request error for ISBN {isbn}: {e}")
         return None
     except Exception as e:
-        print(f"Unexpected error processing Google Books data for ISBN {isbn}: {e}")
+        print(f"❌ [GOOGLE_BOOKS] Unexpected error for ISBN {isbn}: {e}")
         return None
 
 def generate_month_review_image(books, month, year):
@@ -378,32 +564,34 @@ def generate_month_review_image(books, month, year):
     return img_buffer
 
 
-def normalize_goodreads_value(value):
+def normalize_goodreads_value(value, field_type='text'):
     """
-    Normalize values from Goodreads CSV exports.
-    Handles Excel-style text formatting where values might be quoted.
+    Normalize values from Goodreads CSV exports that use Excel text formatting.
+    Goodreads exports often have values like ="123456789" or ="" to force text formatting.
     """
-    if value is None:
-        return None
+    if not value or not isinstance(value, str):
+        return value.strip() if value else ''
     
-    # Convert to string if not already
-    value = str(value).strip()
-    
-    # Handle empty strings
-    if not value:
-        return ""
-    
-    # Handle Excel text formatting: ="value"
+    # Remove Excel text formatting: ="value" -> value
     if value.startswith('="') and value.endswith('"'):
-        value = value[2:-1]
+        value = value[2:-1]  # Remove =" prefix and " suffix
+    elif value.startswith('=') and value.endswith('"'):
+        value = value[1:-1]  # Remove = prefix and " suffix  
+    elif value == '=""':
+        value = ''  # Empty quoted value
     
-    # Handle standard quoted values
+    # Handle standard quoted values for backwards compatibility
     elif value.startswith('"') and value.endswith('"'):
         value = value[1:-1]
     
     # Special handling for ISBN fields
-    if value and any(char.isdigit() for char in value):
-        # Remove any remaining quotes or formatting
-        value = value.replace('"', '').replace("'", "")
+    if field_type == 'isbn' and value:
+        # Remove any remaining quotes or formatting for ISBNs
+        value = value.replace('"', '').replace("'", "").replace('-', '').replace(' ', '')
+        # Only return if it looks like a valid ISBN (10 or 13 digits)
+        if value.isdigit() and len(value) in [10, 13]:
+            return value
+        elif len(value) >= 10:  # Be more lenient for partial matches
+            return value
     
-    return value.strip()
+    return value.strip() if value else ''

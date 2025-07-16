@@ -235,19 +235,25 @@
                             
                             <div class="row mb-3">
                                 <div class="col-md-6">
-                                    <label for="author" class="form-label">Author</label>
+                                    <label for="author" class="form-label">Primary Author</label>
                                     <input type="text" class="form-control" id="author" name="author" placeholder="Primary author name">
                                 </div>
                                 <div class="col-md-6">
-                                    <label for="subtitle" class="form-label">Subtitle</label>
-                                    <input type="text" class="form-control" id="subtitle" name="subtitle" placeholder="Book subtitle (if any)">
+                                    <label for="additional_authors" class="form-label">Additional Authors</label>
+                                    <input type="text" class="form-control" id="additional_authors" name="additional_authors" placeholder="Co-authors (comma-separated)">
                                 </div>
                             </div>
                             
                             <div class="row mb-3">
                                 <div class="col-md-6">
+                                    <label for="subtitle" class="form-label">Subtitle</label>
+                                    <input type="text" class="form-control" id="subtitle" name="subtitle" placeholder="Book subtitle (if any)">
+                                </div>
+                                <div class="col-md-6">
                                     <label for="publisher" class="form-label">Publisher</label>
                                     <input type="text" class="form-control" id="publisher" name="publisher" placeholder="Publisher name">
+                                </div>
+                            </div>
                                 </div>
                                 <div class="col-md-3">
                                     <label for="page_count" class="form-label">Page Count</label>
@@ -744,11 +750,31 @@ function fetchBookFromISBN() {
         })
         .then(data => {
             // Check if we got actual book data
-            if (data && (data.title || data.author)) {
+            if (data && (data.title || data.author || data.authors)) {
                 // Populate form fields
                 if (data.title) document.getElementById('title').value = data.title;
                 if (data.isbn || isbn) document.getElementById('isbn').value = data.isbn || isbn;
-                if (data.author) document.getElementById('author').value = data.author;
+                
+                // Handle authors intelligently
+                if (data.authors_list && Array.isArray(data.authors_list) && data.authors_list.length > 0) {
+                    // Use the structured authors list if available
+                    document.getElementById('author').value = data.authors_list[0]; // Primary author
+                    if (data.authors_list.length > 1) {
+                        const additionalAuthors = data.authors_list.slice(1).join(', ');
+                        document.getElementById('additional_authors').value = additionalAuthors;
+                    }
+                } else if (data.author) {
+                    // Handle comma-separated author string
+                    const authorList = data.author.split(',').map(a => a.trim()).filter(a => a);
+                    if (authorList.length > 0) {
+                        document.getElementById('author').value = authorList[0]; // Primary author
+                        if (authorList.length > 1) {
+                            const additionalAuthors = authorList.slice(1).join(', ');
+                            document.getElementById('additional_authors').value = additionalAuthors;
+                        }
+                    }
+                }
+                
                 if (data.subtitle) document.getElementById('subtitle').value = data.subtitle;
                 if (data.publisher) document.getElementById('publisher').value = data.publisher;
                 if (data.page_count) document.getElementById('page_count').value = data.page_count;

@@ -535,6 +535,7 @@ class KuzuServiceFacade:
         """Update contributor relationships for a book."""
         try:
             # First, remove all existing contributor relationships for this book
+            # Use AUTHORED since all contributor types use AUTHORED relationship with role property
             delete_query = """
             MATCH (p:Person)-[r:AUTHORED]->(b:Book {id: $book_id})
             DELETE r

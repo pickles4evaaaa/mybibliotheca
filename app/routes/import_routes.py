@@ -1624,20 +1624,35 @@ async def process_simple_import(import_config):
             # Collect ISBNs for batch API enrichment if enabled
             isbns_to_enrich = []
             if enable_api_enrichment:
-                for row in rows_list:
+                print(f"🔍 [PROCESS_SIMPLE] Scanning {len(rows_list)} rows for ISBNs...")
+                for row_idx, row in enumerate(rows_list):
                     isbn = row.get('ISBN') or row.get('ISBN13') or row.get('isbn') or row.get('isbn13')
                     if isbn:
+                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Found ISBN '{isbn}'")
                         # Clean ISBN (handle Goodreads formatting)
                         isbn_clean = normalize_goodreads_value(isbn, 'isbn')
+                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Cleaned ISBN '{isbn_clean}' (length: {len(isbn_clean) if isbn_clean else 0})")
                         if isbn_clean and isinstance(isbn_clean, str) and len(isbn_clean) >= 10:
                             isbns_to_enrich.append(isbn_clean)
+                            print(f"✅ [PROCESS_SIMPLE] Row {row_idx+1}: Added ISBN to enrichment list")
+                        else:
+                            print(f"❌ [PROCESS_SIMPLE] Row {row_idx+1}: ISBN doesn't meet criteria")
+                    else:
+                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: No ISBN found in row keys: {list(row.keys())}")
                 
                 print(f"🌐 [PROCESS_SIMPLE] Will enrich {len(isbns_to_enrich)} books with API data")
+                print(f"🌐 [PROCESS_SIMPLE] ISBNs to enrich: {isbns_to_enrich[:5]}{'...' if len(isbns_to_enrich) > 5 else ''}")
                 
-                # Batch fetch metadata
-                book_metadata = batch_fetch_book_metadata(isbns_to_enrich[:50])  # Limit to first 50 to avoid rate limits
-                print(f"🌐 [PROCESS_SIMPLE] Retrieved metadata for {len(book_metadata)} books")
+                if isbns_to_enrich:
+                    # Batch fetch metadata
+                    print(f"🚀 [PROCESS_SIMPLE] Starting API enrichment for {len(isbns_to_enrich)} ISBNs...")
+                    book_metadata = batch_fetch_book_metadata(isbns_to_enrich[:50])  # Limit to first 50 to avoid rate limits
+                    print(f"🌐 [PROCESS_SIMPLE] Retrieved metadata for {len(book_metadata)} books")
+                else:
+                    print(f"⚠️ [PROCESS_SIMPLE] No valid ISBNs found - skipping API enrichment")
+                    book_metadata = {}
             else:
+                print(f"⚠️ [PROCESS_SIMPLE] API enrichment disabled")
                 book_metadata = {}
             
             # Process each row
@@ -1750,19 +1765,28 @@ async def process_simple_import(import_config):
 def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_metadata):
     """Merge API metadata into a SimplifiedBook object."""
     
+    print(f"🔀 [MERGE_API] Starting merge for book with ISBN13: {simplified_book.isbn13}, ISBN10: {simplified_book.isbn10}")
+    print(f"🔀 [MERGE_API] Available metadata ISBNs: {list(book_metadata.keys())}")
+    
     # Check if we have API data for this book's ISBN
     api_data = None
     if simplified_book.isbn13 and simplified_book.isbn13 in book_metadata:
         api_data = book_metadata[simplified_book.isbn13]['data']
+        print(f"✅ [MERGE_API] Found API data for ISBN13: {simplified_book.isbn13}")
     elif simplified_book.isbn10 and simplified_book.isbn10 in book_metadata:
         api_data = book_metadata[simplified_book.isbn10]['data']
+        print(f"✅ [MERGE_API] Found API data for ISBN10: {simplified_book.isbn10}")
     
     if not api_data:
+        print(f"❌ [MERGE_API] No API data found for this book")
         return simplified_book
     
+    print(f"🔀 [MERGE_API] API data keys: {list(api_data.keys())}")
     
     # Merge title (prefer API if available and different)
     if api_data.get('title') and api_data['title'] != simplified_book.title:
+        print(f"🔀 [MERGE_API] Updating title from '{simplified_book.title}' to '{api_data['title']}'")
+        simplified_book.title = api_data['title']
         simplified_book.title = api_data['title']
     
     # Merge authors (prefer API authors over CSV authors)
@@ -1791,13 +1815,20 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
                 else:
                     simplified_book.additional_authors = additional_authors
     
-    # Merge description (prefer API if CSV doesn't have one)
-    if api_data.get('description') and not simplified_book.description:
-        simplified_book.description = api_data['description']
+    # Merge description (prefer API description over CSV)
+    if api_data.get('description'):
+        if not simplified_book.description or simplified_book.description.strip() == '':
+            simplified_book.description = api_data['description']
+            print(f"🔀 [MERGE_API] Updated description to: {api_data['description'][:100]}...")
+        else:
+            print(f"🔀 [MERGE_API] Description already set, keeping CSV description")
+    else:
+        print(f"🔀 [MERGE_API] No description found in API data")
     
     # Merge publisher (prefer API if CSV doesn't have one)
-    if api_data.get('publisher') and not simplified_book.publisher:
+    if api_data.get('publisher') and (not simplified_book.publisher or simplified_book.publisher.strip() == ''):
         simplified_book.publisher = api_data['publisher']
+        print(f"🔀 [MERGE_API] Updated publisher to: {api_data['publisher']}")
     
     # Merge page count (prefer API if CSV doesn't have one)
     if api_data.get('page_count') and not simplified_book.page_count:
@@ -1819,18 +1850,35 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
             # Always use API categories, don't merge with CSV "categories"
             # Keep as list since SimplifiedBook.categories is List[str]
             simplified_book.categories = api_categories
+            print(f"🔀 [MERGE_API] Updated categories to: {len(api_categories)} items")
         elif isinstance(api_categories, str) and api_categories.strip():
             # Split string categories by comma and clean them
             simplified_book.categories = [cat.strip() for cat in api_categories.split(',') if cat.strip()]
+            print(f"🔀 [MERGE_API] Updated categories from string: {len(simplified_book.categories)} items")
     else:
         # If no API categories available, clear any existing CSV categories
         # since they're usually incorrect (user tags instead of real genres)
         if simplified_book.categories:
             simplified_book.categories = []
     
-    # Merge cover URL (prefer API cover)
-    if api_data.get('cover') and not simplified_book.cover_url:
-        simplified_book.cover_url = api_data['cover']
+    # Merge cover URL (prefer API cover) - check both possible field names
+    cover_url = api_data.get('cover_url') or api_data.get('cover')
+    if cover_url and not simplified_book.cover_url:
+        simplified_book.cover_url = cover_url
+        print(f"🔀 [MERGE_API] Updated cover URL to: {cover_url}")
+    elif cover_url:
+        print(f"🔀 [MERGE_API] Cover URL already set, not overriding")
+    else:
+        print(f"🔀 [MERGE_API] No cover URL found in API data")
+    
+    # Merge description (prefer API if CSV doesn't have one)
+    if api_data.get('description') and not simplified_book.description:
+        simplified_book.description = api_data['description']
+        print(f"🔀 [MERGE_API] Updated description to: {api_data['description'][:100]}...")
+    elif api_data.get('description'):
+        print(f"🔀 [MERGE_API] Description already set, not overriding")
+    else:
+        print(f"🔀 [MERGE_API] No description found in API data")
     
     # Merge average rating (prefer API if CSV doesn't have one)
     if api_data.get('average_rating') and not simplified_book.average_rating:
@@ -1847,6 +1895,73 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     if api_data.get('isbn10') and not simplified_book.isbn10:
         simplified_book.isbn10 = api_data['isbn10']
     
+    # Merge contributors (Google Books enhanced data) 
+    if api_data.get('contributors'):
+        contributors = api_data['contributors']
+        
+        # Store contributors in global custom metadata as structured data
+        simplified_book.global_custom_metadata['contributors'] = contributors
+        
+        # Extract different types of contributors
+        authors = [c['name'] for c in contributors if c.get('role') == 'author']
+        editors = [c['name'] for c in contributors if c.get('role') == 'editor']
+        translators = [c['name'] for c in contributors if c.get('role') == 'translator']
+        narrators = [c['name'] for c in contributors if c.get('role') == 'narrator']
+        illustrators = [c['name'] for c in contributors if c.get('role') == 'illustrator']
+        
+        # 🔥 FIX: Map contributors to SimplifiedBook fields that the service expects
+        
+        # Handle additional authors (exclude the primary author)
+        if authors and len(authors) > 1:
+            # If we have multiple authors and the first one matches the primary author,
+            # use the rest as additional authors
+            additional_author_names = authors[1:] if authors[0].lower() == simplified_book.author.lower() else authors
+            if additional_author_names:
+                if simplified_book.additional_authors:
+                    # Merge with existing additional authors
+                    existing = simplified_book.additional_authors.split(', ')
+                    all_additional = existing + additional_author_names
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_additional = []
+                    for author in all_additional:
+                        if author.lower() not in seen:
+                            unique_additional.append(author)
+                            seen.add(author.lower())
+                    simplified_book.additional_authors = ', '.join(unique_additional)
+                else:
+                    simplified_book.additional_authors = ', '.join(additional_author_names)
+                print(f"🔀 [MERGE_API] Set additional_authors: {simplified_book.additional_authors}")
+        
+        # Map other contributor types to SimplifiedBook fields
+        if editors:
+            simplified_book.editor = ', '.join(editors)
+            simplified_book.global_custom_metadata['editors'] = ', '.join(editors)
+            print(f"🔀 [MERGE_API] Set editors: {simplified_book.editor}")
+        
+        if translators:
+            simplified_book.translator = ', '.join(translators)
+            simplified_book.global_custom_metadata['translators'] = ', '.join(translators)
+            print(f"🔀 [MERGE_API] Set translators: {simplified_book.translator}")
+        
+        if narrators:
+            simplified_book.narrator = ', '.join(narrators)
+            simplified_book.global_custom_metadata['narrators'] = ', '.join(narrators)
+            print(f"🔀 [MERGE_API] Set narrators: {simplified_book.narrator}")
+        
+        if illustrators:
+            simplified_book.illustrator = ', '.join(illustrators)
+            simplified_book.global_custom_metadata['illustrators'] = ', '.join(illustrators)
+            print(f"🔀 [MERGE_API] Set illustrators: {simplified_book.illustrator}")
+        
+        print(f"🔀 [MERGE_API] Added contributors: {len(contributors)} total")
+        print(f"    Authors: {len(authors)}, Editors: {len(editors)}, Translators: {len(translators)}, Narrators: {len(narrators)}, Illustrators: {len(illustrators)}")
+    
+    # Add subtitle if available
+    if api_data.get('subtitle') and not simplified_book.global_custom_metadata.get('subtitle'):
+        simplified_book.global_custom_metadata['subtitle'] = api_data['subtitle']
+        print(f"🔀 [MERGE_API] Added subtitle: {api_data['subtitle']}")
+    
     # Add API identifiers to global custom metadata
     if api_data.get('google_books_id'):
         simplified_book.global_custom_metadata['google_books_id'] = api_data['google_books_id']
@@ -1856,6 +1971,19 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     
     if api_data.get('asin'):
         simplified_book.global_custom_metadata['asin'] = api_data['asin']
+    
+    # Add API source information
+    if api_data.get('source'):
+        simplified_book.global_custom_metadata['api_source'] = api_data['source']
+    
+    print(f"🎉 [MERGE_API] Merge completed for '{simplified_book.title}':")
+    print(f"    Title: {simplified_book.title}")
+    print(f"    Author: {simplified_book.author}")
+    print(f"    Cover URL: {simplified_book.cover_url}")
+    print(f"    Description: {simplified_book.description[:100] if simplified_book.description else None}...")
+    print(f"    Categories: {len(simplified_book.categories)} items")
+    contributors_count = len(api_data.get('contributors', []))
+    print(f"    Contributors: {contributors_count} items")
     
     return simplified_book
 
@@ -1889,7 +2017,8 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
 
 def batch_fetch_book_metadata(isbns):
     """Batch fetch metadata from Google Books and OpenLibrary APIs with improved error handling."""
-    print(f"🌐 [API] Fetching metadata for {len(isbns)} ISBNs")
+    print(f"🌐 [API] ===== STARTING BATCH FETCH =====")
+    print(f"🌐 [API] Fetching metadata for {len(isbns)} ISBNs: {isbns}")
     
     from app.utils import fetch_book_data, get_google_books_cover
     import time

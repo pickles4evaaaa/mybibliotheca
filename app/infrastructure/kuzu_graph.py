@@ -500,6 +500,38 @@ class KuzuGraphDB:
                 )
                 """,
                 """
+                CREATE REL TABLE NARRATED(
+                    FROM Person TO Book,
+                    role STRING,
+                    order_index INT64,
+                    created_at TIMESTAMP
+                )
+                """,
+                """
+                CREATE REL TABLE EDITED(
+                    FROM Person TO Book,
+                    role STRING,
+                    order_index INT64,
+                    created_at TIMESTAMP
+                )
+                """,
+                """
+                CREATE REL TABLE TRANSLATED(
+                    FROM Person TO Book,
+                    role STRING,
+                    order_index INT64,
+                    created_at TIMESTAMP
+                )
+                """,
+                """
+                CREATE REL TABLE ILLUSTRATED(
+                    FROM Person TO Book,
+                    role STRING,
+                    order_index INT64,
+                    created_at TIMESTAMP
+                )
+                """,
+                """
                 CREATE REL TABLE PUBLISHED_BY(
                     FROM Book TO Publisher,
                     publication_date DATE,

@@ -504,13 +504,13 @@
                     <!-- Contributors -->
                     <div class="accordion-item shadow-sm mb-2">
                         <h2 class="accordion-header">
-                            <button class="accordion-button collapsed bg-primary text-white" type="button" 
+                            <button class="accordion-button bg-primary text-white" type="button" 
                                     data-bs-toggle="collapse" data-bs-target="#collapseContributors" 
-                                    aria-expanded="false" aria-controls="collapseContributors">
+                                    aria-expanded="true" aria-controls="collapseContributors">
                                 <i class="bi bi-people me-2"></i>Contributors
                             </button>
                         </h2>
-                        <div id="collapseContributors" class="accordion-collapse collapse" data-bs-parent="#editBookAccordion">
+                        <div id="collapseContributors" class="accordion-collapse collapse show" data-bs-parent="#editBookAccordion">
                             <div class="accordion-body">
                                 <div class="row">
                                     <div class="col-lg-6">
@@ -531,6 +531,28 @@
                                                 <div class="contributor-autocomplete">
                                                     <input type="text" class="form-control contributor-input" 
                                                            placeholder="Start typing author name..." data-type="authored">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Translators -->
+                                        <div class="mb-4">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-translate me-1"></i> Translators
+                                            </label>
+                                            <div class="contributor-section" data-type="translated">
+                                                <div class="contributors-display mb-2">
+                                                    {% for translator in book.translators %}
+                                                    <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
+                                                        {{ translator.name }}
+                                                        <span class="remove" onclick="removeContributor(this)">×</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contributor-autocomplete">
+                                                    <input type="text" class="form-control contributor-input" 
+                                                           placeholder="Start typing translator name..." data-type="translated">
                                                     <div class="autocomplete-dropdown"></div>
                                                 </div>
                                             </div>
@@ -582,23 +604,23 @@
                                             </div>
                                         </div>
                                         
-                                        <!-- Translators -->
+                                        <!-- Illustrators -->
                                         <div class="mb-4">
                                             <label class="form-label fw-medium">
-                                                <i class="bi bi-translate me-1"></i> Translators
+                                                <i class="bi bi-palette me-1"></i> Illustrators
                                             </label>
-                                            <div class="contributor-section" data-type="translated">
+                                            <div class="contributor-section" data-type="illustrated">
                                                 <div class="contributors-display mb-2">
-                                                    {% for translator in book.get_contributors_by_type('TRANSLATED') %}
-                                                    <div class="contributor-tag" data-id="{{ translator.id or '' }}" data-name="{{ translator.name }}">
-                                                        {{ translator.name }}
+                                                    {% for illustrator in book.illustrators %}
+                                                    <div class="contributor-tag" data-id="{{ illustrator.id or '' }}" data-name="{{ illustrator.name }}">
+                                                        {{ illustrator.name }}
                                                         <span class="remove" onclick="removeContributor(this)">×</span>
                                                     </div>
                                                     {% endfor %}
                                                 </div>
                                                 <div class="contributor-autocomplete">
                                                     <input type="text" class="form-control contributor-input" 
-                                                           placeholder="Start typing translator name..." data-type="translated">
+                                                           placeholder="Start typing illustrator name..." data-type="illustrated">
                                                     <div class="autocomplete-dropdown"></div>
                                                 </div>
                                             </div>
@@ -611,7 +633,8 @@
                                             </label>
                                             <div class="contributor-section" data-type="contributed">
                                                 <div class="contributors-display mb-2">
-                                                    {% for contributor in book.get_contributors_by_type('CONTRIBUTED') %}
+                                                    {% set other_contributors = book.get_contributors_by_type_str('CONTRIBUTED') if book.get_contributors_by_type_str else [] %}
+                                                    {% for contributor in other_contributors %}
                                                     <div class="contributor-tag" data-id="{{ contributor.id or '' }}" data-name="{{ contributor.name }}">
                                                         {{ contributor.name }}
                                                         <span class="remove" onclick="removeContributor(this)">×</span>
@@ -1161,14 +1184,20 @@ function updateHiddenInputs() {
     const sections = document.querySelectorAll('.contributor-section');
     let contributorIndex = 0;
     
+    console.log(`[CONTRIB_DEBUG] Found ${sections.length} contributor sections`);
+    
     sections.forEach((section, sectionIndex) => {
         const type = section.dataset.type;
         const tags = section.querySelectorAll('.contributor-tag');
+        
+        console.log(`[CONTRIB_DEBUG] Section ${sectionIndex}: type="${type}", ${tags.length} contributors`);
         
         tags.forEach((tag, tagIndex) => {
             const id = tag.dataset.id;
             const name = tag.dataset.name;
             const isNew = tag.dataset.new === 'true';
+            
+            console.log(`[CONTRIB_DEBUG] Creating inputs for: type="${type}", name="${name}", id="${id}", isNew=${isNew}`);
             
             // Create hidden inputs for this contributor
             const typeInput = document.createElement('input');
@@ -1201,6 +1230,8 @@ function updateHiddenInputs() {
             contributorIndex++;
         });
     });
+    
+    console.log(`[CONTRIB_DEBUG] Created hidden inputs for ${contributorIndex} contributors total`);
 }
 
 // Category autocomplete functions

@@ -121,6 +121,14 @@ class SimplifiedBookService:
         try:
             book_id = str(uuid.uuid4())
             
+            # Debug: Print all contributor data
+            print(f"🎯 [SIMPLIFIED] Creating standalone book with contributors:")
+            print(f"   Primary author: '{book_data.author}'")
+            print(f"   Additional authors: '{book_data.additional_authors}'")
+            print(f"   Editor: '{book_data.editor}'")
+            print(f"   Translator: '{book_data.translator}'")
+            print(f"   Narrator: '{book_data.narrator}'")
+            print(f"   Illustrator: '{book_data.illustrator}'")
             
             # Prepare core book node data
             book_node_data = {
@@ -271,6 +279,87 @@ class SimplifiedBookService:
                         pass  # Narrator creation failed
                 except Exception as e:
                     pass  # Error creating narrator relationship
+            
+            # 2.7. Handle editor if present
+            if book_data.editor:
+                try:
+                    editor_list = [name.strip() for name in book_data.editor.split(',') if name.strip()]
+                    for index, editor_name in enumerate(editor_list):
+                        
+                        person_data = create_person_data(editor_name)
+                        editor_id = await book_repo._ensure_person_exists(person_data)
+                        
+                        if editor_id:
+                            edited_success = self.storage.create_relationship(
+                                'Person', editor_id, 'EDITED', 'Book', book_id,
+                                {
+                                    'role': 'edited',
+                                    'order_index': index,
+                                    'created_at': datetime.utcnow()
+                                }
+                            )
+                            if edited_success:
+                                print(f"✅ [SIMPLIFIED] Created EDITED relationship for {editor_name}")
+                            else:
+                                print(f"❌ [SIMPLIFIED] Failed to create EDITED relationship for {editor_name}")
+                        else:
+                            print(f"❌ [SIMPLIFIED] Failed to create editor person: {editor_name}")
+                except Exception as e:
+                    print(f"❌ [SIMPLIFIED] Error creating editor relationship: {e}")
+            
+            # 2.8. Handle translator if present
+            if book_data.translator:
+                try:
+                    translator_list = [name.strip() for name in book_data.translator.split(',') if name.strip()]
+                    for index, translator_name in enumerate(translator_list):
+                        
+                        person_data = create_person_data(translator_name)
+                        translator_id = await book_repo._ensure_person_exists(person_data)
+                        
+                        if translator_id:
+                            translated_success = self.storage.create_relationship(
+                                'Person', translator_id, 'TRANSLATED', 'Book', book_id,
+                                {
+                                    'role': 'translated',
+                                    'order_index': index,
+                                    'created_at': datetime.utcnow()
+                                }
+                            )
+                            if translated_success:
+                                print(f"✅ [SIMPLIFIED] Created TRANSLATED relationship for {translator_name}")
+                            else:
+                                print(f"❌ [SIMPLIFIED] Failed to create TRANSLATED relationship for {translator_name}")
+                        else:
+                            print(f"❌ [SIMPLIFIED] Failed to create translator person: {translator_name}")
+                except Exception as e:
+                    print(f"❌ [SIMPLIFIED] Error creating translator relationship: {e}")
+            
+            # 2.9. Handle illustrator if present
+            if book_data.illustrator:
+                try:
+                    illustrator_list = [name.strip() for name in book_data.illustrator.split(',') if name.strip()]
+                    for index, illustrator_name in enumerate(illustrator_list):
+                        
+                        person_data = create_person_data(illustrator_name)
+                        illustrator_id = await book_repo._ensure_person_exists(person_data)
+                        
+                        if illustrator_id:
+                            illustrated_success = self.storage.create_relationship(
+                                'Person', illustrator_id, 'ILLUSTRATED', 'Book', book_id,
+                                {
+                                    'role': 'illustrated',
+                                    'order_index': index,
+                                    'created_at': datetime.utcnow()
+                                }
+                            )
+                            if illustrated_success:
+                                print(f"✅ [SIMPLIFIED] Created ILLUSTRATED relationship for {illustrator_name}")
+                            else:
+                                print(f"❌ [SIMPLIFIED] Failed to create ILLUSTRATED relationship for {illustrator_name}")
+                        else:
+                            print(f"❌ [SIMPLIFIED] Failed to create illustrator person: {illustrator_name}")
+                except Exception as e:
+                    print(f"❌ [SIMPLIFIED] Error creating illustrator relationship: {e}")
             
             # 3. Create publisher relationship using clean repository
             if book_data.publisher:

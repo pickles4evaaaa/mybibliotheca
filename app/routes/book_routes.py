@@ -64,6 +64,30 @@ def fetch_book(isbn):
         if google_data.get('cover'):
             book_data['cover'] = google_data['cover']
     
+    # Ensure ISBN field is consistently available for frontend
+    if not book_data.get('isbn'):
+        # Try to get ISBN from Google Books data
+        if google_data and google_data.get('isbn_13'):
+            book_data['isbn'] = google_data['isbn_13']
+        elif google_data and google_data.get('isbn_10'):
+            book_data['isbn'] = google_data['isbn_10']
+        else:
+            # Fall back to the original ISBN that was requested
+            book_data['isbn'] = isbn
+    
+    # Ensure author field is available for backward compatibility
+    # Frontend expects 'author' but APIs return 'authors'
+    if not book_data.get('author') and book_data.get('authors'):
+        book_data['author'] = book_data['authors']
+    
+    # Debug logging to see what we're returning
+    print(f"🔍 [FETCH_BOOK] Final data for ISBN {isbn}:")
+    print(f"    title: '{book_data.get('title', 'NOT_FOUND')}'")
+    print(f"    author: '{book_data.get('author', 'NOT_FOUND')}'")
+    print(f"    authors: '{book_data.get('authors', 'NOT_FOUND')}'")
+    print(f"    isbn: '{book_data.get('isbn', 'NOT_FOUND')}'")
+    print(f"    all_keys: {list(book_data.keys())}")
+    
     # If neither source provides a cover, set a default
     if not book_data.get('cover'):
         book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
@@ -1006,6 +1030,9 @@ def edit_book(uid):
                         contributor_data[index_part] = {}
                     contributor_data[index_part][field] = value
         
+        # Debug: Log contributor data received
+        current_app.logger.info(f"[CONTRIB_DEBUG] Received contributor data: {contributor_data}")
+        
         # Process categories
         categories = []
         category_data = {}
@@ -1050,8 +1077,9 @@ def edit_book(uid):
                 categories.append(category_name)  # Add to list for raw_categories processing
         
         # Create BookContribution objects
-        for contrib in contributor_data.values():
+        for contrib_index, contrib in contributor_data.items():
             if contrib.get('name'):
+                current_app.logger.info(f"[CONTRIB_DEBUG] Processing contributor {contrib_index}: {contrib}")
                 from app.domain.models import Person, BookContribution, ContributionType
                 
                 person_name = contrib['name']
@@ -1154,6 +1182,8 @@ def edit_book(uid):
                 }
                 
                 contrib_type = contrib_type_map.get(contrib.get('type', 'authored'), ContributionType.AUTHORED)
+                
+                current_app.logger.info(f"[CONTRIB_DEBUG] Creating contribution: person={person.name}, type={contrib_type}")
                 
                 contribution = BookContribution(
                     person=person,
@@ -1259,6 +1289,19 @@ def edit_book(uid):
                 def __init__(self, data):
                     for key, value in data.items():
                         setattr(self, key, value)
+                    
+                    # DEBUG: Print contributors data structure
+                    if 'contributors' in data:
+                        print(f"[EDIT_BOOK_DEBUG] Contributors in data: {len(data['contributors'])} items")
+                        for i, contrib in enumerate(data['contributors'][:3]):  # Show first 3
+                            if isinstance(contrib, dict):
+                                person_name = contrib.get('person', {}).get('name', 'Unknown') if isinstance(contrib.get('person'), dict) else str(contrib.get('person', 'Unknown'))
+                                print(f"[EDIT_BOOK_DEBUG] Contributor {i}: {person_name}, role: {contrib.get('role', 'None')}")
+                            else:
+                                print(f"[EDIT_BOOK_DEBUG] Contributor {i}: {contrib} (type: {type(contrib)})")
+                    else:
+                        print(f"[EDIT_BOOK_DEBUG] No contributors key in data")
+                    
                     # Ensure common attributes have defaults
                     # Note: authors property is derived from contributors, don't set directly
                     if not hasattr(self, 'contributors'):
@@ -1293,6 +1336,169 @@ def edit_book(uid):
                                 filtered.append(contributor)
                     
                     return filtered
+                
+                # Add property methods to match the Book domain model
+                @property
+                def authors(self):
+                    """Get list of authors."""
+                    if not hasattr(self, 'contributors') or not self.contributors:
+                        return []
+                    
+                    author_contributors = []
+                    for c in self.contributors:
+                        if isinstance(c, dict):
+                            if c.get('role', '').upper() in ['AUTHORED', 'AUTHOR']:
+                                author_contributors.append(c)
+                        else:
+                            role = getattr(c, 'role', '').upper()
+                            if role in ['AUTHORED', 'AUTHOR']:
+                                author_contributors.append(c)
+                    
+                    # Extract person objects or names
+                    authors = []
+                    for c in author_contributors:
+                        if isinstance(c, dict):
+                            person = c.get('person')
+                            if person:
+                                authors.append(person)
+                        else:
+                            person = getattr(c, 'person', None)
+                            if person:
+                                authors.append(person)
+                    
+                    return authors
+                
+                @property
+                def narrators(self):
+                    """Get list of narrators."""
+                    if not hasattr(self, 'contributors') or not self.contributors:
+                        print(f"[DEBUG] No contributors found")
+                        return []
+                    
+                    print(f"[DEBUG] Looking for narrators in {len(self.contributors)} contributors")
+                    narrator_contributors = []
+                    for c in self.contributors:
+                        if isinstance(c, dict):
+                            role = c.get('role', '').upper()
+                            print(f"[DEBUG] Contributor dict: {c.get('person', {}).get('name', 'Unknown')}, role: {role}")
+                            if role in ['NARRATED', 'NARRATOR']:
+                                narrator_contributors.append(c)
+                        else:
+                            role = getattr(c, 'role', '').upper()
+                            print(f"[DEBUG] Contributor obj: {getattr(c, 'person', {}).name if hasattr(getattr(c, 'person', {}), 'name') else 'Unknown'}, role: {role}")
+                            if role in ['NARRATED', 'NARRATOR']:
+                                narrator_contributors.append(c)
+                    
+                    # Extract person objects or names
+                    narrators = []
+                    for c in narrator_contributors:
+                        if isinstance(c, dict):
+                            person = c.get('person')
+                            if person:
+                                narrators.append(person)
+                        else:
+                            person = getattr(c, 'person', None)
+                            if person:
+                                narrators.append(person)
+                    
+                    print(f"[DEBUG] Found {len(narrators)} narrators: {[n.get('name', 'Unknown') if isinstance(n, dict) else getattr(n, 'name', 'Unknown') for n in narrators]}")
+                    return narrators
+                
+                @property
+                def editors(self):
+                    """Get list of editors."""
+                    if not hasattr(self, 'contributors') or not self.contributors:
+                        return []
+                    
+                    editor_contributors = []
+                    for c in self.contributors:
+                        if isinstance(c, dict):
+                            if c.get('role', '').upper() in ['EDITED', 'EDITOR']:
+                                editor_contributors.append(c)
+                        else:
+                            role = getattr(c, 'role', '').upper()
+                            if role in ['EDITED', 'EDITOR']:
+                                editor_contributors.append(c)
+                    
+                    # Extract person objects or names
+                    editors = []
+                    for c in editor_contributors:
+                        if isinstance(c, dict):
+                            person = c.get('person')
+                            if person:
+                                editors.append(person)
+                        else:
+                            person = getattr(c, 'person', None)
+                            if person:
+                                editors.append(person)
+                    
+                    return editors
+                
+                @property
+                def translators(self):
+                    """Get list of translators."""
+                    if not hasattr(self, 'contributors') or not self.contributors:
+                        return []
+                    
+                    translator_contributors = []
+                    for c in self.contributors:
+                        if isinstance(c, dict):
+                            if c.get('role', '').upper() in ['TRANSLATED', 'TRANSLATOR']:
+                                translator_contributors.append(c)
+                        else:
+                            role = getattr(c, 'role', '').upper()
+                            if role in ['TRANSLATED', 'TRANSLATOR']:
+                                translator_contributors.append(c)
+                    
+                    # Extract person objects or names
+                    translators = []
+                    for c in translator_contributors:
+                        if isinstance(c, dict):
+                            person = c.get('person')
+                            if person:
+                                translators.append(person)
+                        else:
+                            person = getattr(c, 'person', None)
+                            if person:
+                                translators.append(person)
+                    
+                    return translators
+                
+                @property
+                def illustrators(self):
+                    """Get list of illustrators."""
+                    if not hasattr(self, 'contributors') or not self.contributors:
+                        print(f"[DEBUG] No contributors found for illustrators")
+                        return []
+                    
+                    print(f"[DEBUG] Looking for illustrators in {len(self.contributors)} contributors")
+                    illustrator_contributors = []
+                    for c in self.contributors:
+                        if isinstance(c, dict):
+                            role = c.get('role', '').upper()
+                            print(f"[DEBUG] Contributor dict: {c.get('person', {}).get('name', 'Unknown')}, role: {role}")
+                            if role in ['ILLUSTRATED', 'ILLUSTRATOR']:
+                                illustrator_contributors.append(c)
+                        else:
+                            role = getattr(c, 'role', '').upper()
+                            print(f"[DEBUG] Contributor obj: {getattr(c, 'person', {}).name if hasattr(getattr(c, 'person', {}), 'name') else 'Unknown'}, role: {role}")
+                            if role in ['ILLUSTRATED', 'ILLUSTRATOR']:
+                                illustrator_contributors.append(c)
+                    
+                    # Extract person objects or names
+                    illustrators = []
+                    for c in illustrator_contributors:
+                        if isinstance(c, dict):
+                            person = c.get('person')
+                            if person:
+                                illustrators.append(person)
+                        else:
+                            person = getattr(c, 'person', None)
+                            if person:
+                                illustrators.append(person)
+                    
+                    print(f"[DEBUG] Found {len(illustrators)} illustrators: {[n.get('name', 'Unknown') if isinstance(n, dict) else getattr(n, 'name', 'Unknown') for n in illustrators]}")
+                    return illustrators
             
             user_book = BookObj(user_book)
         
@@ -1315,6 +1521,34 @@ def view_book_enhanced(uid):
     if not user_book:
         abort(404)
 
+    # DEBUG: Log the object type and contributors structure
+    print(f"[ENHANCED_VIEW_DEBUG] user_book type: {type(user_book)}")
+    print(f"[ENHANCED_VIEW_DEBUG] user_book isinstance dict: {isinstance(user_book, dict)}")
+    if hasattr(user_book, 'contributors'):
+        print(f"[ENHANCED_VIEW_DEBUG] contributors count: {len(user_book.contributors) if user_book.contributors else 0}")
+        if user_book.contributors:
+            for i, contrib in enumerate(user_book.contributors[:3]):  # Show first 3
+                print(f"[ENHANCED_VIEW_DEBUG] Contributor {i}: type={type(contrib)}, {contrib}")
+                if hasattr(contrib, 'contribution_type'):
+                    print(f"[ENHANCED_VIEW_DEBUG] Contrib {i} contribution_type: {contrib.contribution_type}")
+                if hasattr(contrib, 'person'):
+                    print(f"[ENHANCED_VIEW_DEBUG] Contrib {i} person: {contrib.person}")
+    elif isinstance(user_book, dict) and 'contributors' in user_book:
+        print(f"[ENHANCED_VIEW_DEBUG] Dict contributors: {user_book['contributors']}")
+    
+    # DEBUG: Test the property methods directly
+    if hasattr(user_book, 'translators'):
+        translators = user_book.translators
+        print(f"[ENHANCED_VIEW_DEBUG] user_book.translators: {translators} (count: {len(translators)})")
+        for i, translator in enumerate(translators):
+            print(f"[ENHANCED_VIEW_DEBUG] Translator {i}: {translator}")
+    
+    if hasattr(user_book, 'illustrators'):
+        illustrators = user_book.illustrators
+        print(f"[ENHANCED_VIEW_DEBUG] user_book.illustrators: {illustrators} (count: {len(illustrators)})")
+        for i, illustrator in enumerate(illustrators):
+            print(f"[ENHANCED_VIEW_DEBUG] Illustrator {i}: {illustrator}")
+    
     title = user_book.get('title', 'Unknown Title') if isinstance(user_book, dict) else getattr(user_book, 'title', 'Unknown Title')
 
     # Convert dictionary to object-like structure for template compatibility
@@ -1449,6 +1683,157 @@ def view_book_enhanced(uid):
                             filtered.append(contributor)
                 
                 return filtered
+            
+            # Add property methods to match the Book domain model
+            @property
+            def authors(self):
+                """Get list of authors."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                author_contributors = []
+                for c in self.contributors:
+                    if isinstance(c, dict):
+                        if c.get('role', '').upper() in ['AUTHORED', 'AUTHOR']:
+                            author_contributors.append(c)
+                    else:
+                        role = getattr(c, 'role', '').upper()
+                        if role in ['AUTHORED', 'AUTHOR']:
+                            author_contributors.append(c)
+                
+                # Extract person objects or names
+                authors = []
+                for c in author_contributors:
+                    if isinstance(c, dict):
+                        person = c.get('person')
+                        if person:
+                            authors.append(person)
+                    else:
+                        person = getattr(c, 'person', None)
+                        if person:
+                            authors.append(person)
+                
+                return authors
+            
+            @property
+            def narrators(self):
+                """Get list of narrators."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                narrator_contributors = []
+                for c in self.contributors:
+                    if isinstance(c, dict):
+                        if c.get('role', '').upper() in ['NARRATED', 'NARRATOR']:
+                            narrator_contributors.append(c)
+                    else:
+                        role = getattr(c, 'role', '').upper()
+                        if role in ['NARRATED', 'NARRATOR']:
+                            narrator_contributors.append(c)
+                
+                # Extract person objects or names
+                narrators = []
+                for c in narrator_contributors:
+                    if isinstance(c, dict):
+                        person = c.get('person')
+                        if person:
+                            narrators.append(person)
+                    else:
+                        person = getattr(c, 'person', None)
+                        if person:
+                            narrators.append(person)
+                
+                return narrators
+            
+            @property
+            def editors(self):
+                """Get list of editors."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                editor_contributors = []
+                for c in self.contributors:
+                    if isinstance(c, dict):
+                        if c.get('role', '').upper() in ['EDITED', 'EDITOR']:
+                            editor_contributors.append(c)
+                    else:
+                        role = getattr(c, 'role', '').upper()
+                        if role in ['EDITED', 'EDITOR']:
+                            editor_contributors.append(c)
+                
+                # Extract person objects or names
+                editors = []
+                for c in editor_contributors:
+                    if isinstance(c, dict):
+                        person = c.get('person')
+                        if person:
+                            editors.append(person)
+                    else:
+                        person = getattr(c, 'person', None)
+                        if person:
+                            editors.append(person)
+                
+                return editors
+            
+            @property
+            def translators(self):
+                """Get list of translators."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                translator_contributors = []
+                for c in self.contributors:
+                    if isinstance(c, dict):
+                        if c.get('role', '').upper() in ['TRANSLATED', 'TRANSLATOR']:
+                            translator_contributors.append(c)
+                    else:
+                        role = getattr(c, 'role', '').upper()
+                        if role in ['TRANSLATED', 'TRANSLATOR']:
+                            translator_contributors.append(c)
+                
+                # Extract person objects or names
+                translators = []
+                for c in translator_contributors:
+                    if isinstance(c, dict):
+                        person = c.get('person')
+                        if person:
+                            translators.append(person)
+                    else:
+                        person = getattr(c, 'person', None)
+                        if person:
+                            translators.append(person)
+                
+                return translators
+            
+            @property
+            def illustrators(self):
+                """Get list of illustrators."""
+                if not hasattr(self, 'contributors') or not self.contributors:
+                    return []
+                
+                illustrator_contributors = []
+                for c in self.contributors:
+                    if isinstance(c, dict):
+                        if c.get('role', '').upper() in ['ILLUSTRATED', 'ILLUSTRATOR']:
+                            illustrator_contributors.append(c)
+                    else:
+                        role = getattr(c, 'role', '').upper()
+                        if role in ['ILLUSTRATED', 'ILLUSTRATOR']:
+                            illustrator_contributors.append(c)
+                
+                # Extract person objects or names
+                illustrators = []
+                for c in illustrator_contributors:
+                    if isinstance(c, dict):
+                        person = c.get('person')
+                        if person:
+                            illustrators.append(person)
+                    else:
+                        person = getattr(c, 'person', None)
+                        if person:
+                            illustrators.append(person)
+                
+                return illustrators
         
         user_book = BookObj(user_book)
         
@@ -2408,6 +2793,7 @@ def add_book_manual():
             return redirect(url_for('main.library'))
         
         author = request.form.get('author', '').strip()
+        additional_authors_form = request.form.get('additional_authors', '').strip()
         isbn = request.form.get('isbn', '').strip()
         subtitle = request.form.get('subtitle', '').strip()
         publisher_name = request.form.get('publisher', '').strip()
@@ -2487,36 +2873,14 @@ def add_book_manual():
             if normalized_isbn:
                 
                 try:
-                    # Google Books lookup
-                    google_data = None
-                    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{normalized_isbn}"
-                    response = requests.get(url, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        items = data.get("items")
-                        if items:
-                            volume_info = items[0]["volumeInfo"]
-                            google_data = {
-                                'title': volume_info.get('title', ''),
-                                'subtitle': volume_info.get('subtitle', ''),
-                                'description': volume_info.get('description', ''),
-                                'authors_list': volume_info.get('authors', []),
-                                'publisher': volume_info.get('publisher', ''),
-                                'published_date': volume_info.get('publishedDate', ''),
-                                'page_count': volume_info.get('pageCount'),
-                                'language': volume_info.get('language', 'en'),
-                                'categories': volume_info.get('categories', []),
-                                'isbn10': isbn10,
-                                'isbn13': isbn13,
-                                'cover_url': None
-                            }
-                            
-                            # Get best quality cover image
-                            image_links = volume_info.get("imageLinks", {})
-                            for size in ['extraLarge', 'large', 'medium', 'thumbnail', 'smallThumbnail']:
-                                if size in image_links:
-                                    google_data['cover_url'] = image_links[size].replace('http://', 'https://')
-                                    break
+                    # Use the enhanced Google Books function to get comprehensive data including contributors
+                    from app.utils.book_utils import get_google_books_cover
+                    google_data = get_google_books_cover(normalized_isbn, fetch_title_author=True)
+                    
+                    print(f"🎯 [MANUAL] Google Books API returned: {google_data is not None}")
+                    if google_data:
+                        print(f"🎯 [MANUAL] Google Books data keys: {list(google_data.keys())}")
+                        print(f"🎯 [MANUAL] Contributors: {len(google_data.get('contributors', []))} items")
                             
                     
                     # OpenLibrary lookup
@@ -2559,6 +2923,7 @@ def add_book_manual():
                                 api_data['description'] = openlibrary_data['description']
                         
                         print(f"🎯 [MANUAL] Merged API data: {len(api_data.get('categories', []))} categories, cover: {bool(api_data.get('cover_url'))}")
+                        print(f"🎯 [MANUAL] Contributors in API data: {len(api_data.get('contributors', []))} items")
                         
                         # Use API data to fill in missing form fields
                         if not cover_url and api_data.get('cover_url'):
@@ -2617,7 +2982,83 @@ def add_book_manual():
                 except Exception as e:
                     pass
         
-        # Create simplified book data with enhanced API fields
+        # Process API contributors and map them to SimplifiedBook fields
+        additional_authors = None
+        editor = None
+        translator = None
+        narrator = None
+        illustrator = None
+        
+        if api_data and api_data.get('contributors'):
+            contributors = api_data['contributors']
+            print(f"🎯 [MANUAL] Processing {len(contributors)} contributors from API")
+            
+            # Debug: Print all contributors
+            for i, contrib in enumerate(contributors):
+                print(f"🎯 [MANUAL] Contributor {i+1}: name='{contrib.get('name')}', role='{contrib.get('role')}'")
+            
+            # Extract different types of contributors
+            api_authors = [c['name'] for c in contributors if c.get('role') == 'author']
+            api_editors = [c['name'] for c in contributors if c.get('role') == 'editor']
+            api_translators = [c['name'] for c in contributors if c.get('role') == 'translator']
+            api_narrators = [c['name'] for c in contributors if c.get('role') == 'narrator']
+            api_illustrators = [c['name'] for c in contributors if c.get('role') == 'illustrator']
+            
+            print(f"🎯 [MANUAL] Extracted authors: {api_authors}")
+            print(f"🎯 [MANUAL] Current form author: '{author}'")
+            
+            # Set primary author from API only if user didn't provide a meaningful author name
+            # Check for empty, placeholder, or very generic values
+            is_form_author_empty = (
+                not author or 
+                author.strip() == "" or
+                author.lower() in ["primary author name", "author", "unknown author", "unknown", "author name"]
+            )
+            
+            if is_form_author_empty and api_authors:
+                author = api_authors[0]
+                print(f"🎯 [MANUAL] Set primary author from API: {author}")
+            elif api_authors:
+                print(f"🎯 [MANUAL] Form author provided by user, keeping: '{author}' (API has: {api_authors[0]})")
+            else:
+                print(f"🎯 [MANUAL] No API authors found, keeping form author: '{author}'")
+            
+            # Handle additional authors intelligently
+            # Start with form data if provided, otherwise use API data
+            final_additional_authors = None
+            
+            if additional_authors_form:
+                # User provided additional authors in the form - use those
+                final_additional_authors = additional_authors_form
+                print(f"🎯 [MANUAL] Using form additional_authors: {final_additional_authors}")
+            elif api_authors and len(api_authors) > 1:
+                # No form additional authors, but API has multiple - use API excluding primary
+                primary_author = author or "Unknown Author"
+                additional_author_names = [a for a in api_authors if a.lower() != primary_author.lower()]
+                if additional_author_names:
+                    final_additional_authors = ', '.join(additional_author_names)
+                    print(f"🎯 [MANUAL] Set additional_authors from API: {final_additional_authors}")
+            
+            additional_authors = final_additional_authors
+            
+            # Set other contributor types
+            if api_editors:
+                editor = ', '.join(api_editors)
+                print(f"🎯 [MANUAL] Set editor: {editor}")
+            
+            if api_translators:
+                translator = ', '.join(api_translators)
+                print(f"🎯 [MANUAL] Set translator: {translator}")
+            
+            if api_narrators:
+                narrator = ', '.join(api_narrators)
+                print(f"🎯 [MANUAL] Set narrator: {narrator}")
+            
+            if api_illustrators:
+                illustrator = ', '.join(api_illustrators)
+                print(f"🎯 [MANUAL] Set illustrator: {illustrator}")
+        
+        # Create simplified book data with enhanced API fields including contributors
         book_data = SimplifiedBook(
             title=title,
             author=author or "Unknown Author",
@@ -2632,12 +3073,23 @@ def add_book_manual():
             cover_url=cover_url,  # This will be the cached URL if available
             series=series,
             series_volume=series_volume,
-            categories=categories  # Enhanced with API data
+            categories=categories,  # Enhanced with API data
+            additional_authors=additional_authors,
+            editor=editor,
+            translator=translator,
+            narrator=narrator,
+            illustrator=illustrator
         )
         
         # Enhanced debugging for ISBN and cover
+        print(f"🎯 [MANUAL] Final SimplifiedBook data:")
         print(f"   Title: {book_data.title}")
         print(f"   Author: {book_data.author}")
+        print(f"   Additional Authors: {book_data.additional_authors}")
+        print(f"   Editor: {book_data.editor}")
+        print(f"   Translator: {book_data.translator}")
+        print(f"   Narrator: {book_data.narrator}")
+        print(f"   Illustrator: {book_data.illustrator}")
         print(f"   ISBN13: {book_data.isbn13}")
         print(f"   ISBN10: {book_data.isbn10}")
         print(f"   Cover URL: {book_data.cover_url}")
