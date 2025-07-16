@@ -16,7 +16,6 @@ from .import_routes import import_bp
 from .stats_routes import stats_bp
 from .misc_routes import misc_bp
 from .genre_routes import genres_bp
-from .test_import_routes import test_import_bp, debug_import_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -287,16 +286,15 @@ def register_blueprints(app):
     app.register_blueprint(people_bp, url_prefix='/people')
     app.register_blueprint(import_bp, url_prefix='/import')
     app.register_blueprint(genres_bp, url_prefix='/genres')
-    app.register_blueprint(debug_import_bp, url_prefix='/debug')  # Available at /debug/test-import
     
     # Only log route registration in debug mode
     debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
     if debug_mode:
-        logger.debug("Test import routes registered at /debug/test-import")
+        logger.debug("All blueprints registered successfully")
     
     # Note: The original routes.py had routes at the root level
     # We may need to adjust URL prefixes to maintain compatibility
     # Or add URL rules to the main blueprint for backward compatibility
 
 # For backward compatibility, we can also export the blueprints
-__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'test_import_bp', 'debug_import_bp', 'register_blueprints']
+__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'register_blueprints']
