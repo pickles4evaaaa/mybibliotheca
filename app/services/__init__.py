@@ -22,12 +22,71 @@ try:
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade
     
-    # Create default service instances
-    book_service = KuzuServiceFacade()
-    user_service = KuzuUserService()
-    custom_field_service = KuzuCustomFieldService()
-    import_mapping_service = KuzuImportMappingService()
-    person_service = KuzuPersonService()
+    # Service instances with lazy initialization
+    _book_service = None
+    _user_service = None
+    _custom_field_service = None
+    _import_mapping_service = None
+    _person_service = None
+    
+    def _get_book_service():
+        """Get book service instance with lazy initialization."""
+        global _book_service
+        if _book_service is None:
+            _book_service = KuzuServiceFacade()
+        return _book_service
+    
+    def _get_user_service():
+        """Get user service instance with lazy initialization."""
+        global _user_service
+        if _user_service is None:
+            _user_service = KuzuUserService()
+        return _user_service
+    
+    def _get_custom_field_service():
+        """Get custom field service instance with lazy initialization."""
+        global _custom_field_service
+        if _custom_field_service is None:
+            _custom_field_service = KuzuCustomFieldService()
+        return _custom_field_service
+    
+    def _get_import_mapping_service():
+        """Get import mapping service instance with lazy initialization."""
+        global _import_mapping_service
+        if _import_mapping_service is None:
+            _import_mapping_service = KuzuImportMappingService()
+        return _import_mapping_service
+    
+    def _get_person_service():
+        """Get person service instance with lazy initialization."""
+        global _person_service
+        if _person_service is None:
+            _person_service = KuzuPersonService()
+        return _person_service
+    
+    # Create property-like access using classes
+    class _LazyService:
+        """Lazy service that initializes on first access."""
+        def __init__(self, service_getter):
+            self._service_getter = service_getter
+            self._service = None
+        
+        def __getattr__(self, name):
+            if self._service is None:
+                self._service = self._service_getter()
+            return getattr(self._service, name)
+        
+        def __call__(self, *args, **kwargs):
+            if self._service is None:
+                self._service = self._service_getter()
+            return self._service(*args, **kwargs)
+    
+    # Create lazy service instances
+    book_service = _LazyService(_get_book_service)
+    user_service = _LazyService(_get_user_service)
+    custom_field_service = _LazyService(_get_custom_field_service)
+    import_mapping_service = _LazyService(_get_import_mapping_service)
+    person_service = _LazyService(_get_person_service)
 
     # Placeholder services for compatibility during migration
     class StubService:
@@ -49,14 +108,14 @@ try:
         'KuzuBookService',     # Backward compatibility alias
         'KuzuUserService',     # User service
         'KuzuImportMappingService',  # Import mapping service
-        'book_service',        # Default service instance
-        'user_service',        # User service instance
-        'person_service',      # Person service instance
+        'book_service',        # Lazy service instance
+        'user_service',        # Lazy service instance
+        'person_service',      # Lazy service instance
+        'custom_field_service', # Lazy service instance
+        'import_mapping_service', # Lazy service instance
         'run_async',
         # Stub services for compatibility
         'reading_log_service',
-        'custom_field_service',
-        'import_mapping_service',
         'direct_import_service',
         'job_service'
     ]
