@@ -42,10 +42,11 @@ class KuzuGraphDB:
     def connect(self) -> kuzu.Connection:
         """Establish connection and initialize schema."""
         if self._connection is None:
-            # Check if database path exists and log file info
-            db_path = Path(self.database_path)
-            
             try:
+                
+                # Check if database path exists and log file info
+                db_path = Path(self.database_path)
+                
                 if db_path.exists():
                     files = list(db_path.glob("*"))
                     # Log file info only in debug mode
@@ -83,14 +84,7 @@ class KuzuGraphDB:
                         db_path = Path(self.database_path)
                         if db_path.exists():
                             import shutil
-                            if db_path.is_file():
-                                # Database path is a file instead of directory - this is from old KuzuDB version
-                                logger.info(f"Database path {db_path} is a file, removing for directory-based database...")
-                                db_path.unlink()
-                            else:
-                                # Database path is a directory, remove it
-                                logger.info(f"Clearing database directory {db_path}...")
-                                shutil.rmtree(db_path, ignore_errors=True)
+                            shutil.rmtree(db_path, ignore_errors=True)
                             logger.info("Database directory cleared, creating fresh database...")
                             
                             # Create directory and try again

@@ -256,8 +256,13 @@ flask_session/
 *.db
 *.sqlite
 *.sqlite3
-# KuzuDB files are stored in data/kuzu/ now
+# KuzuDB files are stored in data/kuzu/ and should not be deployed
+# However, we need to allow empty data directory structure
+data/
+!data/.gitkeep
+# Specifically ignore kuzu database files but allow directory structure
 data/kuzu/
+!data/kuzu/.gitkeep
 
 # Temporary editor files
 .DS_Store

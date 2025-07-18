@@ -313,14 +313,6 @@ def _initialize_default_templates():
 def create_app():
     import os
     
-    # Initialize fresh installation support
-    try:
-        from .utils.initialization import initialize_fresh_app
-        if not initialize_fresh_app():
-            print("⚠️  Warning: Failed to initialize fresh application setup")
-    except Exception as e:
-        print(f"⚠️  Warning: Could not check fresh installation status: {e}")
-    
     # Ensure static folder exists and is correctly configured
     static_folder = os.path.join(os.path.dirname(__file__), 'static')
     if not os.path.exists(static_folder):
