@@ -1899,9 +1899,6 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     if api_data.get('contributors'):
         contributors = api_data['contributors']
         
-        # Store contributors in global custom metadata as structured data
-        simplified_book.global_custom_metadata['contributors'] = contributors
-        
         # Extract different types of contributors
         authors = [c['name'] for c in contributors if c.get('role') == 'author']
         editors = [c['name'] for c in contributors if c.get('role') == 'editor']
@@ -1971,10 +1968,6 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     
     if api_data.get('asin'):
         simplified_book.global_custom_metadata['asin'] = api_data['asin']
-    
-    # Add API source information
-    if api_data.get('source'):
-        simplified_book.global_custom_metadata['api_source'] = api_data['source']
     
     print(f"🎉 [MERGE_API] Merge completed for '{simplified_book.title}':")
     print(f"    Title: {simplified_book.title}")
