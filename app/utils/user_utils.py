@@ -8,7 +8,7 @@ from flask import current_app
 def calculate_reading_streak(user_id, streak_offset=0):
     """
     Calculate reading streak for a specific user with foolproof logic.
-    Currently returns the streak_offset until the reading log system is fully implemented.
+    Now integrates with the reading log system when available.
     
     Args:
         user_id (str): The ID of the user
@@ -18,13 +18,58 @@ def calculate_reading_streak(user_id, streak_offset=0):
         int: The calculated reading streak
     """
     try:
-        # TODO: Implement proper reading log system
-        # For now, return the streak_offset as a fallback
-        current_app.logger.debug(f"Reading log system not fully implemented, returning streak offset: {streak_offset}")
-        return streak_offset
+        # Try to use the reading log service to calculate actual streak
+        from app.services import reading_log_service
+        from datetime import date, timedelta
+        
+        # Get reading logs for the last 365 days to calculate streak
+        logs = reading_log_service.get_user_reading_logs_sync(user_id, days_back=365, limit=365)
+        
+        if not logs:
+            # No logs found, return streak offset
+            current_app.logger.debug(f"No reading logs found for user {user_id}, returning streak offset: {streak_offset}")
+            return streak_offset
+        
+        # Extract unique dates from logs
+        reading_dates = set()
+        for log in logs:
+            if 'date' in log:
+                # Handle both string and date objects
+                log_date = log['date']
+                if isinstance(log_date, str):
+                    try:
+                        log_date = date.fromisoformat(log_date)
+                    except (ValueError, TypeError):
+                        continue
+                reading_dates.add(log_date)
+        
+        if not reading_dates:
+            current_app.logger.debug(f"No valid reading dates found for user {user_id}, returning streak offset: {streak_offset}")
+            return streak_offset
+        
+        # Calculate current streak
+        current_date = date.today()
+        streak = 0
+        
+        # Check if user read today or yesterday (to account for different time zones)
+        if current_date in reading_dates or (current_date - timedelta(days=1)) in reading_dates:
+            # Start counting from today or yesterday
+            check_date = current_date if current_date in reading_dates else current_date - timedelta(days=1)
             
+            # Count consecutive days backwards
+            while check_date in reading_dates:
+                streak += 1
+                check_date -= timedelta(days=1)
+        
+        # Add the streak offset to account for historical data
+        total_streak = streak + streak_offset
+        
+        current_app.logger.debug(f"Calculated reading streak for user {user_id}: {streak} days from logs + {streak_offset} offset = {total_streak}")
+        return total_streak
+        
     except Exception as e:
         current_app.logger.error(f"Error calculating reading streak for user {user_id}: {e}")
+        # Fall back to streak offset
         return streak_offset
 
 

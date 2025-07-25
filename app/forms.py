@@ -340,3 +340,18 @@ class MergeCategoriesForm(FlaskForm):
         
         if target_id.data == self.source_id.data:
             raise ValidationError('Source and target categories cannot be the same.')
+
+class ReadingLogEntryForm(FlaskForm):
+    book_id = SelectField('Book', choices=[], validators=[DataRequired()], 
+                         render_kw={'class': 'form-select'})
+    start_page = IntegerField('Start Page', validators=[Optional(), NumberRange(min=1)], 
+                             default=1, render_kw={'class': 'form-control'})
+    end_page = IntegerField('End Page', validators=[Optional(), NumberRange(min=1)], 
+                           render_kw={'class': 'form-control'})
+    pages_read = IntegerField('Pages Read', validators=[Optional(), NumberRange(min=1)], 
+                             render_kw={'class': 'form-control'})
+    minutes_read = IntegerField('Minutes Read', validators=[Optional(), NumberRange(min=1)], 
+                               render_kw={'class': 'form-control'})
+    notes = TextAreaField('Notes', validators=[Optional()], 
+                         render_kw={'class': 'form-control', 'rows': 3})
+    submit = SubmitField('Log Reading Session', render_kw={'class': 'btn btn-primary'})

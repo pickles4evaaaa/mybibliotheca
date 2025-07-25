@@ -534,6 +534,43 @@ class KuzuRelationshipService:
                     }
         return None
     
+    async def get_recently_added_want_to_read_books(self, user_id: str, limit: int = 5) -> List[Book]:
+        """Get books recently added to the user's want-to-read list."""
+        try:
+            query = """
+            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+            WHERE owns.reading_status = 'plan_to_read'
+            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            WHERE stored.user_id = $user_id OR stored IS NULL
+            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
+            ORDER BY owns.added_date DESC
+            LIMIT $limit
+            """
+            
+            results = self.graph_storage.query(query, {
+                "user_id": user_id,
+                "limit": limit
+            })
+            
+            books = []
+            for result in results:
+                if 'col_0' in result and 'col_1' in result:
+                    book_data = result['col_0']
+                    relationship_data = result['col_1'] or {}
+                    locations_data = result.get('col_2', []) or []
+                    
+                    # Filter out null/empty locations
+                    valid_locations = [loc for loc in locations_data if loc.get('id')]
+                    
+                    book = self._create_enriched_book(book_data, relationship_data, valid_locations)
+                    books.append(book)
+            
+            return books
+            
+        except Exception as e:
+            traceback.print_exc()
+            return []
+
     # Sync wrappers for backward compatibility
     def get_books_for_user_sync(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:
         """Sync wrapper for get_books_for_user."""
@@ -554,3 +591,7 @@ class KuzuRelationshipService:
     def get_all_books_with_user_overlay_sync(self, user_id: str) -> List[Dict[str, Any]]:
         """Sync wrapper for get_all_books_with_user_overlay."""
         return run_async(self.get_all_books_with_user_overlay(user_id))
+    
+    def get_recently_added_want_to_read_books_sync(self, user_id: str, limit: int = 5) -> List[Book]:
+        """Sync wrapper for get_recently_added_want_to_read_books."""
+        return run_async(self.get_recently_added_want_to_read_books(user_id, limit))

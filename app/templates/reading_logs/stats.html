@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Reading Statistics - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-graph-up"></i> Reading Statistics</h1>
+    <a href="{{ url_for('reading_logs.my_reading_logs') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-journal-text"></i> View Logs
+    </a>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3 col-sm-6 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-journal-check text-primary" style="font-size: 2rem;"></i>
+                <h3 class="mt-2 mb-1">{{ stats.total_sessions }}</h3>
+                <p class="text-muted mb-0">Reading Sessions</p>
+                <small class="text-muted">Last {{ stats.days_back }} days</small>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 col-sm-6 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-file-text text-success" style="font-size: 2rem;"></i>
+                <h3 class="mt-2 mb-1">{{ stats.total_pages }}</h3>
+                <p class="text-muted mb-0">Pages Read</p>
+                <small class="text-muted">Last {{ stats.days_back }} days</small>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 col-sm-6 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-clock text-warning" style="font-size: 2rem;"></i>
+                <h3 class="mt-2 mb-1">{{ stats.total_minutes }}</h3>
+                <p class="text-muted mb-0">Minutes Read</p>
+                <small class="text-muted">Last {{ stats.days_back }} days</small>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 col-sm-6 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-calendar-check text-info" style="font-size: 2rem;"></i>
+                <h3 class="mt-2 mb-1">{{ stats.days_read }}</h3>
+                <p class="text-muted mb-0">Days Read</p>
+                <small class="text-muted">Last {{ stats.days_back }} days</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if stats.days_read > 0 %}
+<div class="row mb-4">
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Daily Averages</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-6 text-center">
+                        <h4 class="text-primary">{{ "%.1f"|format(stats.avg_pages_per_day) }}</h4>
+                        <p class="text-muted mb-0">Pages per Day</p>
+                    </div>
+                    <div class="col-6 text-center">
+                        <h4 class="text-success">{{ "%.0f"|format(stats.avg_minutes_per_day) }}</h4>
+                        <p class="text-muted mb-0">Minutes per Day</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Reading Pace</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-12 text-center">
+                        {% if stats.total_minutes > 0 and stats.total_pages > 0 %}
+                            {% set pages_per_minute = stats.total_pages / stats.total_minutes %}
+                            {% set minutes_per_page = stats.total_minutes / stats.total_pages %}
+                            <h4 class="text-info">{{ "%.1f"|format(minutes_per_page) }}</h4>
+                            <p class="text-muted mb-0">Minutes per Page</p>
+                            <small class="text-muted">
+                                ({{ "%.2f"|format(pages_per_minute) }} pages per minute)
+                            </small>
+                        {% else %}
+                            <h4 class="text-muted">N/A</h4>
+                            <p class="text-muted mb-0">Not enough data</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-trophy"></i> Reading Streak</h5>
+            </div>
+            <div class="card-body">
+                <div class="text-center">
+                    <h2 class="text-primary mb-2">{{ stats.days_read }}/{{ stats.days_back }}</h2>
+                    <p class="text-muted">
+                        You've read on {{ stats.days_read }} out of the last {{ stats.days_back }} days
+                        {% if stats.days_read == stats.days_back %}
+                        <br><span class="text-success"><i class="bi bi-check-circle"></i> Perfect reading streak!</span>
+                        {% elif stats.days_read >= stats.days_back * 0.8 %}
+                        <br><span class="text-warning"><i class="bi bi-star"></i> Great consistency!</span>
+                        {% elif stats.days_read >= stats.days_back * 0.5 %}
+                        <br><span class="text-info"><i class="bi bi-arrow-up"></i> Good progress!</span>
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-graph-down" style="font-size: 3rem; color: #ccc;"></i>
+    <h3 class="mt-3 text-muted">No Reading Data</h3>
+    <p class="text-muted">Start logging your reading sessions to see statistics here!</p>
+    <button class="btn btn-primary btn-lg" data-bs-toggle="modal" data-bs-target="#readingLogModal">
+        <i class="bi bi-journal-plus"></i> Log Your First Session
+    </button>
+</div>
+{% endif %}
+
+<div class="text-center mt-4">
+    <button class="btn btn-primary me-2" data-bs-toggle="modal" data-bs-target="#readingLogModal">
+        <i class="bi bi-journal-plus"></i> New Reading Entry
+    </button>
+    <a href="{{ url_for('reading_logs.my_reading_logs') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-journal-text"></i> View All Logs
+    </a>
+</div>
+
+<style>
+.card {
+    transition: transform 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+</style>
+{% endblock %}

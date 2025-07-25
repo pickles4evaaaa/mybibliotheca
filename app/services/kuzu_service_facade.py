@@ -19,6 +19,7 @@ from .kuzu_person_service import KuzuPersonService
 from .kuzu_relationship_service import KuzuRelationshipService
 from .kuzu_search_service import KuzuSearchService
 from .kuzu_custom_field_service import KuzuCustomFieldService
+from .kuzu_reading_log_service import KuzuReadingLogService
 from .kuzu_async_helper import run_async
 
 
@@ -38,6 +39,7 @@ class KuzuServiceFacade:
         self.relationship_service = KuzuRelationshipService()
         self.search_service = KuzuSearchService()
         self.custom_field_service = KuzuCustomFieldService()
+        self.reading_log_service = KuzuReadingLogService()
         
         # Keep reference to book repository for compatibility
         self.book_repo = KuzuBookRepository()
@@ -248,6 +250,14 @@ class KuzuServiceFacade:
     def get_user_books_sync(self, user_id: str) -> List[Book]:
         """Get all books for a user."""
         return self.relationship_service.get_books_for_user_sync(user_id)
+    
+    def get_recently_read_books_for_user(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recently read books for a user based on reading logs."""
+        return self.reading_log_service.get_recently_read_books_sync(user_id, limit)
+    
+    def get_recently_added_want_to_read_books(self, user_id: str, limit: int = 5) -> List[Book]:
+        """Get recently added want-to-read books for a user."""
+        return self.relationship_service.get_recently_added_want_to_read_books_sync(user_id, limit)
     
     def get_book_by_id_for_user_sync(self, book_id: str, user_id: str) -> Optional[Book]:
         """Get a specific book for a user with relationship data."""

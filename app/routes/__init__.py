@@ -16,6 +16,7 @@ from .import_routes import import_bp
 from .stats_routes import stats_bp
 from .misc_routes import misc_bp
 from .genre_routes import genres_bp
+from .reading_log_routes import reading_logs
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -31,6 +32,61 @@ def index():
         return redirect(url_for('book.library'))
     else:
         return redirect(url_for('auth.login'))
+
+@main_bp.route('/api/user/books')
+def api_user_books():
+    """API endpoint to get user's books for the reading log modal."""
+    from flask_login import login_required, current_user
+    from flask import jsonify
+    from app.services import book_service
+    import logging
+    
+    @login_required
+    def _api_user_books():
+        logger = logging.getLogger(__name__)
+        try:
+            # Get user's books
+            books = book_service.get_books_for_user(current_user.id, limit=1000)
+            
+            # Format for dropdown
+            book_data = []
+            for book in books:
+                # Get authors string
+                authors_str = ''
+                if hasattr(book, 'contributors') and book.contributors:
+                    author_names = [contrib.person.name for contrib in book.contributors 
+                                  if contrib.contribution_type.value in ['authored', 'co_authored']]
+                    authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
+                    if len(author_names) > 3:
+                        authors_str += ' et al.'
+                elif hasattr(book, 'authors') and book.authors:
+                    authors_str = ', '.join([author.name for author in book.authors[:3]])
+                    if len(book.authors) > 3:
+                        authors_str += ' et al.'
+                
+                book_data.append({
+                    'id': book.id,
+                    'title': book.title,
+                    'authors': authors_str
+                })
+            
+            # Sort by title
+            book_data.sort(key=lambda x: x['title'].lower())
+            
+            return jsonify({
+                'status': 'success',
+                'books': book_data
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting user books for API: {e}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to load books'
+            }), 500
+    
+    return _api_user_books()
+
 
 @main_bp.route('/library')
 def library():
@@ -286,6 +342,7 @@ def register_blueprints(app):
     app.register_blueprint(people_bp, url_prefix='/people')
     app.register_blueprint(import_bp, url_prefix='/import')
     app.register_blueprint(genres_bp, url_prefix='/genres')
+    app.register_blueprint(reading_logs, url_prefix='/reading-logs')
     
     # Only log route registration in debug mode
     debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
@@ -297,4 +354,4 @@ def register_blueprints(app):
     # Or add URL rules to the main blueprint for backward compatibility
 
 # For backward compatibility, we can also export the blueprints
-__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'register_blueprints']
+__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'reading_logs', 'register_blueprints']

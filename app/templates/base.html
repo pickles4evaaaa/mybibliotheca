@@ -639,6 +639,9 @@
               <a class="btn btn-outline-success me-2" href="{{ url_for('main.stats') }}">Stats</a>
               <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
               <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>
+              <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#readingLogModal">
+                <i class="bi bi-journal-plus"></i> Reading Log
+              </button>
               <a class="btn btn-outline-secondary me-2" href="{{ url_for('auth.settings') }}">Settings</a>
             {% endif %}
           </div>
@@ -815,5 +818,428 @@
       });
     }
   </script>
+
+  <!-- Reading Log Entry Modal -->
+  {% if current_user.is_authenticated %}
+  <div class="modal fade" id="readingLogModal" tabindex="-1" aria-labelledby="readingLogModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="readingLogModalLabel">
+            <i class="bi bi-journal-plus"></i> Reading Log
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="readingLogForm" method="POST" action="{{ url_for('reading_logs.create_reading_log_entry') }}">
+          <div class="modal-body">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" id="selected_book_id" name="book_id" value="">
+            
+            <div class="mb-3">
+              <label for="book_search" class="form-label">Book *</label>
+              <div class="book-autocomplete">
+                <input type="text" class="form-control book-search" id="book_search" 
+                       placeholder="Start typing book title..." autocomplete="off">
+                <div class="autocomplete-dropdown" id="book_dropdown"></div>
+              </div>
+              <div class="selected-book mt-2" id="selected_book" style="display: none;">
+                <div class="selected-book-display">
+                  <span class="book-title"></span>
+                  <span class="book-authors"></span>
+                  <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="clearBookSelection()">
+                    <i class="bi bi-x"></i> Change
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="start_page" class="form-label">Start Page</label>
+                  <input type="number" class="form-control" id="start_page" name="start_page" min="1">
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="end_page" class="form-label">End Page</label>
+                  <input type="number" class="form-control" id="end_page" name="end_page" min="1">
+                </div>
+              </div>
+            </div>
+            
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="pages_read" class="form-label">Pages Read</label>
+                  <input type="number" class="form-control" id="pages_read" name="pages_read" min="1" readonly>
+                  <small class="form-text text-muted">Auto-calculated from start/end pages</small>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="minutes_read" class="form-label">Minutes Read</label>
+                  <input type="number" class="form-control" id="minutes_read" name="minutes_read" min="1">
+                </div>
+              </div>
+            </div>
+            
+            <div class="mb-3">
+              <label for="notes" class="form-label">Notes (Optional)</label>
+              <textarea class="form-control" id="notes" name="notes" rows="3" placeholder="Any thoughts or notes about your reading session..."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-journal-check"></i> Log Session
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    /* Book search autocomplete styles */
+    .book-autocomplete {
+      position: relative;
+    }
+    
+    .book-autocomplete .autocomplete-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #ced4da;
+      border-top: none;
+      border-radius: 0 0 0.375rem 0.375rem;
+      max-height: 250px;
+      overflow-y: auto;
+      z-index: 1050;
+      display: none;
+    }
+    
+    .book-autocomplete .autocomplete-item {
+      padding: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f8f9fa;
+    }
+    
+    .book-autocomplete .autocomplete-item:hover {
+      background-color: #f8f9fa;
+    }
+    
+    .book-autocomplete .autocomplete-item:last-child {
+      border-bottom: none;
+    }
+    
+    .book-title-main {
+      font-weight: 600;
+      color: #333;
+    }
+    
+    .book-authors-sub {
+      font-size: 0.9em;
+      color: #666;
+      margin-top: 2px;
+    }
+    
+    .selected-book-display {
+      padding: 10px;
+      background-color: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 0.375rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .selected-book-display .book-title {
+      font-weight: 600;
+      color: #333;
+    }
+    
+    .selected-book-display .book-authors {
+      font-size: 0.9em;
+      color: #666;
+      margin-left: 8px;
+    }
+    
+    /* Dark mode support */
+    [data-theme="dark"] .book-autocomplete .autocomplete-dropdown {
+      background: #2d2d2d;
+      border-color: #404040;
+      color: #e0e0e0;
+    }
+    
+    [data-theme="dark"] .book-autocomplete .autocomplete-item {
+      border-bottom-color: #404040;
+    }
+    
+    [data-theme="dark"] .book-autocomplete .autocomplete-item:hover {
+      background-color: #404040;
+    }
+    
+    [data-theme="dark"] .book-title-main {
+      color: #e0e0e0;
+    }
+    
+    [data-theme="dark"] .book-authors-sub {
+      color: #b0b0b0;
+    }
+    
+    [data-theme="dark"] .selected-book-display {
+      background-color: #2d2d2d;
+      border-color: #404040;
+    }
+    
+    [data-theme="dark"] .selected-book-display .book-title {
+      color: #e0e0e0;
+    }
+    
+    [data-theme="dark"] .selected-book-display .book-authors {
+      color: #b0b0b0;
+    }
+  </style>
+
+  <script>
+    // Reading Log Modal JavaScript
+    document.addEventListener('DOMContentLoaded', function() {
+      const modal = document.getElementById('readingLogModal');
+      const bookSearchInput = document.getElementById('book_search');
+      const bookDropdown = document.getElementById('book_dropdown');
+      const selectedBookDiv = document.getElementById('selected_book');
+      const selectedBookIdInput = document.getElementById('selected_book_id');
+      const startPageInput = document.getElementById('start_page');
+      const endPageInput = document.getElementById('end_page');
+      const pagesReadInput = document.getElementById('pages_read');
+      
+      let userBooksData = [];
+      let searchTimeout = null;
+      
+      // Load user's books when modal is shown
+      modal.addEventListener('show.bs.modal', function() {
+        if (userBooksData.length === 0) {
+          loadUserBooks();
+        }
+      });
+      
+      // Book search functionality
+      bookSearchInput.addEventListener('input', function() {
+        const query = this.value.trim();
+        
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          if (query.length >= 1) {
+            searchBooks(query);
+          } else {
+            showRecentBooks();
+          }
+        }, 200);
+      });
+      
+      // Show recent books when field is focused
+      bookSearchInput.addEventListener('focus', function() {
+        if (!this.value.trim()) {
+          showRecentBooks();
+        }
+      });
+      
+      // Hide dropdown when clicking outside
+      document.addEventListener('click', function(event) {
+        if (!event.target.closest('.book-autocomplete')) {
+          hideBookDropdown();
+        }
+      });
+      
+      // Auto-calculate pages read
+      function calculatePagesRead() {
+        const startPage = parseInt(startPageInput.value) || 0;
+        const endPage = parseInt(endPageInput.value) || 0;
+        
+        if (startPage > 0 && endPage > 0 && endPage >= startPage) {
+          pagesReadInput.value = endPage - startPage + 1;
+        } else {
+          pagesReadInput.value = '';
+        }
+      }
+      
+      startPageInput.addEventListener('input', calculatePagesRead);
+      endPageInput.addEventListener('input', calculatePagesRead);
+      
+      // Allow manual override of pages read
+      pagesReadInput.addEventListener('focus', function() {
+        this.readOnly = false;
+      });
+      
+      pagesReadInput.addEventListener('blur', function() {
+        if (!this.value) {
+          this.readOnly = true;
+          calculatePagesRead();
+        }
+      });
+      
+      // Load user's books via AJAX
+      function loadUserBooks() {
+        fetch('/reading-logs/api/user/books', {
+          headers: {
+            'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.status === 'success') {
+            userBooksData = data.books;
+          }
+        })
+        .catch(error => {
+          console.error('Error loading books:', error);
+        });
+      }
+      
+      function searchBooks(query) {
+        if (!userBooksData.length) {
+          return;
+        }
+        
+        const queryLower = query.toLowerCase();
+        const matchingBooks = userBooksData.filter(book => {
+          return book.title.toLowerCase().includes(queryLower) ||
+                 (book.authors && book.authors.toLowerCase().includes(queryLower));
+        });
+        
+        showBookDropdown(matchingBooks, query);
+      }
+      
+      function showRecentBooks() {
+        // Show recent books when no search query
+        if (userBooksData.length > 0) {
+          // Take the first 5 books (which should be prioritized by the API)
+          const recentBooks = userBooksData.slice(0, 5);
+          showBookDropdown(recentBooks, '');
+        }
+      }
+      
+      function showBookDropdown(books, query) {
+        bookDropdown.innerHTML = '';
+        
+        if (books.length === 0) {
+          const noResultsItem = document.createElement('div');
+          noResultsItem.className = 'autocomplete-item';
+          noResultsItem.innerHTML = '<em>No books found</em>';
+          bookDropdown.appendChild(noResultsItem);
+        } else {
+          books.slice(0, 10).forEach(book => { // Limit to 10 results
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.innerHTML = `
+              <div class="book-title-main">${book.title}</div>
+              ${book.authors ? `<div class="book-authors-sub">by ${book.authors}</div>` : ''}
+            `;
+            item.addEventListener('click', () => selectBook(book));
+            bookDropdown.appendChild(item);
+          });
+        }
+        
+        bookDropdown.style.display = 'block';
+      }
+      
+      function hideBookDropdown() {
+        bookDropdown.style.display = 'none';
+      }
+      
+      function selectBook(book) {
+        selectedBookIdInput.value = book.id;
+        bookSearchInput.value = '';
+        
+        // Show selected book
+        selectedBookDiv.querySelector('.book-title').textContent = book.title;
+        selectedBookDiv.querySelector('.book-authors').textContent = book.authors ? `by ${book.authors}` : '';
+        selectedBookDiv.style.display = 'block';
+        bookSearchInput.style.display = 'none';
+        
+        hideBookDropdown();
+      }
+      
+      window.clearBookSelection = function() {
+        selectedBookIdInput.value = '';
+        selectedBookDiv.style.display = 'none';
+        bookSearchInput.style.display = 'block';
+        bookSearchInput.focus();
+      };
+      
+      // Handle form submission
+      document.getElementById('readingLogForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        // Validate book selection
+        if (!selectedBookIdInput.value) {
+          showAlert('danger', 'Please select a book');
+          return;
+        }
+        
+        const formData = new FormData(this);
+        
+        fetch(this.action, {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.status === 'success') {
+            // Close modal and show success message
+            const modalInstance = bootstrap.Modal.getInstance(modal);
+            modalInstance.hide();
+            
+            // Reset form
+            this.reset();
+            clearBookSelection();
+            pagesReadInput.readOnly = true;
+            
+            // Show success alert
+            showAlert('success', 'Reading session logged successfully!');
+          } else {
+            showAlert('danger', data.message || 'Error logging reading session');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showAlert('danger', 'Error logging reading session');
+        });
+      });
+      
+      // Reset form when modal is hidden
+      modal.addEventListener('hidden.bs.modal', function() {
+        document.getElementById('readingLogForm').reset();
+        clearBookSelection();
+        pagesReadInput.readOnly = true;
+      });
+      
+      function showAlert(type, message) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show mt-2`;
+        alertDiv.innerHTML = `
+          ${message}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        const container = document.querySelector('.container');
+        container.insertBefore(alertDiv, container.firstChild);
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+          if (alertDiv.parentNode) {
+            alertDiv.remove();
+          }
+        }, 5000);
+      }
+    });
+  </script>
+  {% endif %}
 </body>
 </html>

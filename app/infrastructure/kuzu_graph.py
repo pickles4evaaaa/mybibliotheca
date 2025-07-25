@@ -596,6 +596,12 @@ class KuzuGraphDB:
                 )
                 """,
                 """
+                CREATE REL TABLE FOR_BOOK(
+                    FROM ReadingLog TO Book,
+                    created_at TIMESTAMP
+                )
+                """,
+                """
                 CREATE REL TABLE PARENT_CATEGORY(
                     FROM Category TO Category,
                     created_at TIMESTAMP
