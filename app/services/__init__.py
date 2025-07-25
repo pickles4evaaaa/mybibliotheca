@@ -18,6 +18,7 @@ try:
     from .kuzu_custom_field_service import KuzuCustomFieldService
     from .kuzu_import_mapping_service import KuzuImportMappingService
     from .kuzu_person_service import KuzuPersonService
+    from .kuzu_reading_log_service import KuzuReadingLogService
 
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade
@@ -28,6 +29,7 @@ try:
     _custom_field_service = None
     _import_mapping_service = None
     _person_service = None
+    _reading_log_service = None
     
     def _get_book_service():
         """Get book service instance with lazy initialization."""
@@ -64,6 +66,13 @@ try:
             _person_service = KuzuPersonService()
         return _person_service
     
+    def _get_reading_log_service():
+        """Get reading log service instance with lazy initialization."""
+        global _reading_log_service
+        if _reading_log_service is None:
+            _reading_log_service = KuzuReadingLogService()
+        return _reading_log_service
+    
     # Create property-like access using classes
     class _LazyService:
         """Lazy service that initializes on first access."""
@@ -87,6 +96,7 @@ try:
     custom_field_service = _LazyService(_get_custom_field_service)
     import_mapping_service = _LazyService(_get_import_mapping_service)
     person_service = _LazyService(_get_person_service)
+    reading_log_service = _LazyService(_get_reading_log_service)
 
     # Placeholder services for compatibility during migration
     class StubService:
@@ -98,7 +108,6 @@ try:
             return stub_method
 
     # Create stub service instances
-    reading_log_service = StubService()
     direct_import_service = StubService()
     job_service = StubService()
 

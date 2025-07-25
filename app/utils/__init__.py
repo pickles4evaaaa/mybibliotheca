@@ -10,11 +10,19 @@ from .book_utils import (
     search_author_by_name
 )
 
+# Import functions from the user_utils module
+from .user_utils import (
+    calculate_reading_streak,
+    get_reading_streak
+)
+
 __all__ = [
     'fetch_book_data', 
     'get_google_books_cover', 
     'fetch_author_data', 
     'generate_month_review_image', 
     'normalize_goodreads_value',
-    'search_author_by_name'
+    'search_author_by_name',
+    'calculate_reading_streak',
+    'get_reading_streak'
 ]
