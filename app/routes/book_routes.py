@@ -49,6 +49,53 @@ def _safe_date_to_isoformat(date_obj):
         return date_obj.isoformat()
     return None
 
+def _format_published_date_for_input(published_date_str):
+    """Format published_date for HTML5 date input (YYYY-MM-DD)."""
+    if not published_date_str or not isinstance(published_date_str, str):
+        return None
+    
+    try:
+        from datetime import datetime
+        date_str = published_date_str.strip()
+        
+        # Try various date formats that APIs might return
+        formats = [
+            '%Y-%m-%d',        # 2023-12-25
+            '%Y/%m/%d',        # 2023/12/25  
+            '%m/%d/%Y',        # 12/25/2023
+            '%d/%m/%Y',        # 25/12/2023
+            '%Y-%m',           # 2023-12
+            '%Y/%m',           # 2023/12
+            '%m/%Y',           # 12/2023
+            '%Y',              # 2023
+            '%B %d, %Y',       # December 25, 2023
+            '%b %d, %Y',       # Dec 25, 2023
+            '%d %B %Y',        # 25 December 2023
+            '%d %b %Y',        # 25 Dec 2023
+            '%B %Y',           # December 2023
+            '%b %Y',           # Dec 2023
+        ]
+        
+        for fmt in formats:
+            try:
+                parsed_date = datetime.strptime(date_str, fmt)
+                # Return YYYY-MM-DD format for HTML5 date input
+                return parsed_date.strftime('%Y-%m-%d')
+            except ValueError:
+                continue
+        
+        # If no format matches, try to extract just the year
+        import re
+        year_match = re.search(r'\b(19|20)\d{2}\b', date_str)
+        if year_match:
+            year = year_match.group()
+            # Return January 1st of that year as default
+            return f"{year}-01-01"
+        
+        return None
+    except Exception as e:
+        return None
+
 @book_bp.route('/fetch_book/<isbn>', methods=['GET'])
 def fetch_book(isbn):
     book_data = fetch_book_data(isbn) or {}
@@ -80,12 +127,25 @@ def fetch_book(isbn):
     if not book_data.get('author') and book_data.get('authors'):
         book_data['author'] = book_data['authors']
     
+    # Format published_date for HTML5 date input (expects YYYY-MM-DD format)
+    if book_data.get('published_date'):
+        original_date = book_data['published_date']
+        formatted_date = _format_published_date_for_input(original_date)
+        if formatted_date:
+            book_data['published_date'] = formatted_date
+            print(f"📅 [FETCH_BOOK] Formatted published_date: '{original_date}' -> '{formatted_date}'")
+        else:
+            print(f"⚠️ [FETCH_BOOK] Could not format published_date: '{original_date}'")
+    
     # Debug logging to see what we're returning
     print(f"🔍 [FETCH_BOOK] Final data for ISBN {isbn}:")
     print(f"    title: '{book_data.get('title', 'NOT_FOUND')}'")
     print(f"    author: '{book_data.get('author', 'NOT_FOUND')}'")
     print(f"    authors: '{book_data.get('authors', 'NOT_FOUND')}'")
+    print(f"    published_date: '{book_data.get('published_date', 'NOT_FOUND')}'")
     print(f"    isbn: '{book_data.get('isbn', 'NOT_FOUND')}'")
+    print(f"    google_books_id: '{book_data.get('google_books_id', 'NOT_FOUND')}'")
+    print(f"    openlibrary_id: '{book_data.get('openlibrary_id', 'NOT_FOUND')}'")
     print(f"    all_keys: {list(book_data.keys())}")
     
     # If neither source provides a cover, set a default
@@ -1998,11 +2058,14 @@ def month_review(year, month):
         })()
         book_objects.append(book_obj)
 
-    img = generate_month_review_image(book_objects, month, year)
-    buf = BytesIO()
-    img.save(buf, format='JPEG')
-    buf.seek(0)
-    return send_file(buf, mimetype='image/jpeg', as_attachment=True, download_name=f"month_review_{year}_{month}.jpg")
+    img_buffer = generate_month_review_image(book_objects, month, year)
+    
+    # Check if image generation was successful
+    if not img_buffer:
+        return "Error generating month review image", 500
+    
+    # img_buffer is already a BytesIO object from generate_month_review_image
+    return send_file(img_buffer, mimetype='image/png', as_attachment=True, download_name=f"month_review_{year}_{month}.png")
 
 @book_bp.route('/add_book_from_search', methods=['POST'])
 @login_required
@@ -2538,6 +2601,14 @@ def add_book_manual():
                         if book_key in data:
                             book = data[book_key]
                             
+                            # Extract OpenLibrary ID from the key field
+                            ol_id = None
+                            if 'key' in book:
+                                key = book['key']
+                                # Key format is typically "/books/OL12345M" - extract the ID part
+                                if key.startswith('/books/'):
+                                    ol_id = key.replace('/books/', '')
+                            
                             # Extract categories/subjects
                             subjects = book.get('subjects', [])
                             ol_categories = []
@@ -2551,7 +2622,9 @@ def add_book_manual():
                             openlibrary_data = {
                                 'categories': ol_categories,
                                 'description': book.get('notes', {}).get('value', '') if isinstance(book.get('notes'), dict) else str(book.get('notes', '')),
-                                'cover_url': book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small')
+                                'cover_url': book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small'),
+                                'published_date': book.get('publish_date', ''),  # Add publication date from OpenLibrary
+                                'openlibrary_id': ol_id
                             }
                     
                     # Merge API data
@@ -2566,6 +2639,34 @@ def add_book_manual():
                             # Use OpenLibrary description if Google doesn't have one
                             if not api_data.get('description') and openlibrary_data.get('description'):
                                 api_data['description'] = openlibrary_data['description']
+                            
+                            # Set OpenLibrary ID if not already set by Google Books data
+                            if not api_data.get('openlibrary_id') and openlibrary_data.get('openlibrary_id'):
+                                api_data['openlibrary_id'] = openlibrary_data['openlibrary_id']
+                            
+                            # Smart publication date handling: prioritize Google Books full dates over OpenLibrary years
+                            google_date = google_data.get('published_date', '') if google_data else ''
+                            ol_date = openlibrary_data.get('published_date', '') if openlibrary_data else ''
+                            
+                            if google_date and ol_date:
+                                # Both have dates - use Google Books if it's a full date, otherwise use OpenLibrary
+                                if len(google_date) > 4 and '-' in google_date:  # Full date format like "2025-03-26"
+                                    api_data['published_date'] = google_date
+                                    print(f"🎯 [MANUAL] Using Google Books full date: '{google_date}' over OpenLibrary: '{ol_date}'")
+                                elif len(ol_date) > 4 and '-' in ol_date:  # OpenLibrary has full date
+                                    api_data['published_date'] = ol_date
+                                    print(f"🎯 [MANUAL] Using OpenLibrary full date: '{ol_date}' over Google Books year: '{google_date}'")
+                                else:
+                                    # Both are year-only, prefer Google Books
+                                    api_data['published_date'] = google_date
+                                    print(f"🎯 [MANUAL] Both year-only, using Google Books: '{google_date}'")
+                            elif google_date:
+                                api_data['published_date'] = google_date
+                                print(f"🎯 [MANUAL] Using Google Books date: '{google_date}'")
+                            elif ol_date:
+                                api_data['published_date'] = ol_date
+                                print(f"🎯 [MANUAL] Using OpenLibrary date: '{ol_date}'")
+                            # If neither has a date, api_data['published_date'] will be whatever Google Books had (possibly empty)
                         
                         print(f"🎯 [MANUAL] Merged API data: {len(api_data.get('categories', []))} categories, cover: {bool(api_data.get('cover_url'))}")
                         print(f"🎯 [MANUAL] Contributors in API data: {len(api_data.get('contributors', []))} items")
@@ -2581,6 +2682,7 @@ def add_book_manual():
                             page_count = api_data['page_count']
                         if not published_date_str and api_data.get('published_date'):
                             published_date_str = api_data['published_date']
+                            print(f"🎯 [MANUAL] Using API published_date: '{published_date_str}' (type: {type(published_date_str)})")
                         if not categories and api_data.get('categories'):
                             categories = api_data['categories']
                         
@@ -2633,6 +2735,18 @@ def add_book_manual():
         translator = None
         narrator = None
         illustrator = None
+        google_books_id = None
+        openlibrary_id = None
+        
+        # Extract Google Books ID from API data
+        if api_data and api_data.get('google_books_id'):
+            google_books_id = api_data['google_books_id']
+            print(f"🎯 [MANUAL] Set Google Books ID: {google_books_id}")
+        
+        # Extract OpenLibrary ID from API data  
+        if api_data and api_data.get('openlibrary_id'):
+            openlibrary_id = api_data['openlibrary_id']
+            print(f"🎯 [MANUAL] Set OpenLibrary ID: {openlibrary_id}")
         
         if api_data and api_data.get('contributors'):
             contributors = api_data['contributors']
@@ -2712,7 +2826,7 @@ def add_book_manual():
             subtitle=subtitle,
             description=description,
             publisher=publisher_name,
-            published_date=published_date_str,
+            published_date=published_date_str,  # Keep as string - SimplifiedBookService will convert
             page_count=page_count,
             language=language,
             cover_url=cover_url,  # This will be the cached URL if available
@@ -2723,7 +2837,9 @@ def add_book_manual():
             editor=editor,
             translator=translator,
             narrator=narrator,
-            illustrator=illustrator
+            illustrator=illustrator,
+            google_books_id=google_books_id,
+            openlibrary_id=openlibrary_id
         )
         
         # Enhanced debugging for ISBN and cover
@@ -2741,7 +2857,10 @@ def add_book_manual():
         print(f"   Categories: {book_data.categories}")
         print(f"   Description: {book_data.description[:100] if book_data.description else 'None'}...")
         print(f"   Publisher: {book_data.publisher}")
+        print(f"   Published Date: '{book_data.published_date}' (type: {type(book_data.published_date)})")
         print(f"   Page count: {book_data.page_count}")
+        print(f"   Google Books ID: {book_data.google_books_id}")
+        print(f"   OpenLibrary ID: {book_data.openlibrary_id}")
         
         # Use simplified service
         service = SimplifiedBookService()

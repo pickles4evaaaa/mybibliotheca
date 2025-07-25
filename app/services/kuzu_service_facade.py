@@ -367,6 +367,10 @@ class KuzuServiceFacade:
         """Merge multiple categories into one."""
         return self.category_service.merge_categories_sync(primary_category_id, merge_category_ids)
     
+    def get_category_book_counts_sync(self) -> Dict[str, int]:
+        """Get book counts for all categories."""
+        return self.category_service.get_category_book_counts_sync()
+    
     def search_categories_sync(self, query: str, limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search categories by name or description."""
         return self.category_service.search_categories_sync(query, limit, user_id)

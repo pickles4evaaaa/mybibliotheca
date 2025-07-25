@@ -112,7 +112,12 @@ def get_onboarding_step() -> int:
     return session.get('onboarding_step', 1)
 
 def clear_onboarding_session():
-    """Clear all onboarding data from session."""
+    """Clear all onboarding data from session.
+    
+    Note: After onboarding completion, JavaScript timers in import progress templates
+    may continue to make requests to onboarding routes. The authentication checks
+    added to routes help prevent confusion and redirect users appropriately.
+    """
     session.pop('onboarding_step', None)
     session.pop('onboarding_data', None)
     session.pop('onboarding_backup', None)
@@ -125,6 +130,13 @@ def clear_onboarding_session():
 @debug_route('ONBOARDING_START')  
 def start():
     """Start the onboarding process."""
+    
+    # Check if user is already authenticated (onboarding completed)
+    from flask_login import current_user
+    if current_user.is_authenticated:
+        logger.info(f"🔍 ONBOARDING DEBUG: User is already authenticated - redirecting to library")
+        flash('You have already completed the setup process.', 'info')
+        return redirect(url_for('main.library'))
     
     try:
         # Only check user count if we're not in the middle of onboarding
@@ -182,6 +194,18 @@ def step(step_num: int):
     logger.info(f"🔍 ONBOARDING DEBUG: User accessing step {step_num}, current_step={current_step}")
     logger.info(f"🔍 ONBOARDING DEBUG: Session data: {dict(session)}")
     logger.info(f"🔍 ONBOARDING DEBUG: Request method: {request.method}")
+    
+    # Check if user is already authenticated (onboarding completed)
+    from flask_login import current_user
+    if current_user.is_authenticated:
+        # If user is logged in and there's no onboarding session, they've completed onboarding
+        current_step = get_onboarding_step()
+        onboarding_data = get_onboarding_data()
+        
+        if current_step == 1 and not onboarding_data:  # Default empty state after session clear
+            logger.info(f"🔍 ONBOARDING DEBUG: User is authenticated but accessing onboarding routes - redirecting to library")
+            flash('You have already completed the setup process.', 'info')
+            return redirect(url_for('main.library'))
     
     # Allow backward navigation always
     # For forward navigation, check if we have completed previous steps
@@ -780,6 +804,8 @@ def get_goodreads_field_mappings():
         'Binding': 'custom_global_binding',
         'Number of Pages': 'page_count',
         'Year Published': 'publication_year',
+        'Published Date': 'published_date',  # In case Goodreads has full dates
+        'Publication Date': 'published_date',  # Alternative field name
         'Original Publication Year': 'custom_global_original_publication_year',
         'Date Read': 'date_read',
         'Date Added': 'date_added',
@@ -812,6 +838,9 @@ def get_storygraph_field_mappings():
         'Read Status': 'reading_status',
         'Date Started': 'start_date',
         'Last Date Read': 'date_read',  # Fixed: StoryGraph uses "Last Date Read"
+        'Publication Year': 'publication_year',  # StoryGraph may have this field
+        'Published Date': 'published_date',  # In case StoryGraph has full dates
+        'Publication Date': 'published_date',  # Alternative field name
         'Tags': 'categories',
         'Review': 'notes',  # Fixed: StoryGraph uses "Review" not "My Review"
         'Format': 'custom_global_format',
@@ -962,6 +991,13 @@ def import_progress(task_id: str):
     """Show simple import splash screen during onboarding."""
     logger.info(f"🔍 ONBOARDING DEBUG: Showing import splash for task {task_id}")
     
+    # Check if user is already authenticated (onboarding completed)
+    from flask_login import current_user
+    if current_user.is_authenticated:
+        logger.info(f"🔍 ONBOARDING DEBUG: User is authenticated, redirecting to library")
+        flash('Setup completed successfully! Welcome to your library.', 'success')
+        return redirect(url_for('main.library'))
+    
     try:
         # For simple onboarding, always show the splash screen regardless of task status
         # Get site configuration for template context
@@ -1035,6 +1071,22 @@ def import_progress_json(task_id: str):
     logger.info(f"🔍 ONBOARDING DEBUG: Getting progress JSON for task {task_id}")
     
     try:
+        # Check if user is already authenticated (onboarding completed)
+        from flask_login import current_user
+        if current_user.is_authenticated:
+            # If user is logged in, onboarding likely completed - return success status
+            logger.info(f"✅ User is authenticated - assuming import completed successfully")
+            return jsonify({
+                'status': 'completed',
+                'processed': 1,
+                'success': 1,
+                'errors': 0,
+                'total': 1,
+                'current_book': 'Setup completed',
+                'error_messages': [],
+                'recent_activity': ['Setup completed successfully - please continue to your library']
+            })
+        
         # First, try to get job from memory for real import tasks
         job = import_jobs.get(task_id)
         
@@ -1072,8 +1124,8 @@ def import_progress_json(task_id: str):
         
         # If the onboarding session is cleared, assume the job completed successfully
         current_step = get_onboarding_step()
-        if current_step is None:
-            logger.info(f"✅ No onboarding step found - assuming import completed")
+        if current_step is None or current_step == 1:  # Default state or cleared
+            logger.info(f"✅ No active onboarding step found - assuming import completed")
             return jsonify({
                 'status': 'completed',
                 'processed': 1,

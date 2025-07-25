@@ -367,21 +367,57 @@ class SimplifiedBookService:
                     publisher_id = await book_repo._ensure_publisher_exists(book_data.publisher)
                     if publisher_id:
                         # Create PUBLISHED_BY relationship
-                        # Convert publication_date to proper date format
+                        # Enhanced publication_date conversion with comprehensive format support
                         pub_date = None
                         if book_data.published_date:
+                            print(f"📅 [BOOK_SERVICE] Converting published_date: '{book_data.published_date}' (type: {type(book_data.published_date)})")
                             if isinstance(book_data.published_date, str):
                                 try:
-                                    # Try to parse the string as a date
-                                    pub_date = datetime.strptime(book_data.published_date, '%Y-%m-%d').date()
-                                except ValueError:
-                                    try:
-                                        # Try alternative formats
-                                        pub_date = datetime.strptime(book_data.published_date, '%Y').date()
-                                    except ValueError:
-                                        pub_date = None
+                                    # Enhanced date parsing - handle common formats from APIs
+                                    date_str = book_data.published_date.strip()
+                                    formats = [
+                                        '%Y-%m-%d',    # 2023-12-25
+                                        '%Y/%m/%d',    # 2023/12/25
+                                        '%m/%d/%Y',    # 12/25/2023
+                                        '%d/%m/%Y',    # 25/12/2023
+                                        '%Y-%m',       # 2023-12
+                                        '%Y/%m',       # 2023/12
+                                        '%m/%Y',       # 12/2023
+                                        '%Y',          # 2023
+                                        '%B %d, %Y',   # December 25, 2023
+                                        '%b %d, %Y',   # Dec 25, 2023
+                                        '%d %B %Y',    # 25 December 2023
+                                        '%d %b %Y',    # 25 Dec 2023
+                                    ]
+                                    
+                                    for fmt in formats:
+                                        try:
+                                            pub_date = datetime.strptime(date_str, fmt).date()
+                                            print(f"✅ [BOOK_SERVICE] Successfully parsed '{date_str}' using format '{fmt}' -> {pub_date}")
+                                            break
+                                        except ValueError:
+                                            continue
+                                    
+                                    if not pub_date:
+                                        # Try extracting just the year if other formats fail
+                                        import re
+                                        year_match = re.search(r'\b(19|20)\d{2}\b', date_str)
+                                        if year_match:
+                                            year = int(year_match.group())
+                                            pub_date = datetime(year, 1, 1).date()
+                                            print(f"✅ [BOOK_SERVICE] Extracted year {year} from '{date_str}' -> {pub_date}")
+                                        else:
+                                            print(f"❌ [BOOK_SERVICE] Could not parse any date from '{date_str}'")
+                                        
+                                except Exception as e:
+                                    print(f"⚠️ [BOOK_SERVICE] Failed to parse published_date '{book_data.published_date}': {e}")
+                                    pub_date = None
                             else:
+                                # Already a date object
                                 pub_date = book_data.published_date
+                                print(f"✅ [BOOK_SERVICE] Using existing date object: {pub_date}")
+                        else:
+                            print(f"📅 [BOOK_SERVICE] No published_date provided")
                         
                         published_success = self.storage.create_relationship(
                             'Book', book_id, 'PUBLISHED_BY', 'Publisher', publisher_id,
@@ -693,6 +729,11 @@ class SimplifiedBookService:
                             book_data['published_date'] = f"{year}-01-01"
                     except (ValueError, TypeError):
                         pass
+                elif book_field == 'published_date':
+                    # Handle full publication dates - preserve them as-is if valid
+                    if value and value.strip():
+                        book_data['published_date'] = value.strip()
+                        print(f"📅 [CSV] Set published_date from CSV: '{value.strip()}'")
                 elif book_field == 'additional_authors':
                     book_data['additional_authors'] = value
                 elif book_field == 'additional_author':  # Handle singular form too

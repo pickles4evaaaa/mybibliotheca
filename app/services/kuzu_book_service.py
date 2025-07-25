@@ -175,6 +175,97 @@ class KuzuBookService:
             # Initialize empty list on error
             book.contributors = []
 
+    def _load_book_categories_sync(self, book: Book) -> None:
+        """Load categories for a book from the database (sync version)."""
+        try:
+            if not book.id:
+                return  # Cannot load categories without book ID
+                
+            # Use the sync query method directly from the repository
+            query = """
+            MATCH (b:Book {id: $book_id})-[:CATEGORIZED_AS]->(c:Category)
+            RETURN c.name as name, c.id as id, c.description as description, 
+                   c.color as color, c.icon as icon, c.aliases as aliases,
+                   c.normalized_name as normalized_name, c.parent_id as parent_id,
+                   c.level as level, c.book_count as book_count, c.user_book_count as user_book_count,
+                   c.created_at as created_at, c.updated_at as updated_at
+            ORDER BY c.name ASC
+            """
+            
+            results = self.book_repo.db.query(query, {"book_id": book.id})
+            
+            from ..domain.models import Category
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            categories = []
+            for result in results:
+                if result.get('col_0'):  # name
+                    # Create Category object
+                    category = Category(
+                        id=result.get('col_1') or '',
+                        name=result.get('col_0') or '',
+                        normalized_name=result.get('col_6') or '',
+                        description=result.get('col_2'),
+                        parent_id=result.get('col_7'),
+                        level=result.get('col_8', 0),
+                        color=result.get('col_3'),
+                        icon=result.get('col_4'),
+                        aliases=result.get('col_5', []),
+                        book_count=result.get('col_9', 0),
+                        user_book_count=result.get('col_10', 0),
+                        created_at=result.get('col_11') or datetime.utcnow(),
+                        updated_at=result.get('col_12') or datetime.utcnow()
+                    )
+                    categories.append(category)
+            
+            book.categories = categories
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to load categories for book {book.id}: {e}")
+            # Initialize empty list on error
+            book.categories = []
+
+    def _load_book_publisher_sync(self, book: Book) -> None:
+        """Load publisher for a book from the database (sync version)."""
+        try:
+            if not book.id:
+                return  # Cannot load publisher without book ID
+                
+            # Use the sync query method directly from the repository
+            query = """
+            MATCH (b:Book {id: $book_id})-[:PUBLISHED_BY]->(p:Publisher)
+            RETURN p.name as name, p.id as id, p.country as country, p.founded_year as founded_year
+            LIMIT 1
+            """
+            
+            results = self.book_repo.db.query(query, {"book_id": book.id})
+            
+            from ..domain.models import Publisher
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            if results and results[0].get('col_0'):  # name
+                # Create Publisher object
+                publisher = Publisher(
+                    id=results[0].get('col_1') or '',
+                    name=results[0].get('col_0') or '',
+                    country=results[0].get('col_2'),
+                    founded_year=results[0].get('col_3')
+                )
+                book.publisher = publisher
+            else:
+                book.publisher = None
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to load publisher for book {book.id}: {e}")
+            # Initialize None on error
+            book.publisher = None
+
     def _initialize_book_relationships(self, book: Book) -> None:
         """Initialize and load relationships for a book."""
         if not hasattr(book, 'categories'):
@@ -184,9 +275,11 @@ class KuzuBookService:
         if not hasattr(book, 'publisher'):
             book.publisher = None
             
-        # Load contributors from database if book has an ID
+        # Load all relationships from database if book has an ID
         if book.id:
             self._load_book_contributors_sync(book)
+            self._load_book_categories_sync(book)
+            self._load_book_publisher_sync(book)
     
     async def create_book(self, domain_book: Book) -> Book:
         """Create a book in Kuzu."""

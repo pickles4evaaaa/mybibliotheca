@@ -29,17 +29,27 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 env.bak/
 venv.bak/
 .pytest_cache/
 .coverage
 htmlcov/
+*.pyc
+*.pyo
+*.pyd
 
 # Data directories (will be mounted as volumes)
 data/
 data-test/
 flask_session/
+migration_backups/
+backups/
+
+# Static assets that get large
+app/static/covers/
+static/covers/
 
 # Logs
 *.log
@@ -49,6 +59,7 @@ logs/
 test_files/
 *_test.py
 test_*.py
+tests/
 
 # Build artifacts
 build/
@@ -68,6 +79,17 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.db
+migration_backups/
+backups/
+
+# Node modules (if any)
+node_modules/
+npm-debug.log*
+
+# Cache directories
+.cache/
+.npm/
+.yarn/
 
 # Lock files (except requirements)
 *.lock
@@ -96,6 +118,12 @@ data-test/
 *.db
 *.sqlite
 *.sqlite3
+
+# Large directories that shouldn't be in build context
+dev_docs/
+migration_backups/
+backups/
+app/static/covers/
 
 # Logs
 *.log

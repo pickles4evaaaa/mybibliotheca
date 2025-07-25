@@ -169,11 +169,15 @@ def auto_detect_fields(headers, user_id):
         'number of pages': 'page_count',
         'total pages': 'page_count',
         
-        # Publication year
+        # Publication year and date
         'year': 'publication_year',
         'publication year': 'publication_year',
         'published year': 'publication_year',
         'year published': 'publication_year',
+        'published date': 'published_date',
+        'publication date': 'published_date',
+        'date published': 'published_date',
+        'publish date': 'published_date',
         
         # Dates
         'date read': 'date_read',
@@ -374,6 +378,8 @@ def get_goodreads_field_mappings():
         'Publisher': 'publisher',
         'Number of Pages': 'page_count',
         'Year Published': 'publication_year',
+        'Published Date': 'published_date',  # In case Goodreads has full dates
+        'Publication Date': 'published_date',  # Alternative field name
         'Original Publication Year': 'original_publication_year',
         'Date Read': 'date_read',
         'Date Added': 'date_added',
@@ -413,6 +419,8 @@ def get_storygraph_field_mappings():
         'Publisher': 'publisher',
         'Pages': 'page_count',
         'Publication Year': 'publication_year',
+        'Published Date': 'published_date',  # In case StoryGraph has full dates
+        'Publication Date': 'published_date',  # Alternative field name
         'Date Started': 'start_date',
         'Date Finished': 'date_read',
         'Date Added': 'date_added',
@@ -1837,6 +1845,7 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     # Merge publication date (prefer API if CSV doesn't have one)
     if api_data.get('published_date') and not simplified_book.published_date:
         simplified_book.published_date = api_data['published_date']
+        print(f"🔀 [MERGE_API] Updated published_date to: '{api_data['published_date']}' (type: {type(api_data['published_date'])})")
     
     # Merge language (prefer API if CSV doesn't have one)
     if api_data.get('language') and not simplified_book.language:

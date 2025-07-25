@@ -172,8 +172,19 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function pollProgress() {
         fetch(`/onboarding/import-progress-json/${taskId}`)
-            .then(response => response.json())
+            .then(response => {
+                // If we get a redirect response, it means onboarding is complete
+                if (response.redirected || response.status === 302) {
+                    console.log('Received redirect - onboarding complete, redirecting to library');
+                    clearInterval(pollInterval);
+                    window.location.href = '/library';
+                    return;
+                }
+                return response.json();
+            })
             .then(data => {
+                if (!data) return; // Skip if no data (redirect case)
+                
                 console.log('Progress data:', data);
                 
                 updateProgressDisplay(data);
@@ -186,6 +197,13 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .catch(error => {
                 console.error('Error polling progress:', error);
+                // If we get a 401 or 403, user might be logged in and redirected
+                if (error.status === 401 || error.status === 403) {
+                    console.log('Authentication error - redirecting to library');
+                    clearInterval(pollInterval);
+                    window.location.href = '/library';
+                    return;
+                }
                 // Don't stop polling on error, just log it
             });
     }

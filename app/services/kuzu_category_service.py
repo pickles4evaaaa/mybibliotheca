@@ -431,7 +431,36 @@ class KuzuCategoryService:
             traceback.print_exc()
             return []
 
+    async def get_category_book_counts(self) -> Dict[str, int]:
+        """Get book counts for all categories efficiently."""
+        try:
+            db = get_kuzu_database()
+            
+            # Query to count books per category
+            query = """
+            MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category)
+            RETURN c.id as category_id, COUNT(DISTINCT b) as book_count
+            """
+            
+            results = db.query(query)
+            
+            counts = {}
+            for result in results:
+                category_id = result.get('category_id')
+                book_count = result.get('book_count', 0)
+                if category_id:
+                    counts[category_id] = book_count
+            
+            return counts
+            
+        except Exception as e:
+            return {}
+
     # Sync wrappers for backward compatibility
+    def get_category_book_counts_sync(self) -> Dict[str, int]:
+        """Get book counts for all categories (sync version)."""
+        return run_async(self.get_category_book_counts())
+    
     def list_all_categories_sync(self) -> List[Dict[str, Any]]:
         """Get all categories (sync version)."""
         return run_async(self.list_all_categories())

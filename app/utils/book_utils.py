@@ -98,6 +98,15 @@ def fetch_book_data(isbn):
         if book_key in data:
             print(f"📖 [OPENLIBRARY] Found book data for {book_key}")
             book = data[book_key]
+            
+            # Extract OpenLibrary ID from the key field
+            openlibrary_id = None
+            if 'key' in book:
+                key = book['key']
+                # Key format is typically "/books/OL12345M" - extract the ID part
+                if key.startswith('/books/'):
+                    openlibrary_id = key.replace('/books/', '')
+            
             title = book.get('title', '')
             subtitle = book.get('subtitle', '')
             
@@ -244,10 +253,12 @@ def fetch_book_data(isbn):
                 'language': language,
                 'isbn': primary_isbn,
                 'publisher': publisher,
+                'openlibrary_id': openlibrary_id,
                 'source': 'OpenLibrary'
             }
             
             print(f"✅ [OPENLIBRARY] Successfully retrieved data for ISBN {isbn}:")
+            print(f"    openlibrary_id='{openlibrary_id}'")
             print(f"    title='{title}'")
             print(f"    authors={len(authors_list)} items")
             print(f"    description='{description[:100] if description else None}...'")
@@ -354,9 +365,14 @@ def get_google_books_cover(isbn, fetch_title_author=False):
         
         if 'items' in data and len(data['items']) > 0:
             print(f"📚 [GOOGLE_BOOKS] Found {len(data['items'])} items")
-            book_info = data['items'][0]['volumeInfo']
+            book_item = data['items'][0]
+            book_info = book_item['volumeInfo']
+            google_books_id = book_item.get('id', '')
             
             result = {}
+            
+            # Store Google Books ID
+            result['google_books_id'] = google_books_id
             
             # Get cover image
             image_links = book_info.get('imageLinks', {})
@@ -446,6 +462,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 })
                 
                 print(f"✅ [GOOGLE_BOOKS] Enhanced data for ISBN {isbn}:")
+                print(f"    google_books_id='{google_books_id}'")
                 print(f"    title='{title}'")
                 print(f"    authors={len(authors)} items")
                 print(f"    description='{description[:100] if description else None}...'")
