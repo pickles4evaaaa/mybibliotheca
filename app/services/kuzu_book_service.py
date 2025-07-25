@@ -146,12 +146,9 @@ class KuzuBookService:
                     
                     # Map role string to ContributionType enum
                     role_str = (result.get('col_2') or 'authored').lower()
-                    logger.info(f"🔍 [LOAD_DEBUG] Found contributor: {result.get('col_0')}, role_str: {role_str}")
                     try:
                         contribution_type = ContributionType(role_str)
-                        logger.info(f"🔍 [LOAD_DEBUG] Mapped to contribution_type: {contribution_type}")
                     except ValueError:
-                        logger.warning(f"⚠️ [LOAD_DEBUG] Unknown role '{role_str}', defaulting to AUTHORED")
                         # Default to AUTHORED if role is not recognized
                         contribution_type = ContributionType.AUTHORED
                     

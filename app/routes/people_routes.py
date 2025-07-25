@@ -22,10 +22,8 @@ people_bp = Blueprint('people', __name__)
 @login_required
 def people():
     """Display all people with management options."""
-    from app.debug_system import debug_log, debug_service_call, debug_template_data
     
     try:
-        debug_log(f"🔍 [PEOPLE] Starting people page for user {current_user.id}", "PEOPLE_VIEW")
         
         # Get all persons with error handling for async issues
         # Helper function to handle potential coroutine returns
@@ -42,24 +40,17 @@ def people():
                     loop.close()
             return result
         
-        debug_service_call("book_service", "list_all_persons_sync", {}, None, "BEFORE")
         all_persons = safe_call_sync_method(book_service.list_all_persons_sync)
-        debug_service_call("book_service", "list_all_persons_sync", {}, all_persons, "AFTER")
         
         # Ensure we have a list
         if not isinstance(all_persons, list):
-            debug_log(f"⚠️ [PEOPLE] Expected list, got {type(all_persons)}", "PEOPLE_VIEW")
             all_persons = []
-        
-        debug_log(f"📊 [PEOPLE] Found {len(all_persons)} persons in database", "PEOPLE_VIEW")
         
         # Convert dictionaries to objects for template compatibility
         processed_persons = []
         
         # Add book counts and contributions for each person
         for i, person in enumerate(all_persons):
-            debug_log(f"🔍 [PEOPLE] Processing person {i+1}/{len(all_persons)}: {person.get('name', 'unknown') if isinstance(person, dict) else getattr(person, 'name', 'unknown')}", "PEOPLE_VIEW")
-            
             # Convert dictionary to object if needed
             if isinstance(person, dict):
                 from types import SimpleNamespace
@@ -86,7 +77,6 @@ def people():
                 processed_persons.append(person_obj)
                 
             except Exception as person_error:
-                debug_log(f"⚠️ [PEOPLE] Error processing person {i+1}: {person_error}", "PEOPLE_VIEW")
                 person_obj.book_count = 0
                 person_obj.contributions = {}
                 processed_persons.append(person_obj)
@@ -94,32 +84,26 @@ def people():
         # Sort by name safely
         try:
             processed_persons.sort(key=lambda p: getattr(p, 'name', '').lower())
-            debug_log(f"✅ [PEOPLE] Sorted {len(processed_persons)} persons by name", "PEOPLE_VIEW")
         except Exception as sort_error:
-            debug_log(f"⚠️ [PEOPLE] Error sorting persons: {sort_error}", "PEOPLE_VIEW")
+            pass
         
         # Show summary of what we found
         try:
             total_with_books = sum(1 for p in processed_persons if getattr(p, 'book_count', 0) > 0)
-            debug_log(f"📊 [PEOPLE] Summary: {len(processed_persons)} total persons, {total_with_books} with books", "PEOPLE_VIEW")
         except Exception as summary_error:
-            debug_log(f"⚠️ [PEOPLE] Error calculating summary: {summary_error}", "PEOPLE_VIEW")
+            pass
         
         # Get contribution type counts for the accordion
         try:
             contribution_counts = safe_call_sync_method(person_service.get_contribution_type_counts_sync)
-            debug_log(f"📊 [PEOPLE] Contribution counts: {contribution_counts}", "PEOPLE_VIEW")
         except Exception as counts_error:
-            debug_log(f"⚠️ [PEOPLE] Error getting contribution counts: {counts_error}", "PEOPLE_VIEW")
             contribution_counts = {}
         
         template_data = {'persons': processed_persons, 'contribution_counts': contribution_counts}
-        debug_template_data('people.html', template_data, "PEOPLE_VIEW")
         
         return render_template('people.html', persons=processed_persons, contribution_counts=contribution_counts)
     
     except Exception as e:
-        debug_log(f"❌ [PEOPLE] Error loading people page: {e}", "PEOPLE_VIEW")
         traceback.print_exc()
         current_app.logger.error(f"Error loading people page: {e}")
         flash('Error loading people page.', 'error')
@@ -130,22 +114,12 @@ def people():
 @login_required
 def person_details(person_id):
     """Display detailed information about a person."""
-    from app.debug_system import debug_log, debug_person_details, debug_service_call, debug_template_data
     
     try:
-        debug_log(f"🔍 [PERSON] Starting person details page for person_id: {person_id}, user: {current_user.id}", "PERSON_DETAILS")
-        
         # Get person details
-        debug_log(f"🔍 [PERSON] Calling get_person_by_id_sync for person_id: {person_id}", "PERSON_DETAILS")
-        debug_service_call("book_service", "get_person_by_id_sync", {"person_id": person_id}, None, "BEFORE")
         person = book_service.get_person_by_id_sync(person_id)
-        debug_service_call("book_service", "get_person_by_id_sync", {"person_id": person_id}, person, "AFTER")
-        
-        debug_log(f"📊 [PERSON] Got person: {person}", "PERSON_DETAILS")
-        debug_log(f"📊 [PERSON] Person type: {type(person)}", "PERSON_DETAILS")
         
         if not person:
-            debug_log(f"❌ [PERSON] Person not found for ID: {person_id}", "PERSON_DETAILS")
             flash('Person not found.', 'error')
             return redirect(url_for('people.people'))
         
@@ -153,18 +127,8 @@ def person_details(person_id):
         person_name = getattr(person, 'name', None) or (person.get('name') if isinstance(person, dict) else 'Unknown')
         person_id_val = getattr(person, 'id', None) or (person.get('id') if isinstance(person, dict) else person_id)
         
-        debug_log(f"✅ [PERSON] Found person: {person_name} (ID: {person_id_val})", "PERSON_DETAILS")
-        
-        # Enhanced person debugging
-        debug_person_details(person, person_id, str(current_user.id), "DETAILS_VIEW")
-        
         # Get books by this person for current user
-        debug_log(f"🔍 [PERSON] Getting books by person for user {current_user.id}", "PERSON_DETAILS")
-        debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, None, "BEFORE")
         books_by_type = book_service.get_books_by_person_sync(person_id, str(current_user.id))
-        debug_service_call("book_service", "get_books_by_person_sync", {"person_id": person_id, "user_id": str(current_user.id)}, books_by_type, "AFTER")
-        debug_log(f"📊 [PERSON] Got books_by_type: {type(books_by_type)}", "PERSON_DETAILS")
-        debug_log(f"📊 [PERSON] Books by type keys: {list(books_by_type.keys()) if books_by_type else 'None'}", "PERSON_DETAILS")
         
         # Convert service objects to template-compatible format
         converted_books_by_type = {}
@@ -184,15 +148,12 @@ def person_details(person_id):
             'person': person,
             'contributions_by_type': converted_books_by_type
         }
-        debug_template_data('person_details.html', template_data, "PERSON_DETAILS")
         
-        debug_log(f"✅ [PERSON] Rendering template", "PERSON_DETAILS")
         return render_template('person_details.html', 
                              person=person, 
                              contributions_by_type=converted_books_by_type)
     
     except Exception as e:
-        debug_log(f"❌ [PERSON] Error loading person details for {person_id}: {e}", "PERSON_DETAILS")
         traceback.print_exc()
         current_app.logger.error(f"Error loading person details: {e}")
         flash('Error loading person details.', 'error')

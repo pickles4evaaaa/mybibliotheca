@@ -82,8 +82,6 @@ class KuzuPersonService:
     async def create_person(self, person_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new person."""
         try:
-            print(f"👤 [CREATE_PERSON] Creating person: {person_data.get('name', 'Unknown')}")
-            
             # Use the person repository to create (it's a sync method)
             created_person = self.person_repo.create(person_data)
             
@@ -99,8 +97,6 @@ class KuzuPersonService:
     async def update_person(self, person_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a person's information."""
         try:
-            print(f"👤 [UPDATE_PERSON] Updating person {person_id} with: {updates}")
-            
             # Update the person node in Kuzu
             success = self.graph_storage.update_node('Person', person_id, updates)
             
@@ -117,8 +113,6 @@ class KuzuPersonService:
     async def delete_person(self, person_id: str) -> bool:
         """Delete a person (if not referenced by any books)."""
         try:
-            print(f"🗑️ [DELETE_PERSON] Deleting person {person_id}")
-            
             # Check if person is referenced by any books
             check_query = """
             MATCH (p:Person {id: $person_id})<-[:AUTHORED]-(b:Book)
