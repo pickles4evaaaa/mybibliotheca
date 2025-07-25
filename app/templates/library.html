@@ -460,14 +460,6 @@
             <div class="book-author">{{ book.author }}</div>
 
             <div class="book-meta">
-              {% if book.categories %}
-                <div class="category-badges mb-2">
-                  {% for category in book.categories[:2] %}
-                    <span class="badge category-badge">{{ category.name }}</span>
-                  {% endfor %}
-                </div>
-              {% endif %}
-
               {% if book.average_rating %}
                 <div class="rating-display mb-2">
                   {% for i in range(5) %}
