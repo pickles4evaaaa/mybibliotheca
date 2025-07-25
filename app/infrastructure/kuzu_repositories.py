@@ -1133,7 +1133,6 @@ class KuzuBookRepository:
                     person_data['book_count'] = book_count
                     persons.append(person_data)
             
-            logger.debug(f"Retrieved {len(persons)} persons with book counts")
             return persons
             
         except Exception as e:

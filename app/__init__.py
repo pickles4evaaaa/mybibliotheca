@@ -333,6 +333,10 @@ def create_app():
     # Initialize debug utilities
     from .debug_utils import setup_debug_logging, print_debug_banner, debug_middleware
     
+    # Suppress asyncio debug logging unless explicitly needed
+    import logging
+    logging.getLogger('asyncio').setLevel(logging.INFO)
+    
     with app.app_context():
         setup_debug_logging()
         print_debug_banner()

@@ -190,7 +190,6 @@ class KuzuGraphDB:
                     # Test if openlibrary_id column exists
                     if self._connection:
                         self._connection.execute("MATCH (p:Person) RETURN p.openlibrary_id LIMIT 1")
-                        logger.debug("Person.openlibrary_id column already exists")
                 except Exception as e:
                     if "Cannot find property openlibrary_id" in str(e):
                         try:
@@ -635,7 +634,6 @@ class KuzuGraphDB:
                     # Check if it's a "already exists" error and skip if so
                     if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
                         tables_existed += 1
-                        logger.debug(f"Table/relationship already exists, skipping query {i+1}")
                         continue
                     else:
                         logger.error(f"Failed to execute query {i+1}: {e}")
@@ -764,7 +762,7 @@ class KuzuGraphDB:
         except Exception as e:
             # Don't log expected "already exists" errors as errors
             if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.debug(f"Query execution - table/relationship already exists: {e}")
+                pass  # Silently skip expected "already exists" errors
             else:
                 logger.error(f"Query execution failed: {e}")
                 
@@ -854,7 +852,7 @@ class KuzuGraphStorage:
         except Exception as e:
             # Don't log expected "already exists" errors as errors
             if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.debug(f"Query execution - table/relationship already exists: {e}")
+                pass  # Silently skip expected "already exists" errors
             else:
                 logger.error(f"Query execution failed: {e}")
                 
