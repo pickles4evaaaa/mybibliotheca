@@ -435,12 +435,18 @@ class AdvancedMigrationSystem:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
+            # Track book ID mapping for reading logs
+            book_id_mapping = {}  # old_id -> new_id
+            
             # Migrate books
             cursor.execute("SELECT * FROM book;")
             books = cursor.fetchall()
             
             for book_row in books:
                 try:
+                    # Get the old book ID for mapping
+                    old_book_id = book_row['id']
+                    
                     # Convert SQLite row to Book object with API metadata enhancement
                     # For v1 databases, always fetch API metadata since they lack categories
                     book = self._sqlite_row_to_book(book_row, fetch_api_metadata=True)
@@ -453,6 +459,9 @@ class AdvancedMigrationSystem:
                     # Add book to admin user's library with appropriate status
                     created_book_id = getattr(created_book, 'id', None) if created_book else None
                     if created_book and created_book_id:
+                        # Store the book ID mapping for reading logs
+                        book_id_mapping[old_book_id] = created_book_id
+                        
                         reading_status = ReadingStatus.READ if book_row['finish_date'] else ReadingStatus.WANT_TO_READ
                         locations = [default_location_id] if default_location_id else []
                         
@@ -477,12 +486,51 @@ class AdvancedMigrationSystem:
                 cursor.execute("SELECT * FROM reading_log;")
                 reading_logs = cursor.fetchall()
                 
+                # Import reading log service for actual migration
+                from app.services import reading_log_service
+                from app.domain.models import ReadingLog
+                
                 for log_row in reading_logs:
                     try:
-                        # Find the corresponding book by old book_id
-                        # This requires mapping old IDs to new ones
-                        # For now, we'll skip reading logs or implement ID mapping
-                        self.stats['reading_logs_migrated'] += 1
+                        # Helper function for safe row access
+                        def safe_get(row, key, default=None):
+                            try:
+                                return row[key] if key in row.keys() and row[key] is not None else default
+                            except (KeyError, IndexError):
+                                return default
+                        
+                        old_book_id = safe_get(log_row, 'book_id')
+                        log_date = safe_get(log_row, 'date')
+                        
+                        if old_book_id and old_book_id in book_id_mapping and log_date:
+                            new_book_id = book_id_mapping[old_book_id]
+                            
+                            # Convert string date to date object if needed
+                            if isinstance(log_date, str):
+                                from datetime import datetime
+                                log_date = datetime.strptime(log_date, '%Y-%m-%d').date()
+                            
+                            # Create ReadingLog domain object
+                            reading_log = ReadingLog(
+                                user_id=admin_user_id,
+                                book_id=new_book_id,
+                                date=log_date,
+                                pages_read=safe_get(log_row, 'pages_read', 1),  # Default 1 page if not in SQLite
+                                minutes_read=safe_get(log_row, 'minutes_read', 1),  # Default 1 minute if not in SQLite
+                                notes=safe_get(log_row, 'notes', '')  # Empty notes if not in SQLite
+                            )
+                            
+                            # Create the reading log in Kuzu
+                            created_log = reading_log_service.create_reading_log_sync(reading_log)
+                            
+                            if created_log:
+                                self.stats['reading_logs_migrated'] += 1
+                                logger.debug(f"✅ Migrated reading log for book {new_book_id} on {log_date}")
+                            else:
+                                logger.warning(f"⚠️ Failed to create reading log for book {new_book_id} on {log_date}")
+                        else:
+                            logger.warning(f"⚠️ Skipping reading log - missing data: book_id={old_book_id}, date={log_date}")
+                            
                     except Exception as e:
                         self._log_error(f"Error migrating reading log: {e}")
                         continue
@@ -711,6 +759,10 @@ class AdvancedMigrationSystem:
                 cursor.execute("SELECT * FROM reading_log;")
                 reading_logs = cursor.fetchall()
                 
+                # Import reading log service for actual migration
+                from app.services import reading_log_service
+                from app.domain.models import ReadingLog
+                
                 for log_row in reading_logs:
                     try:
                         # Helper function for safe row access
@@ -720,15 +772,41 @@ class AdvancedMigrationSystem:
                             except (KeyError, IndexError):
                                 return default
                         
-                        old_book_id = log_row['book_id']
+                        old_book_id = safe_get(log_row, 'book_id')
                         old_user_id = safe_get(log_row, 'user_id')
+                        log_date = safe_get(log_row, 'date')
                         
                         if (old_book_id in book_id_mapping and 
-                            old_user_id and old_user_id in user_mapping):
+                            old_user_id and old_user_id in user_mapping and log_date):
                             
-                            # Create reading log entry
-                            # Implementation depends on your reading log structure
-                            self.stats['reading_logs_migrated'] += 1
+                            new_book_id = book_id_mapping[old_book_id]
+                            new_user_id = user_mapping[old_user_id]
+                            
+                            # Convert string date to date object if needed
+                            if isinstance(log_date, str):
+                                from datetime import datetime
+                                log_date = datetime.strptime(log_date, '%Y-%m-%d').date()
+                            
+                            # Create ReadingLog domain object
+                            reading_log = ReadingLog(
+                                user_id=new_user_id,
+                                book_id=new_book_id,
+                                date=log_date,
+                                pages_read=safe_get(log_row, 'pages_read', 1),  # Default 1 page if not in SQLite
+                                minutes_read=safe_get(log_row, 'minutes_read', 1),  # Default 1 minute if not in SQLite
+                                notes=safe_get(log_row, 'notes', '')  # Empty notes if not in SQLite
+                            )
+                            
+                            # Create the reading log in Kuzu
+                            created_log = reading_log_service.create_reading_log_sync(reading_log)
+                            
+                            if created_log:
+                                self.stats['reading_logs_migrated'] += 1
+                                logger.debug(f"✅ Migrated reading log for user {new_user_id}, book {new_book_id} on {log_date}")
+                            else:
+                                logger.warning(f"⚠️ Failed to create reading log for user {new_user_id}, book {new_book_id} on {log_date}")
+                        else:
+                            logger.warning(f"⚠️ Skipping reading log - missing mapping: book_id={old_book_id}, user_id={old_user_id}, date={log_date}")
                             
                     except Exception as e:
                         self._log_error(f"Error migrating reading log: {e}")

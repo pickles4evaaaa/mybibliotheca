@@ -147,6 +147,22 @@ def index():
         # Ensure recent_logs is always a list even on error
         recent_logs = []
 
+    # Get user reading log stats
+    reading_log_stats = {}
+    try:
+        if hasattr(reading_log_service, 'get_user_all_time_reading_stats_sync'):
+            reading_log_stats = reading_log_service.get_user_all_time_reading_stats_sync(str(current_user.id))
+    except Exception as e:
+        current_app.logger.error(f"Error loading reading log stats: {e}")
+        reading_log_stats = {
+            'total_log_entries': 0,
+            'total_pages': 0,
+            'total_minutes': 0,
+            'distinct_books': 0,
+            'distinct_days': 0,
+            'total_time_formatted': '0m'
+        }
+
     return render_template('stats.html',
         books_finished_this_week=books_finished_this_week,
         books_finished_this_month=books_finished_this_month,
@@ -160,7 +176,8 @@ def index():
         total_books_this_month=total_books_this_month,
         total_active_readers=total_active_readers,
         recent_logs=recent_logs,
-        sharing_users=sharing_users
+        sharing_users=sharing_users,
+        reading_log_stats=reading_log_stats
     )
 
 @stats_bp.route('/community_stats/active-readers')
@@ -299,6 +316,45 @@ def community_currently_reading():
     except Exception as e:
         current_app.logger.error(f"Error loading currently reading: {e}")
         return render_template('community_stats/currently_reading.html', books=[])
+
+
+@stats_bp.route('/reading-logs')
+@login_required
+def reading_logs():
+    """Get paginated reading logs for the current user"""
+    from flask import request
+    
+    try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 25))
+        
+        # Validate per_page options
+        valid_per_page = [10, 25, 50, 100]
+        if per_page not in valid_per_page:
+            per_page = 25
+        
+        # Get paginated logs
+        result = reading_log_service.get_user_reading_logs_paginated_sync(
+            str(current_user.id), page=page, per_page=per_page
+        )
+        
+        # Get all-time stats for totals
+        all_time_stats = reading_log_service.get_user_all_time_reading_stats_sync(str(current_user.id))
+        
+        return render_template('reading_logs/user_logs.html', 
+                             logs=result['logs'],
+                             pagination=result['pagination'],
+                             all_time_stats=all_time_stats,
+                             valid_per_page=valid_per_page)
+    
+    except Exception as e:
+        current_app.logger.error(f"Error loading reading logs: {e}")
+        return render_template('reading_logs/user_logs.html', 
+                             logs=[], 
+                             pagination={'page': 1, 'per_page': 25, 'total_count': 0, 'total_pages': 1, 'has_prev': False, 'has_next': False},
+                             all_time_stats={'total_log_entries': 0, 'total_pages': 0, 'total_minutes': 0, 'distinct_books': 0, 'distinct_days': 0, 'total_time_formatted': '0m'},
+                             valid_per_page=[10, 25, 50, 100])
 
 @stats_bp.route('/community_stats/recent-activity')
 @login_required

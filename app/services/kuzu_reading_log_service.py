@@ -416,3 +416,174 @@ class KuzuReadingLogService:
         except Exception as e:
             logger.error(f"Error getting recently read books: {e}")
             return []
+
+    def get_user_all_time_reading_stats_sync(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get all-time reading statistics for a user.
+        
+        Args:
+            user_id: The user ID
+            
+        Returns:
+            Dictionary with all-time reading statistics
+        """
+        try:
+            # Use the same working query pattern as the paginated method to get ALL reading logs
+            # This ensures we're counting from the same data source that displays correctly
+            all_logs_query = """
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
+            RETURN rl, b
+            """
+            
+            logs_result = self.graph_storage.query(all_logs_query, {
+                "user_id": user_id
+            })
+            
+            # Process the results manually to count everything
+            if logs_result:
+                total_log_entries = len(logs_result)
+                total_pages = 0
+                total_minutes = 0
+                distinct_books = set()
+                distinct_days = set()
+                
+                for result in logs_result:
+                    if 'col_0' in result and 'col_1' in result:
+                        log_data = dict(result['col_0'])
+                        book_data = dict(result['col_1'])
+                        
+                        # Count pages and minutes (with safe defaults)
+                        pages = log_data.get('pages_read', 0) or 0
+                        minutes = log_data.get('minutes_read', 0) or 0
+                        total_pages += pages
+                        total_minutes += minutes
+                        
+                        # Track distinct books by book ID
+                        book_id = book_data.get('id')
+                        if book_id:
+                            distinct_books.add(book_id)
+                        
+                        # Track distinct days
+                        log_date = log_data.get('date')
+                        if log_date:
+                            distinct_days.add(str(log_date))
+                
+                stats = {
+                    'total_log_entries': total_log_entries,
+                    'total_pages': total_pages,
+                    'total_minutes': total_minutes,
+                    'distinct_books': len(distinct_books),
+                    'distinct_days': len(distinct_days)
+                }
+                
+                # Calculate total time in more readable format
+                total_minutes = stats['total_minutes']
+                if total_minutes and total_minutes > 0:
+                    days = total_minutes // (24 * 60)
+                    hours = (total_minutes % (24 * 60)) // 60
+                    minutes = total_minutes % 60
+                    stats['total_time_formatted'] = f"{days}d {hours}h {minutes}m"
+                else:
+                    stats['total_time_formatted'] = "0m"
+                
+                return stats
+            
+            return {
+                'total_log_entries': 0,
+                'total_pages': 0,
+                'total_minutes': 0,
+                'distinct_books': 0,
+                'distinct_days': 0,
+                'total_time_formatted': '0m'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting all-time reading stats for user {user_id}: {e}")
+            return {
+                'total_log_entries': 0,
+                'total_pages': 0,
+                'total_minutes': 0,
+                'distinct_books': 0,
+                'distinct_days': 0,
+                'total_time_formatted': '0m'
+            }
+
+    def get_user_reading_logs_paginated_sync(self, user_id: str, page: int = 1, per_page: int = 25) -> Dict[str, Any]:
+        """
+        Get paginated reading logs for a user.
+        
+        Args:
+            user_id: The user ID
+            page: Page number (1-based)
+            per_page: Number of logs per page
+            
+        Returns:
+            Dictionary with logs, pagination info, and totals
+        """
+        try:
+            # First get total count
+            count_query = """
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+            RETURN COUNT(rl) as total_count
+            """
+            
+            count_result = self.graph_storage.query(count_query, {"user_id": user_id})
+            total_count = count_result[0].get('col_0', 0) if count_result else 0
+            
+            # Calculate offset
+            offset = (page - 1) * per_page
+            
+            # Get paginated logs with book details
+            logs_query = """
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
+            RETURN rl, b
+            ORDER BY rl.date DESC, rl.created_at DESC
+            SKIP $offset
+            LIMIT $limit
+            """
+            
+            logs_result = self.graph_storage.query(logs_query, {
+                "user_id": user_id,
+                "offset": offset,
+                "limit": per_page
+            })
+            
+            logs = []
+            for result in logs_result:
+                if 'col_0' in result and 'col_1' in result:
+                    log_data = dict(result['col_0'])
+                    book_data = dict(result['col_1'])
+                    
+                    log_data['book'] = book_data
+                    logs.append(log_data)
+            
+            # Calculate pagination info
+            total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
+            has_prev = page > 1
+            has_next = page < total_pages
+            
+            return {
+                'logs': logs,
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total_count': total_count,
+                    'total_pages': total_pages,
+                    'has_prev': has_prev,
+                    'has_next': has_next
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting paginated reading logs for user {user_id}: {e}")
+            return {
+                'logs': [],
+                'pagination': {
+                    'page': 1,
+                    'per_page': per_page,
+                    'total_count': 0,
+                    'total_pages': 1,
+                    'has_prev': False,
+                    'has_next': False
+                }
+            }

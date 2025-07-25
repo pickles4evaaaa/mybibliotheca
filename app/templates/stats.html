@@ -235,24 +235,47 @@
 
                             <!-- Library Status Stats -->
                             <div class="row">
-                                <div class="col-lg-4 col-md-6 mb-3">
+                                <div class="col-lg-3 col-md-6 mb-3">
                                     <div class="stat-card text-center">
                                         <p class="stat-number">{{ currently_reading|length }}</p>
                                         <p class="stat-label">Currently Reading</p>
                                     </div>
                                 </div>
-                                <div class="col-lg-4 col-md-6 mb-3">
+                                <div class="col-lg-3 col-md-6 mb-3">
                                     <div class="stat-card text-center">
                                         <p class="stat-number">{{ want_to_read|length }}</p>
                                         <p class="stat-label">Want to Read</p>
                                     </div>
                                 </div>
-                                <div class="col-lg-4 col-md-6 mb-3">
+                                <div class="col-lg-3 col-md-6 mb-3">
                                     <div class="stat-card text-center">
                                         <p class="stat-number">{{ streak }}</p>
                                         <p class="stat-label">Day Reading Streak</p>
                                     </div>
                                 </div>
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="stat-card text-center" onclick="showUserReadingLogs()">
+                                        <p class="stat-number">{{ reading_log_stats.total_log_entries or 0 }}</p>
+                                        <p class="stat-label">Reading Logs</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reading Logs Detail Container -->
+                <div id="reading-logs-detail-container" style="display: none;" class="mb-4">
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 id="reading-logs-detail-title" class="mb-0"><i class="bi bi-journal-text"></i> Your Reading Logs</h5>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideReadingLogsDetail()">
+                                <i class="bi bi-x"></i> Close
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="reading-logs-detail-content">
+                                <!-- Content will be loaded here -->
                             </div>
                         </div>
                     </div>
@@ -431,6 +454,34 @@ function showCommunityDetail(type) {
 
 function hideCommunityDetail() {
   const container = document.getElementById('community-detail-container');
+  container.style.display = 'none';
+}
+
+function showUserReadingLogs() {
+  const container = document.getElementById('reading-logs-detail-container');
+  const content = document.getElementById('reading-logs-detail-content');
+  
+  // Load content
+  content.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+  
+  // Show the container
+  container.style.display = 'block';
+  container.scrollIntoView({ behavior: 'smooth' });
+  
+  // Fetch content via AJAX
+  fetch('/stats/reading-logs')
+    .then(response => response.text())
+    .then(html => {
+      content.innerHTML = html;
+    })
+    .catch(error => {
+      console.error('Error loading reading logs:', error);
+      content.innerHTML = '<div class="alert alert-danger">Error loading reading logs. Please try again.</div>';
+    });
+}
+
+function hideReadingLogsDetail() {
+  const container = document.getElementById('reading-logs-detail-container');
   container.style.display = 'none';
 }
 </script>
