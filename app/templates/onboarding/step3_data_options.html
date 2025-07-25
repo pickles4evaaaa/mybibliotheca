@@ -271,10 +271,21 @@
                 <div>
                     <strong>{{ db.name }}</strong>
                     {% if db.version %}
-                        <span class="badge bg-info">{{ db.version.value }}</span>
+                        {% if db.version == 'v1_single_user' %}
+                            <span class="badge bg-info">V1 Single User</span>
+                        {% elif db.version == 'v2_multi_user' %}
+                            <span class="badge bg-success">V2 Multi User</span>
+                        {% elif db.version == 'unknown' %}
+                            <span class="badge bg-warning">Unknown Version</span>
+                        {% else %}
+                            <span class="badge bg-info">{{ db.version }}</span>
+                        {% endif %}
                     {% endif %}
-                    {% if db.book_count is defined %}
-                        <span class="badge bg-secondary">{{ db.book_count }} books</span>
+                    {% if db.analysis and db.analysis.book_count is defined %}
+                        <span class="badge bg-secondary">{{ db.analysis.book_count }} books</span>
+                    {% endif %}
+                    {% if db.analysis and db.analysis.user_count is defined and db.analysis.user_count > 0 %}
+                        <span class="badge bg-primary">{{ db.analysis.user_count }} users</span>
                     {% endif %}
                 </div>
                 <div class="database-path">{{ db.path }}</div>

@@ -81,6 +81,13 @@ else
     echo "✅ No stale lock files found"
 fi
 
+# Check if database path exists as a directory and clean it up if needed
+if [ -d "$KUZU_DB_PATH/bibliotheca.db" ]; then
+    echo "⚠️  Found existing KuzuDB directory at $KUZU_DB_PATH/bibliotheca.db - cleaning up for fresh start..."
+    rm -rf "$KUZU_DB_PATH/bibliotheca.db" 2>/dev/null || echo "❌ Failed to remove existing directory"
+    echo "✅ Cleaned up existing KuzuDB directory"
+fi
+
 # Additional KuzuDB diagnostic info
 echo "🔧 KuzuDB diagnostics:"
 echo "  - Directory permissions: $(ls -ld $KUZU_DB_PATH 2>/dev/null || echo 'N/A')"

@@ -22,7 +22,12 @@ class KuzuGraphDB:
     """Simplified Kuzu graph database with clean schema design."""
     
     def __init__(self, database_path: Optional[str] = None):
-        self.database_path = database_path or os.getenv('KUZU_DB_PATH', 'data/kuzu/bibliotheca.db')
+        if database_path:
+            self.database_path = database_path
+        else:
+            # Get the directory from environment or use default, then append the database name
+            kuzu_dir = os.getenv('KUZU_DB_PATH', 'data/kuzu')
+            self.database_path = os.path.join(kuzu_dir, 'bibliotheca.db')
         self._database: Optional[kuzu.Database] = None
         self._connection: Optional[kuzu.Connection] = None
         self._is_initialized = False
