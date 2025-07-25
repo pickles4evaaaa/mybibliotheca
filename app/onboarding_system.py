@@ -563,9 +563,30 @@ def migration_config_step(data_options: Dict):
     """Configure migration settings."""
     logger.info(f"🔍 ONBOARDING DEBUG: migration_config_step called, method={request.method}")
     
-    database_analysis = data_options.get('database_analysis', {})
+    database_analysis_data = data_options.get('database_analysis', {})
     
-    logger.info(f"🔍 ONBOARDING DEBUG: database_analysis: {database_analysis}")
+    # Create a simple namespace object for template compatibility
+    from types import SimpleNamespace
+    
+    if database_analysis_data and 'analysis' in database_analysis_data:
+        analysis = database_analysis_data['analysis']
+        version = database_analysis_data.get('version', 'unknown')
+    else:
+        analysis = {}
+        version = 'unknown'
+    
+    # Create structured objects for template
+    version_obj = SimpleNamespace(value=version)
+    database_analysis = SimpleNamespace(
+        version=version_obj,
+        users=analysis.get('users', []),
+        book_count=analysis.get('book_count', 0),
+        user_count=analysis.get('user_count', 0),
+        detected_version=analysis.get('detected_version', version)
+    )
+    
+    logger.info(f"🔍 ONBOARDING DEBUG: database_analysis_data: {database_analysis_data}")
+    logger.info(f"🔍 ONBOARDING DEBUG: structured database_analysis version: {version}")
     
     if request.method == 'POST':
         try:
@@ -573,7 +594,7 @@ def migration_config_step(data_options: Dict):
             
             migration_config = {'type': 'migration'}
             
-            if database_analysis.get('version') == DatabaseVersion.V2_MULTI_USER:
+            if version == DatabaseVersion.V2_MULTI_USER:
                 # Handle user mapping for V2 databases
                 admin_user_mapping = request.form.get('admin_user_mapping')
                 if not admin_user_mapping:

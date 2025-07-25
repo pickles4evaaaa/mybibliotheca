@@ -1,6 +1,10 @@
 {% extends "onboarding/base_onboarding.html" %}
 {% block title %}Setting Up Your Library - MyBibliotheca{% endblock %}
-{% block onboarding_content %}
+
+{% block progress_width %}100%{% endblock %}
+{% block step_info %}Step 5 of 5: Setting Up Your Library{% endblock %}
+
+{% block extra_styles %}
 <style>
 /* Dark mode enhancements for Import Books Progress */
 [data-theme="dark"] .text-muted {
@@ -68,6 +72,9 @@
     color: #e0e0e0 !important;
 }
 </style>
+{% endblock %}
+
+{% block content %}
 <!-- Progress Indicator -->
 <div class="card mb-4">
     <div class="card-body">
@@ -169,7 +176,9 @@
             </div>
         </div>
     </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 let taskId = '{{ task_id }}';
 let totalBooks = {{ total_books }};

@@ -1,6 +1,10 @@
 {% extends "onboarding/base_onboarding.html" %}
 {% block title %}Importing Your Library - {{ site_name }}{% endblock %}
-{% block onboarding_content %}
+
+{% block progress_width %}100%{% endblock %}
+{% block step_info %}Step 5 of 5: Importing Your Library{% endblock %}
+
+{% block extra_styles %}
 <style>
 /* Splash screen styling */
 .splash-container {
@@ -52,7 +56,9 @@
     color: #b0b0b0 !important;
 }
 </style>
+{% endblock %}
 
+{% block content %}
 <!-- Progress Indicator -->
 <div class="card mb-4">
     <div class="card-body">
@@ -91,7 +97,9 @@
         </p>
     </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 // Auto-check for completion and redirect
 let checkInterval;
