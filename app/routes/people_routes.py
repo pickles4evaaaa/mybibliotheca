@@ -797,13 +797,36 @@ def merge_persons():
                 return redirect(url_for('people.merge_persons'))
             
             # Get the primary person's name for logging
-            primary_person_name = getattr(primary_person, 'name', 'Unknown Person')
+            primary_person_name = primary_person.get('name', 'Unknown Person') if isinstance(primary_person, dict) else getattr(primary_person, 'name', 'Unknown Person')
+            
+            # Validate that the primary person exists in KuzuDB
+            from app.infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            
+            primary_check_query = """
+            MATCH (p:Person {id: $person_id})
+            RETURN p.name as name
+            """
+            primary_check_result = db.query(primary_check_query, {"person_id": primary_person_id})
+            if not primary_check_result or len(primary_check_result) == 0:
+                flash(f'Primary person "{primary_person_name}" not found in database.', 'error')
+                return redirect(url_for('people.merge_persons'))
+            
+            current_app.logger.info(f"Primary person validated: {primary_person_name} (ID: {primary_person_id})")
             
             merge_persons = []
             for person_id in merge_person_ids:
                 person = safe_call_sync_method_merge(book_service.get_person_by_id_sync, person_id)
                 if person:
-                    merge_persons.append(person)
+                    # Also validate this person exists in KuzuDB
+                    person_check_result = db.query(primary_check_query, {"person_id": person_id})
+                    if person_check_result and len(person_check_result) > 0:
+                        merge_persons.append(person)
+                        current_app.logger.info(f"Merge person validated: {person.get('name' if isinstance(person, dict) else 'name', 'Unknown')} (ID: {person_id})")
+                    else:
+                        current_app.logger.warning(f"Person {person_id} not found in KuzuDB, skipping")
+                else:
+                    current_app.logger.warning(f"Person {person_id} not found in service layer, skipping")
             
             if not merge_persons:
                 flash('No valid persons found to merge.', 'error')
@@ -815,25 +838,47 @@ def merge_persons():
             
             merged_count = 0
             for merge_person in merge_persons:
+                merge_person_id = None
+                merge_person_name = 'Unknown'
                 try:
-                    current_app.logger.info(f"Merging person {merge_person.name} (ID: {merge_person.id}) into {primary_person_name}")
+                    # Handle both dict and object formats
+                    merge_person_name = merge_person.get('name', 'Unknown') if isinstance(merge_person, dict) else getattr(merge_person, 'name', 'Unknown')
+                    merge_person_id = merge_person.get('id') if isinstance(merge_person, dict) else getattr(merge_person, 'id', None)
+                    
+                    current_app.logger.info(f"Merging person {merge_person_name} (ID: {merge_person_id}) into {primary_person_name}")
                     
                     # Use direct Kuzu query to transfer all types of relationships
                     from app.infrastructure.kuzu_graph import get_kuzu_database
                     db = get_kuzu_database()
                     
+                    # First, let's check what relationships exist for this person
+                    check_query = """
+                    MATCH (p:Person {id: $merge_person_id})-[r]->(b:Book)
+                    RETURN COUNT(*) as total_relationships
+                    """
+                    
+                    check_result = db.query(check_query, {"merge_person_id": merge_person_id})
+                    total_rels = 0
+                    if check_result and len(check_result) > 0:
+                        total_rels = check_result[0].get('col_0', 0) or 0
+                    current_app.logger.info(f"Person {merge_person_name} has {total_rels} total relationships")
+                    
                     # Transfer all AUTHORED relationships from merge_person to primary_person
+                    # First check if any AUTHORED relationships exist to avoid duplicates
                     transfer_query = """
                     MATCH (merge_person:Person {id: $merge_person_id})-[old_rel:AUTHORED]->(b:Book)
                     MATCH (primary_person:Person {id: $primary_person_id})
                     CREATE (primary_person)-[new_rel:AUTHORED]->(b)
-                    SET new_rel = old_rel
+                    SET new_rel.contribution_type = old_rel.contribution_type,
+                        new_rel.role = old_rel.role,
+                        new_rel.order_index = old_rel.order_index,
+                        new_rel.created_at = old_rel.created_at
                     DELETE old_rel
                     RETURN COUNT(old_rel) as transferred_count
                     """
                     
                     transfer_result = db.query(transfer_query, {
-                        "merge_person_id": merge_person.id,
+                        "merge_person_id": merge_person_id,
                         "primary_person_id": primary_person_id
                     })
                     
@@ -841,25 +886,53 @@ def merge_persons():
                     if transfer_result and len(transfer_result) > 0:
                         transferred_count = transfer_result[0].get('col_0', 0) or 0
                     
-                    current_app.logger.info(f"Transferred {transferred_count} book relationships from {merge_person.name} to {primary_person_name}")
+                    current_app.logger.info(f"Transferred {transferred_count} AUTHORED relationships from {merge_person_name} to {primary_person_name}")
                     
-                    # Delete the merged person
+                    # Also transfer other relationship types (EDITED, NARRATED, etc.)
+                    other_relationships = ['EDITED', 'NARRATED', 'ILLUSTRATED', 'TRANSLATED']
+                    for rel_type in other_relationships:
+                        other_transfer_query = f"""
+                        MATCH (merge_person:Person {{id: $merge_person_id}})-[old_rel:{rel_type}]->(b:Book)
+                        MATCH (primary_person:Person {{id: $primary_person_id}})
+                        CREATE (primary_person)-[new_rel:{rel_type}]->(b)
+                        SET new_rel.role = old_rel.role,
+                            new_rel.order_index = old_rel.order_index,
+                            new_rel.created_at = old_rel.created_at
+                        DELETE old_rel
+                        RETURN COUNT(old_rel) as transferred_count
+                        """
+                        
+                        other_result = db.query(other_transfer_query, {
+                            "merge_person_id": merge_person_id,
+                            "primary_person_id": primary_person_id
+                        })
+                        
+                        if other_result and len(other_result) > 0:
+                            other_count = other_result[0].get('col_0', 0) or 0
+                            if other_count > 0:
+                                current_app.logger.info(f"Transferred {other_count} {rel_type} relationships from {merge_person_name} to {primary_person_name}")
+                    
+                    # Delete the merged person using DETACH DELETE to handle any remaining relationships
                     delete_query = """
                     MATCH (p:Person {id: $person_id})
-                    DELETE p
+                    DETACH DELETE p
                     """
                     
-                    db.query(delete_query, {"person_id": merge_person.id})
+                    delete_result = db.query(delete_query, {"person_id": merge_person_id})
+                    current_app.logger.info(f"Delete query completed for person {merge_person_name}")
                     
                     merged_count += 1
-                    current_app.logger.info(f"Successfully merged person {merge_person.name}")
+                    current_app.logger.info(f"Successfully merged person {merge_person_name}")
                     
                 except Exception as e:
-                    current_app.logger.error(f"Error merging person {merge_person.id}: {e}")
+                    current_app.logger.error(f"Error merging person {merge_person_name} (ID: {merge_person_id}): {e}")
                     continue
             
             if merged_count > 0:
-                person_names = [p.name for p in merge_persons[:merged_count]]
+                person_names = [
+                    p.get('name', 'Unknown') if isinstance(p, dict) else getattr(p, 'name', 'Unknown') 
+                    for p in merge_persons[:merged_count]
+                ]
                 flash(f'Successfully merged {merged_count} person(s) ({", ".join(person_names)}) into "{primary_person_name}".', 'success')
             else:
                 flash('No persons were merged due to errors.', 'error')
@@ -894,14 +967,50 @@ def merge_persons():
         if all_persons is None:
             all_persons = []
         
+        # Add book counts to each person for the merge preview
+        processed_persons = []
+        for person in all_persons:
+            # Convert dictionary to object if needed for consistency
+            if isinstance(person, dict):
+                from types import SimpleNamespace
+                person_obj = SimpleNamespace(**person)
+            else:
+                person_obj = person
+            
+            try:
+                # Get book count for this person
+                person_id = getattr(person_obj, 'id', None)
+                if person_id:
+                    books_by_type = safe_call_sync_method(person_service.get_books_by_person_for_user_sync, person_id, str(current_user.id))
+                    if books_by_type:
+                        # Handle both dict and list return types
+                        if isinstance(books_by_type, dict):
+                            total_books = sum(len(books) for books in books_by_type.values())
+                        elif isinstance(books_by_type, list):
+                            total_books = len(books_by_type)
+                        else:
+                            total_books = 0
+                        person_obj.book_count = total_books
+                    else:
+                        person_obj.book_count = 0
+                else:
+                    person_obj.book_count = 0
+                
+                processed_persons.append(person_obj)
+                
+            except Exception as person_error:
+                current_app.logger.warning(f"Error getting book count for person {getattr(person_obj, 'name', 'Unknown')}: {person_error}")
+                person_obj.book_count = 0
+                processed_persons.append(person_obj)
+        
         # Safe sorting that handles both object and dict formats
         try:
-            all_persons.sort(key=lambda p: getattr(p, 'name', p.get('name', '') if isinstance(p, dict) else '').lower())
+            processed_persons.sort(key=lambda p: getattr(p, 'name', '').lower())
         except:
             # Fallback - just use the list as is
             pass
             
-        return render_template('merge_persons.html', persons=all_persons)
+        return render_template('merge_persons.html', persons=processed_persons)
     
     except Exception as e:
         current_app.logger.error(f"Error loading merge persons page: {e}")

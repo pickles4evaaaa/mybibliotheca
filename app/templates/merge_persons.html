@@ -253,8 +253,13 @@ document.addEventListener('DOMContentLoaded', function() {
             
             let totalBooks = 0;
             selectedPersons.forEach(person => {
-                const bookCount = parseInt(person.books.split(' ')[0]);
-                totalBooks += bookCount;
+                // Extract book count more safely
+                const bookText = person.books || '0 books';
+                const matches = bookText.match(/(\d+)/);
+                const bookCount = matches ? parseInt(matches[0]) : 0;
+                if (!isNaN(bookCount)) {
+                    totalBooks += bookCount;
+                }
             });
             
             mergePreviewContent.innerHTML = `
