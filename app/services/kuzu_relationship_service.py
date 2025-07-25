@@ -156,11 +156,13 @@ class KuzuRelationshipService:
         return book
     
     async def get_books_for_user(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:
-        """Get all books for a user with relationship data and locations."""
+        """Get all books for a user with relationship data and locations (common library model)."""
         try:
-            # Enhanced query to also get location information via STORED_AT relationships
+            # Common library model: Get ALL books with optional user overlay data
+            # No longer requires OWNS relationships since all books are in the common library
             query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
+            MATCH (b:Book)
+            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
             WHERE stored.user_id = $user_id OR stored IS NULL
             RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
@@ -193,11 +195,13 @@ class KuzuRelationshipService:
             return []
     
     async def get_book_by_id_for_user(self, book_id: str, user_id: str) -> Optional[Book]:
-        """Get a specific book for a user with relationship data."""
+        """Get a specific book for a user with relationship data (common library model)."""
         try:
-            # Enhanced query to also get location information via STORED_AT relationships
+            # Common library model: Get ANY book with optional user overlay data
+            # No longer requires OWNS relationships since all books are in the common library
             query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
+            MATCH (b:Book {id: $book_id})
+            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
             WHERE stored.user_id = $user_id OR stored IS NULL
             RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations

@@ -23,7 +23,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import pytz
 from datetime import datetime
 
@@ -451,22 +451,86 @@ def data_options_step():
             logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {dict(request.form)}")
             
             data_option = request.form.get('data_option')
-            data_options = {'option': data_option}
+            data_options: Dict[str, Any] = {'option': data_option}
             
             logger.info(f"🔍 ONBOARDING DEBUG: Selected data option: {data_option}")
             
-            if data_option == 'migrate' and db_analysis:
+            if data_option == 'migrate':
+                # Check for pre-detected database selection
                 selected_db = request.form.get('migration_source')
-                data_options['selected_database'] = selected_db
                 
-                logger.info(f"🔍 ONBOARDING DEBUG: Selected database: {selected_db}")
+                # Check for custom database file upload
+                custom_db_file = request.files.get('custom_db_path')
                 
-                # Find analysis for selected database
-                for db in db_analysis:
-                    if db['path'] == selected_db:
-                        data_options['database_analysis'] = db
-                        logger.info(f"🔍 ONBOARDING DEBUG: Found database analysis: {db}")
-                        break
+                if selected_db:
+                    # User selected a pre-detected database
+                    data_options['selected_database'] = selected_db
+                    logger.info(f"🔍 ONBOARDING DEBUG: Selected pre-detected database: {selected_db}")
+                    
+                    # Find analysis for selected database
+                    for db in db_analysis:
+                        if db['path'] == selected_db:
+                            data_options['database_analysis'] = db
+                            logger.info(f"🔍 ONBOARDING DEBUG: Found database analysis: {db}")
+                            break
+                            
+                elif custom_db_file and custom_db_file.filename:
+                    # User uploaded a custom database file
+                    import tempfile
+                    import os
+                    
+                    # Save uploaded database file to temporary location
+                    temp_dir = tempfile.gettempdir()
+                    temp_fd, temp_path = tempfile.mkstemp(
+                        suffix=f"_{custom_db_file.filename}",
+                        prefix="onboarding_db_",
+                        dir=temp_dir
+                    )
+                    
+                    try:
+                        # Save the file
+                        with os.fdopen(temp_fd, 'wb') as tmp_file:
+                            custom_db_file.save(tmp_file)
+                        
+                        logger.info(f"🔍 ONBOARDING DEBUG: Custom database file saved: {custom_db_file.filename} -> {temp_path}")
+                        
+                        # Analyze the uploaded database
+                        migration_system = AdvancedMigrationSystem()
+                        version, analysis = migration_system.detect_database_version(Path(temp_path))
+                        
+                        # Store database info
+                        data_options['selected_database'] = temp_path
+                        custom_db_info = {
+                            'path': temp_path,
+                            'name': custom_db_file.filename,
+                            'version': version,
+                            'analysis': analysis
+                        }
+                        data_options['database_analysis'] = custom_db_info
+                        
+                        logger.info(f"🔍 ONBOARDING DEBUG: Custom database analysis: version={version}, analysis={analysis}")
+                        
+                    except Exception as e:
+                        # Clean up on error
+                        try:
+                            os.unlink(temp_path)
+                        except:
+                            pass
+                        logger.error(f"❌ Failed to process custom database file: {e}")
+                        flash(f'Error processing database file: {e}', 'error')
+                        return render_template('onboarding/step3_data_options.html',
+                                             databases=db_analysis,
+                                             step=3,
+                                             total_steps=5)
+                                             
+                else:
+                    # No database selected
+                    logger.warning(f"🔍 ONBOARDING DEBUG: No database selected for migration")
+                    flash('Please select a database to migrate from before proceeding.', 'error')
+                    return render_template('onboarding/step3_data_options.html',
+                                         databases=db_analysis,
+                                         step=3,
+                                         total_steps=5)
             
             elif data_option == 'import':
                 # Handle file upload for import
@@ -1271,7 +1335,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                         logger.error(f"❌ Invalid admin_mapping type: {e}")
                         return False
                     
-                    success = migration_system.migrate_v2_database(db_path, user_mapping, fetch_api_metadata=False)
+                    success = migration_system.migrate_v2_database(db_path, user_mapping, fetch_api_metadata=True)
                 else:
                     success = False
                 
@@ -1346,29 +1410,73 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 logger.error("❌ Admin user has no ID")
                 return False
                 
-            # Import synchronously instead of as background job
+            # Import synchronously using the same pattern as migration system
             try:
-                import asyncio
-                from .routes.import_routes import process_simple_import
+                import csv
                 
-                # Generate a task ID for tracking (but don't use background processing)
-                task_id = str(uuid.uuid4())
+                logger.info(f"🚀 Starting CSV import for common library model")
                 
-                # Create import config for synchronous processing
-                sync_import_config = {
-                    'task_id': task_id,
-                    'csv_file_path': import_config.get('csv_file_path'),
-                    'field_mappings': import_config.get('field_mappings', {}),
-                    'user_id': admin_user.id,
-                    'default_reading_status': 'library_only',
-                    'enable_api_enrichment': True,
-                    'format_type': import_config.get('detected_type', 'unknown')
-                }
+                csv_file_path = import_config.get('csv_file_path')
+                field_mappings = import_config.get('field_mappings', {})
                 
-                # Execute import synchronously
-                logger.info(f"🚀 Starting synchronous CSV import for user {admin_user.id}")
-                asyncio.run(process_simple_import(sync_import_config))
-                logger.info(f"✅ CSV import completed successfully")
+                if not csv_file_path or not Path(csv_file_path).exists():
+                    logger.error(f"❌ CSV file not found: {csv_file_path}")
+                    return False
+                
+                # Use the migration system's approach: direct book service, no user relationships
+                migration_system = AdvancedMigrationSystem()
+                books_imported = 0
+                errors = 0
+                
+                with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    
+                    for row in reader:
+                        try:
+                            # Extract basic book data using field mappings
+                            book_data = {}
+                            for csv_field, domain_field in field_mappings.items():
+                                if csv_field in row and row[csv_field]:
+                                    value = row[csv_field].strip()
+                                    if value:
+                                        book_data[domain_field] = value
+                            
+                            # Skip rows without title
+                            if not book_data.get('title'):
+                                continue
+                            
+                            # Create Book domain object (minimal for common library)
+                            from .domain.models import Book
+                            book = Book(
+                                title=book_data.get('title', ''),
+                                isbn13=book_data.get('isbn', ''),
+                                isbn10=None,
+                                subtitle=book_data.get('subtitle', ''),
+                                description=book_data.get('description', ''),
+                                publisher=book_data.get('publisher', ''),
+                                published_date=book_data.get('published_date', ''),
+                                page_count=int(book_data.get('page_count', 0)) if book_data.get('page_count', '').isdigit() else None,
+                                language=book_data.get('language', 'en'),
+                            )
+                            
+                            # Create book using the same pattern as migration system
+                            created_book = migration_system.book_service.create_book_sync(
+                                domain_book=book
+                            )
+                            
+                            if created_book:
+                                books_imported += 1
+                                logger.info(f"✅ Imported book: {book.title}")
+                            else:
+                                errors += 1
+                                logger.warning(f"❌ Failed to import book: {book.title}")
+                                
+                        except Exception as book_error:
+                            errors += 1
+                            logger.error(f"❌ Error importing book from row: {book_error}")
+                            continue
+                
+                logger.info(f"✅ CSV import completed: {books_imported} books imported, {errors} errors")
                 
             except Exception as e:
                 logger.error(f"❌ Failed to execute CSV import: {e}")
