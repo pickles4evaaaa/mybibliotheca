@@ -543,7 +543,7 @@ class KuzuRelationshipService:
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
             WHERE stored.user_id = $user_id OR stored IS NULL
             RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
-            ORDER BY owns.added_date DESC
+            ORDER BY owns.date_added DESC
             LIMIT $limit
             """
             

@@ -161,11 +161,11 @@ def api_user_books():
                     })
                     book_ids_added.add(book.id)
         
-        # If we don't have enough books (less than 5), fill with recently added want-to-read books
+        # If we don't have enough books (less than 5), fill with user's regular books
         if len(book_data) < 5:
-            want_to_read_books = book_service.get_recently_added_want_to_read_books(current_user.id, limit=5)
+            all_books = book_service.get_books_for_user(current_user.id, limit=50)
             
-            for book in want_to_read_books:
+            for book in all_books:
                 if len(book_data) >= 5:
                     break
                     

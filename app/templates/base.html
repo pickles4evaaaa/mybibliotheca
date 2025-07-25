@@ -832,6 +832,12 @@
         </div>
         <form id="readingLogForm" method="POST" action="{{ url_for('reading_logs.create_reading_log_entry') }}">
           <div class="modal-body">
+            <!-- Error Message Area -->
+            <div class="alert alert-danger" id="readingLogError" style="display: none;" role="alert">
+              <i class="bi bi-exclamation-triangle"></i>
+              <span id="readingLogErrorMessage"></span>
+            </div>
+            
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <input type="hidden" id="selected_book_id" name="book_id" value="">
             
@@ -1170,13 +1176,36 @@
         bookSearchInput.focus();
       };
       
+      // Helper functions for modal error handling
+      function showModalError(message) {
+        const errorDiv = document.getElementById('readingLogError');
+        const errorMessage = document.getElementById('readingLogErrorMessage');
+        errorMessage.textContent = message;
+        errorDiv.style.display = 'block';
+        // Scroll to top of modal to show error
+        document.querySelector('.modal-body').scrollTop = 0;
+      }
+      
+      function hideModalError() {
+        const errorDiv = document.getElementById('readingLogError');
+        errorDiv.style.display = 'none';
+      }
+      
+      // Hide error when modal is opened
+      modal.addEventListener('shown.bs.modal', function() {
+        hideModalError();
+      });
+      
       // Handle form submission
       document.getElementById('readingLogForm').addEventListener('submit', function(e) {
         e.preventDefault();
         
+        // Hide any previous errors
+        hideModalError();
+        
         // Validate book selection
         if (!selectedBookIdInput.value) {
-          showAlert('danger', 'Please select a book');
+          showModalError('Please select a book');
           return;
         }
         
@@ -1201,15 +1230,17 @@
             clearBookSelection();
             pagesReadInput.readOnly = true;
             
-            // Show success alert
+            // Show success alert on page
             showAlert('success', 'Reading session logged successfully!');
           } else {
-            showAlert('danger', data.message || 'Error logging reading session');
+            // Show error in modal instead of page
+            showModalError(data.message || 'Error logging reading session');
           }
         })
         .catch(error => {
           console.error('Error:', error);
-          showAlert('danger', 'Error logging reading session');
+          // Show error in modal instead of page
+          showModalError('Error logging reading session');
         });
       });
       

@@ -51,7 +51,7 @@ class KuzuReadingLogService:
             List of reading log dictionaries
         """
         try:
-            cutoff_date = (date.today() - timedelta(days=days_back)).isoformat()
+            cutoff_date = date.today() - timedelta(days=days_back)  # Keep as date object
             
             query = """
             MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
@@ -107,7 +107,7 @@ class KuzuReadingLogService:
             existing_results = self.graph_storage.query(existing_query, {
                 "user_id": reading_log.user_id,
                 "book_id": reading_log.book_id,
-                "log_date": reading_log.date.isoformat()
+                "log_date": reading_log.date  # Pass date object directly, not isoformat string
             })
             
             if existing_results:
@@ -129,16 +129,23 @@ class KuzuReadingLogService:
             
             log_result = self.graph_storage.query(create_log_query, {
                 "log_id": log_id,
-                "log_date": reading_log.date.isoformat(),
+                "log_date": reading_log.date,  # Pass date object directly
                 "pages_read": reading_log.pages_read,
                 "minutes_read": reading_log.minutes_read,
                 "notes": reading_log.notes,
-                "created_at": reading_log.created_at.isoformat()
+                "created_at": reading_log.created_at  # Pass datetime object directly
             })
             
             if not log_result:
                 logger.error("Failed to create reading log node")
                 return None
+            
+            # Debug: Check the structure of log_result
+            logger.debug(f"log_result structure: {log_result}")
+            logger.debug(f"log_result type: {type(log_result)}")
+            if log_result and len(log_result) > 0:
+                logger.debug(f"log_result[0]: {log_result[0]}")
+                logger.debug(f"log_result[0] keys: {log_result[0].keys() if hasattr(log_result[0], 'keys') else 'No keys method'}")
             
             # Create relationships
             user_rel_query = """
@@ -161,9 +168,17 @@ class KuzuReadingLogService:
                 "book_id": reading_log.book_id
             })
             
-            # Return the created log
-            created_log = dict(log_result[0]['col_0'])
-            created_log['id'] = log_id
+            # Return a simple success response instead of trying to access col_0
+            created_log = {
+                'id': log_id,
+                'user_id': reading_log.user_id,
+                'book_id': reading_log.book_id,
+                'date': reading_log.date.isoformat() if reading_log.date else None,
+                'pages_read': reading_log.pages_read,
+                'minutes_read': reading_log.minutes_read,
+                'notes': reading_log.notes,
+                'created_at': reading_log.created_at.isoformat() if reading_log.created_at else None
+            }
             
             logger.info(f"Successfully created reading log {log_id} for user {reading_log.user_id}")
             return created_log
@@ -270,7 +285,7 @@ class KuzuReadingLogService:
             Dictionary with reading statistics
         """
         try:
-            cutoff_date = (date.today() - timedelta(days=days_back)).isoformat()
+            cutoff_date = date.today() - timedelta(days=days_back)  # Keep as date object
             
             stats_query = """
             MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
@@ -350,7 +365,7 @@ class KuzuReadingLogService:
             result = self.graph_storage.query(query, {
                 "user_id": user_id,
                 "book_id": book_id,
-                "log_date": log_date.isoformat()
+                "log_date": log_date  # Pass date object directly
             })
             
             if result and 'col_0' in result[0]:
@@ -374,12 +389,11 @@ class KuzuReadingLogService:
             List of book dictionaries with reading log info
         """
         try:
+            # Simplified query without Contribution table since it doesn't exist yet
             query = """
             MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
-            OPTIONAL MATCH (b)<-[:CONTRIBUTED_TO]-(c:Contribution)<-[:MADE]-(p:Person)
-            WHERE c.contribution_type IN ['authored', 'co_authored']
-            WITH b, MAX(rl.date) as latest_log_date, COLLECT(DISTINCT p.name) as authors
-            RETURN DISTINCT b, latest_log_date, authors
+            WITH b, MAX(rl.date) as latest_log_date
+            RETURN DISTINCT b, latest_log_date
             ORDER BY latest_log_date DESC
             LIMIT $limit
             """
@@ -394,7 +408,7 @@ class KuzuReadingLogService:
                 if 'col_0' in result:
                     book_data = dict(result['col_0'])
                     book_data['latest_log_date'] = result.get('col_1')
-                    book_data['authors'] = result.get('col_2', []) or []
+                    book_data['authors'] = []  # Will be populated by other means
                     books.append(book_data)
             
             return books
