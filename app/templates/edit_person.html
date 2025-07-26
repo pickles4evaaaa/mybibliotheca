@@ -61,7 +61,35 @@
                             </div>
                         </div>
 
-                        <!-- Years -->
+                        <!-- Birth and Death Dates -->
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="birth_date" class="form-label">
+                                        <i class="bi bi-calendar-event"></i> Birth Date
+                                    </label>
+                                    <input type="text" class="form-control" id="birth_date" name="birth_date" 
+                                           value="{{ person.birth_date or '' }}" placeholder="e.g., September 21, 1947">
+                                    <div class="form-text">
+                                        Full birth date (optional) - e.g., "September 21, 1947" or "21 September 1947"
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="death_date" class="form-label">
+                                        <i class="bi bi-calendar-x"></i> Death Date
+                                    </label>
+                                    <input type="text" class="form-control" id="death_date" name="death_date" 
+                                           value="{{ person.death_date or '' }}" placeholder="e.g., June 1, 2021">
+                                    <div class="form-text">
+                                        Full death date (if applicable) - e.g., "June 1, 2021" or "1 June 2021"
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Legacy Birth/Death Years (for backward compatibility) -->
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
@@ -72,7 +100,7 @@
                                            min="1" max="{{ current_year }}" 
                                            value="{{ person.birth_year or '' }}" placeholder="e.g., 1947">
                                     <div class="form-text">
-                                        Year of birth (optional)
+                                        Year of birth (optional) - will be extracted from birth date if provided
                                     </div>
                                 </div>
                             </div>
@@ -85,7 +113,7 @@
                                            min="1" max="{{ current_year }}" 
                                            value="{{ person.death_year or '' }}" placeholder="e.g., 2021">
                                     <div class="form-text">
-                                        Year of death (if applicable)
+                                        Year of death (if applicable) - will be extracted from death date if provided
                                     </div>
                                 </div>
                             </div>
@@ -115,15 +143,95 @@
                             </div>
                         </div>
 
-                        <!-- OpenLibrary ID -->
+                        <!-- Professional Information -->
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="title" class="form-label">
+                                        <i class="bi bi-award"></i> Title
+                                    </label>
+                                    <input type="text" class="form-control" id="title" name="title" 
+                                           value="{{ person.title or '' }}" placeholder="e.g., Dr., Professor, Schriftsteller">
+                                    <div class="form-text">
+                                        Professional title or designation (optional)
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="fuller_name" class="form-label">
+                                        <i class="bi bi-person-badge"></i> Fuller Name
+                                    </label>
+                                    <input type="text" class="form-control" id="fuller_name" name="fuller_name" 
+                                           value="{{ person.fuller_name or '' }}" placeholder="e.g., Stephen Edwin King">
+                                    <div class="form-text">
+                                        Full name with middle names or formal name (optional)
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- External Service IDs -->
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="openlibrary_id" class="form-label">
+                                        <i class="bi bi-book"></i> OpenLibrary ID
+                                    </label>
+                                    <input type="text" class="form-control" id="openlibrary_id" name="openlibrary_id" 
+                                           value="{{ person.openlibrary_id or '' }}" placeholder="e.g., OL23919A">
+                                    <div class="form-text">
+                                        OpenLibrary author identifier - used for metadata enrichment
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="wikidata_id" class="form-label">
+                                        <i class="bi bi-wikipedia"></i> Wikidata ID
+                                    </label>
+                                    <input type="text" class="form-control" id="wikidata_id" name="wikidata_id" 
+                                           value="{{ person.wikidata_id or '' }}" placeholder="e.g., Q39829">
+                                    <div class="form-text">
+                                        Wikidata identifier (optional)
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="imdb_id" class="form-label">
+                                        <i class="bi bi-film"></i> IMDb ID
+                                    </label>
+                                    <input type="text" class="form-control" id="imdb_id" name="imdb_id" 
+                                           value="{{ person.imdb_id or '' }}" placeholder="e.g., nm0000175">
+                                    <div class="form-text">
+                                        IMDb identifier (optional)
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Alternate Names -->
                         <div class="mb-3">
-                            <label for="openlibrary_id" class="form-label">
-                                <i class="bi bi-book"></i> OpenLibrary ID
+                            <label for="alternate_names" class="form-label">
+                                <i class="bi bi-tags"></i> Alternate Names
                             </label>
-                            <input type="text" class="form-control" id="openlibrary_id" name="openlibrary_id" 
-                                   value="{{ person.openlibrary_id or '' }}" placeholder="e.g., OL23919A">
+                            <textarea class="form-control" id="alternate_names" name="alternate_names" rows="3" 
+                                      placeholder="Enter alternate names, one per line or comma-separated">{{ (person.alternate_names | from_json | join('\n')) if person.alternate_names else '' }}</textarea>
                             <div class="form-text">
-                                OpenLibrary author identifier (optional) - used for metadata enrichment
+                                Alternative names, pen names, or variations (optional) - one per line or comma-separated
+                            </div>
+                        </div>
+
+                        <!-- Official Links -->
+                        <div class="mb-3">
+                            <label for="official_links" class="form-label">
+                                <i class="bi bi-link-45deg"></i> Official Links
+                            </label>
+                            <textarea class="form-control" id="official_links" name="official_links" rows="3" 
+                                      placeholder="Enter official links in JSON format or one URL per line">{% if person.official_links %}{{ person.official_links | from_json | map(attribute='url') | join('\n') if person.official_links | from_json is iterable else person.official_links }}{% endif %}</textarea>
+                            <div class="form-text">
+                                Official links, websites, social media (optional) - one URL per line or JSON format
                             </div>
                         </div>
 

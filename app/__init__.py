@@ -393,6 +393,17 @@ def create_app():
         if not path:
             return ''
         return os.path.basename(str(path))
+    
+    @app.template_filter('from_json')
+    def from_json_filter(json_string):
+        """Parse JSON string into Python object."""
+        import json
+        if not json_string:
+            return []
+        try:
+            return json.loads(json_string)
+        except (json.JSONDecodeError, TypeError):
+            return []
 
     # CSRF error handler
     @app.errorhandler(400)

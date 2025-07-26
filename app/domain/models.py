@@ -347,14 +347,26 @@ class Person:
     normalized_name: str = ""  # For fuzzy matching
     
     # Optional biographical information
+    birth_date: Optional[str] = None  # Full birth date string from OpenLibrary
+    death_date: Optional[str] = None  # Full death date string from OpenLibrary
     birth_year: Optional[int] = None
     death_year: Optional[int] = None
     birth_place: Optional[str] = None
     bio: Optional[str] = None
     website: Optional[str] = None
-    # OpenLibrary or other API author ID for metadata refresh
+    
+    # External service IDs
     openlibrary_id: Optional[str] = None
-    # Optional author/narrator image URL fetched from OpenLibrary or other APIs
+    wikidata_id: Optional[str] = None
+    imdb_id: Optional[str] = None
+    
+    # Additional metadata
+    fuller_name: Optional[str] = None  # Full name with titles, etc.
+    title: Optional[str] = None  # Professional title (e.g., "Dr.", "Professor")
+    alternate_names: Optional[str] = None  # JSON string of alternate names
+    official_links: Optional[str] = None  # JSON string of official links
+    
+    # Media
     image_url: Optional[str] = None
     
     # Timestamps

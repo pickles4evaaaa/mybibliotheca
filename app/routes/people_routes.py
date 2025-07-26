@@ -223,33 +223,22 @@ def add_person():
                 bio=bio if bio else None,
                 birth_year=birth_year_int,
                 death_year=death_year_int,
+                birth_place=birth_place if birth_place else None,
+                website=website if website else None,
                 created_at=datetime.now()
             )
             
-            # Store person using the repository pattern
+            # Use the repository to create the person (includes automatic OpenLibrary metadata enrichment)
             try:
-                from app.infrastructure.kuzu_graph import get_graph_storage
-                storage = get_graph_storage()
+                from app.infrastructure.kuzu_repositories import KuzuPersonRepository
+                person_repo = KuzuPersonRepository()
                 
-                # Ensure we have a valid person ID
-                if not person.id:
-                    raise ValueError("Person ID cannot be None")
-                
-                person_data = {
-                    'name': person.name,
-                    'normalized_name': Person._normalize_name(person.name),
-                    'bio': person.bio,
-                    'birth_year': person.birth_year,
-                    'death_year': person.death_year,
-                    'birth_place': birth_place if birth_place else None,
-                    'website': website if website else None,
-                    'created_at': person.created_at.isoformat(),
-                    'updated_at': person.created_at.isoformat()
-                }
-                
-                storage.store_node('Person', person.id, person_data)
-                flash(f'Person "{name}" added successfully!', 'success')
-                return redirect(url_for('people.person_details', person_id=person.id))
+                created_person = person_repo.create(person)
+                if created_person:
+                    flash(f'Person "{name}" added successfully with OpenLibrary metadata!', 'success')
+                    return redirect(url_for('people.person_details', person_id=person.id))
+                else:
+                    flash('Error saving person. Please try again.', 'error')
                     
             except Exception as storage_error:
                 current_app.logger.error(f"Error storing person: {storage_error}")
@@ -274,6 +263,8 @@ def edit_person(person_id):
         
         if request.method == 'POST':
             # Get form data
+            import json
+            
             name = request.form.get('name', '').strip()
             bio = request.form.get('bio', '').strip()
             birth_year = request.form.get('birth_year')
@@ -282,6 +273,16 @@ def edit_person(person_id):
             website = request.form.get('website', '').strip()
             openlibrary_id = request.form.get('openlibrary_id', '').strip()
             image_url = request.form.get('image_url', '').strip()
+            
+            # New comprehensive fields
+            birth_date = request.form.get('birth_date', '').strip()
+            death_date = request.form.get('death_date', '').strip()
+            title = request.form.get('title', '').strip()
+            fuller_name = request.form.get('fuller_name', '').strip()
+            wikidata_id = request.form.get('wikidata_id', '').strip()
+            imdb_id = request.form.get('imdb_id', '').strip()
+            alternate_names_str = request.form.get('alternate_names', '').strip()
+            official_links_str = request.form.get('official_links', '').strip()
             
             if not name:
                 flash('Name is required.', 'error')
@@ -318,6 +319,55 @@ def edit_person(person_id):
                 flash('Death year cannot be before birth year.', 'error')
                 return render_template('edit_person.html', person=person, current_year=datetime.now().year)
             
+            # Process alternate names
+            alternate_names_json = None
+            if alternate_names_str:
+                try:
+                    # Try to parse as existing JSON first
+                    if alternate_names_str.startswith('[') and alternate_names_str.endswith(']'):
+                        alternate_names_list = json.loads(alternate_names_str)
+                    else:
+                        # Split by newlines or commas
+                        if '\n' in alternate_names_str:
+                            alternate_names_list = [name.strip() for name in alternate_names_str.split('\n') if name.strip()]
+                        else:
+                            alternate_names_list = [name.strip() for name in alternate_names_str.split(',') if name.strip()]
+                    
+                    if alternate_names_list:
+                        alternate_names_json = json.dumps(alternate_names_list)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, treat as comma-separated
+                    alternate_names_list = [name.strip() for name in alternate_names_str.split(',') if name.strip()]
+                    if alternate_names_list:
+                        alternate_names_json = json.dumps(alternate_names_list)
+            
+            # Process official links
+            official_links_json = None
+            if official_links_str:
+                try:
+                    # Try to parse as existing JSON first
+                    if official_links_str.startswith('[') and official_links_str.endswith(']'):
+                        links_data = json.loads(official_links_str)
+                    else:
+                        # Split by newlines and create simple link objects
+                        urls = [url.strip() for url in official_links_str.split('\n') if url.strip() and url.strip().startswith('http')]
+                        links_data = []
+                        for url in urls:
+                            links_data.append({
+                                'title': 'Official Link',
+                                'url': url,
+                                'type': ''
+                            })
+                    
+                    if links_data:
+                        official_links_json = json.dumps(links_data)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, treat as URL list
+                    urls = [url.strip() for url in official_links_str.split('\n') if url.strip() and url.strip().startswith('http')]
+                    if urls:
+                        links_data = [{'title': 'Official Link', 'url': url, 'type': ''} for url in urls]
+                        official_links_json = json.dumps(links_data)
+            
             # Update person data using safe attribute access
             # Note: We don't directly assign to person attributes due to type uncertainty
             # Instead, we build the updated data dictionary directly for storage
@@ -347,6 +397,15 @@ def edit_person(person_id):
                 'website': website if website else None,
                 'openlibrary_id': openlibrary_id if openlibrary_id else None,
                 'image_url': image_url if image_url else None,
+                # New comprehensive fields
+                'birth_date': birth_date if birth_date else None,
+                'death_date': death_date if death_date else None,
+                'title': title if title else None,
+                'fuller_name': fuller_name if fuller_name else None,
+                'wikidata_id': wikidata_id if wikidata_id else None,
+                'imdb_id': imdb_id if imdb_id else None,
+                'alternate_names': alternate_names_json,
+                'official_links': official_links_json,
                 'created_at': created_at_val.isoformat() if created_at_val and hasattr(created_at_val, 'isoformat') else datetime.now().isoformat(),
                 'updated_at': updated_at_val.isoformat()
             }
@@ -529,6 +588,130 @@ def delete_person(person_id):
         return redirect(url_for('people.people'))
 
 
+def parse_openlibrary_date(date_str):
+    """Parse OpenLibrary date string and extract year as integer.
+    
+    Args:
+        date_str: Date string like "21 September 1947" or "1947"
+        
+    Returns:
+        Integer year or None if parsing fails
+    """
+    if not date_str or not isinstance(date_str, str):
+        return None
+    
+    # Try to extract year from various formats
+    import re
+    
+    # Look for 4-digit year pattern
+    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', date_str)
+    if year_match:
+        try:
+            return int(year_match.group(1))
+        except ValueError:
+            pass
+    
+    # Try parsing just the beginning if it's a year
+    try:
+        if len(date_str) >= 4 and date_str[:4].isdigit():
+            return int(date_str[:4])
+    except ValueError:
+        pass
+    
+    return None
+
+
+def parse_comprehensive_openlibrary_data(author_data):
+    """Parse comprehensive OpenLibrary author data into Person field updates.
+    
+    Args:
+        author_data: Dictionary from OpenLibrary API
+        
+    Returns:
+        Dictionary of field updates for Person model
+    """
+    import json
+    
+    updates = {}
+    
+    # Basic information
+    if author_data.get('name'):
+        updates['name'] = author_data['name']
+    
+    # Full birth/death dates
+    if author_data.get('birth_date'):
+        updates['birth_date'] = author_data['birth_date']
+        # Also extract year for backward compatibility
+        birth_year = parse_openlibrary_date(author_data['birth_date'])
+        if birth_year:
+            updates['birth_year'] = birth_year
+    
+    if author_data.get('death_date'):
+        updates['death_date'] = author_data['death_date']
+        # Also extract year for backward compatibility
+        death_year = parse_openlibrary_date(author_data['death_date'])
+        if death_year:
+            updates['death_year'] = death_year
+    
+    # Biography and basic info
+    if author_data.get('bio'):
+        updates['bio'] = author_data['bio']
+    
+    if author_data.get('title'):
+        updates['title'] = author_data['title']
+    
+    if author_data.get('fuller_name') or author_data.get('personal_name'):
+        updates['fuller_name'] = author_data.get('fuller_name') or author_data.get('personal_name')
+    
+    # External service IDs
+    updates['openlibrary_id'] = author_data.get('openlibrary_id', '')
+    
+    if author_data.get('remote_ids'):
+        remote_ids = author_data['remote_ids']
+        if remote_ids.get('wikidata'):
+            updates['wikidata_id'] = remote_ids['wikidata']
+        if remote_ids.get('imdb'):
+            updates['imdb_id'] = remote_ids['imdb']
+    
+    # Alternate names
+    if author_data.get('alternate_names'):
+        # Store as JSON string for database storage
+        updates['alternate_names'] = json.dumps(author_data['alternate_names'])
+    
+    # Links - process all official links
+    if author_data.get('links'):
+        # Store all links as JSON
+        links_data = []
+        for link in author_data['links']:
+            if isinstance(link, dict):
+                links_data.append({
+                    'title': link.get('title', ''),
+                    'url': link.get('url', ''),
+                    'type': link.get('type', {}).get('key', '') if link.get('type') else ''
+                })
+        if links_data:
+            updates['official_links'] = json.dumps(links_data)
+        
+        # Also set the first official website as the main website field
+        for link in author_data['links']:
+            if isinstance(link, dict) and link.get('url'):
+                if 'official' in link.get('title', '').lower() or 'website' in link.get('title', '').lower():
+                    updates['website'] = link['url']
+                    break
+    
+    # Wikipedia URL handling
+    if author_data.get('wikipedia_url'):
+        updates['website'] = author_data['wikipedia_url']
+    elif author_data.get('website_url'):
+        updates['website'] = author_data['website_url']
+    
+    # Photo/image
+    if author_data.get('photo_url'):
+        updates['image_url'] = author_data['photo_url']
+    
+    return updates
+
+
 @people_bp.route('/person/<person_id>/refresh_metadata', methods=['POST'])
 @login_required
 def refresh_person_metadata(person_id):
@@ -537,42 +720,88 @@ def refresh_person_metadata(person_id):
         from app.utils import search_author_by_name, fetch_author_data
         
         # Get the current person
-        person = book_service.get_person_by_id_sync(person_id)
+        person = person_service.get_person_by_id_sync(person_id)
         if not person:
             flash('Person not found.', 'error')
             return redirect(url_for('people.people'))
         
-        person_name = getattr(person, 'name', '')
-        current_openlibrary_id = getattr(person, 'openlibrary_id', None)
+        # Handle both dict and object formats
+        if isinstance(person, dict):
+            person_name = person.get('name', '')
+            current_openlibrary_id = person.get('openlibrary_id', None)
+        else:
+            person_name = getattr(person, 'name', '')
+            current_openlibrary_id = getattr(person, 'openlibrary_id', None)
+        
+        current_app.logger.info(f"Person data retrieved: name='{person_name}', openlibrary_id='{current_openlibrary_id}'")
+        current_app.logger.info(f"Full person object: {person}")
+        current_app.logger.info(f"Person object type: {type(person)}")
+        if hasattr(person, '__dict__'):
+            current_app.logger.info(f"Person attributes: {person.__dict__}")
+        elif isinstance(person, dict):
+            current_app.logger.info(f"Person dict keys: {person.keys()}")
+            current_app.logger.info(f"Person dict: {person}")
         
         metadata_updated = False
         
         # If person already has an OpenLibrary ID, fetch fresh data
-        if current_openlibrary_id:
+        if current_openlibrary_id and current_openlibrary_id.strip():
+            current_app.logger.info(f"✅ Person has OpenLibrary ID - fetching fresh metadata for person '{person_name}' with OpenLibrary ID: {current_openlibrary_id}")
             author_data = fetch_author_data(current_openlibrary_id)
+            current_app.logger.info(f"OpenLibrary API returned data: {author_data}")
             if author_data:
-                # Update person with fresh metadata
-                flash(f'Metadata refreshed for "{person_name}".', 'success')
-                metadata_updated = True
+                # Update person with fresh metadata using comprehensive parser
+                updates = parse_comprehensive_openlibrary_data(author_data)
+                
+                current_app.logger.info(f"Updating person {person_id} with comprehensive data: {updates}")
+                updated_person = person_service.update_person_sync(person_id, updates)
+                if updated_person:
+                    flash(f'Metadata refreshed for "{person_name}".', 'success')
+                    metadata_updated = True
+                else:
+                    current_app.logger.error(f"Failed to update person {person_id} in database")
+                    flash(f'Error updating metadata for "{person_name}".', 'error')
             else:
+                current_app.logger.warning(f"No author data returned from OpenLibrary for ID: {current_openlibrary_id}")
                 flash(f'Could not refresh metadata for "{person_name}".', 'warning')
         else:
             # Search for the person by name
+            current_app.logger.info(f"❌ No OpenLibrary ID found (ID='{current_openlibrary_id}') - searching OpenLibrary for person by name: '{person_name}'")
+            if not person_name or not person_name.strip():
+                current_app.logger.error(f"❌ Person name is empty! Cannot search OpenLibrary. Person ID: {person_id}")
+                flash(f'Person name is missing - cannot search for metadata.', 'error')
+                return redirect(url_for('people.person_details', person_id=person_id))
+            
             search_result = search_author_by_name(person_name)
+            current_app.logger.info(f"OpenLibrary search returned: {search_result}")
             if search_result:
                 # search_author_by_name returns a single result dict, not a list
                 author_id = search_result.get('openlibrary_id', '')
                 if author_id:
                     author_data = fetch_author_data(author_id)
+                    current_app.logger.info(f"Detailed author data from OpenLibrary: {author_data}")
                     if author_data:
-                        # Update person with new metadata
-                        flash(f'Metadata found and added for "{person_name}".', 'success')
-                        metadata_updated = True
+                        # Update person with new metadata using comprehensive parser
+                        updates = parse_comprehensive_openlibrary_data(author_data)
+                        # Set the OpenLibrary ID
+                        updates['openlibrary_id'] = author_id
+                        
+                        current_app.logger.info(f"Updating person {person_id} with comprehensive data: {updates}")
+                        updated_person = person_service.update_person_sync(person_id, updates)
+                        if updated_person:
+                            flash(f'Metadata found and added for "{person_name}".', 'success')
+                            metadata_updated = True
+                        else:
+                            current_app.logger.error(f"Failed to update person {person_id} in database")
+                            flash(f'Error updating metadata for "{person_name}".', 'error')
                     else:
+                        current_app.logger.warning(f"No detailed author data returned for OpenLibrary ID: {author_id}")
                         flash(f'Found author but could not fetch metadata for "{person_name}".', 'warning')
                 else:
+                    current_app.logger.warning(f"No OpenLibrary ID found in search result: {search_result}")
                     flash(f'No valid author ID found for "{person_name}".', 'warning')
             else:
+                current_app.logger.warning(f"No search results returned from OpenLibrary for: '{person_name}'")
                 flash(f'No metadata found for "{person_name}".', 'warning')
         
         if not metadata_updated:

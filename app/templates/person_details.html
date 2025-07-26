@@ -23,7 +23,14 @@
                                     </div>
                                 {% endif %}
                                 <div>
-                                    <h1 class="h2 mb-2">{{ person.name }}</h1>
+                                    <h1 class="h2 mb-2">
+                                        {% if person.title %}{{ person.title }} {% endif %}{{ person.name }}
+                                    </h1>
+                                    {% if person.fuller_name and person.fuller_name != person.name %}
+                                        <p class="text-muted mb-2">
+                                            <small><i class="bi bi-person-badge"></i> {{ person.fuller_name }}</small>
+                                        </p>
+                                    {% endif %}
                                 </div>
                             </div>
                             {% if person.bio %}
@@ -31,12 +38,16 @@
                             {% endif %}
                             
                             <div class="row">
-                                {% if person.birth_year %}
+                                {% if person.birth_date or person.birth_year %}
                                 <div class="col-sm-6">
                                     <small class="text-muted">
                                         <i class="bi bi-calendar-event"></i> 
-                                        Born: {{ person.birth_year }}
-                                        {% if person.death_year %} - {{ person.death_year }}{% endif %}
+                                        Born: {% if person.birth_date %}{{ person.birth_date }}{% else %}{{ person.birth_year }}{% endif %}
+                                        {% if person.death_date %}
+                                            <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Died: {{ person.death_date }}
+                                        {% elif person.death_year %}
+                                            - {{ person.death_year }}
+                                        {% endif %}
                                     </small>
                                 </div>
                                 {% endif %}
@@ -51,12 +62,67 @@
                                 {% endif %}
                             </div>
                             
-                            {% if person.website %}
-                            <div class="mt-2">
-                                <a href="{{ person.website }}" target="_blank" class="btn btn-sm btn-outline-primary">
-                                    <i class="bi bi-globe"></i> Website
-                                </a>
+                            <!-- External Links and IDs -->
+                            {% if person.website or person.wikidata_id or person.imdb_id or person.official_links %}
+                            <div class="mt-3">
+                                <h6 class="text-muted mb-2">External Links</h6>
+                                <div class="d-flex flex-wrap gap-2">
+                                    {% if person.website %}
+                                        <a href="{{ person.website }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-globe"></i> Website
+                                        </a>
+                                    {% endif %}
+                                    
+                                    {% if person.wikidata_id %}
+                                        <a href="https://www.wikidata.org/wiki/{{ person.wikidata_id }}" target="_blank" class="btn btn-sm btn-outline-info">
+                                            <i class="bi bi-wikipedia"></i> Wikidata
+                                        </a>
+                                    {% endif %}
+                                    
+                                    {% if person.imdb_id %}
+                                        <a href="https://www.imdb.com/name/{{ person.imdb_id }}/" target="_blank" class="btn btn-sm btn-outline-warning">
+                                            <i class="bi bi-film"></i> IMDb
+                                        </a>
+                                    {% endif %}
+                                    
+                                    {% if person.openlibrary_id %}
+                                        <a href="https://openlibrary.org/authors/{{ person.openlibrary_id }}" target="_blank" class="btn btn-sm btn-outline-success">
+                                            <i class="bi bi-book"></i> OpenLibrary
+                                        </a>
+                                    {% endif %}
+                                    
+                                    {% if person.official_links %}
+                                        {% set links_data = person.official_links | from_json %}
+                                        {% if links_data %}
+                                            {% for link in links_data %}
+                                                {% if link.url and link.title %}
+                                                    <a href="{{ link.url }}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                                        <i class="bi bi-link-45deg"></i> {{ link.title }}
+                                                    </a>
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% endif %}
+                                    {% endif %}
+                                </div>
                             </div>
+                            {% endif %}
+                            
+                            <!-- Alternate Names -->
+                            {% if person.alternate_names %}
+                                {% set alt_names = person.alternate_names | from_json %}
+                                {% if alt_names and alt_names | length > 0 %}
+                                <div class="mt-3">
+                                    <h6 class="text-muted mb-2">Also Known As</h6>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        {% for name in alt_names[:10] %}  {# Limit to first 10 alternate names #}
+                                            <span class="badge bg-light text-dark">{{ name }}</span>
+                                        {% endfor %}
+                                        {% if alt_names | length > 10 %}
+                                            <span class="badge bg-secondary">+{{ alt_names | length - 10 }} more</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endif %}
                             {% endif %}
                         </div>
                         
@@ -80,12 +146,12 @@
                                 
                                 <!-- Action Buttons -->
                                 <div class="mt-3">
-                                    <a href="{{ url_for('main.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary me-2">
+                                    <a href="{{ url_for('people.edit_person', person_id=person.id) }}" class="btn btn-sm btn-outline-secondary me-2">
                                         <i class="bi bi-pencil"></i> Edit
                                     </a>
                                     
                                     <!-- Refresh Metadata Button -->
-                                    <form method="post" action="{{ url_for('main.refresh_person_metadata', person_id=person.id) }}" class="d-inline">
+                                    <form method="post" action="{{ url_for('people.refresh_person_metadata', person_id=person.id) }}" class="d-inline">
                                         <button type="submit" class="btn btn-sm btn-outline-info me-2" 
                                                 title="{% if person.openlibrary_id %}Refresh metadata from OpenLibrary{% else %}Search for this person on OpenLibrary{% endif %}">
                                             <i class="bi bi-arrow-clockwise"></i> 
@@ -93,7 +159,7 @@
                                         </button>
                                     </form>
                                     
-                                    <a href="{{ url_for('main.people') }}" class="btn btn-sm btn-outline-primary">
+                                    <a href="{{ url_for('people.people') }}" class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-arrow-left"></i> Back to People
                                     </a>
                                 </div>

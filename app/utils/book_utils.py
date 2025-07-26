@@ -9,52 +9,117 @@ import os
 from flask import current_app
 
 def search_author_by_name(author_name):
-    """Search for authors on OpenLibrary by name and return the best match."""
+    """Search for authors on OpenLibrary by name and return the best match with most comprehensive data."""
     if not author_name:
+        print(f"[OPENLIBRARY] No author name provided for search")
         return None
     
     # OpenLibrary search API endpoint for authors
     url = f"https://openlibrary.org/search/authors.json?q={author_name}"
+    print(f"[OPENLIBRARY] Searching for author: '{author_name}' at {url}")
     try:
         response = requests.get(url, timeout=10)
+        print(f"[OPENLIBRARY] Search response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
+        print(f"[OPENLIBRARY] Search response data: {data}")
         
         docs = data.get('docs', [])
         if not docs:
+            print(f"[OPENLIBRARY] No search results found for '{author_name}'")
             return None
             
-        # Find the best match (usually the first result)
-        for doc in docs:
+        print(f"[OPENLIBRARY] Found {len(docs)} search results")
+        
+        # Find exact matches first and score them by comprehensiveness
+        exact_matches = []
+        close_matches = []
+        
+        for i, doc in enumerate(docs):
             name = doc.get('name', '')
             key = doc.get('key', '')
+            author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
+            print(f"[OPENLIBRARY] Result {i}: name='{name}', key='{key}'")
             
-            # Basic name matching - could be enhanced with fuzzy matching
+            # Calculate comprehensiveness score for this search result
+            score = 0
+            if doc.get('birth_date'):
+                score += 10
+            if doc.get('death_date'):
+                score += 5
+            if doc.get('alternate_names'):
+                score += 8
+            if doc.get('top_subjects'):
+                score += 3
+            work_count = doc.get('work_count', 0)
+            if work_count > 0:
+                score += min(work_count // 5, 10)  # Up to 10 points for work count
+            
+            result_data = {
+                'name': name,
+                'author_id': author_id,
+                'doc': doc,
+                'score': score
+            }
+            
+            # Check for exact name match (case insensitive)
             if name.lower().strip() == author_name.lower().strip():
-                author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
-                
-                # Fetch detailed data for this author
-                detailed_data = fetch_author_data(author_id)
-                if detailed_data:
-                    detailed_data['openlibrary_id'] = author_id
-                    detailed_data['name'] = name
-                    return detailed_data
-                else:
-                    # Return basic info if detailed fetch fails
-                    return {
-                        'openlibrary_id': author_id,
-                        'name': name,
-                        'birth_date': doc.get('birth_date'),
-                        'death_date': doc.get('death_date'),
-                        'bio': None,
-                        'photo_url': None
-                    }
+                exact_matches.append(result_data)
+                print(f"[OPENLIBRARY] Exact match: {name} (ID: {author_id}, score: {score})")
+            elif author_name.lower() in name.lower() or name.lower() in author_name.lower():
+                close_matches.append(result_data)
+                print(f"[OPENLIBRARY] Close match: {name} (ID: {author_id}, score: {score})")
+        
+        # Sort exact matches by comprehensiveness score (highest first)
+        exact_matches.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Choose the best match from exact matches, or fall back to close matches
+        candidates = exact_matches if exact_matches else close_matches
+        if not candidates:
+            # Fall back to first result if no good matches
+            candidates = [{'name': docs[0].get('name', ''), 
+                          'author_id': docs[0].get('key', '').replace('/authors/', ''),
+                          'doc': docs[0], 'score': 0}]
+        
+        # Log scoring results
+        if exact_matches:
+            print(f"[OPENLIBRARY] {len(exact_matches)} exact matches found, sorted by score:")
+            for match in exact_matches:
+                print(f"  - {match['name']} ({match['author_id']}): {match['score']} points")
+        
+        # Try to get detailed data for the best candidate
+        best_match = candidates[0]
+        author_id = best_match['author_id']
+        
+        print(f"[OPENLIBRARY] Choosing author '{best_match['name']}' (ID: {author_id}, score: {best_match['score']}) from {len(candidates)} candidates")
+        
+        # Fetch detailed data for this author
+        detailed_data = fetch_author_data(author_id)
+        if detailed_data:
+            detailed_data['openlibrary_id'] = author_id
+            detailed_data['name'] = best_match['name']
+            return detailed_data
+        else:
+            # Return enhanced basic info from search results if detailed fetch fails
+            print(f"[OPENLIBRARY] Detailed fetch failed, returning basic info")
+            doc = best_match['doc']
+            return {
+                'openlibrary_id': author_id,
+                'name': best_match['name'],
+                'birth_date': doc.get('birth_date', ''),
+                'death_date': doc.get('death_date', ''),
+                'bio': None,
+                'photo_url': None,
+                'alternate_names': doc.get('alternate_names', []),
+                'top_subjects': doc.get('top_subjects', [])
+            }
         
         # If no exact match, return the first result as best match
         first_match = docs[0]
         name = first_match.get('name', '')
         key = first_match.get('key', '')
         author_id = key.replace('/authors/', '') if key.startswith('/authors/') else key
+        print(f"[OPENLIBRARY] No exact match, using first result: '{name}' (ID: {author_id})")
         
         detailed_data = fetch_author_data(author_id)
         if detailed_data:
@@ -62,6 +127,7 @@ def search_author_by_name(author_name):
             detailed_data['name'] = name
             return detailed_data
         else:
+            print(f"[OPENLIBRARY] Detailed fetch failed for first result, returning basic info")
             return {
                 'openlibrary_id': author_id,
                 'name': name,
@@ -72,7 +138,7 @@ def search_author_by_name(author_name):
             }
             
     except Exception as e:
-        current_app.logger.warning(f"Failed to search for author '{author_name}': {e}")
+        print(f"[OPENLIBRARY] Failed to search for author '{author_name}': {e}")
         return None
 
 def fetch_book_data(isbn):
@@ -278,13 +344,17 @@ def fetch_book_data(isbn):
 def fetch_author_data(author_id):
     """Fetch detailed author information from OpenLibrary API using author ID."""
     if not author_id:
+        print(f"[OPENLIBRARY] No author ID provided")
         return None
         
     url = f"https://openlibrary.org/authors/{author_id}.json"
+    print(f"[OPENLIBRARY] Fetching author data from: {url}")
     try:
         response = requests.get(url, timeout=10)
+        print(f"[OPENLIBRARY] Response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
+        print(f"[OPENLIBRARY] Raw response data: {data}")
         
         # Extract author information
         name = data.get('name', '')
@@ -316,7 +386,7 @@ def fetch_author_data(author_id):
                     wikipedia_url = url_val
                     break
         
-        return {
+        result = {
             'name': name,
             'birth_date': birth_date,
             'death_date': death_date,
@@ -327,12 +397,14 @@ def fetch_author_data(author_id):
             'openlibrary_id': author_id,
             'source': 'OpenLibrary'
         }
+        print(f"[OPENLIBRARY] Processed author data: {result}")
+        return result
         
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching author data from OpenLibrary for ID {author_id}: {e}")
+        print(f"[OPENLIBRARY] Error fetching author data from OpenLibrary for ID {author_id}: {e}")
         return None
     except Exception as e:
-        print(f"Unexpected error processing OpenLibrary author data for ID {author_id}: {e}")
+        print(f"[OPENLIBRARY] Unexpected error processing OpenLibrary author data for ID {author_id}: {e}")
         return None
 
 def get_google_books_cover(isbn, fetch_title_author=False):

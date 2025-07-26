@@ -187,24 +187,32 @@ class KuzuGraphDB:
                 
                 # Check for and add missing columns to Person table
                 try:
-                    # Test if openlibrary_id column exists
+                    # Test if openlibrary_id column exists and add missing Person fields
                     if self._connection:
                         self._connection.execute("MATCH (p:Person) RETURN p.openlibrary_id LIMIT 1")
                 except Exception as e:
                     if "Cannot find property openlibrary_id" in str(e):
-                        try:
-                            if self._connection:
-                                self._connection.execute("ALTER TABLE Person ADD openlibrary_id STRING")
-                                logger.debug("Added openlibrary_id column to Person table")
-                        except Exception as alter_e:
-                            print(f"Note: Could not add image_url to Book table: {alter_e}")
+                        # Add missing Person fields one by one
+                        person_fields_to_add = [
+                            ("openlibrary_id", "STRING"),
+                            ("image_url", "STRING"),
+                            ("birth_date", "STRING"),
+                            ("death_date", "STRING"),
+                            ("wikidata_id", "STRING"),
+                            ("imdb_id", "STRING"),
+                            ("alternate_names", "STRING"),
+                            ("fuller_name", "STRING"),
+                            ("title", "STRING"),
+                            ("official_links", "STRING")
+                        ]
                         
-                        try:
-                            if self._connection:
-                                self._connection.execute("ALTER TABLE Person ADD image_url STRING")
-                                logger.debug("Added image_url column to Person table")
-                        except Exception as alter_e:
-                            print(f"Note: Could not add image_url to Person table: {alter_e}")
+                        for field_name, field_type in person_fields_to_add:
+                            try:
+                                if self._connection:
+                                    self._connection.execute(f"ALTER TABLE Person ADD {field_name} {field_type}")
+                                    logger.debug(f"Added {field_name} column to Person table")
+                            except Exception as alter_e:
+                                print(f"Note: Could not add {field_name} to Person table: {alter_e}")
                     else:
                         print("Schema appears to be up to date")
                         
@@ -286,6 +294,8 @@ class KuzuGraphDB:
                     id STRING,
                     name STRING,
                     normalized_name STRING,
+                    birth_date STRING,
+                    death_date STRING,
                     birth_year INT64,
                     death_year INT64,
                     birth_place STRING,
@@ -293,6 +303,12 @@ class KuzuGraphDB:
                     website STRING,
                     openlibrary_id STRING,
                     image_url STRING,
+                    wikidata_id STRING,
+                    imdb_id STRING,
+                    alternate_names STRING,
+                    fuller_name STRING,
+                    title STRING,
+                    official_links STRING,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP,
                     PRIMARY KEY(id)
@@ -1077,11 +1093,19 @@ class KuzuGraphStorage:
             print(f"🔧 [UPDATE_NODE] Generated query: {query}")
             print(f"🔧 [UPDATE_NODE] Query parameters: {params}")
             
-            self.kuzu_conn.execute(query, params)
-            return True
+            try:
+                print(f"🔧 [UPDATE_NODE] About to execute query...")
+                result = self.kuzu_conn.execute(query, params)
+                print(f"🔧 [UPDATE_NODE] Query executed successfully, result: {result}")
+                print(f"🔧 [UPDATE_NODE] Result type: {type(result)}")
+                return True
+            except Exception as exec_e:
+                print(f"🔧 [UPDATE_NODE] Query execution failed: {type(exec_e).__name__}: {str(exec_e)}")
+                raise exec_e
             
         except Exception as e:
             logger.error(f"Failed to update {node_type} node {node_id}: {e}")
+            print(f"🔧 [UPDATE_NODE] Exception details: {type(e).__name__}: {str(e)}")
             return False
     
     def delete_node(self, node_type: str, node_id: str) -> bool:

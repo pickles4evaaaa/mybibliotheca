@@ -169,38 +169,42 @@ class KuzuPersonRepository:
             logger.info(f"🔍 [DEBUG] CREATE: Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
             if not openlibrary_id and not bio and not birth_year and not image_url:
                 try:
-                    from ..utils import search_author_by_name
+                    from ..utils import search_author_by_name, fetch_author_data
                     logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")
-                    author_data = search_author_by_name(person_name)
+                    search_result = search_author_by_name(person_name)
                     
-                    if author_data and author_data.get('openlibrary_id'):
-                        openlibrary_id = author_data.get('openlibrary_id')
+                    if search_result and search_result.get('openlibrary_id'):
+                        # Get detailed author data using the OpenLibrary ID
+                        author_id = search_result['openlibrary_id']
+                        detailed_author_data = fetch_author_data(author_id)
                         
-                        if author_data.get('bio') and not bio:
-                            bio = author_data['bio']
-                        
-                        if author_data.get('birth_date') and not birth_year:
-                            try:
-                                import re
-                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['birth_date']))
-                                if year_match:
-                                    birth_year = int(year_match.group())
-                            except (ValueError, TypeError):
-                                pass
-                        
-                        if author_data.get('death_date') and not death_year:
-                            try:
-                                import re
-                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['death_date']))
-                                if year_match:
-                                    death_year = int(year_match.group())
-                            except (ValueError, TypeError):
-                                pass
-                        
-                        if author_data.get('photo_url') and not image_url:
-                            image_url = author_data['photo_url']
-                        
-                        logger.info(f"✅ Auto-fetched metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                        if detailed_author_data:
+                            # Use the same comprehensive parser as the person metadata refresh
+                            from ..routes.people_routes import parse_comprehensive_openlibrary_data
+                            
+                            # Parse comprehensive data
+                            updates = parse_comprehensive_openlibrary_data(detailed_author_data)
+                            
+                            # Apply all the comprehensive updates if not already provided
+                            if not openlibrary_id and updates.get('openlibrary_id'):
+                                openlibrary_id = updates['openlibrary_id']
+                            if not bio and updates.get('bio'):
+                                bio = updates['bio']
+                            if not birth_year and updates.get('birth_year'):
+                                birth_year = updates['birth_year']
+                            if not death_year and updates.get('death_year'):
+                                death_year = updates['death_year']
+                            if not image_url and updates.get('image_url'):
+                                image_url = updates['image_url']
+                            if not birth_place and updates.get('birth_place'):
+                                birth_place = updates['birth_place']
+                            if not website and updates.get('website'):
+                                website = updates['website']
+                            
+                            logger.info(f"✅ Auto-fetched comprehensive metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                            logger.info(f"📚 Applied fields: {list(updates.keys())}")
+                        else:
+                            logger.warning(f"⚠️ Could not fetch detailed data for OpenLibrary ID: {author_id}")
                     else:
                         logger.info(f"📝 No OpenLibrary data found for: {person_name}")
                         
@@ -239,6 +243,7 @@ class KuzuPersonRepository:
     async def get_by_id(self, person_id: str) -> Optional[Dict[str, Any]]:
         """Get a person by ID."""
         try:
+            print(f"🔧 [PERSON_REPO] Getting person by ID: {person_id}")
             query = """
             MATCH (p:Person {id: $person_id})
             RETURN p
@@ -246,13 +251,34 @@ class KuzuPersonRepository:
             """
             
             results = self.db.query(query, {"person_id": person_id})
+            print(f"🔧 [PERSON_REPO] Query results: {results}")
+            print(f"🔧 [PERSON_REPO] Results length: {len(results) if results else 0}")
             
-            if results and 'col_0' in results[0]:
-                return dict(results[0]['col_0'])
-            
-            return None
+            if results and len(results) > 0:
+                print(f"🔧 [PERSON_REPO] First result keys: {list(results[0].keys()) if results[0] else 'None'}")
+                
+                # Try different possible key formats
+                if 'result' in results[0]:
+                    person_data = dict(results[0]['result'])
+                    print(f"🔧 [PERSON_REPO] Found using 'result' key: {person_data}")
+                    return person_data
+                elif 'col_0' in results[0]:
+                    person_data = dict(results[0]['col_0'])
+                    print(f"🔧 [PERSON_REPO] Found using 'col_0' key: {person_data}")
+                    return person_data
+                elif 'p' in results[0]:
+                    person_data = dict(results[0]['p'])
+                    print(f"🔧 [PERSON_REPO] Found using 'p' key: {person_data}")
+                    return person_data
+                else:
+                    print(f"🔧 [PERSON_REPO] No recognized key format found")
+                    return None
+            else:
+                print(f"🔧 [PERSON_REPO] No results found")
+                return None
             
         except Exception as e:
+            print(f"🔧 [PERSON_REPO] Exception in get_by_id: {type(e).__name__}: {str(e)}")
             logger.error(f"❌ Failed to get person by ID {person_id}: {e}")
             return None
     
@@ -572,38 +598,42 @@ class KuzuBookRepository:
             logger.info(f"🔍 [DEBUG] Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
             if not openlibrary_id and not bio and not birth_year and not image_url:
                 try:
-                    from ..utils import search_author_by_name
+                    from ..utils import search_author_by_name, fetch_author_data
                     logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")
-                    author_data = search_author_by_name(person_name)
+                    search_result = search_author_by_name(person_name)
                     
-                    if author_data and author_data.get('openlibrary_id'):
-                        openlibrary_id = author_data.get('openlibrary_id')
+                    if search_result and search_result.get('openlibrary_id'):
+                        # Get detailed author data using the OpenLibrary ID
+                        author_id = search_result['openlibrary_id']
+                        detailed_author_data = fetch_author_data(author_id)
                         
-                        if author_data.get('bio') and not bio:
-                            bio = author_data['bio']
-                        
-                        if author_data.get('birth_date') and not birth_year:
-                            try:
-                                import re
-                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['birth_date']))
-                                if year_match:
-                                    birth_year = int(year_match.group())
-                            except (ValueError, TypeError):
-                                pass
-                        
-                        if author_data.get('death_date') and not death_year:
-                            try:
-                                import re
-                                year_match = re.search(r'\b(19|20)\d{2}\b', str(author_data['death_date']))
-                                if year_match:
-                                    death_year = int(year_match.group())
-                            except (ValueError, TypeError):
-                                pass
-                        
-                        if author_data.get('photo_url') and not image_url:
-                            image_url = author_data['photo_url']
-                        
-                        logger.info(f"✅ Auto-fetched metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                        if detailed_author_data:
+                            # Use the same comprehensive parser as the person metadata refresh
+                            from ..routes.people_routes import parse_comprehensive_openlibrary_data
+                            
+                            # Parse comprehensive data
+                            updates = parse_comprehensive_openlibrary_data(detailed_author_data)
+                            
+                            # Apply all the comprehensive updates if not already provided
+                            if not openlibrary_id and updates.get('openlibrary_id'):
+                                openlibrary_id = updates['openlibrary_id']
+                            if not bio and updates.get('bio'):
+                                bio = updates['bio']
+                            if not birth_year and updates.get('birth_year'):
+                                birth_year = updates['birth_year']
+                            if not death_year and updates.get('death_year'):
+                                death_year = updates['death_year']
+                            if not image_url and updates.get('image_url'):
+                                image_url = updates['image_url']
+                            if not birth_place and updates.get('birth_place'):
+                                birth_place = updates['birth_place']
+                            if not website and updates.get('website'):
+                                website = updates['website']
+                            
+                            logger.info(f"✅ Auto-fetched comprehensive metadata for {person_name}: OpenLibrary ID {openlibrary_id}")
+                            logger.info(f"📚 Applied fields: {list(updates.keys())}")
+                        else:
+                            logger.warning(f"⚠️ Could not fetch detailed data for OpenLibrary ID: {author_id}")
                     else:
                         logger.info(f"📝 No OpenLibrary data found for: {person_name}")
                         

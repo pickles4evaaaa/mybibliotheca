@@ -98,15 +98,22 @@ class KuzuPersonService:
         """Update a person's information."""
         try:
             # Update the person node in Kuzu
+            print(f"🔧 [PERSON_SERVICE] About to call update_node with person_id={person_id}, updates={updates}")
             success = self.graph_storage.update_node('Person', person_id, updates)
+            print(f"🔧 [PERSON_SERVICE] update_node returned: {success} (type: {type(success)})")
             
             if success:
+                print(f"🔧 [PERSON_SERVICE] Success=True, fetching updated person data...")
                 # Return updated person data
-                return await self.get_person_by_id(person_id)
+                updated_person = await self.get_person_by_id(person_id)
+                print(f"🔧 [PERSON_SERVICE] Fetched updated person: {updated_person is not None}")
+                return updated_person
             else:
+                print(f"🔧 [PERSON_SERVICE] Success=False, returning None")
                 return None
                 
         except Exception as e:
+            print(f"🔧 [PERSON_SERVICE] Exception in update_person: {type(e).__name__}: {str(e)}")
             traceback.print_exc()
             return None
     

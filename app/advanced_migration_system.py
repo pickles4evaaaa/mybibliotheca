@@ -26,6 +26,8 @@ import shutil
 import json
 import logging
 import asyncio
+import time
+import random
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any, Union
 from pathlib import Path
@@ -757,6 +759,11 @@ class AdvancedMigrationSystem:
             
             # Migrate reading logs with proper user and book mapping
             if self._table_exists(cursor, 'reading_log'):
+                # First check what columns exist in the reading_log table
+                cursor.execute("PRAGMA table_info(reading_log);")
+                reading_log_columns = [row[1] for row in cursor.fetchall()]
+                has_user_id_column = 'user_id' in reading_log_columns
+                
                 cursor.execute("SELECT * FROM reading_log;")
                 reading_logs = cursor.fetchall()
                 
@@ -774,14 +781,21 @@ class AdvancedMigrationSystem:
                                 return default
                         
                         old_book_id = safe_get(log_row, 'book_id')
-                        old_user_id = safe_get(log_row, 'user_id')
+                        old_user_id = safe_get(log_row, 'user_id') if has_user_id_column else None
                         log_date = safe_get(log_row, 'date')
                         
-                        if (old_book_id in book_id_mapping and 
-                            old_user_id and old_user_id in user_mapping and log_date):
+                        # For V2 databases without user_id in reading_log, assign to admin user
+                        # For V2 databases with user_id in reading_log, use the mapping
+                        target_user_id = None
+                        if has_user_id_column and old_user_id and old_user_id in user_mapping:
+                            target_user_id = user_mapping[old_user_id]
+                        elif not has_user_id_column:
+                            # No user_id column - assign to admin user (like V1 migration)
+                            target_user_id = admin_user_id
+                        
+                        if (old_book_id in book_id_mapping and target_user_id and log_date):
                             
                             new_book_id = book_id_mapping[old_book_id]
-                            new_user_id = user_mapping[old_user_id]
                             
                             # Convert string date to date object if needed
                             if isinstance(log_date, str):
@@ -790,7 +804,7 @@ class AdvancedMigrationSystem:
                             
                             # Create ReadingLog domain object
                             reading_log = ReadingLog(
-                                user_id=new_user_id,
+                                user_id=target_user_id,
                                 book_id=new_book_id,
                                 date=log_date,
                                 pages_read=safe_get(log_row, 'pages_read', 1),  # Default 1 page if not in SQLite
@@ -803,11 +817,23 @@ class AdvancedMigrationSystem:
                             
                             if created_log:
                                 self.stats['reading_logs_migrated'] += 1
-                                logger.debug(f"✅ Migrated reading log for user {new_user_id}, book {new_book_id} on {log_date}")
+                                logger.debug(f"✅ Migrated reading log for user {target_user_id}, book {new_book_id} on {log_date}")
                             else:
-                                logger.warning(f"⚠️ Failed to create reading log for user {new_user_id}, book {new_book_id} on {log_date}")
+                                logger.warning(f"⚠️ Failed to create reading log for user {target_user_id}, book {new_book_id} on {log_date}")
                         else:
-                            logger.warning(f"⚠️ Skipping reading log - missing mapping: book_id={old_book_id}, user_id={old_user_id}, date={log_date}")
+                            # More detailed warning about why reading log was skipped
+                            missing_parts = []
+                            if old_book_id not in book_id_mapping:
+                                missing_parts.append(f"book_id={old_book_id} not in mapping")
+                            if not target_user_id:
+                                if has_user_id_column:
+                                    missing_parts.append(f"user_id={old_user_id} not in mapping")
+                                else:
+                                    missing_parts.append("no admin_user_id for V1-style reading log")
+                            if not log_date:
+                                missing_parts.append("missing date")
+                                
+                            logger.warning(f"⚠️ Skipping reading log - {', '.join(missing_parts)}")
                             
                     except Exception as e:
                         self._log_error(f"Error migrating reading log: {e}")
@@ -994,13 +1020,52 @@ class AdvancedMigrationSystem:
         contributors = []
         for i, author in enumerate(authors_to_process):
             if author and author.strip():
-                # Create Person for the author
+                # Create Person for the author with OpenLibrary metadata enrichment
                 person = Person(
                     name=author.strip(),
                     normalized_name=author.strip().lower(),
                     created_at=datetime.now(),
                     updated_at=datetime.now()
                 )
+                
+                # Try to enrich person data with OpenLibrary metadata during migration
+                try:
+                    from app.utils import search_author_by_name, fetch_author_data
+                    
+                    # Add small delay to avoid overwhelming OpenLibrary API
+                    delay = random.uniform(0.3, 0.7)  # Random delay between 300-700ms
+                    time.sleep(delay)
+                    
+                    logger.info(f"📡 Fetching OpenLibrary metadata for author: {author.strip()}")
+                    search_result = search_author_by_name(author.strip())
+                    
+                    if search_result and search_result.get('openlibrary_id'):
+                        # Get detailed author data using the OpenLibrary ID
+                        author_id = search_result['openlibrary_id']
+                        detailed_author_data = fetch_author_data(author_id)
+                        
+                        if detailed_author_data:
+                            # Use the same comprehensive parser as the person metadata refresh
+                            from app.routes.people_routes import parse_comprehensive_openlibrary_data
+                            
+                            # Parse comprehensive data
+                            updates = parse_comprehensive_openlibrary_data(detailed_author_data)
+                            
+                            # Apply all the comprehensive updates to the person
+                            for field, value in updates.items():
+                                if hasattr(person, field) and value is not None:
+                                    setattr(person, field, value)
+                            
+                            logger.info(f"✅ Enriched author '{author.strip()}' with comprehensive OpenLibrary data: {author_id}")
+                            logger.info(f"📚 Applied fields: {list(updates.keys())}")
+                        else:
+                            logger.warning(f"⚠️ Could not fetch detailed data for OpenLibrary ID: {author_id}")
+                    else:
+                        logger.info(f"⚠️ No OpenLibrary data found for author: {author.strip()}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to fetch OpenLibrary data for author '{author.strip()}': {e}")
+                    # Continue with basic person data if API fails
                 
                 # Create BookContribution with proper order
                 contribution = BookContribution(
