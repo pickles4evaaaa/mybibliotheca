@@ -463,12 +463,23 @@ class AdvancedMigrationSystem:
                         book_id_mapping[old_book_id] = created_book_id
                         
                         reading_status = ReadingStatus.READ if book_row['finish_date'] else ReadingStatus.WANT_TO_READ
-                        locations = [default_location_id] if default_location_id else []
                         
-                        # In the new common library model, we don't create OWNS relationships
-                        # Instead, books are in the common library and users have reading activity records
-                        # For now, just track successful book creation
-                        self.stats['books_migrated'] += 1
+                        # Assign book to admin user's default location
+                        if default_location_id:
+                            try:
+                                location_success = self.location_service.add_book_to_location(
+                                    created_book_id, default_location_id, admin_user_id
+                                )
+                                if location_success:
+                                    self._log_action(f"✅ Assigned book '{book.title}' to admin user's default location")
+                                    self.stats['books_migrated'] += 1
+                                else:
+                                    self._log_error(f"Failed to assign book '{book.title}' to admin user's default location")
+                            except Exception as e:
+                                self._log_error(f"Error assigning book '{book.title}' to admin user's location: {e}")
+                        else:
+                            self._log_error(f"No default location found for admin user when trying to assign book '{book.title}'")
+                            self.stats['books_migrated'] += 1  # Still count as migrated even if location assignment failed
                         
                         # TODO: Create reading activity/history records for user interaction with this book
                         # This could include reading status, dates, ratings, etc. stored in ReadingLog
@@ -671,19 +682,8 @@ class AdvancedMigrationSystem:
                             book_id_mapping[book_row['id']] = created_book_id
                             self.stats['books_migrated'] += 1
                             
-                            # Assign book to admin user's default location
-                            admin_default_location_id = user_default_locations.get(admin_user_id)
-                            if admin_default_location_id:
-                                try:
-                                    location_success = self.location_service.add_book_to_location(
-                                        created_book_id, admin_default_location_id, admin_user_id
-                                    )
-                                    if location_success:
-                                        self._log_action(f"✅ Assigned book '{book.title}' to default location")
-                                    else:
-                                        self._log_error(f"Failed to assign book '{book.title}' to default location")
-                                except Exception as e:
-                                    self._log_error(f"Error assigning book '{book.title}' to location: {e}")
+                            # Don't assign to admin location here - books will be assigned to 
+                            # their original users later based on user_id in reading data
                         else:
                             self._log_error(f"Failed to create global book '{book.title}'")
                     else:
@@ -701,8 +701,8 @@ class AdvancedMigrationSystem:
                     self._log_error(f"Error migrating book {title}: {e}")
                     continue
             
-            # Migrate user reading data separately (preserve reading history)
-            # This creates user-specific reading metadata without ownership relationships
+            # Assign books to users based on user_id field in book table
+            # In V2 databases, every book has a user_id indicating ownership
             cursor.execute("SELECT * FROM book;")
             books_with_user_data = cursor.fetchall()
             
@@ -718,40 +718,41 @@ class AdvancedMigrationSystem:
                     old_book_id = book_row['id']
                     old_user_id = safe_get(book_row, 'user_id')
                     
-                    # Only migrate reading data if user exists and book was created
+                    # Assign book to user if both user mapping and book mapping exist
                     if (old_user_id and old_user_id in user_mapping and 
                         old_book_id in book_id_mapping):
                         
                         new_user_id = user_mapping[old_user_id]
                         new_book_id = book_id_mapping[old_book_id]
                         
-                        # Only create reading data if the user actually interacted with the book
-                        has_reading_data = (
-                            safe_get(book_row, 'finish_date') or 
-                            safe_get(book_row, 'start_date') or
-                            safe_get(book_row, 'user_rating') or
-                            safe_get(book_row, 'notes')
-                        )
+                        # Get default location for this user and assign the book to it (if default location exists)
+                        user_default_location_id = user_default_locations.get(new_user_id)
                         
-                        if has_reading_data:
-                            # Determine reading status from the book data
-                            reading_status = ReadingStatus.READ if safe_get(book_row, 'finish_date') else ReadingStatus.PLAN_TO_READ
-                            
-                            # Get default location for this user (for future reading activity implementation)
-                            user_default_location_id = user_default_locations.get(new_user_id)
-                            
-                            # In the new common library model, we don't create OWNS relationships
-                            # Instead, books are in the common library and users have reading activity records
-                            # For now, just track successful relationship creation
+                        if user_default_location_id:
+                            try:
+                                # Add book to user's default location (like manual book adding)
+                                location_success = self.location_service.add_book_to_location(
+                                    new_book_id, user_default_location_id, new_user_id
+                                )
+                                if location_success:
+                                    self._log_action(f"✅ Assigned book '{safe_get(book_row, 'title', 'Unknown')}' to user {new_user_id}'s default location")
+                                    self.stats['relationships_created'] += 1
+                                else:
+                                    self._log_error(f"Failed to assign book '{safe_get(book_row, 'title', 'Unknown')}' to user {new_user_id}'s default location")
+                            except Exception as e:
+                                self._log_error(f"Error assigning book '{safe_get(book_row, 'title', 'Unknown')}' to user {new_user_id}'s location: {e}")
+                        else:
+                            # No default location - leave book unassigned to any location (but still owned by user)
+                            self._log_action(f"📝 Book '{safe_get(book_row, 'title', 'Unknown')}' assigned to user {new_user_id} but no default location set - book remains location-free")
                             self.stats['relationships_created'] += 1
                             
-                            # TODO: Create reading activity/history records for user interaction with this book
-                            # This could include reading status, dates, ratings, notes, etc. stored in ReadingLog
-                            # For now, we'll skip this as the common library model is still being developed
+                        # TODO: Create reading activity/history records for user interaction with this book
+                        # This could include reading status, dates, ratings, notes, etc. stored in ReadingLog
+                        # For now, we'll skip this as the common library model is still being developed
                     
                 except Exception as e:
                     title = book_row['title'] if 'title' in book_row.keys() else 'Unknown'
-                    self._log_error(f"Error migrating reading data for book {title}: {e}")
+                    self._log_error(f"Error assigning book to user: {title}: {e}")
                     continue
             
             # Migrate reading logs with proper user and book mapping
