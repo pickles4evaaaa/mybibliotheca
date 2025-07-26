@@ -492,13 +492,9 @@ class SimplifiedBookService:
             
             print(f"🎉 [SIMPLIFIED] Book creation completed: {book_id}")
             
-            # Force a checkpoint to ensure all book data is persisted to disk
-            try:
-                print(f"🔄 [SIMPLIFIED] Forcing checkpoint to ensure persistence...")
-                self.storage._force_checkpoint()
-                print(f"✅ [SIMPLIFIED] Checkpoint completed successfully")
-            except Exception as e:
-                print(f"⚠️ [SIMPLIFIED] Checkpoint failed: {e}")
+            # Use safe checkpoint to ensure data is visible after container restarts
+            # This is done AFTER all operations complete to avoid corruption
+            self.storage.safe_checkpoint()
             
             return book_id
             
@@ -571,13 +567,8 @@ class SimplifiedBookService:
                     except Exception as e:
                         pass  # Error saving personal custom metadata
                 
-                # Force a checkpoint to ensure ownership data is persisted to disk
-                try:
-                    print(f"🔄 [SIMPLIFIED] Forcing checkpoint to ensure ownership persistence...")
-                    self.storage._force_checkpoint()
-                    print(f"✅ [SIMPLIFIED] Ownership checkpoint completed successfully")
-                except Exception as e:
-                    print(f"⚠️ [SIMPLIFIED] Ownership checkpoint failed: {e}")
+                # KuzuDB handles its own persistence automatically via WAL
+                # No manual checkpoint needed - ownership data is already durable
                 
                 return True
             else:
@@ -896,13 +887,8 @@ class SimplifiedBookService:
             
             print(f"🎉 [SIMPLIFIED] Successfully added book to user library")
             
-            # Final checkpoint to ensure ALL data is persisted before returning success
-            try:
-                print(f"🔄 [SIMPLIFIED] Final checkpoint to ensure complete persistence...")
-                self.storage._force_checkpoint()
-                print(f"✅ [SIMPLIFIED] Final checkpoint completed successfully")
-            except Exception as e:
-                print(f"⚠️ [SIMPLIFIED] Final checkpoint failed: {e}")
+            # Use safe checkpoint to ensure ownership data is visible after container restarts
+            self.storage.safe_checkpoint()
             
             return True
             

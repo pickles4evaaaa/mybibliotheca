@@ -995,10 +995,7 @@ class KuzuGraphStorage:
             print(f"[KUZU_STORAGE] 🚀 Executing CREATE query for {node_type}")
             self.kuzu_conn.execute(query, serialized_data)
             
-            # Force checkpoint to ensure data is written to disk immediately
-            self._force_checkpoint()
-            
-            print(f"[KUZU_STORAGE] 💾 Query executed and checkpointed to disk")
+            # KuzuDB handles persistence automatically via WAL - no manual checkpoint needed
             
             print(f"[KUZU_STORAGE] ✅ Successfully stored {node_type} node: {node_id}")
             
@@ -1265,10 +1262,7 @@ class KuzuGraphStorage:
             print(f"[KUZU_STORAGE] 🚀 Executing CREATE RELATIONSHIP query")
             self.kuzu_conn.execute(query, params)
             
-            # Force checkpoint to ensure data is written to disk immediately
-            self._force_checkpoint()
-            
-            print(f"[KUZU_STORAGE] 💾 Query executed and checkpointed to disk")
+            # KuzuDB handles persistence automatically via WAL - no manual checkpoint needed
             
             print(f"[KUZU_STORAGE] ✅ Successfully created {rel_type} relationship")
             
@@ -1543,6 +1537,17 @@ class KuzuGraphStorage:
                 self.kuzu_conn.execute("MATCH (n) RETURN COUNT(n) LIMIT 1;")
             except Exception as e2:
                 logger.error(f"Failed to sync database: {e2}")
+    
+    def safe_checkpoint(self):
+        """Safely checkpoint the database only when needed, with error handling."""
+        try:
+            print(f"💾 [KUZU_SAFE] Performing safe checkpoint...")
+            self.kuzu_conn.execute("CHECKPOINT;")
+            print(f"✅ [KUZU_SAFE] Safe checkpoint completed successfully")
+            return True
+        except Exception as e:
+            print(f"⚠️ [KUZU_SAFE] Safe checkpoint failed (this is usually okay): {e}")
+            return False
                 
 
 # Global database instance - SINGLE SOURCE OF TRUTH
