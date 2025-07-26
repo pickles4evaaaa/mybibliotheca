@@ -13,6 +13,14 @@ from .infrastructure.kuzu_graph import get_graph_storage
 from .services.kuzu_custom_field_service import KuzuCustomFieldService
 
 
+class BookAlreadyExistsError(Exception):
+    """Exception raised when attempting to add a duplicate book."""
+    def __init__(self, book_id: str, message: str = "Book already exists in library"):
+        self.book_id = book_id
+        self.message = message
+        super().__init__(self.message)
+
+
 def normalize_goodreads_value(value, field_type='text'):
     """
     Normalize values from Goodreads CSV exports that use Excel text formatting.
@@ -601,28 +609,114 @@ class SimplifiedBookService:
             
         except Exception as e:
             return None
+
+    def find_book_by_title_author(self, title: str, author: str) -> Optional[str]:
+        """Find existing book by title and author. Returns book_id if found."""
+        try:
+            # Normalize title and author for comparison
+            normalized_title = title.lower().strip()
+            normalized_author = author.lower().strip()
+            
+            # First, try to find books with exact title match
+            title_query = """
+            MATCH (b:Book)
+            WHERE toLower(b.title) = $title
+            RETURN b.id, b.title
+            """
+            
+            title_results = self.storage.execute_cypher(title_query, {"title": normalized_title})
+            
+            if title_results:
+                # If we found books with matching titles, check if any have matching authors
+                for result in title_results:
+                    book_id = result['col_0']
+                    
+                    # Check if this book has the author we're looking for
+                    author_query = """
+                    MATCH (b:Book {id: $book_id})<-[:CONTRIBUTED_TO {role: 'author'}]-(p:Person)
+                    WHERE toLower(p.name) CONTAINS $author OR $author CONTAINS toLower(p.name)
+                    RETURN p.name
+                    LIMIT 1
+                    """
+                    
+                    author_results = self.storage.execute_cypher(author_query, {
+                        "book_id": book_id,
+                        "author": normalized_author
+                    })
+                    
+                    if author_results:
+                        print(f"🔍 [DUPLICATE] Found matching book: '{title}' by author containing '{author}'")
+                        return book_id
+            
+            # If no exact matches, try fuzzy matching on title
+            fuzzy_query = """
+            MATCH (b:Book)
+            WHERE toLower(b.title) CONTAINS $title_part OR $title_part CONTAINS toLower(b.title)
+            OPTIONAL MATCH (b)<-[:CONTRIBUTED_TO {role: 'author'}]-(p:Person)
+            WHERE toLower(p.name) CONTAINS $author OR $author CONTAINS toLower(p.name)
+            RETURN b.id, b.title, p.name
+            LIMIT 1
+            """
+            
+            # Use first few words of title for fuzzy matching
+            title_words = normalized_title.split()
+            title_part = ' '.join(title_words[:3]) if len(title_words) >= 3 else normalized_title
+            
+            fuzzy_results = self.storage.execute_cypher(fuzzy_query, {
+                "title_part": title_part,
+                "author": normalized_author
+            })
+            
+            if fuzzy_results:
+                result = fuzzy_results[0]
+                if result.get('col_2'):  # Has matching author
+                    print(f"🔍 [DUPLICATE] Found fuzzy matching book: '{result['col_1']}' by '{result['col_2']}'")
+                    return result['col_0']
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error finding book by title/author: {e}")
+            return None
     
     async def find_or_create_book(self, book_data: SimplifiedBook) -> Optional[str]:
         """
         Find existing book or create new one.
         Returns book_id if successful.
+        Raises BookAlreadyExistsError if duplicate is found.
         """
         try:
-            # Try to find existing book by ISBN
+            # Try to find existing book by ISBN first (most reliable)
+            existing_id = None
+            
             if book_data.isbn13:
                 existing_id = self.find_book_by_isbn(book_data.isbn13)
                 if existing_id:
-                    return existing_id
+                    print(f"🔍 [DUPLICATE] Found existing book by ISBN13: {book_data.isbn13}")
+                    raise BookAlreadyExistsError(existing_id, f"Book already exists with ISBN13: {book_data.isbn13}")
             
-            if book_data.isbn10:
+            if book_data.isbn10 and not existing_id:
                 existing_id = self.find_book_by_isbn(book_data.isbn10)
                 if existing_id:
-                    return existing_id
+                    print(f"🔍 [DUPLICATE] Found existing book by ISBN10: {book_data.isbn10}")
+                    raise BookAlreadyExistsError(existing_id, f"Book already exists with ISBN10: {book_data.isbn10}")
+            
+            # If no ISBN or ISBN not found, check by title and author
+            if not existing_id and book_data.title and book_data.author:
+                existing_id = self.find_book_by_title_author(book_data.title, book_data.author)
+                if existing_id:
+                    print(f"🔍 [DUPLICATE] Found existing book by title/author: '{book_data.title}' by '{book_data.author}'")
+                    raise BookAlreadyExistsError(existing_id, f"Book already exists: '{book_data.title}' by '{book_data.author}'")
             
             # Book doesn't exist, create new one
+            print(f"📚 [NEW_BOOK] Creating new book: '{book_data.title}' by '{book_data.author}'")
             return await self.create_standalone_book(book_data)
             
+        except BookAlreadyExistsError:
+            # Re-raise duplicate error
+            raise
         except Exception as e:
+            print(f"Error in find_or_create_book: {e}")
             return None
     
     def build_book_data_from_row(self, row, mappings, book_meta_map=None, author_meta_map=None):
@@ -812,16 +906,22 @@ class SimplifiedBookService:
         """
         Complete workflow: Find/create book + create user ownership.
         This is the main entry point for the simplified architecture.
+        Raises BookAlreadyExistsError if book already exists in communal library.
         """
         try:
             print(f"🎯 [SIMPLIFIED] Starting add_book_to_user_library for: {book_data.title}")
             
             # Step 1: Find or create standalone book
+            # This will raise BookAlreadyExistsError if duplicate is found
             book_id = await self.find_or_create_book(book_data)
             if not book_id:
                 return False
             
-            # Step 2: Create user ownership relationship
+            # If we get here, it's a new book, so we can proceed with the rest
+            # Note: In a communal library, we might not need user ownership relationships
+            # but keeping this for compatibility with the current system
+            
+            # Step 2: Create user ownership relationship (if needed for the current system)
             ownership = UserBookOwnership(
                 user_id=user_id,
                 book_id=book_id,
@@ -892,7 +992,11 @@ class SimplifiedBookService:
             
             return True
             
+        except BookAlreadyExistsError:
+            # Re-raise the duplicate error so it can be handled by the calling code
+            raise
         except Exception as e:
+            print(f"Error in add_book_to_user_library: {e}")
             return False
     
     def add_book_to_user_library_sync(self, book_data: SimplifiedBook, user_id: str, 
@@ -906,6 +1010,7 @@ class SimplifiedBookService:
         """
         Synchronous wrapper for add_book_to_user_library.
         Use this method from Flask routes and other sync contexts.
+        Raises BookAlreadyExistsError if book already exists in communal library.
         """
         import asyncio
         

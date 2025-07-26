@@ -16,7 +16,7 @@ from pathlib import Path
 from io import BytesIO
 
 from app.services import book_service, reading_log_service, custom_field_service, user_service
-from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.domain.models import Book as DomainBook
 
@@ -3257,19 +3257,25 @@ def add_book_manual():
         
         # Use simplified service
         service = SimplifiedBookService()
-        success = service.add_book_to_user_library_sync(
-            book_data=book_data,
-            user_id=current_user.id,
-            reading_status=reading_status,
-            ownership_status=ownership_status,
-            media_type=media_type,
-            location_id=location_id
-        )
-        
-        if success:
-            flash(f'Successfully added "{title}" to your library!', 'success')
-        else:
-            flash('Failed to add book. Please try again.', 'danger')
+        try:
+            success = service.add_book_to_user_library_sync(
+                book_data=book_data,
+                user_id=current_user.id,
+                reading_status=reading_status,
+                ownership_status=ownership_status,
+                media_type=media_type,
+                location_id=location_id
+            )
+            
+            if success:
+                flash(f'Successfully added "{title}" to your library!', 'success')
+            else:
+                flash('Failed to add book. Please try again.', 'danger')
+                
+        except BookAlreadyExistsError as e:
+            # Book already exists in the communal library, redirect to edit page
+            flash(f'This book already exists in the library! Redirecting to edit the existing copy.', 'info')
+            return redirect(url_for('book.edit_book', uid=e.book_id))
             
         return redirect(url_for('main.library'))
         
