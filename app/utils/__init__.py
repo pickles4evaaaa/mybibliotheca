@@ -7,7 +7,8 @@ from .book_utils import (
     fetch_author_data, 
     generate_month_review_image, 
     normalize_goodreads_value,
-    search_author_by_name
+    search_author_by_name,
+    search_book_by_title_author
 )
 
 # Import functions from the user_utils module
@@ -23,6 +24,7 @@ __all__ = [
     'generate_month_review_image', 
     'normalize_goodreads_value',
     'search_author_by_name',
+    'search_book_by_title_author',
     'calculate_reading_streak',
     'get_reading_streak'
 ]

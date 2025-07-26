@@ -173,9 +173,18 @@ def add_book():
             personal_fields = []
             global_fields = []
         
+        # Load AI configuration
+        try:
+            from app.admin import load_ai_config
+            ai_config = load_ai_config()
+        except Exception as e:
+            current_app.logger.error(f"Error loading AI config: {e}")
+            ai_config = {}
+        
         return render_template('add_book_new.html', 
                              personal_fields=personal_fields,
-                             global_fields=global_fields)
+                             global_fields=global_fields,
+                             ai_config=ai_config)
     
     # Handle POST request for adding book
     # Forward to the manual add handler
@@ -242,6 +251,390 @@ def add_book_from_image():
         except Exception as e:
             current_app.logger.error(f"Error processing image upload: {e}")
             return jsonify({'error': 'Failed to process image. Please try again.'}), 500
+
+@book_bp.route('/add/image-ai', methods=['POST'])
+@login_required
+def add_book_from_image_ai():
+    """Handle image upload for AI-powered book extraction"""
+    try:
+        current_app.logger.info("AI image processing request started")
+        
+        # Check if AI is enabled
+        from app.admin import load_ai_config
+        ai_config = load_ai_config()
+        
+        current_app.logger.info(f"AI config loaded: {ai_config}")
+        
+        if ai_config.get('AI_BOOK_EXTRACTION_ENABLED') != 'true':
+            current_app.logger.warning("AI book extraction is disabled")
+            return jsonify({'error': 'AI book extraction is not enabled. Please contact your administrator.'}), 400
+        
+        # Check if file was uploaded
+        if 'image' not in request.files:
+            current_app.logger.error("No image file in request")
+            return jsonify({'error': 'No image file provided'}), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            current_app.logger.error("Empty filename")
+            return jsonify({'error': 'No file selected'}), 400
+        
+        current_app.logger.info(f"Processing file: {file.filename}")
+        
+        # Validate file type
+        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'webp'}
+        filename = file.filename or ''
+        file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename and len(filename.rsplit('.', 1)) > 1 else ''
+        if file_ext not in allowed_extensions:
+            current_app.logger.error(f"Invalid file extension: {file_ext}")
+            return jsonify({'error': 'Invalid file type. Please upload an image file.'}), 400
+        
+        # Process image with AI
+        from app.services.ai_service import AIService
+        ai_service = AIService(ai_config)
+        
+        # Read file content
+        file.seek(0)  # Reset file pointer
+        file_content = file.read()
+        
+        current_app.logger.info(f"File read successfully, size: {len(file_content)} bytes")
+        
+        # Extract book information using AI
+        book_data = ai_service.extract_book_info_from_image(file_content, filename)
+        
+        current_app.logger.info(f"AI extraction result: {book_data}")
+        
+        if book_data:
+            # If auto-search is enabled and we have enough info, try to fetch additional data
+            auto_search_enabled = ai_config.get('AI_BOOK_EXTRACTION_AUTO_SEARCH') == 'true'
+            has_isbn = bool(book_data.get('isbn'))
+            has_title = bool(book_data.get('title'))
+            has_authors = bool(book_data.get('authors'))
+            has_contributors = bool(book_data.get('contributors'))
+            
+            # Check if we have enough data for auto-search
+            search_criteria_met = (has_isbn or 
+                                 (has_title and has_authors) or 
+                                 (has_title and has_contributors))
+            
+            current_app.logger.info(f"Auto-search evaluation: enabled={auto_search_enabled}, criteria_met={search_criteria_met}")
+            current_app.logger.info(f"  - has_isbn: {has_isbn}")
+            current_app.logger.info(f"  - has_title: {has_title}")  
+            current_app.logger.info(f"  - has_authors: {has_authors}")
+            current_app.logger.info(f"  - has_contributors: {has_contributors}")
+            
+            if auto_search_enabled and search_criteria_met:
+                
+                current_app.logger.info("Auto-search is enabled and conditions met - attempting API enhancement")
+                current_app.logger.info(f"Book data keys: {list(book_data.keys())}")
+                current_app.logger.info(f"Has ISBN: {bool(book_data.get('isbn'))}")
+                current_app.logger.info(f"Has title: {bool(book_data.get('title'))}")
+                current_app.logger.info(f"Has authors: {bool(book_data.get('authors'))}")
+                current_app.logger.info(f"Has contributors: {bool(book_data.get('contributors'))}")
+                
+                # Try to enhance data with API lookup
+                try:
+                    from app.utils import fetch_book_data, search_book_by_title_author
+                    
+                    api_data = None
+                    
+                    # First try ISBN lookup if available
+                    if book_data.get('isbn'):
+                        current_app.logger.info(f"Trying ISBN lookup: {book_data.get('isbn')}")
+                        api_data = fetch_book_data(book_data['isbn'])
+                        if api_data:
+                            current_app.logger.info("Successfully fetched data using ISBN")
+                    
+                    # If no ISBN or ISBN lookup failed, try title+author search
+                    if not api_data and book_data.get('title'):
+                        current_app.logger.info("No API data from ISBN, attempting title+author search")
+                        
+                        # Extract author from contributors if needed
+                        author = None
+                        if book_data.get('authors'):
+                            author = book_data.get('authors')
+                            current_app.logger.info(f"Found author from 'authors' field: {author}")
+                        elif book_data.get('contributors'):
+                            # Extract authors from contributors array
+                            contributors = book_data.get('contributors', [])
+                            current_app.logger.info(f"Found contributors: {contributors}")
+                            
+                            if isinstance(contributors, list):
+                                authors = [c.get('name') for c in contributors if c.get('role', '').lower() == 'author']
+                                current_app.logger.info(f"Extracted authors from contributors: {authors}")
+                                if authors:
+                                    author = authors[0]  # Use first author for search
+                                    current_app.logger.info(f"Using first author for search: {author}")
+                            elif isinstance(contributors, str):
+                                # Handle case where contributors might be a string
+                                current_app.logger.info("Contributors is a string, attempting to parse")
+                                try:
+                                    import json
+                                    contributors_parsed = json.loads(contributors.replace("'", '"'))
+                                    if isinstance(contributors_parsed, list):
+                                        authors = [c.get('name') for c in contributors_parsed if c.get('role', '').lower() == 'author']
+                                        if authors:
+                                            author = authors[0]
+                                            current_app.logger.info(f"Parsed author from string contributors: {author}")
+                                except Exception as e:
+                                    current_app.logger.warning(f"Failed to parse contributors string: {e}")
+                        
+                        if author:
+                            current_app.logger.info(f"Trying title+author search: '{book_data.get('title')}' by '{author}'")
+                            api_data = search_book_by_title_author(book_data.get('title'), author)
+                            if api_data:
+                                current_app.logger.info("Successfully fetched data using title+author search")
+                            else:
+                                current_app.logger.info("Title+author search returned no results")
+                        else:
+                            current_app.logger.info("No author found for title search")
+                    
+                    if api_data:
+                        # Merge AI data with API data, preferring AI data for conflicts
+                        merged_data = {**api_data, **book_data}
+                        book_data = merged_data
+                        current_app.logger.info("Successfully enhanced AI data with API data")
+                    else:
+                        current_app.logger.info("No additional API data found, using AI data only")
+                        
+                except Exception as e:
+                    current_app.logger.warning(f"Failed to enhance AI data with API lookup: {e}")
+            
+            return jsonify({
+                'success': True,
+                'message': 'AI extraction successful',
+                **book_data
+            })
+        else:
+            current_app.logger.warning("AI extraction returned no data")
+            return jsonify({
+                'error': 'Could not extract book information from image. Please try a clearer image or use manual entry.',
+                'suggestion': 'Make sure the book cover and text are clearly visible and well-lit'
+            }), 404
+            
+    except Exception as e:
+        current_app.logger.error(f"Error processing AI image upload: {e}")
+        current_app.logger.error(f"AI image upload error traceback:", exc_info=True)
+        return jsonify({'error': f'Failed to process image with AI: {str(e)}'}), 500
+
+@book_bp.route('/search_details', methods=['POST'])
+@login_required
+def search_book_details():
+    """Search for books by title and/or author and return multiple results for user selection"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No search criteria provided'}), 400
+        
+        title = data.get('title', '').strip()
+        author = data.get('author', '').strip()
+        
+        if not title and not author:
+            return jsonify({'success': False, 'message': 'Please provide at least a title or author to search'}), 400
+        
+        current_app.logger.info(f"Book search request: title='{title}', author='{author}'")
+        
+        # Import search functions
+        from app.utils import search_book_by_title_author, fetch_book_data
+        import requests
+        
+        results = []
+        
+        # Try title+author search on OpenLibrary
+        try:
+            current_app.logger.info("Searching OpenLibrary...")
+            
+            # Build search query
+            if title and author:
+                search_title = title
+                search_author = author
+                current_app.logger.info(f"Searching with both title and author: '{search_title}' by '{search_author}'")
+            elif title:
+                search_title = title
+                search_author = None
+                current_app.logger.info(f"Searching with title only: '{search_title}'")
+            else:
+                search_title = author  # Search author name as title
+                search_author = None
+                current_app.logger.info(f"Searching with author as title: '{search_title}'")
+            
+            # Use OpenLibrary search API to get multiple results
+            import requests
+            query_parts = [search_title]
+            if search_author:
+                query_parts.append(search_author)
+            
+            query = ' '.join(query_parts)
+            url = f"https://openlibrary.org/search.json?q={query}&limit=10"
+            
+            current_app.logger.info(f"OpenLibrary search URL: {url}")
+            
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            search_data = response.json()
+            
+            docs = search_data.get('docs', [])
+            current_app.logger.info(f"Found {len(docs)} OpenLibrary results")
+            
+            for i, doc in enumerate(docs[:10]):  # Limit to 10 results
+                doc_title = doc.get('title', '')
+                doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
+                doc_isbn = doc.get('isbn', [])
+                
+                # Get best ISBN (prefer 13-digit)
+                best_isbn = None
+                if doc_isbn:
+                    for isbn in doc_isbn:
+                        if len(isbn) == 13:
+                            best_isbn = isbn
+                            break
+                    if not best_isbn and doc_isbn:
+                        best_isbn = doc_isbn[0]
+                
+                # Build result object
+                result = {
+                    'title': doc_title,
+                    'authors': ', '.join(doc_authors) if doc_authors else '',
+                    'authors_list': doc_authors,
+                    'isbn': best_isbn,
+                    'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                    'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                    'page_count': doc.get('number_of_pages_median'),
+                    'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
+                    'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None,
+                    'source': 'OpenLibrary'
+                }
+                
+                # Try to get cover image
+                if result.get('openlibrary_id'):
+                    cover_url = f"https://covers.openlibrary.org/w/id/{result['openlibrary_id']}-L.jpg"
+                    try:
+                        cover_response = requests.head(cover_url, timeout=3)
+                        if cover_response.status_code == 200:
+                            result['cover_url'] = cover_url
+                    except:
+                        pass
+                
+                # If we have an ISBN, try to get enhanced data
+                if best_isbn:
+                    try:
+                        enhanced_data = fetch_book_data(best_isbn)
+                        if enhanced_data:
+                            # Merge enhanced data with search result
+                            result.update(enhanced_data)
+                            current_app.logger.info(f"Enhanced result {i} with ISBN data")
+                    except Exception as e:
+                        current_app.logger.warning(f"Failed to enhance result {i} with ISBN {best_isbn}: {e}")
+                
+                results.append(result)
+                current_app.logger.info(f"Added result {i}: '{doc_title}' by {doc_authors}")
+        
+        except Exception as e:
+            current_app.logger.error(f"OpenLibrary search failed: {e}")
+        
+        # Try Google Books as fallback if OpenLibrary didn't return enough results
+        if len(results) < 5:
+            try:
+                current_app.logger.info("Searching Google Books for additional results...")
+                
+                # Google Books search
+                query_parts = []
+                if title:
+                    query_parts.append(f'intitle:"{title}"')
+                if author:
+                    query_parts.append(f'inauthor:"{author}"')
+                
+                google_query = '+'.join(query_parts)
+                google_url = f"https://www.googleapis.com/books/v1/volumes?q={google_query}&maxResults=10"
+                
+                current_app.logger.info(f"Google Books search URL: {google_url}")
+                
+                response = requests.get(google_url, timeout=10)
+                response.raise_for_status()
+                google_data = response.json()
+                
+                if 'items' in google_data:
+                    current_app.logger.info(f"Found {len(google_data['items'])} Google Books results")
+                    
+                    for item in google_data['items']:
+                        book_info = item['volumeInfo']
+                        
+                        # Extract data
+                        gb_title = book_info.get('title', '')
+                        gb_authors = book_info.get('authors', [])
+                        gb_publisher = book_info.get('publisher', '')
+                        gb_published = book_info.get('publishedDate', '')
+                        gb_description = book_info.get('description', '')
+                        gb_page_count = book_info.get('pageCount')
+                        gb_language = book_info.get('language', 'en')
+                        
+                        # Get ISBN
+                        gb_isbn = None
+                        if 'industryIdentifiers' in book_info:
+                            for identifier in book_info['industryIdentifiers']:
+                                if identifier.get('type') == 'ISBN_13':
+                                    gb_isbn = identifier.get('identifier')
+                                    break
+                                elif identifier.get('type') == 'ISBN_10':
+                                    gb_isbn = identifier.get('identifier')
+                        
+                        # Get cover image
+                        gb_cover = None
+                        image_links = book_info.get('imageLinks', {})
+                        for size in ['large', 'medium', 'small', 'thumbnail']:
+                            if size in image_links:
+                                gb_cover = image_links[size].replace('http:', 'https:')
+                                break
+                        
+                        # Check if this result is already in our list (avoid duplicates)
+                        duplicate = False
+                        for existing in results:
+                            if (existing.get('title', '').lower() == gb_title.lower() and 
+                                existing.get('authors', '').lower() == ', '.join(gb_authors).lower()):
+                                duplicate = True
+                                break
+                        
+                        if not duplicate:
+                            google_result = {
+                                'title': gb_title,
+                                'authors': ', '.join(gb_authors) if gb_authors else '',
+                                'authors_list': gb_authors,
+                                'isbn': gb_isbn,
+                                'publisher': gb_publisher,
+                                'published_date': gb_published,
+                                'description': gb_description,
+                                'page_count': gb_page_count,
+                                'language': gb_language,
+                                'cover_url': gb_cover,
+                                'source': 'Google Books'
+                            }
+                            results.append(google_result)
+                            current_app.logger.info(f"Added Google Books result: '{gb_title}' by {gb_authors}")
+            
+            except Exception as e:
+                current_app.logger.error(f"Google Books search failed: {e}")
+        
+        if results:
+            current_app.logger.info(f"Returning {len(results)} search results")
+            return jsonify({
+                'success': True,
+                'results': results,
+                'message': f'Found {len(results)} books matching your search'
+            })
+        else:
+            current_app.logger.info("No search results found")
+            return jsonify({
+                'success': False,
+                'message': 'No books found matching your search criteria. Try different keywords or check spelling.'
+            })
+    
+    except Exception as e:
+        current_app.logger.error(f"Error in book search: {e}")
+        current_app.logger.error("Book search error traceback:", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'An error occurred while searching: {str(e)}'
+        }), 500
 
 @book_bp.route('/search', methods=['GET', 'POST'])
 @login_required

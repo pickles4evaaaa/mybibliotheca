@@ -15,6 +15,90 @@ import os
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
 
+def load_ai_config():
+    """Load AI configuration from .env file in data directory"""
+    env_path = os.path.join(current_app.config.get('DATA_DIR', 'data'), '.env')
+    config = {}
+    
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key.strip()] = value.strip()
+        except Exception as e:
+            current_app.logger.error(f"Error loading AI config: {e}")
+    
+    # Set defaults for missing values
+    defaults = {
+        'OPENAI_API_KEY': '',
+        'OPENAI_BASE_URL': 'https://api.openai.com/v1',
+        'OPENAI_MODEL': 'gpt-4o',
+        'OLLAMA_BASE_URL': 'http://localhost:11434',
+        'OLLAMA_MODEL': 'llama3.2-vision:11b',
+        'AI_PROVIDER': 'openai',
+        'AI_TIMEOUT': '30',
+        'AI_MAX_TOKENS': '1000',
+        'AI_TEMPERATURE': '0.1',
+        'AI_BOOK_EXTRACTION_ENABLED': 'false',
+        'AI_BOOK_EXTRACTION_AUTO_SEARCH': 'true'
+    }
+    
+    for key, default_value in defaults.items():
+        if key not in config:
+            config[key] = default_value
+    
+    return config
+
+def save_ai_config(config):
+    """Save AI configuration to .env file in data directory"""
+    env_path = os.path.join(current_app.config.get('DATA_DIR', 'data'), '.env')
+    
+    try:
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(env_path), exist_ok=True)
+        
+        # Read existing content to preserve comments
+        existing_lines = []
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                existing_lines = f.readlines()
+        
+        # Build new content
+        lines = ['# AI Configuration for MyBibliotheca\n',
+                '# This file stores API keys and configuration for AI book extraction features\n',
+                '# Keep this file secure and do not commit to version control\n\n']
+        
+        # Add configuration sections
+        lines.append('# OpenAI Configuration\n')
+        lines.append(f"OPENAI_API_KEY={config.get('OPENAI_API_KEY', '')}\n")
+        lines.append(f"OPENAI_BASE_URL={config.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')}\n")
+        lines.append(f"OPENAI_MODEL={config.get('OPENAI_MODEL', 'gpt-4o')}\n\n")
+        
+        lines.append('# Ollama Configuration (Local AI)\n')
+        lines.append(f"OLLAMA_BASE_URL={config.get('OLLAMA_BASE_URL', 'http://localhost:11434')}\n")
+        lines.append(f"OLLAMA_MODEL={config.get('OLLAMA_MODEL', 'llama3.2-vision:11b')}\n\n")
+        
+        lines.append('# AI Processing Settings\n')
+        lines.append(f"AI_PROVIDER={config.get('AI_PROVIDER', 'openai')}\n")
+        lines.append(f"AI_TIMEOUT={config.get('AI_TIMEOUT', '30')}\n")
+        lines.append(f"AI_MAX_TOKENS={config.get('AI_MAX_TOKENS', '1000')}\n")
+        lines.append(f"AI_TEMPERATURE={config.get('AI_TEMPERATURE', '0.1')}\n\n")
+        
+        lines.append('# Feature Flags\n')
+        lines.append(f"AI_BOOK_EXTRACTION_ENABLED={config.get('AI_BOOK_EXTRACTION_ENABLED', 'false')}\n")
+        lines.append(f"AI_BOOK_EXTRACTION_AUTO_SEARCH={config.get('AI_BOOK_EXTRACTION_AUTO_SEARCH', 'true')}\n")
+        
+        with open(env_path, 'w') as f:
+            f.writelines(lines)
+        
+        return True
+    except Exception as e:
+        current_app.logger.error(f"Error saving AI config: {e}")
+        return False
+
 def admin_required(f):
     """
     Decorator to require admin privileges for route access
@@ -314,12 +398,26 @@ def settings():
         'America/Toronto', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles'
     ]
     
+    # Get debug manager
+    try:
+        from .debug_system import get_debug_manager
+        debug_manager = get_debug_manager()
+    except Exception as e:
+        current_app.logger.warning(f"Could not load debug manager: {e}")
+        # Create a simple mock debug manager to prevent template errors
+        class MockDebugManager:
+            def is_debug_enabled(self):
+                return False
+        debug_manager = MockDebugManager()
+    
     return render_template('admin/settings.html', 
                          title='Admin Settings', 
                          site_name=current_site_name,
                          server_timezone=current_timezone,
                          common_timezones=common_timezones,
-                         available_timezones=sorted(available_timezones))
+                         available_timezones=sorted(available_timezones),
+                         ai_config=load_ai_config(),
+                         debug_manager=debug_manager)
 
 @admin.route('/api/stats')
 @login_required
@@ -328,6 +426,104 @@ def api_stats():
     """API endpoint for dashboard statistics (for auto-refresh)"""
     stats = get_system_stats()
     return jsonify(stats)
+
+@admin.route('/update-ai-settings', methods=['POST'])
+@login_required
+@admin_required
+def update_ai_settings():
+    """Update AI configuration settings"""
+    try:
+        config = {}
+        
+        # Get form data
+        config['AI_PROVIDER'] = request.form.get('ai_provider', 'openai')
+        config['OPENAI_API_KEY'] = request.form.get('openai_api_key', '')
+        config['OPENAI_BASE_URL'] = request.form.get('openai_base_url', 'https://api.openai.com/v1')
+        config['OPENAI_MODEL'] = request.form.get('openai_model', 'gpt-4o')
+        config['OLLAMA_BASE_URL'] = request.form.get('ollama_base_url', 'http://localhost:11434/v1')
+        
+        # Handle Ollama model selection (dropdown vs manual input)
+        ollama_model_manual = request.form.get('ollama_model_manual', '').strip()
+        ollama_model_select = request.form.get('ollama_model', '').strip()
+        if ollama_model_manual:
+            config['OLLAMA_MODEL'] = ollama_model_manual
+        elif ollama_model_select:
+            config['OLLAMA_MODEL'] = ollama_model_select
+        else:
+            config['OLLAMA_MODEL'] = 'llama3.2-vision:11b'  # fallback
+            
+        config['AI_TIMEOUT'] = request.form.get('ai_timeout', '30')
+        config['AI_MAX_TOKENS'] = request.form.get('ai_max_tokens', '1000')
+        config['AI_TEMPERATURE'] = request.form.get('ai_temperature', '0.1')
+        config['AI_BOOK_EXTRACTION_ENABLED'] = 'true' if request.form.get('ai_book_extraction_enabled') else 'false'
+        config['AI_BOOK_EXTRACTION_AUTO_SEARCH'] = 'true' if request.form.get('ai_book_extraction_auto_search') else 'false'
+        
+        # Save configuration
+        if save_ai_config(config):
+            flash('AI settings saved successfully!', 'success')
+        else:
+            flash('Error saving AI settings. Please try again.', 'danger')
+        
+        return redirect(url_for('admin.settings'))
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating AI settings: {e}")
+        flash('Error updating AI settings. Please try again.', 'danger')
+        return redirect(url_for('admin.settings'))
+
+@admin.route('/test-ai-connection', methods=['POST'])
+@login_required
+@admin_required
+def test_ai_connection():
+    """Test AI connection with provided settings"""
+    try:
+        # Build config from form data
+        config = {
+            'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
+            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
+            'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
+            'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
+            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
+            'OLLAMA_MODEL': request.form.get('ollama_model_manual') or request.form.get('ollama_model', 'llama3.2-vision:11b'),
+            'AI_TIMEOUT': request.form.get('ai_timeout', '30'),
+            'AI_MAX_TOKENS': request.form.get('ai_max_tokens', '1000'),
+            'AI_TEMPERATURE': request.form.get('ai_temperature', '0.1'),
+        }
+        
+        # Test connection using AI service
+        from app.services.ai_service import AIService
+        ai_service = AIService(config)
+        result = ai_service.test_connection()
+        
+        return jsonify(result)
+            
+    except Exception as e:
+        current_app.logger.error(f"Error testing AI connection: {e}")
+        return jsonify({'success': False, 'message': 'Connection test failed. Please check your settings.'})
+
+@admin.route('/test-ollama-connection', methods=['POST'])
+@login_required
+@admin_required
+def test_ollama_connection():
+    """Test Ollama connection and return available models"""
+    try:
+        # Create minimal config for testing
+        config = {
+            'AI_PROVIDER': 'ollama',
+            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
+            'AI_TIMEOUT': '10'  # Short timeout for testing
+        }
+        
+        # Test connection using AI service
+        from app.services.ai_service import AIService
+        ai_service = AIService(config)
+        result = ai_service._test_ollama_connection()
+        
+        return jsonify(result)
+            
+    except Exception as e:
+        current_app.logger.error(f"Error testing Ollama connection: {e}")
+        return jsonify({'success': False, 'message': 'Ollama connection test failed. Please check your settings.'})
 
 @admin.route('/users/<string:user_id>/reset_password', methods=['GET', 'POST'])
 @login_required

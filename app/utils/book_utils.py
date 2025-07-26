@@ -684,3 +684,140 @@ def normalize_goodreads_value(value, field_type='text'):
             return value
     
     return value.strip() if value else ''
+
+def search_book_by_title_author(title, author=None):
+    """Search for books on OpenLibrary by title and optionally author, return the best match."""
+    if not title:
+        print(f"[OPENLIBRARY] No title provided for book search")
+        return None
+    
+    # Build search query
+    query_parts = [title]
+    if author:
+        query_parts.append(author)
+    
+    query = ' '.join(query_parts)
+    url = f"https://openlibrary.org/search.json?q={query}&limit=10"
+    
+    print(f"[OPENLIBRARY] Searching for book: title='{title}', author='{author}' at {url}")
+    
+    try:
+        response = requests.get(url, timeout=15)
+        print(f"[OPENLIBRARY] Book search response status: {response.status_code}")
+        response.raise_for_status()
+        data = response.json()
+        
+        docs = data.get('docs', [])
+        if not docs:
+            print(f"[OPENLIBRARY] No search results found for '{title}' by '{author}'")
+            return None
+            
+        print(f"[OPENLIBRARY] Found {len(docs)} book search results")
+        
+        # Score matches based on title similarity and author match
+        scored_matches = []
+        
+        for i, doc in enumerate(docs):
+            doc_title = doc.get('title', '')
+            doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
+            doc_isbn = doc.get('isbn', [])
+            
+            # Get best ISBN (prefer 13-digit)
+            best_isbn = None
+            if doc_isbn:
+                for isbn in doc_isbn:
+                    if len(isbn) == 13:
+                        best_isbn = isbn
+                        break
+                if not best_isbn and doc_isbn:
+                    best_isbn = doc_isbn[0]
+            
+            print(f"[OPENLIBRARY] Result {i}: title='{doc_title}', authors={doc_authors}, isbn={best_isbn}")
+            
+            # Calculate match score
+            score = 0
+            
+            # Title similarity (basic)
+            if title.lower() in doc_title.lower() or doc_title.lower() in title.lower():
+                score += 50
+            if title.lower().strip() == doc_title.lower().strip():
+                score += 50  # Exact title match bonus
+            
+            # Author similarity
+            if author:
+                for doc_author in doc_authors:
+                    if doc_author and author.lower() in doc_author.lower():
+                        score += 30
+                    if doc_author and author.lower().strip() == doc_author.lower().strip():
+                        score += 20  # Exact author match bonus
+            
+            # Prefer results with ISBN
+            if best_isbn:
+                score += 10
+            
+            # Prefer more recent publications (if available)
+            if doc.get('first_publish_year'):
+                try:
+                    year = int(doc.get('first_publish_year'))
+                    if year > 1950:  # Reasonable cutoff
+                        score += min((year - 1950) // 10, 5)  # Up to 5 bonus points for newer books
+                except:
+                    pass
+            
+            scored_matches.append({
+                'doc': doc,
+                'score': score,
+                'title': doc_title,
+                'authors': doc_authors,
+                'isbn': best_isbn
+            })
+        
+        # Sort by score (highest first)
+        scored_matches.sort(key=lambda x: x['score'], reverse=True)
+        
+        if scored_matches:
+            best_match = scored_matches[0]
+            print(f"[OPENLIBRARY] Best match: '{best_match['title']}' by {best_match['authors']} (score: {best_match['score']}, ISBN: {best_match['isbn']})")
+            
+            # If we have an ISBN, fetch full book data using existing function
+            if best_match['isbn']:
+                print(f"[OPENLIBRARY] Fetching full data using ISBN: {best_match['isbn']}")
+                full_data = fetch_book_data(best_match['isbn'])
+                if full_data:
+                    return full_data
+            
+            # Otherwise, build book data from search result
+            doc = best_match['doc']
+            result = {
+                'title': best_match['title'],
+                'author': ', '.join(best_match['authors']) if best_match['authors'] else '',
+                'authors_list': best_match['authors'],
+                'isbn': best_match['isbn'],
+                'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                'page_count': doc.get('number_of_pages_median'),
+                'cover': None,  # Search results don't include cover URLs
+                'description': '',  # Search results don't include descriptions
+                'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
+                'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None
+            }
+            
+            # Try to get cover image if we have an OpenLibrary work ID
+            if result.get('openlibrary_id'):
+                cover_url = f"https://covers.openlibrary.org/w/id/{result['openlibrary_id']}-L.jpg"
+                try:
+                    cover_response = requests.head(cover_url, timeout=5)
+                    if cover_response.status_code == 200:
+                        result['cover'] = cover_url
+                        result['cover_url'] = cover_url
+                except:
+                    pass
+            
+            print(f"[OPENLIBRARY] Returning book data: {result}")
+            return result
+        
+    except Exception as e:
+        print(f"[OPENLIBRARY] Failed to search for book '{title}' by '{author}': {e}")
+        return None
+    
+    return None

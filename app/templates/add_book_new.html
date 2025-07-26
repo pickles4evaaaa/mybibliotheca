@@ -244,6 +244,43 @@
                                 </div>
                             </div>
                             
+                            <!-- Book Lookup Section -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card bg-light">
+                                        <div class="card-body">
+                                            <h6 class="card-title">
+                                                <i class="bi bi-search me-2"></i>Look Up Book Details
+                                            </h6>
+                                            <p class="card-text small text-muted mb-3">
+                                                Search for book information using title and/or author to auto-fill the form
+                                            </p>
+                                            <button type="button" class="btn btn-outline-primary" id="lookup-book-btn" onclick="searchForBook()">
+                                                <i class="bi bi-search me-2"></i>Search for Book
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Search Results Display -->
+                            <div class="row mb-3" id="search-results-container" style="display: none;">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">
+                                                <i class="bi bi-list-ul me-2"></i>Search Results
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="search-results-list">
+                                                <!-- Results will be populated here -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <label for="subtitle" class="form-label">Subtitle</label>
@@ -551,6 +588,21 @@
 </div>
 
 <script>
+// Global helper functions for safe DOM access
+function safeGetValue(elementId) {
+    const element = document.getElementById(elementId);
+    return element ? element.value : null;
+}
+
+function safeSetValue(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element && value !== null && value !== undefined) {
+        element.value = value;
+        return true;
+    }
+    return false;
+}
+
 // File upload handling
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('file-input');
@@ -593,7 +645,7 @@ function handleFileUpload(input) {
     
     if (fileType.startsWith('image/')) {
         fileTypeDisplay = '📷 Image';
-        processingMessage = 'Will extract ISBN from book cover';
+        processingMessage = 'Choose processing method below';
     } else if (fileName.toLowerCase().endsWith('.csv')) {
         fileTypeDisplay = '📁 CSV';
         processingMessage = 'Will import multiple books from CSV';
@@ -605,28 +657,61 @@ function handleFileUpload(input) {
         processingMessage = 'File type not supported';
     }
     
-    // Show file preview
-    filePreview.innerHTML = `
-        <div class="alert alert-info">
-            <div class="d-flex align-items-center">
-                <div class="me-3">
-                    <strong>${fileTypeDisplay}</strong>
-                </div>
-                <div class="flex-grow-1">
-                    <div><strong>${fileName}</strong></div>
-                    <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
-                </div>
-                <div>
-                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="processFile()">
-                        <i class="bi bi-play-circle me-1"></i>Process
-                    </button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearFile()">
-                        <i class="bi bi-x-circle me-1"></i>Clear
-                    </button>
+    // Show file preview with processing options for images
+    if (fileType.startsWith('image/')) {
+        filePreview.innerHTML = `
+            <div class="alert alert-info">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <strong>${fileTypeDisplay}</strong>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div><strong>${fileName}</strong></div>
+                        <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
+                        <div class="mt-2">
+                            <select class="form-select form-select-sm" id="processing-method" style="width: auto; display: inline-block;">
+                                <option value="ocr">Extract ISBN (OCR)</option>
+                                {% if ai_config and ai_config.get('AI_BOOK_EXTRACTION_ENABLED') == 'true' %}
+                                <option value="ai">Process with AI</option>
+                                {% endif %}
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="processFile()">
+                            <i class="bi bi-play-circle me-1"></i>Process
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearFile()">
+                            <i class="bi bi-x-circle me-1"></i>Clear
+                        </button>
+                    </div>
                 </div>
             </div>
-        </div>
-    `;
+        `;
+    } else {
+        // Show file preview for non-image files
+        filePreview.innerHTML = `
+            <div class="alert alert-info">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <strong>${fileTypeDisplay}</strong>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div><strong>${fileName}</strong></div>
+                        <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="processFile()">
+                            <i class="bi bi-play-circle me-1"></i>Process
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearFile()">
+                            <i class="bi bi-x-circle me-1"></i>Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
 }
 
 // Process uploaded file
@@ -651,15 +736,31 @@ function processFile() {
     
     formData.append('csrf_token', '{{ csrf_token() }}');
     
-    // Determine processing endpoint based on file type
+    // Determine processing endpoint based on file type and method
     let endpoint = '';
+    let processingMessage = 'Processing';
     
     if (fileType.startsWith('image/')) {
-        endpoint = '{{ url_for("main.add_book_from_image") }}';
+        // Check processing method for images
+        const processingMethodElement = document.getElementById('processing-method');
+        const processingMethod = processingMethodElement ? processingMethodElement.value : 'ocr';
+        
+        console.log('Processing method element:', processingMethodElement);
+        console.log('Processing method value:', processingMethod);
+        
+        if (processingMethod === 'ai') {
+            endpoint = '{{ url_for("book.add_book_from_image_ai") }}';
+            processingMessage = 'Processing with AI';
+        } else {
+            endpoint = '{{ url_for("main.add_book_from_image") }}';
+            processingMessage = 'Extracting ISBN';
+        }
     } else if (fileName.toLowerCase().endsWith('.csv')) {
         endpoint = '{{ url_for("import.simple_upload") }}';
+        processingMessage = 'Importing CSV';
     } else if (fileName.toLowerCase().endsWith('.db')) {
         endpoint = '{{ url_for("main.migrate_sqlite") }}';
+        processingMessage = 'Migrating database';
     } else {
         alert('Unsupported file type. Please select an image, CSV, or SQLite database file.');
         return;
@@ -672,7 +773,7 @@ function processFile() {
                 <div class="spinner-border spinner-border-sm me-2" role="status">
                     <span class="visually-hidden">Processing...</span>
                 </div>
-                <strong>Processing ${fileName}...</strong>
+                <strong>${processingMessage} ${fileName}...</strong>
             </div>
         </div>
     `;
@@ -701,12 +802,19 @@ function processFile() {
     })
     .then(data => {
         if (data && data.isbn) {
-            // Auto-populate ISBN field and fetch book data
-            document.getElementById('isbn-lookup').value = data.isbn;
+            // Traditional OCR processing - just ISBN
+            safeSetValue('isbn-lookup', data.isbn);
             fetchBookFromISBN();
+        } else if (data && (data.title || data.authors)) {
+            // AI processing - full book data
+            populateFormWithAIData(data);
+            showMessage('success', 'AI processed book details successfully! Please review and add any additional information.');
         } else if (data && data.task_id) {
             // For CSV imports, redirect to progress page
             window.location.href = `/import/import-books/progress/${data.task_id}`;
+        } else if (data && data.message) {
+            // Show message from server
+            showMessage('info', data.message);
         }
     })
     .catch(error => {
@@ -726,10 +834,103 @@ function clearFile() {
     filePreview.innerHTML = '';
 }
 
+// Populate form with AI-extracted data
+function populateFormWithAIData(data) {
+    // Helper function to safely set element value
+    function safeSetValue(elementId, value) {
+        const element = document.getElementById(elementId);
+        if (element && value !== null && value !== undefined) {
+            element.value = value;
+            return true;
+        }
+        return false;
+    }
+    
+    // Basic information
+    if (data.title) safeSetValue('title', data.title);
+    if (data.subtitle) safeSetValue('subtitle', data.subtitle);
+    if (data.isbn) safeSetValue('isbn', data.isbn);
+    
+    // Handle authors
+    if (data.authors) {
+        if (typeof data.authors === 'string') {
+            // Split author string by semicolon or comma
+            const authorList = data.authors.split(/[;,]/).map(a => a.trim()).filter(a => a);
+            if (authorList.length > 0) {
+                safeSetValue('author', authorList[0]);
+                if (authorList.length > 1) {
+                    safeSetValue('additional_authors', authorList.slice(1).join(', '));
+                }
+            }
+        }
+    }
+    
+    // Publication details
+    if (data.publisher) safeSetValue('publisher', data.publisher);
+    if (data.publication_year) {
+        // Convert year to full date format for the date input
+        safeSetValue('published_date', `${data.publication_year}-01-01`);
+    }
+    if (data.page_count) safeSetValue('page_count', data.page_count);
+    if (data.language) safeSetValue('language', data.language);
+    if (data.edition) safeSetValue('edition', data.edition);
+    
+    // Additional information
+    if (data.genre) safeSetValue('genre', data.genre);
+    if (data.series) safeSetValue('series', data.series);
+    
+    // Handle contributors - convert to format that works with existing author fields
+    if (data.contributors) {
+        let contributors;
+        
+        // Handle both string and array formats
+        if (typeof data.contributors === 'string') {
+            try {
+                // Try to parse as JSON string first
+                contributors = JSON.parse(data.contributors.replace(/'/g, '"'));
+            } catch (e) {
+                // If that fails, treat it as a simple string
+                console.log('Contributors as string:', data.contributors);
+                return; // Skip processing if we can't parse it
+            }
+        } else if (Array.isArray(data.contributors)) {
+            contributors = data.contributors;
+        } else {
+            return; // Skip if not a recognizable format
+        }
+        
+        if (Array.isArray(contributors)) {
+            const authors = contributors.filter(c => c.role && c.role.toLowerCase().includes('author')).map(c => c.name);
+            const editors = contributors.filter(c => c.role && c.role.toLowerCase().includes('editor')).map(c => c.name);
+            const others = contributors.filter(c => c.role && !c.role.toLowerCase().includes('author') && !c.role.toLowerCase().includes('editor')).map(c => `${c.name} (${c.role})`);
+            
+            // Set primary author if we found authors and don't already have one
+            if (authors.length > 0 && !safeGetValue('author')) {
+                safeSetValue('author', authors[0]);
+                if (authors.length > 1) {
+                    const additionalAuthors = authors.slice(1).concat(editors).concat(others).join(', ');
+                    if (additionalAuthors) {
+                        safeSetValue('additional_authors', additionalAuthors);
+                    }
+                }
+            } else if (authors.length > 0) {
+                // We already have an author, so put all contributors in additional authors
+                const allContributors = authors.concat(editors).concat(others).join(', ');
+                const existingAdditional = safeGetValue('additional_authors');
+                const combinedAdditional = existingAdditional ? `${existingAdditional}, ${allContributors}` : allContributors;
+                safeSetValue('additional_authors', combinedAdditional);
+            }
+        }
+    }
+    
+    // Auto-expand accordions to show the filled data
+    expandBookDetails();
+}
+
 // Fetch book data from ISBN
 function fetchBookFromISBN() {
-    const isbn = document.getElementById('isbn-lookup').value.trim();
-    if (!isbn) {
+    const isbn = safeGetValue('isbn-lookup');
+    if (!isbn || !isbn.trim()) {
         alert('Please enter an ISBN');
         return;
     }
@@ -752,36 +953,36 @@ function fetchBookFromISBN() {
             // Check if we got actual book data
             if (data && (data.title || data.author || data.authors)) {
                 // Populate form fields
-                if (data.title) document.getElementById('title').value = data.title;
-                if (data.isbn || isbn) document.getElementById('isbn').value = data.isbn || isbn;
+                if (data.title) safeSetValue('title', data.title);
+                if (data.isbn || isbn) safeSetValue('isbn', data.isbn || isbn);
                 
                 // Handle authors intelligently
                 if (data.authors_list && Array.isArray(data.authors_list) && data.authors_list.length > 0) {
                     // Use the structured authors list if available
-                    document.getElementById('author').value = data.authors_list[0]; // Primary author
+                    safeSetValue('author', data.authors_list[0]); // Primary author
                     if (data.authors_list.length > 1) {
                         const additionalAuthors = data.authors_list.slice(1).join(', ');
-                        document.getElementById('additional_authors').value = additionalAuthors;
+                        safeSetValue('additional_authors', additionalAuthors);
                     }
                 } else if (data.author) {
                     // Handle comma-separated author string
                     const authorList = data.author.split(',').map(a => a.trim()).filter(a => a);
                     if (authorList.length > 0) {
-                        document.getElementById('author').value = authorList[0]; // Primary author
+                        safeSetValue('author', authorList[0]); // Primary author
                         if (authorList.length > 1) {
                             const additionalAuthors = authorList.slice(1).join(', ');
-                            document.getElementById('additional_authors').value = additionalAuthors;
+                            safeSetValue('additional_authors', additionalAuthors);
                         }
                     }
                 }
                 
-                if (data.subtitle) document.getElementById('subtitle').value = data.subtitle;
-                if (data.publisher) document.getElementById('publisher').value = data.publisher;
-                if (data.page_count) document.getElementById('page_count').value = data.page_count;
-                if (data.language) document.getElementById('language').value = data.language;
-                if (data.cover_url || data.cover) document.getElementById('cover_url').value = data.cover_url || data.cover;
-                if (data.published_date) document.getElementById('published_date').value = data.published_date;
-                if (data.description) document.getElementById('description').value = data.description;
+                if (data.subtitle) safeSetValue('subtitle', data.subtitle);
+                if (data.publisher) safeSetValue('publisher', data.publisher);
+                if (data.page_count) safeSetValue('page_count', data.page_count);
+                if (data.language) safeSetValue('language', data.language);
+                if (data.cover_url || data.cover) safeSetValue('cover_url', data.cover_url || data.cover);
+                if (data.published_date) safeSetValue('published_date', data.published_date);
+                if (data.description) safeSetValue('description', data.description);
                 
                 // Auto-expand accordions to show the filled data
                 expandBookDetails();
@@ -824,7 +1025,15 @@ function showMessage(type, message) {
     `;
     
     const cardBody = document.querySelector('.card-body');
-    cardBody.appendChild(alert);
+    if (cardBody) {
+        cardBody.appendChild(alert);
+    } else {
+        // Fallback - append to the main container or body
+        const container = document.querySelector('.container') || document.querySelector('main') || document.body;
+        if (container) {
+            container.appendChild(alert);
+        }
+    }
     
     // Auto-remove message after 5 seconds
     if (type === 'success') {
@@ -920,7 +1129,7 @@ function loadUserLocations() {
 }
 
 function fetchBookData() {
-  const isbn = document.getElementById('manual-isbn').value.trim();
+  const isbn = safeGetValue('manual-isbn').trim();
   if (!isbn) {
     alert('Please enter an ISBN first.');
     return;
@@ -935,27 +1144,27 @@ function fetchBookData() {
   fetch(`{{ url_for('main.fetch_book', isbn='') }}${isbn}`)
     .then(response => response.json())
     .then(data => {
-      if (data.title) document.getElementById('title').value = data.title;
-      if (data.author) document.getElementById('author').value = data.author;
-      if (data.subtitle) document.getElementById('subtitle').value = data.subtitle;
-      if (data.cover) document.getElementById('cover_url').value = data.cover;
-      if (data.publisher) document.getElementById('publisher').value = data.publisher;
-      if (data.page_count) document.getElementById('page_count').value = data.page_count;
-      if (data.published_date) document.getElementById('published_date').value = data.published_date;
-      if (data.language) document.getElementById('language').value = data.language;
-      if (data.description) document.getElementById('description').value = data.description;
+      if (data.title) safeSetValue('title', data.title);
+      if (data.author) safeSetValue('author', data.author);
+      if (data.subtitle) safeSetValue('subtitle', data.subtitle);
+      if (data.cover) safeSetValue('cover_url', data.cover);
+      if (data.publisher) safeSetValue('publisher', data.publisher);
+      if (data.page_count) safeSetValue('page_count', data.page_count);
+      if (data.published_date) safeSetValue('published_date', data.published_date);
+      if (data.language) safeSetValue('language', data.language);
+      if (data.description) safeSetValue('description', data.description);
       
       // Handle categories/genres
       if (data.categories) {
         const categories = Array.isArray(data.categories) ? data.categories.join(', ') : data.categories;
-        document.getElementById('genres').value = categories;
+        safeSetValue('genres', categories);
       }
       
       // Handle series information
       if (data.series) {
-        document.getElementById('series').value = data.series;
-        if (data.series_volume) document.getElementById('series_volume').value = data.series_volume;
-        if (data.series_order) document.getElementById('series_order').value = data.series_order;
+        safeSetValue('series', data.series);
+        if (data.series_volume) safeSetValue('series_volume', data.series_volume);
+        if (data.series_order) safeSetValue('series_order', data.series_order);
       }
     })
     .catch(error => {
@@ -1058,6 +1267,152 @@ imageDropZone.addEventListener('drop', function(e) {
     imageFileInput.dispatchEvent(event);
   }
 });
+
+// Book search functionality
+function searchForBook() {
+  const title = safeGetValue('title');
+  const author = safeGetValue('author');
+  
+  if (!title && !author) {
+    alert('Please enter at least a title or author to search for books.');
+    return;
+  }
+  
+  const button = document.getElementById('lookup-book-btn');
+  const originalContent = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = '<i class="bi bi-search me-2"></i>Searching...';
+  
+  // Build search query
+  const searchData = {};
+  if (title) searchData.title = title;
+  if (author) searchData.author = author;
+  
+  fetch('{{ url_for("book.search_book_details") }}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token() }}'
+    },
+    body: JSON.stringify(searchData)
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success && data.results && data.results.length > 0) {
+      displaySearchResults(data.results);
+    } else {
+      showMessage('warning', data.message || 'No books found matching your search criteria.');
+    }
+  })
+  .catch(error => {
+    console.error('Search error:', error);
+    showMessage('error', 'An error occurred while searching for books. Please try again.');
+  })
+  .finally(() => {
+    button.disabled = false;
+    button.innerHTML = originalContent;
+  });
+}
+
+function displaySearchResults(results) {
+  const container = document.getElementById('search-results-container');
+  const resultsList = document.getElementById('search-results-list');
+  
+  // Clear previous results
+  resultsList.innerHTML = '';
+  
+  // Create result items
+  results.forEach((book, index) => {
+    const resultItem = document.createElement('div');
+    resultItem.className = 'border rounded p-3 mb-3 search-result-item';
+    resultItem.style.cursor = 'pointer';
+    
+    const title = book.title || 'Unknown Title';
+    const authors = book.authors || book.author || 'Unknown Author';
+    const publisher = book.publisher || '';
+    const publishedDate = book.published_date || book.publication_year || '';
+    const isbn = book.isbn || '';
+    const description = book.description || '';
+    
+    resultItem.innerHTML = `
+      <div class="row">
+        <div class="col-md-8">
+          <h6 class="mb-1">${title}</h6>
+          <p class="mb-1 text-muted">by ${authors}</p>
+          ${publisher ? `<small class="text-muted">Published by ${publisher}${publishedDate ? ` (${publishedDate})` : ''}</small>` : ''}
+          ${isbn ? `<br><small class="text-muted">ISBN: ${isbn}</small>` : ''}
+          ${description ? `<p class="mt-2 small">${description.substring(0, 200)}${description.length > 200 ? '...' : ''}</p>` : ''}
+        </div>
+        <div class="col-md-4 text-end">
+          <button class="btn btn-primary btn-sm" onclick="selectBookResult(${index})">
+            <i class="bi bi-check2 me-1"></i>Use This Book
+          </button>
+        </div>
+      </div>
+    `;
+    
+    // Add hover effect
+    resultItem.addEventListener('mouseenter', () => {
+      resultItem.style.backgroundColor = '#f8f9fa';
+    });
+    resultItem.addEventListener('mouseleave', () => {
+      resultItem.style.backgroundColor = '';
+    });
+    
+    resultsList.appendChild(resultItem);
+  });
+  
+  // Store results globally for selection
+  window.searchResults = results;
+  
+  // Show the results container
+  container.style.display = 'block';
+  container.scrollIntoView({ behavior: 'smooth' });
+}
+
+function selectBookResult(index) {
+  const book = window.searchResults[index];
+  if (!book) return;
+  
+  // Populate form with selected book data
+  if (book.title) safeSetValue('title', book.title);
+  if (book.isbn) safeSetValue('isbn', book.isbn);
+  if (book.subtitle) safeSetValue('subtitle', book.subtitle);
+  if (book.publisher) safeSetValue('publisher', book.publisher);
+  if (book.page_count) safeSetValue('page_count', book.page_count);
+  if (book.language) safeSetValue('language', book.language);
+  if (book.cover_url || book.cover) safeSetValue('cover_url', book.cover_url || book.cover);
+  if (book.published_date || book.publication_year) safeSetValue('published_date', book.published_date || book.publication_year);
+  if (book.description) safeSetValue('description', book.description);
+  
+  // Handle authors
+  if (book.authors_list && Array.isArray(book.authors_list)) {
+    if (book.authors_list.length > 0) {
+      safeSetValue('author', book.authors_list[0]);
+      if (book.authors_list.length > 1) {
+        safeSetValue('additional_authors', book.authors_list.slice(1).join(', '));
+      }
+    }
+  } else if (book.authors || book.author) {
+    const authorString = book.authors || book.author;
+    const authorList = authorString.split(',').map(a => a.trim()).filter(a => a);
+    if (authorList.length > 0) {
+      safeSetValue('author', authorList[0]);
+      if (authorList.length > 1) {
+        safeSetValue('additional_authors', authorList.slice(1).join(', '));
+      }
+    }
+  }
+  
+  // Hide search results
+  document.getElementById('search-results-container').style.display = 'none';
+  
+  // Auto-expand accordions to show the filled data
+  expandBookDetails();
+  
+  // Show success message
+  showMessage('success', `Book details loaded: "${book.title}"`);
+}
 </script>
 
 <div class="text-center mt-4">

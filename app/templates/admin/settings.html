@@ -108,9 +108,7 @@
             <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-speedometer2 me-1"></i>Dashboard
             </a>
-        </div>
-    </div>
-            <a href="{{ url_for('admin.users') }}" class="btn btn-outline-light btn-sm">
+            <a href="{{ url_for('admin.users') }}" class="btn btn-outline-light btn-sm ms-2">
                 <i class="bi bi-people me-1"></i>User Management
             </a>
         </div>
@@ -255,6 +253,157 @@
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Configuration -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-primary text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseAIConfig" 
+                                aria-expanded="false" aria-controls="collapseAIConfig">
+                            <i class="bi bi-robot me-2"></i>AI Configuration
+                        </button>
+                    </h2>
+                    <div id="collapseAIConfig" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Configure AI services for enhanced book processing features.</p>
+                            
+                            <form method="POST" action="{{ url_for('admin.update_ai_settings') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                
+                                <!-- AI Provider Selection -->
+                                <div class="mb-3">
+                                    <label for="ai_provider" class="form-label fw-bold">AI Provider</label>
+                                    <select class="form-select" id="ai_provider" name="ai_provider" onchange="toggleProviderSettings()">
+                                        <option value="openai" {{ 'selected' if ai_config and ai_config.get('AI_PROVIDER') == 'openai' else '' }}>OpenAI</option>
+                                        <option value="ollama" {{ 'selected' if ai_config and ai_config.get('AI_PROVIDER') == 'ollama' else '' }}>Ollama (Local)</option>
+                                    </select>
+                                    <small class="form-text text-muted">Choose between cloud-based OpenAI or local Ollama</small>
+                                </div>
+
+                                <!-- OpenAI Settings -->
+                                <div id="openai-settings" class="provider-settings">
+                                    <h6 class="fw-bold text-primary mb-3">OpenAI Configuration</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="openai_api_key" class="form-label">API Key</label>
+                                            <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" 
+                                                   value="{{ ai_config.get('OPENAI_API_KEY', '') if ai_config else '' }}" placeholder="sk-...">
+                                            <small class="form-text text-muted">Your OpenAI API key</small>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="openai_model" class="form-label">Model</label>
+                                            <select class="form-select" id="openai_model" name="openai_model">
+                                                <option value="gpt-4o-mini" {{ 'selected' if ai_config and ai_config.get('OPENAI_MODEL') == 'gpt-4o-mini' else '' }}>GPT-4o Mini (Recommended)</option>
+                                                <option value="gpt-4o" {{ 'selected' if ai_config and ai_config.get('OPENAI_MODEL') == 'gpt-4o' else '' }}>GPT-4o</option>
+                                                <option value="gpt-4-turbo" {{ 'selected' if ai_config and ai_config.get('OPENAI_MODEL') == 'gpt-4-turbo' else '' }}>GPT-4 Turbo</option>
+                                                <option value="gpt-4" {{ 'selected' if ai_config and ai_config.get('OPENAI_MODEL') == 'gpt-4' else '' }}>GPT-4</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-12">
+                                            <label for="openai_base_url" class="form-label">Base URL</label>
+                                            <input type="url" class="form-control" id="openai_base_url" name="openai_base_url" 
+                                                   value="{{ ai_config.get('OPENAI_BASE_URL', 'https://api.openai.com/v1') if ai_config else 'https://api.openai.com/v1' }}">
+                                            <small class="form-text text-muted">API endpoint URL (use default unless using a proxy)</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Ollama Settings -->
+                                <div id="ollama-settings" class="provider-settings" style="display: none;">
+                                    <h6 class="fw-bold text-success mb-3">Ollama Configuration</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-8">
+                                            <label for="ollama_base_url" class="form-label">Base URL</label>
+                                            <div class="input-group">
+                                                <input type="url" class="form-control" id="ollama_base_url" name="ollama_base_url" 
+                                                       value="{{ ai_config.get('OLLAMA_BASE_URL', 'http://localhost:11434/v1') if ai_config else 'http://localhost:11434/v1' }}">
+                                                <button type="button" class="btn btn-outline-secondary" onclick="testOllamaConnection()">
+                                                    <i class="bi bi-wifi me-1"></i>Test & Load Models
+                                                </button>
+                                            </div>
+                                            <small class="form-text text-muted">Ollama server URL</small>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="ollama_model" class="form-label">Model</label>
+                                            <select class="form-select" id="ollama_model" name="ollama_model">
+                                                <option value="">Select model after testing connection</option>
+                                                <option value="{{ ai_config.get('OLLAMA_MODEL', 'llama3.2-vision:11b') if ai_config else 'llama3.2-vision:11b' }}" selected>
+                                                    {{ ai_config.get('OLLAMA_MODEL', 'llama3.2-vision:11b') if ai_config else 'llama3.2-vision:11b' }}
+                                                </option>
+                                            </select>
+                                            <small class="form-text text-muted">Vision-capable model name</small>
+                                            <div class="form-check mt-2">
+                                                <input class="form-check-input" type="checkbox" id="ollama_manual_model">
+                                                <label class="form-check-label" for="ollama_manual_model">
+                                                    Enter model name manually
+                                                </label>
+                                            </div>
+                                            <input type="text" class="form-control mt-2" id="ollama_model_manual" name="ollama_model_manual" 
+                                                   style="display: none;" placeholder="Enter model name manually">
+                                        </div>
+                                    </div>
+                                    <!-- Ollama Test Results Area -->
+                                    <div id="ollama-test-results" class="mt-3"></div>
+                                </div>
+
+                                <!-- General AI Settings -->
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-secondary mb-3">General Settings</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label for="ai_timeout" class="form-label">Timeout (seconds)</label>
+                                            <input type="number" class="form-control" id="ai_timeout" name="ai_timeout" 
+                                                   value="{{ ai_config.get('AI_TIMEOUT', '30') if ai_config else '30' }}" min="10" max="120">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="ai_max_tokens" class="form-label">Max Tokens</label>
+                                            <input type="number" class="form-control" id="ai_max_tokens" name="ai_max_tokens" 
+                                                   value="{{ ai_config.get('AI_MAX_TOKENS', '1000') if ai_config else '1000' }}" min="100" max="4000">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="ai_temperature" class="form-label">Temperature</label>
+                                            <input type="number" class="form-control" id="ai_temperature" name="ai_temperature" 
+                                                   value="{{ ai_config.get('AI_TEMPERATURE', '0.1') if ai_config else '0.1' }}" min="0" max="1" step="0.1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Feature Settings -->
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-info mb-3">Feature Settings</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="ai_book_extraction_enabled" 
+                                                       name="ai_book_extraction_enabled" {{ 'checked' if ai_config and ai_config.get('AI_BOOK_EXTRACTION_ENABLED') == 'true' else '' }}>
+                                                <label class="form-check-label" for="ai_book_extraction_enabled">
+                                                    Enable AI Book Extraction
+                                                </label>
+                                            </div>
+                                            <small class="form-text text-muted">Allow users to process book images with AI</small>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="ai_book_extraction_auto_search" 
+                                                       name="ai_book_extraction_auto_search" {{ 'checked' if ai_config and ai_config.get('AI_BOOK_EXTRACTION_AUTO_SEARCH') == 'true' else '' }}>
+                                                <label class="form-check-label" for="ai_book_extraction_auto_search">
+                                                    Auto-search after AI extraction
+                                                </label>
+                                            </div>
+                                            <small class="form-text text-muted">Automatically search APIs with extracted data</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-check2 me-1"></i>Save AI Settings
+                                    </button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 </div>
@@ -437,5 +586,220 @@ async function toggleDebugMode() {
     
     btn.disabled = false;
 }
+
+// AI Configuration Functions
+function toggleProviderSettings() {
+    const provider = document.getElementById('ai_provider').value;
+    const openaiSettings = document.getElementById('openai-settings');
+    const ollamaSettings = document.getElementById('ollama-settings');
+    
+    if (provider === 'openai') {
+        openaiSettings.style.display = 'block';
+        ollamaSettings.style.display = 'none';
+    } else if (provider === 'ollama') {
+        openaiSettings.style.display = 'none';
+        ollamaSettings.style.display = 'block';
+    }
+}
+
+async function testAIConnection() {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';
+    
+    try {
+        const provider = document.getElementById('ai_provider').value;
+        const formData = new FormData();
+        formData.append('csrf_token', '{{ csrf_token() }}');
+        formData.append('ai_provider', provider);
+        
+        if (provider === 'openai') {
+            formData.append('openai_api_key', document.getElementById('openai_api_key').value);
+            formData.append('openai_base_url', document.getElementById('openai_base_url').value);
+            formData.append('openai_model', document.getElementById('openai_model').value);
+        } else if (provider === 'ollama') {
+            formData.append('ollama_base_url', document.getElementById('ollama_base_url').value);
+            formData.append('ollama_model', document.getElementById('ollama_model').value);
+        }
+        
+        const response = await fetch('/admin/test-ai-connection', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        // Remove any existing alerts
+        const existingAlerts = document.querySelectorAll('.ai-test-alert');
+        existingAlerts.forEach(alert => alert.remove());
+        
+        // Create new alert
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${result.success ? 'success' : 'danger'} alert-dismissible fade show mt-3 ai-test-alert`;
+        
+        let alertContent = `<strong>${result.success ? '✅ Success:' : '❌ Error:'}</strong> ${result.message}`;
+        
+        // Add model information for successful Ollama connections
+        if (result.success && result.models && Array.isArray(result.models) && result.models.length > 0) {
+            alertContent += `<br><br><strong>Available Models:</strong><ul class="mt-2 mb-1">`;
+            result.models.forEach(model => {
+                alertContent += `<li><code>${model}</code></li>`;
+            });
+            alertContent += `</ul>`;
+        }
+        
+        alertContent += `<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+        alertDiv.innerHTML = alertContent;
+        btn.parentNode.appendChild(alertDiv);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+        
+    } catch (error) {
+        // Remove any existing alerts
+        const existingAlerts = document.querySelectorAll('.ai-test-alert');
+        existingAlerts.forEach(alert => alert.remove());
+        
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-danger alert-dismissible fade show mt-3 ai-test-alert';
+        alertDiv.innerHTML = `
+            <strong>❌ Error:</strong> Failed to test AI connection. Please try again.
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        btn.parentNode.appendChild(alertDiv);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+}
+
+async function testOllamaConnection() {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    const ollamaUrl = document.getElementById('ollama_base_url').value;
+    const resultsDiv = document.getElementById('ollama-test-results');
+    
+    if (!ollamaUrl) {
+        alert('Please enter the Ollama server URL first');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';
+    
+    // Clear previous results
+    resultsDiv.innerHTML = '';
+    
+    try {
+        const formData = new FormData();
+        formData.append('csrf_token', '{{ csrf_token() }}');
+        formData.append('ollama_base_url', ollamaUrl);
+        
+        const response = await fetch('/admin/test-ollama-connection', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success && result.models) {
+            // Populate model dropdown
+            const modelSelect = document.getElementById('ollama_model');
+            modelSelect.innerHTML = '<option value="">Select a model</option>';
+            
+            result.models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.name;
+                option.textContent = `${model.name} (${model.size})`;
+                modelSelect.appendChild(option);
+            });
+            
+            // Show success message
+            resultsDiv.innerHTML = `
+                <div class="alert alert-success alert-dismissible fade show">
+                    <i class="bi bi-check-circle me-1"></i>
+                    <strong>Connection successful!</strong> Found ${result.models.length} models. Please select one from the dropdown above.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+        } else {
+            // Show error message
+            resultsDiv.innerHTML = `
+                <div class="alert alert-danger alert-dismissible fade show">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    <strong>Connection failed:</strong> ${result.message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+        }
+        
+    } catch (error) {
+        resultsDiv.innerHTML = `
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                <strong>Error:</strong> Failed to test connection. Please try again.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `;
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+}
+
+// Handle manual model entry toggle
+document.addEventListener('DOMContentLoaded', function() {
+    const manualCheckbox = document.getElementById('ollama_manual_model');
+    const modelSelect = document.getElementById('ollama_model');
+    const manualInput = document.getElementById('ollama_model_manual');
+    
+    if (manualCheckbox) {
+        manualCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                modelSelect.style.display = 'none';
+                manualInput.style.display = 'block';
+                manualInput.required = true;
+                modelSelect.required = false;
+            } else {
+                modelSelect.style.display = 'block';
+                manualInput.style.display = 'none';
+                manualInput.required = false;
+                modelSelect.required = true;
+            }
+        });
+    }
+});
+
+// Initialize provider settings on page load
+document.addEventListener('DOMContentLoaded', function() {
+    toggleProviderSettings();
+});
+
+// Add spinning animation for loading states
+const style = document.createElement('style');
+style.textContent = `
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+`;
+document.head.appendChild(style);
 </script>
 {% endblock %}
