@@ -962,16 +962,37 @@ class AdvancedMigrationSystem:
         author_name = safe_get(row, 'author')
         api_authors = api_data.get('authors_list', []) if api_data else []
         
-        # Use SQLite author if available, otherwise use API authors
-        if author_name:
-            authors_to_process = [author_name.strip()]
-        elif api_authors:
+        # Determine authors to process with proper comma-separation support
+        authors_to_process = []
+        
+        # Prioritize API authors if available (they're already in list format)
+        if api_authors:
             authors_to_process = api_authors
-        else:
-            authors_to_process = []
+            logger.info(f"📚 Using API authors for {safe_get(row, 'title', 'Unknown')}: {api_authors}")
+        elif author_name and author_name.strip():
+            # Handle comma-separated authors from SQLite data
+            # Split by common separators: comma, semicolon, " and ", " & "
+            raw_author = author_name.strip()
+            
+            # Try different separators in order of preference
+            if ',' in raw_author:
+                authors_to_process = [name.strip() for name in raw_author.split(',') if name.strip()]
+            elif ';' in raw_author:
+                authors_to_process = [name.strip() for name in raw_author.split(';') if name.strip()]
+            elif ' and ' in raw_author.lower():
+                # Split on " and " (case insensitive)
+                import re
+                authors_to_process = [name.strip() for name in re.split(r'\s+and\s+', raw_author, flags=re.IGNORECASE) if name.strip()]
+            elif ' & ' in raw_author:
+                authors_to_process = [name.strip() for name in raw_author.split(' & ') if name.strip()]
+            else:
+                # Single author
+                authors_to_process = [raw_author]
+            
+            logger.info(f"📚 Parsed SQLite authors for {safe_get(row, 'title', 'Unknown')}: {authors_to_process}")
         
         contributors = []
-        for author in authors_to_process:
+        for i, author in enumerate(authors_to_process):
             if author and author.strip():
                 # Create Person for the author
                 person = Person(
@@ -981,11 +1002,11 @@ class AdvancedMigrationSystem:
                     updated_at=datetime.now()
                 )
                 
-                # Create BookContribution
+                # Create BookContribution with proper order
                 contribution = BookContribution(
                     person=person,
                     contribution_type=ContributionType.AUTHORED,
-                    order=0,
+                    order=i,  # Proper ordering for multiple authors
                     created_at=datetime.now()
                 )
                 contributors.append(contribution)

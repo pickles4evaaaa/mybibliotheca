@@ -190,46 +190,6 @@ class KuzuPersonService:
             traceback.print_exc()
             return []
     
-    async def get_books_by_person_for_user(self, person_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Get books associated with a person, filtered by user's library and organized by contribution type."""
-        try:
-            # Query that joins person-book relationships with user-book relationships
-            query = """
-            MATCH (p:Person {id: $person_id})-[pr:AUTHORED]->(b:Book)<-[ur:OWNS]-(u:User {id: $user_id})
-            RETURN b, COALESCE(pr.role, 'authored') as relationship_type, ur
-            ORDER BY b.title ASC
-            """
-            
-            results = self.graph_storage.query(query, {"person_id": person_id, "user_id": user_id})
-            
-            books_by_type = {}
-            for result in results:
-                if 'col_0' in result:
-                    book_data = dict(result['col_0'])
-                    relationship_type = result.get('col_1', 'authored')
-                    user_relationship = result.get('col_2', {})
-                    
-                    # Add user relationship data to book
-                    if isinstance(user_relationship, dict):
-                        book_data.update(user_relationship)
-                    
-                    # Add the relationship type
-                    book_data['relationship_type'] = relationship_type
-                    # Ensure uid is available as alias for id
-                    if 'id' in book_data:
-                        book_data['uid'] = book_data['id']
-                    
-                    # Organize by contribution type
-                    if relationship_type not in books_by_type:
-                        books_by_type[relationship_type] = []
-                    books_by_type[relationship_type].append(book_data)
-            
-            return books_by_type
-            
-        except Exception as e:
-            traceback.print_exc()
-            return {}
-    
     async def get_contribution_type_counts(self) -> Dict[str, int]:
         """Get counts of people by contribution type."""
         try:
@@ -278,10 +238,6 @@ class KuzuPersonService:
     def get_books_by_person_sync(self, person_id: str) -> List[Dict[str, Any]]:
         """Get all books associated with a person (sync version)."""
         return run_async(self.get_books_by_person(person_id))
-    
-    def get_books_by_person_for_user_sync(self, person_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Get books grouped by contribution type for a person (sync version)."""
-        return run_async(self.get_books_by_person_for_user(person_id, user_id))
     
     def get_contribution_type_counts_sync(self) -> Dict[str, int]:
         """Get counts of people by contribution type (sync version)."""

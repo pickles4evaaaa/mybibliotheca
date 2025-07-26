@@ -62,10 +62,17 @@ def people():
                 # Get book count and contributions for this person
                 person_id = getattr(person_obj, 'id', None)
                 if person_id:
-                    books_by_type = safe_call_sync_method(person_service.get_books_by_person_for_user_sync, person_id, str(current_user.id))
-                    if books_by_type:
-                        total_books = sum(len(books) for books in books_by_type.values())
-                        person_obj.book_count = total_books
+                    # Use global book count (all books authored by this person)
+                    all_books_by_person = safe_call_sync_method(person_service.get_books_by_person_sync, person_id)
+                    if all_books_by_person:
+                        person_obj.book_count = len(all_books_by_person)
+                        # For the template, organize by relationship type
+                        books_by_type = {}
+                        for book in all_books_by_person:
+                            rel_type = book.get('relationship_type', 'authored')
+                            if rel_type not in books_by_type:
+                                books_by_type[rel_type] = []
+                            books_by_type[rel_type].append(book)
                         person_obj.contributions = books_by_type
                     else:
                         person_obj.book_count = 0
