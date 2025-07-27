@@ -42,11 +42,16 @@ def handle_connection_error(error_message: str) -> bool:
         logger.info("🔄 Attempting to recover database connections...")
         
         # Import here to avoid circular imports
-        from app.services.backup_restore_service import get_backup_service
-        backup_service = get_backup_service()
+        from app.services.simple_backup_service import SimpleBackupService
+        backup_service = SimpleBackupService()
         
-        # Attempt emergency connection refresh
-        success = backup_service.emergency_connection_refresh()
+        # Simple connection refresh by getting fresh database instance
+        try:
+            from app.infrastructure.kuzu_graph import get_kuzu_database
+            db = get_kuzu_database()
+            success = db is not None
+        except Exception:
+            success = False
         
         if success:
             logger.info("✅ Connection recovery successful")
@@ -101,18 +106,28 @@ def check_and_refresh_connections() -> bool:
         True if connections are healthy or were successfully refreshed, False otherwise
     """
     try:
-        from app.services.backup_restore_service import get_backup_service
-        backup_service = get_backup_service()
+        from app.infrastructure.kuzu_graph import get_kuzu_database
+        db = get_kuzu_database()
         
-        # Check connection health
-        health = backup_service.check_connection_health()
+        # Check if database connection is working
+        try:
+            conn = db.connect() if db else None
+            health_status = 'healthy' if conn else 'unhealthy'
+        except Exception:
+            health_status = 'unhealthy'
         
-        if health.get('overall_health') == 'healthy':
+        if health_status == 'healthy':
             logger.debug("Database connections are healthy")
             return True
         else:
             logger.warning("Database connections are unhealthy, attempting refresh...")
-            return backup_service.emergency_connection_refresh()
+            # Simple refresh by creating a new database instance
+            try:
+                from app.infrastructure.kuzu_graph import get_kuzu_database
+                db = get_kuzu_database()
+                return db is not None
+            except Exception:
+                return False
             
     except Exception as e:
         logger.error(f"Failed to check and refresh connections: {e}")
