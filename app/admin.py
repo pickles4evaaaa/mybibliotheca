@@ -169,9 +169,30 @@ def dashboard():
     except Exception as e:
         current_app.logger.error(f"Error loading admin dashboard: {e}")
         flash('Error loading dashboard data.', 'danger')
+        # Provide default stats structure to prevent template errors
+        default_stats = {
+            'total_books': 0,
+            'total_users': 0,
+            'active_users': 0,
+            'admin_users': 0,
+            'new_users_30d': 0,
+            'new_books_30d': 0,
+            'total_categories': 0,
+            'total_contributors': 0,
+            'recent_activity': 0,
+            'database_size': 'Unknown',
+            'system': {
+                'disk_free_gb': 'N/A',
+                'disk_total_gb': 'N/A', 
+                'disk_percent': 'N/A',
+                'memory_percent': 'N/A',
+                'memory_available_gb': 'N/A'
+            },
+            'top_users': []
+        }
         return render_template('admin/dashboard.html', 
                              title='Admin Dashboard',
-                             stats={},
+                             stats=default_stats,
                              recent_users=[],
                              recent_books=[])
 

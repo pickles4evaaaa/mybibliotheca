@@ -714,15 +714,25 @@ def create_app():
     app.register_blueprint(auth, url_prefix='/auth')
     app.register_blueprint(admin, url_prefix='/admin')
     
-    # Register backup routes
+    # Register backup routes (DISABLED - using simple backup instead)
+    # try:
+    #     from .routes.backup_routes import backup_bp
+    #     app.register_blueprint(backup_bp)
+    #     verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+    #     if verbose_init:
+    #         print("✅ Backup routes registered")
+    # except Exception as e:
+    #     print(f"Could not register backup routes: {e}")
+    
+    # Register simple backup routes
     try:
-        from .routes.backup_routes import backup_bp
-        app.register_blueprint(backup_bp)
+        from .routes.simple_backup_routes import simple_backup_bp
+        app.register_blueprint(simple_backup_bp)
         verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
         if verbose_init:
-            print("✅ Backup routes registered")
+            print("✅ Simple backup routes registered")
     except Exception as e:
-        print(f"Could not register backup routes: {e}")
+        print(f"Could not register simple backup routes: {e}")
     
     # Register debug admin routes
     try:

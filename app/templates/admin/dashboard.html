@@ -174,11 +174,8 @@
                     <div class="col-md-4">
                         <h6>Quick Actions</h6>
                         <div class="btn-group-vertical btn-group-sm d-grid gap-1">
-                            <a href="{{ url_for('backup.index') }}" class="btn btn-outline-primary">
-                                <i class="fas fa-shield-alt me-1"></i>Manage Backups
-                            </a>
-                            <a href="{{ url_for('backup.export_data') }}" class="btn btn-outline-info">
-                                <i class="fas fa-download me-1"></i>Export Data
+                            <a href="{{ url_for('simple_backup.index') }}" class="btn btn-outline-success">
+                                <i class="bi bi-database me-1"></i>Backup & Restore
                             </a>
                         </div>
                     </div>
@@ -186,11 +183,8 @@
                         <h6>System Maintenance</h6>
                         <div class="btn-group-vertical btn-group-sm d-grid gap-1">
                             <button type="button" class="btn btn-outline-success" onclick="createQuickBackup()">
-                                <i class="fas fa-plus me-1"></i>Quick Backup
+                                <i class="bi bi-plus me-1"></i>Quick Backup
                             </button>
-                            <a href="{{ url_for('backup.schedule_backups') }}" class="btn btn-outline-secondary">
-                                <i class="fas fa-clock me-1"></i>Schedule Backups
-                            </a>
                         </div>
                     </div>
                 </div>
@@ -373,23 +367,16 @@ setInterval(function() {
 
 // Quick backup function
 function createQuickBackup() {
-    if (confirm('Create a quick full backup of the system? This may take a few minutes.')) {
+    if (confirm('Create a quick backup of your database? This will take just a moment.')) {
         // Create a form to submit the backup request
         const form = document.createElement('form');
         form.method = 'POST';
-        form.action = '{{ url_for("backup.create_backup") }}';
-        
-        // Add backup type
-        const typeInput = document.createElement('input');
-        typeInput.type = 'hidden';
-        typeInput.name = 'backup_type';
-        typeInput.value = 'full';
-        form.appendChild(typeInput);
+        form.action = '{{ url_for("simple_backup.create_backup") }}';
         
         // Add custom name
         const nameInput = document.createElement('input');
         nameInput.type = 'hidden';
-        nameInput.name = 'custom_name';
+        nameInput.name = 'name';
         nameInput.value = 'quick-backup-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-');
         form.appendChild(nameInput);
         
@@ -401,14 +388,11 @@ function createQuickBackup() {
         form.appendChild(descInput);
         
         // Add CSRF token
-        const csrfToken = document.querySelector('meta[name=csrf-token]');
-        if (csrfToken) {
-            const csrfInput = document.createElement('input');
-            csrfInput.type = 'hidden';
-            csrfInput.name = 'csrf_token';
-            csrfInput.value = csrfToken.getAttribute('content');
-            form.appendChild(csrfInput);
-        }
+        const csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden';
+        csrfInput.name = 'csrf_token';
+        csrfInput.value = '{{ csrf_token() }}';
+        form.appendChild(csrfInput);
         
         document.body.appendChild(form);
         form.submit();

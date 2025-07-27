@@ -252,6 +252,9 @@ flask_session/
 .env.local
 .env.production
 
+# Local development notes (not for GitHub)
+.local_notes/
+
 # Database files
 *.db
 *.sqlite

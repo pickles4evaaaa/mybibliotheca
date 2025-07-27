@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block title %}Simple Backup & Restore - Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1><i class="bi bi-database me-2"></i>Simple Backup & Restore</h1>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createBackupModal">
+                        <i class="bi bi-plus me-1"></i>Create Backup
+                    </button>
+                    <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-1"></i>Back to Admin
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Introduction -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="alert alert-info">
+                <h5><i class="bi bi-info-circle me-2"></i>About Simple Backup</h5>
+                <p class="mb-2">This simplified backup system directly backs up your KuzuDB database files as ZIP archives.</p>
+                <ul class="mb-0">
+                    <li><strong>Backup:</strong> Creates a ZIP file of your complete database</li>
+                    <li><strong>Restore:</strong> Cleanly disconnects, replaces database files, and reconnects</li>
+                    <li><strong>Simple:</strong> No complex metadata or multi-step processes</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <h5 class="card-title">{{ backup_stats.total_backups }}</h5>
+                            <p class="card-text text-muted">Total Backups</p>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-archive display-6 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <h5 class="card-title">{{ backup_stats.database_size_formatted }}</h5>
+                            <p class="card-text text-muted">Database Size</p>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-hdd display-6 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <h5 class="card-title">{{ backup_stats.newest_backup_age or 'None' }}</h5>
+                            <p class="card-text text-muted">Last Backup</p>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-clock display-6 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <h5 class="card-title">
+                                {% if backup_stats.total_backups > 0 %}
+                                    <i class="bi bi-check-circle text-success"></i> Ready
+                                {% else %}
+                                    <i class="bi bi-exclamation-triangle"></i> No backups
+                                {% endif %}
+                            </h5>
+                            <p class="card-text text-muted">System Status</p>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-activity display-4 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backups Table -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Available Backups</h5>
+                </div>
+                <div class="card-body">
+                    {% if backups %}
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Backup Name</th>
+                                        <th>Created</th>
+                                        <th>Size</th>
+                                        <th>Database Size</th>
+                                        <th>Status</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for backup in backups %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ backup.name }}</strong>
+                                            {% if backup.description %}
+                                                <br><small class="text-muted">{{ backup.description }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {{ backup.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                                            <br><small class="text-muted">{{ backup.age }}</small>
+                                        </td>
+                                        <td>{{ backup.size_formatted }}</td>
+                                        <td>{{ backup.database_size_formatted }}</td>
+                                        <td>
+                                            {% if backup.valid %}
+                                                <span class="badge bg-success">Valid</span>
+                                            {% else %}
+                                                <span class="badge bg-danger">Invalid</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            <div class="btn-group btn-group-sm" role="group" aria-label="Backup actions">
+                                                <a href="{{ url_for('simple_backup.download_backup', backup_id=backup.id) }}" 
+                                                   class="btn btn-outline-primary" 
+                                                   title="Download Backup">
+                                                    <i class="bi bi-download"></i>
+                                                </a>
+                                                <button type="button" 
+                                                        class="btn btn-outline-warning" 
+                                                        onclick="confirmRestore('{{ backup.id }}', '{{ backup.name }}')"
+                                                        title="Restore Backup">
+                                                    <i class="bi bi-arrow-clockwise"></i>
+                                                </button>
+                                                <button type="button" 
+                                                        class="btn btn-outline-danger" 
+                                                        onclick="confirmDelete('{{ backup.id }}', '{{ backup.name }}')"
+                                                        title="Delete Backup">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="bi bi-inbox display-1 text-muted"></i>
+                            <h5 class="mt-3">No Backups Found</h5>
+                            <p class="text-muted">Create your first backup to get started.</p>
+                            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createBackupModal">
+                                <i class="bi bi-plus me-1"></i>Create First Backup
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Backup Modal -->
+<div class="modal fade" id="createBackupModal" tabindex="-1" aria-labelledby="createBackupModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{{ url_for('simple_backup.create_backup') }}">
+                {{ csrf_token() }}
+                <div class="modal-header">
+                    <h5 class="modal-title" id="createBackupModalLabel">
+                        <i class="bi bi-plus-circle me-2"></i>Create Simple Backup
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="backupName" class="form-label">Backup Name</label>
+                        <input type="text" class="form-control" id="backupName" name="name" 
+                               placeholder="My Backup" required>
+                        <div class="form-text">Choose a descriptive name for this backup.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="backupDescription" class="form-label">Description (Optional)</label>
+                        <textarea class="form-control" id="backupDescription" name="description" 
+                                  rows="3" placeholder="Describe what this backup contains..."></textarea>
+                    </div>
+                    <div class="alert alert-info">
+                        <h6><i class="bi bi-info-circle me-2"></i>What will be backed up:</h6>
+                        <ul class="mb-0">
+                            <li>Complete KuzuDB database ({{ backup_stats.database_size_formatted }})</li>
+                            <li>All nodes, relationships, and data</li>
+                            <li>Database schema and indexes</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-2"></i>Create Backup
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden delete form -->
+<form id="deleteForm" method="post" style="display: none;">
+    {{ csrf_token() }}
+    <input type="hidden" name="_method" value="DELETE">
+</form>
+
+<script>
+// Confirmation functions
+function confirmRestore(backupId, backupName) {
+    if (confirm(`Are you sure you want to restore backup "${backupName}"?\n\nThis will:\n- Stop the current database\n- Replace all current data\n- Restart with the backup data\n\nThis action cannot be undone!`)) {
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = `{{ url_for('simple_backup.restore_backup', backup_id='BACKUP_ID') }}`.replace('BACKUP_ID', backupId);
+        
+        // Add CSRF token
+        const csrfToken = document.createElement('input');
+        csrfToken.type = 'hidden';
+        csrfToken.name = 'csrf_token';
+        csrfToken.value = '{{ csrf_token() }}';
+        form.appendChild(csrfToken);
+        
+        // Add confirmation field
+        const confirmField = document.createElement('input');
+        confirmField.type = 'hidden';
+        confirmField.name = 'confirm';
+        confirmField.value = 'yes';
+        form.appendChild(confirmField);
+        
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+function confirmDelete(backupId, backupName) {
+    if (confirm(`Are you sure you want to delete backup "${backupName}"?\n\nThis action cannot be undone!`)) {
+        const form = document.getElementById('deleteForm');
+        form.action = `{{ url_for('simple_backup.delete_backup', backup_id='BACKUP_ID') }}`.replace('BACKUP_ID', backupId);
+        
+        // Ensure CSRF token is present
+        if (!form.querySelector('input[name="csrf_token"]')) {
+            const csrfToken = document.createElement('input');
+            csrfToken.type = 'hidden';
+            csrfToken.name = 'csrf_token';
+            csrfToken.value = '{{ csrf_token() }}';
+            form.appendChild(csrfToken);
+        }
+        
+        form.submit();
+    }
+}
+
+// Auto-refresh stats every 30 seconds
+setInterval(() => {
+    fetch('{{ url_for("simple_backup.api_backup_stats") }}')
+        .then(response => response.json())
+        .then(data => {
+            // Update stats if needed
+            console.log('Stats refreshed:', data);
+        })
+        .catch(error => console.error('Error refreshing stats:', error));
+}, 30000);
+</script>
+
+{% endblock %}

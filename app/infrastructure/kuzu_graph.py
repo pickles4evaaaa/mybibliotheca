@@ -1555,7 +1555,7 @@ _kuzu_database = None
 _graph_storage = None
 
 
-def get_kuzu_connection() -> KuzuGraphDB:
+def get_kuzu_connection() -> 'KuzuGraphDB':
     """Get the global KuzuDB instance. DEPRECATED: Use get_kuzu_database() instead."""
     return get_kuzu_database()
 
