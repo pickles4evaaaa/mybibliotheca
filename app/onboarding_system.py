@@ -28,7 +28,15 @@ import pytz
 from datetime import datetime
 
 from .advanced_migration_system import AdvancedMigrationSystem, DatabaseVersion
-from .routes.import_routes import import_jobs, store_job_in_kuzu, start_import_job, auto_create_custom_fields, update_job_in_kuzu
+from .routes.import_routes import store_job_in_kuzu, start_import_job, auto_create_custom_fields, update_job_in_kuzu
+from .utils.safe_import_manager import (
+    safe_import_manager,
+    safe_create_import_job,
+    safe_update_import_job,
+    safe_get_import_job,
+    safe_get_user_import_jobs,
+    safe_delete_import_job
+)
 from .services import user_service
 from .location_service import LocationService
 from .forms import SetupForm
@@ -1172,8 +1180,22 @@ def import_progress_json(task_id: str):
                 'recent_activity': ['Setup completed successfully - please continue to your library']
             })
         
-        # First, try to get job from memory for real import tasks
-        job = import_jobs.get(task_id)
+        # First, try to get job from safe manager for real import tasks
+        # Note: We need user context, but during onboarding the user might not be logged in yet
+        # Try to get the user ID from the onboarding session data
+        onboarding_data = get_onboarding_data()
+        admin_data = onboarding_data.get('admin', {})
+        
+        # If we have admin user ID from session, try to get the job safely
+        if admin_data and 'user_id' in admin_data:
+            job = safe_get_import_job(admin_data['user_id'], task_id)
+        else:
+            # Fallback: Try to get from current user if authenticated
+            from flask_login import current_user
+            if current_user.is_authenticated:
+                job = safe_get_import_job(current_user.id, task_id)
+            else:
+                job = None
         
         if job:
             logger.info(f"📊 Found real job data: {job}")
@@ -1946,18 +1968,18 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             logger.warning(f"⚠️ Could not count CSV rows: {e}")
             job_data['total'] = 0
         
-        # Store job data using the same proven method as post-onboarding import
+        # Store job data using the safe import manager
         print(f"🚀 [IMPORT_JOB] Storing job in Kuzu...")
         kuzu_success = store_job_in_kuzu(task_id, job_data)
         print(f"🚀 [IMPORT_JOB] Kuzu storage result: {kuzu_success}")
         
-        print(f"🚀 [IMPORT_JOB] Storing job in memory...")
-        import_jobs[task_id] = job_data
-        print(f"🚀 [IMPORT_JOB] Memory storage complete")
+        print(f"🚀 [IMPORT_JOB] Storing job safely with user isolation...")
+        safe_success = safe_create_import_job(user_id, task_id, job_data)
+        print(f"🚀 [IMPORT_JOB] Safe storage complete: {safe_success}")
         
         logger.info(f"🏗️ Created onboarding import job {task_id} for user {user_id}")
         logger.info(f"📊 Kuzu storage: {'✅' if kuzu_success else '❌'}")
-        logger.info(f"💾 Memory storage: ✅")
+        logger.info(f"� Safe storage: {'✅' if safe_success else '❌'}")
         
         # Auto-create custom fields (same as post-onboarding)
         field_mappings = import_config.get('field_mappings', {})
@@ -1971,11 +1993,13 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                 print(f"🚀 [IMPORT_JOB] Starting background import thread for task {task_id}")
                 print(f"🚀 [IMPORT_JOB] Import config: {import_config}")
                 
-                # Update job status to running
-                if task_id in import_jobs:
-                    import_jobs[task_id]['status'] = 'running'
-                    import_jobs[task_id]['current_book'] = 'Starting import...'
-                    print(f"🚀 [IMPORT_JOB] Updated job status to running")
+                # Update job status to running safely
+                running_update = {
+                    'status': 'running',
+                    'current_book': 'Starting import...'
+                }
+                safe_update_import_job(user_id, task_id, running_update)
+                print(f"🚀 [IMPORT_JOB] Updated job status to running")
                 
                 start_import_job(
                     task_id=task_id,
@@ -1985,21 +2009,24 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     format_type=import_config.get('detected_type', 'unknown')
                 )
                 
-                # Update job status to completed
-                if task_id in import_jobs:
-                    import_jobs[task_id]['status'] = 'completed'
-                    import_jobs[task_id]['current_book'] = 'Import completed successfully'
+                # Update job status to completed safely
+                completion_update = {
+                    'status': 'completed',
+                    'current_book': 'Import completed successfully'
+                }
+                safe_update_import_job(user_id, task_id, completion_update)
                     
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 
-                if task_id in import_jobs:
-                    import_jobs[task_id]['status'] = 'failed'
-                    import_jobs[task_id]['current_book'] = f'Import failed: {str(e)}'
-                    if 'error_messages' not in import_jobs[task_id]:
-                        import_jobs[task_id]['error_messages'] = []
-                    import_jobs[task_id]['error_messages'].append(str(e))
+                # Update job status to failed safely
+                error_update = {
+                    'status': 'failed',
+                    'current_book': f'Import failed: {str(e)}',
+                    'error_messages': [str(e)]
+                }
+                safe_update_import_job(user_id, task_id, error_update)
                 logger.error(f"Onboarding import job {task_id} failed: {e}")
         
         print(f"🚀 [IMPORT_JOB] Creating background thread...")
@@ -2013,13 +2040,14 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         import time
         time.sleep(0.5)
         
-        # Verify the job is still in memory after thread start
-        if task_id in import_jobs:
-            print(f"🚀 [IMPORT_JOB] Job {task_id} confirmed in memory after thread start")
-            logger.info(f"Job {task_id} confirmed in memory after thread start")
+        # Verify the job is stored safely after thread start
+        verification_job = safe_get_import_job(user_id, task_id)
+        if verification_job:
+            print(f"🚀 [IMPORT_JOB] Job {task_id} confirmed in safe storage after thread start")
+            logger.info(f"Job {task_id} confirmed in safe storage after thread start")
         else:
-            print(f"❌ [IMPORT_JOB] Job {task_id} missing from memory after thread start")
-            logger.warning(f"Job {task_id} missing from memory after thread start")
+            print(f"❌ [IMPORT_JOB] Job {task_id} missing from safe storage after thread start")
+            logger.warning(f"Job {task_id} missing from safe storage after thread start")
         
         logger.info(f"✅ Onboarding import job {task_id} started successfully")
         return task_id
@@ -2081,16 +2109,14 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             
     except Exception as e:
         logger.error(f"❌ Error in onboarding import job {task_id}: {e}")
-        # Update job status to failed
+        # Update job status to failed safely
         try:
-            job = import_jobs.get(task_id)
-            if job:
-                job['status'] = 'failed'
-                if 'error_messages' not in job:
-                    job['error_messages'] = []
-               
-                job['error_messages'].append(str(e))
-                update_job_in_kuzu(task_id, {'status': 'failed', 'error_messages': job['error_messages']})
+            error_update = {
+                'status': 'failed',
+                'error_messages': [str(e)]
+            }
+            safe_update_import_job(user_id, task_id, error_update)
+            update_job_in_kuzu(task_id, error_update)
         except:
             pass
 
@@ -2100,8 +2126,8 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
         import csv
         from .utils import normalize_goodreads_value
         
-        # Get the job from memory (for onboarding, jobs are stored in memory)
-        job = import_jobs.get(task_id)
+        # Get the job safely (for onboarding, jobs are stored in safe manager)
+        job = safe_get_import_job(user_id, task_id)
         if not job:
             logger.error(f"❌ Job {task_id} not found")
             return False

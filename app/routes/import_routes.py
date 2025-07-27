@@ -37,8 +37,17 @@ from app.utils.safe_import_manager import (
 
 # DEPRECATED: Global dictionary to store import jobs 
 # This is being replaced with safe_import_manager for thread safety and user isolation
-# TODO: Remove this after all code is migrated to safe_import_manager
+# WARNING: This dictionary should no longer be used - kept only for legacy fallback during migration
+# TODO: Remove this completely after all code is verified to use safe_import_manager
 import_jobs = {}
+
+# Add warning for any remaining usage
+import atexit
+def _warn_about_global_dict():
+    if import_jobs:
+        print(f"⚠️ WARNING: {len(import_jobs)} jobs remain in deprecated global import_jobs dictionary")
+        print("   These jobs may indicate incomplete migration to SafeImportJobManager")
+atexit.register(_warn_about_global_dict)
 
 # Create import blueprint
 import_bp = Blueprint('import', __name__)
@@ -962,10 +971,6 @@ def import_books_execute():
     # Store in safe import manager with proper user isolation
     safe_success = safe_create_import_job(current_user.id, task_id, job_data)
     
-    # Also keep in global dict for backward compatibility during migration
-    # TODO: Remove this after migration is complete
-    import_jobs[task_id] = job_data
-    
     print(f"📊 [EXECUTE] Kuzu storage: {'✅' if kuzu_success else '❌'}")
     print(f"🔒 [EXECUTE] Safe storage: {'✅' if safe_success else '❌'}")
     print(f"💾 [EXECUTE] Legacy storage: ✅")
@@ -1001,13 +1006,6 @@ def import_books_execute():
                 # Update safely with user isolation
                 safe_update_import_job(current_user.id, task_id, error_update)
                 
-                # Legacy update for backward compatibility
-                # TODO: Remove this after migration is complete
-                if task_id in import_jobs:
-                    import_jobs[task_id]['status'] = 'failed'
-                    if 'error_messages' not in import_jobs[task_id]:
-                        import_jobs[task_id]['error_messages'] = []
-                    import_jobs[task_id]['error_messages'].append(str(e))
             except Exception as update_error:
                 pass  # Error updating job status
     
@@ -1024,7 +1022,8 @@ def import_books_execute():
 @login_required
 def import_books_progress(task_id):
     """Show import progress."""
-    job = import_jobs.get(task_id)
+    # Use safe import manager with user isolation
+    job = safe_get_import_job(current_user.id, task_id)
     if not job:
         flash('Import job not found.', 'error')
         return redirect(url_for('import.import_books'))
@@ -1217,7 +1216,9 @@ def direct_import():
         
         # Store job data in memory and Kuzu
         print(f"🏗️ [DIRECT_IMPORT] Creating job {task_id} for user {current_user.id}")
-        import_jobs[task_id] = job_data
+        
+        # Store in safe import manager with proper user isolation
+        safe_create_import_job(current_user.id, task_id, job_data)
         store_job_in_kuzu(task_id, job_data)
         
         # Auto-create any custom fields referenced in the mappings
@@ -1251,8 +1252,8 @@ def direct_import():
                         'error_messages': [str(e)]
                     }
                     update_job_in_kuzu(task_id, error_update)
-                    if task_id in import_jobs:
-                        import_jobs[task_id].update(error_update)
+                    # Update safely with user isolation
+                    safe_update_import_job(current_user.id, task_id, error_update)
                 except Exception as update_error:
                     pass  # Error updating job status
         
@@ -1368,49 +1369,27 @@ def bulk_import():
     return redirect(url_for('import.import_books'))
 
 def process_import_job(task_id):
-    """Process an import job in the background."""
-    job = import_jobs.get(task_id)
-    if not job:
-        return
+    """
+    DEPRECATED: This function is unsafe for concurrent use.
+    Use safe_import_manager functions instead.
     
-    try:
-        job['status'] = 'running'
-        
-        # Process the CSV file
-        csv_path = job['csv_file_path']
-        field_mappings = job['field_mappings']
-        
-        with open(csv_path, 'r', encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile)
-            rows = list(reader)
-            job['total'] = len(rows)
-            
-            for i, row in enumerate(rows):
-                try:
-                    # Process each row
-                    job['processed'] = i + 1
-                    job['success'] += 1
-                    job['current_book'] = row.get('Title', 'Unknown')
-                except Exception as e:
-                    job['errors'] += 1
-                    job['error_messages'].append(str(e))
-        
-        job['status'] = 'completed'
-        
-    except Exception as e:
-        job['status'] = 'failed'
-        job['error_messages'].append(str(e))
+    Process an import job in the background.
+    """
+    # DEPRECATED: Direct access to global import_jobs is unsafe
+    # This function should not be used
+    print(f"⚠️ WARNING: process_import_job({task_id}) called - this function is deprecated and unsafe")
+    return
+
+@import_bp.route('/upload', methods=['GET', 'POST'])
+@login_required 
+def upload_import():
+    """Upload and process CSV files for book import."""
+    if request.method == 'GET':
+        return render_template('import_upload.html')
     
-    finally:
-        # Clean up temp file
-        try:
-            os.remove(job['csv_file_path'])
-        except:
-            pass
-        return redirect(url_for('import.import_books'))
-    
-    csv_file = request.files['csv_file']
-    if csv_file.filename == '':
+    # Handle POST request - file upload
+    csv_file = request.files.get('csv_file')
+    if not csv_file or not csv_file.filename or csv_file.filename == '':
         flash('No CSV file selected.', 'error')
         return redirect(url_for('import.import_books'))
     
@@ -1474,8 +1453,8 @@ def process_import_job(task_id):
             job_data['total'] = 0
             current_app.logger.error(f"Error counting CSV rows: {e}")
         
-        # Store job data
-        import_jobs[task_id] = job_data
+        # Store job data with user isolation
+        safe_create_import_job(current_user.id, task_id, job_data)
         
         # Start the import in background thread
         import_config = {
@@ -1491,19 +1470,28 @@ def process_import_job(task_id):
             try:
                 # Import process would go here
                 # For now, just simulate a successful import
-                job = import_jobs.get(task_id)
+                job = safe_get_import_job(current_user.id, task_id)
                 if job:
-                    job['status'] = 'running'
-                    job['processed'] = job['total']
-                    job['success'] = job['total']
-                    job['status'] = 'completed'
-                    job['current_book'] = None
-                    job['recent_activity'].append(f"Import completed! {job['success']} books imported")
+                    updates = {
+                        'status': 'running',
+                        'processed': job['total'],
+                        'success': job['total'],
+                        'current_book': None
+                    }
+                    safe_update_import_job(current_user.id, task_id, updates)
+                    
+                    # Final completion update
+                    completion_updates = {
+                        'status': 'completed',
+                        'recent_activity': job.get('recent_activity', []) + [f"Import completed! {job['total']} books imported"]
+                    }
+                    safe_update_import_job(current_user.id, task_id, completion_updates)
             except Exception as e:
-                job = import_jobs.get(task_id)
-                if job:
-                    job['status'] = 'failed'
-                    job['error_messages'].append(str(e))
+                error_updates = {
+                    'status': 'failed',
+                    'error_messages': [str(e)]
+                }
+                safe_update_import_job(current_user.id, task_id, error_updates)
                 current_app.logger.error(f"Import job {task_id} failed: {e}")
         
         # Start the import process in background
@@ -1594,8 +1582,8 @@ def simple_import():
         except:
             job_data['total'] = 0
         
-        # Store job data
-        import_jobs[task_id] = job_data
+        # Store job data with user isolation
+        safe_create_import_job(current_user.id, task_id, job_data)
         store_job_in_kuzu(task_id, job_data)
         
         print(f"🚀 [SIMPLE_IMPORT] Created job {task_id} for {job_data['total']} rows")
@@ -1629,8 +1617,7 @@ def simple_import():
                 # Update job with error
                 error_update = {'status': 'failed', 'error_messages': [str(e)]}
                 update_job_in_kuzu(task_id, error_update)
-                if task_id in import_jobs:
-                    import_jobs[task_id].update(error_update)
+                safe_update_import_job(current_user.id, task_id, error_update)
         
         # Start background thread
         thread = threading.Thread(target=run_simple_import)
@@ -1785,9 +1772,8 @@ async def process_simple_import(import_config):
                         'skipped': skipped_count,
                         'current_book': simplified_book.title
                     }
-                    # Update in memory for fast API access
-                    if task_id in import_jobs:
-                        import_jobs[task_id].update(progress_update)
+                    # Update safely with user isolation
+                    safe_update_import_job(user_id, task_id, progress_update)
                     
                     # Update in Kuzu less frequently to avoid performance issues
                     if processed_count % 5 == 0:
@@ -1812,8 +1798,8 @@ async def process_simple_import(import_config):
             'recent_activity': [f"Import completed! {success_count} books imported, {error_count} errors, {skipped_count} skipped"]
         }
         update_job_in_kuzu(task_id, completion_data)
-        if task_id in import_jobs:
-            import_jobs[task_id].update(completion_data)
+        # Update safely with user isolation
+        safe_update_import_job(user_id, task_id, completion_data)
         
         print(f"🎉 [PROCESS_SIMPLE] Import completed! {success_count} success, {error_count} errors, {skipped_count} skipped")
         
@@ -1826,8 +1812,8 @@ async def process_simple_import(import_config):
             'error_messages': [str(e)]
         }
         update_job_in_kuzu(task_id, error_data)
-        if task_id in import_jobs:
-            import_jobs[task_id].update(error_data)
+        # Update safely with user isolation
+        safe_update_import_job(user_id, task_id, error_data)
     
     finally:
         # Clean up temp file
@@ -2193,10 +2179,8 @@ def store_job_in_kuzu(task_id, job_data):
 def update_job_in_kuzu(task_id, update_data):
     """Update import job status in KuzuDB."""
     try:
-        # Update in-memory job tracking
-        if task_id in import_jobs:
-            import_jobs[task_id].update(update_data)
         # TODO: Implement actual Kuzu update
+        # Note: In-memory updates are now handled by SafeImportJobManager
         return True
     except Exception as e:
         print(f"Error updating job in Kuzu: {e}")
@@ -2456,7 +2440,8 @@ def simple_upload():
             'created_at': datetime.now().isoformat(),
             'recent_activity': [f'Started import of {file.filename} ({total_books} books)']
         }
-        import_jobs[task_id] = job_data
+        # Store job data with user isolation
+        safe_create_import_job(current_user.id, task_id, job_data)
         
         # Start background processing
         def process_upload():
@@ -2474,10 +2459,12 @@ def simple_upload():
                     
             except Exception as e:
                 traceback.print_exc()
-                # Update job status
-                if task_id in import_jobs:
-                    import_jobs[task_id]['status'] = 'failed'
-                    import_jobs[task_id]['error_messages'] = [str(e)]
+                # Update job status with user isolation
+                error_updates = {
+                    'status': 'failed',
+                    'error_messages': [str(e)]
+                }
+                safe_update_import_job(current_user.id, task_id, error_updates)
         
         thread = threading.Thread(target=process_upload)
         thread.daemon = True
