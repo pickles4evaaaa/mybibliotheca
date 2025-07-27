@@ -624,7 +624,7 @@
     {% block navbar %}
     <nav class="navbar navbar-expand-lg navbar-light">
       <div class="container-fluid">
-        <a class="navbar-brand" href="{{ url_for('main.library') }}"><strong>MyBibliotheca</strong></a>
+        <a class="navbar-brand" href="{{ url_for('main.library') }}"><strong>{{ site_name }}</strong></a>
         
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
           <span class="navbar-toggler-icon"></span>
@@ -696,7 +696,7 @@
             </svg>
           </a>
         </div>
-        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">MyBibliotheca db-upgrade0.1 | It is highly recommended to backup your database regularly.</div>
+        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">{{ site_name }} db-upgrade0.1 | It is highly recommended to backup your database regularly.</div>
       </div>
       {% block footer %}
       <footer class="text-center mt-4">

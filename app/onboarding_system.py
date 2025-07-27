@@ -1297,7 +1297,20 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 logger.error(f"❌ Failed to create location '{location_name}': {e}")
                 # Don't fail the entire onboarding if location creation fails
         
-        # TODO: Apply other site configuration settings to system settings
+        # Apply site configuration settings to system settings
+        try:
+            from .admin import save_system_config
+            system_config = {
+                'site_name': site_config.get('site_name', 'MyBibliotheca'),
+                'server_timezone': site_config.get('timezone', 'UTC')
+            }
+            if save_system_config(system_config):
+                logger.info(f"✅ Applied site configuration to system settings: {system_config}")
+            else:
+                logger.warning(f"⚠️ Failed to save site configuration to system settings")
+        except Exception as e:
+            logger.error(f"❌ Error applying site configuration: {e}")
+            # Don't fail onboarding if system config save fails
         
         # Step 3: Handle data migration/import
         data_options = onboarding_data.get('data_options', {})
@@ -1615,6 +1628,26 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         else:
             print(f"🏠 [SETUP] No location specified (location='{location_name}'), skipping location creation")
             logger.info("No location specified, skipping location creation")
+        
+        # Apply site configuration settings to system settings
+        print(f"🚀 [SETUP] ============ APPLYING SITE CONFIGURATION ============")
+        try:
+            from .admin import save_system_config
+            system_config = {
+                'site_name': site_config.get('site_name', 'MyBibliotheca'),
+                'server_timezone': site_config.get('timezone', 'UTC')
+            }
+            print(f"🚀 [SETUP] Applying system config: {system_config}")
+            if save_system_config(system_config):
+                logger.info(f"✅ Applied site configuration to system settings: {system_config}")
+                print(f"🚀 [SETUP] Site configuration applied successfully")
+            else:
+                logger.warning(f"⚠️ Failed to save site configuration to system settings")
+                print(f"🚀 [SETUP] Failed to apply site configuration")
+        except Exception as e:
+            logger.error(f"❌ Error applying site configuration: {e}")
+            print(f"🚀 [SETUP] Error applying site configuration: {e}")
+            # Don't fail onboarding if system config save fails
         
         print(f"🚀 [SETUP] ============ STEP 3: CREATING CUSTOM FIELDS ============")
         # Step 3: Create custom metadata fields for import

@@ -101,6 +101,7 @@ class Config:
     ISBN_API_KEY = os.environ.get('ISBN_API_KEY') or 'your_isbn_api_key'
     
     # Application settings
+    SITE_NAME = os.environ.get('SITE_NAME', 'MyBibliotheca')
     TIMEZONE = os.environ.get('TIMEZONE') or 'UTC'
     
     # Authentication settings

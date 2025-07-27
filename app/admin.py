@@ -52,6 +52,81 @@ def load_ai_config():
     
     return config
 
+def save_system_config(config):
+    """Save system configuration to config file in data directory"""
+    import json
+    
+    try:
+        # Get data directory from current app config or default
+        try:
+            data_dir = current_app.config.get('DATA_DIR', 'data')
+        except RuntimeError:
+            # Working outside of application context, use default
+            data_dir = 'data'
+        
+        config_path = os.path.join(data_dir, 'system_config.json')
+        
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        
+        # Load existing config
+        existing_config = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    existing_config = json.load(f)
+            except (json.JSONDecodeError, Exception):
+                # If file is corrupted, start fresh
+                existing_config = {}
+        
+        # Update with new system settings
+        existing_config['site_name'] = config.get('site_name', 'MyBibliotheca')
+        existing_config['server_timezone'] = config.get('server_timezone', 'UTC')
+        existing_config['last_updated'] = datetime.now().isoformat()
+        
+        # Save updated config
+        with open(config_path, 'w') as f:
+            json.dump(existing_config, f, indent=2)
+        
+        return True
+    except Exception as e:
+        # Log error if we have current_app context, otherwise print
+        try:
+            current_app.logger.error(f"Error saving system config: {e}")
+        except RuntimeError:
+            print(f"Error saving system config: {e}")
+        return False
+
+def load_system_config():
+    """Load system configuration from config file in data directory"""
+    import json
+    
+    try:
+        # Get data directory from current app config or default
+        try:
+            data_dir = current_app.config.get('DATA_DIR', 'data')
+        except RuntimeError:
+            # Working outside of application context, use default
+            data_dir = 'data'
+        
+        config_path = os.path.join(data_dir, 'system_config.json')
+        
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                return json.load(f)
+    except (json.JSONDecodeError, Exception) as e:
+        # Log warning if we have current_app context, otherwise print
+        try:
+            current_app.logger.warning(f"Error loading system config: {e}")
+        except RuntimeError:
+            print(f"Error loading system config: {e}")
+    
+    # Return defaults if file doesn't exist or is corrupted
+    return {
+        'site_name': 'MyBibliotheca',
+        'server_timezone': 'UTC'
+    }
+
 def save_ai_config(config):
     """Save AI configuration to .env file in data directory"""
     env_path = os.path.join(current_app.config.get('DATA_DIR', 'data'), '.env')
@@ -399,14 +474,23 @@ def settings():
         site_name = request.form.get('site_name', 'MyBibliotheca')
         server_timezone = request.form.get('server_timezone', 'UTC')
         
-        # For Kuzu version, settings are managed via environment variables
-        # Store settings notification (in production, these would be environment variables)
-        flash(f'Settings noted! Site name: {site_name}, Server timezone: {server_timezone}. Configure via environment variables for persistence.', 'info')
+        # Save system configuration to .env file
+        config = {
+            'site_name': site_name,
+            'server_timezone': server_timezone
+        }
+        
+        if save_system_config(config):
+            flash('System settings saved successfully! Changes are now active.', 'success')
+        else:
+            flash('Error saving system settings. Please check permissions and try again.', 'error')
+        
         return redirect(url_for('admin.settings'))
     
-    # Get the current settings from environment variables
-    current_site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
-    current_timezone = os.getenv('SERVER_TIMEZONE', 'UTC')
+    # Get the current settings from config file and environment variables
+    system_config = load_system_config()
+    current_site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
+    current_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
     
     # Get available timezones
     available_timezones = pytz.all_timezones

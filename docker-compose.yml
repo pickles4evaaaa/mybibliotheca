@@ -18,6 +18,7 @@ services:
       - GRAPH_DATABASE_ENABLED=true
       
       # Application settings
+      - SITE_NAME=${SITE_NAME:-MyBibliotheca}
       - TIMEZONE=${TIMEZONE:-UTC}
       # CRITICAL: Use single worker for KuzuDB compatibility
       - WORKERS=1
