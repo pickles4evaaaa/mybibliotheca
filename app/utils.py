@@ -53,6 +53,20 @@ def fetch_book_data(isbn):
                     cover_url = cover_data[size]
                     break
             
+            # Try to enhance OpenLibrary cover URL to highest resolution
+            if cover_url and 'covers.openlibrary.org' in cover_url:
+                # Only enhance if we're confident it will work
+                if '-L.jpg' in cover_url:
+                    # Try XL but don't validate - let frontend handle it
+                    xl_url = cover_url.replace('-L.jpg', '-XL.jpg')
+                    current_app.logger.info(f"Enhanced cover to XL size: {xl_url}")
+                    cover_url = xl_url
+                elif '-M.jpg' in cover_url:
+                    # Enhance M to L size
+                    enhanced_url = cover_url.replace('-M.jpg', '-L.jpg')
+                    current_app.logger.info(f"Enhanced cover to L size: {enhanced_url}")
+                    cover_url = enhanced_url
+            
             # Enhanced description handling
             description = book.get('notes', {})
             if isinstance(description, dict):
@@ -293,9 +307,24 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     cover_url = image_links[size]
                     break
             
-            # Force HTTPS for cover URLs
+            # Force HTTPS and enhance Google Books URLs for higher resolution
             if cover_url and cover_url.startswith('http://'):
                 cover_url = cover_url.replace('http://', 'https://')
+            
+            # Enhance Google Books cover URLs for higher resolution
+            if cover_url and 'books.google.com' in cover_url:
+                # Add zoom parameter for higher quality if not already present
+                if 'zoom=' not in cover_url:
+                    separator = '&' if '?' in cover_url else '?'
+                    cover_url = f"{cover_url}{separator}zoom=1"
+                
+                # Replace small thumbnail sizes with larger ones in the URL
+                if 'zoom=0' in cover_url:
+                    cover_url = cover_url.replace('zoom=0', 'zoom=1')
+                if 'zoom=2' in cover_url:
+                    cover_url = cover_url.replace('zoom=2', 'zoom=1')
+                if 'zoom=3' in cover_url:
+                    cover_url = cover_url.replace('zoom=3', 'zoom=1')
             
             if fetch_title_author:
                 title = volume_info.get('title', '')

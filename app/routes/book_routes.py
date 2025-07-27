@@ -100,6 +100,10 @@ def _format_published_date_for_input(published_date_str):
 def fetch_book(isbn):
     book_data = fetch_book_data(isbn) or {}
     
+    # Normalize OpenLibrary cover_url to cover for consistent frontend usage
+    if book_data.get('cover_url') and not book_data.get('cover'):
+        book_data['cover'] = book_data['cover_url']
+    
     # Get comprehensive data from Google Books including description
     google_data = get_google_books_cover(isbn, fetch_title_author=True)
     if google_data:
@@ -107,8 +111,10 @@ def fetch_book(isbn):
         for key, value in google_data.items():
             if key not in book_data or not book_data[key]:
                 book_data[key] = value
-        # Ensure cover field is set correctly
-        if google_data.get('cover'):
+        # Ensure cover field is set correctly - Google Books returns 'cover_url'
+        if google_data.get('cover_url'):
+            book_data['cover'] = google_data['cover_url']
+        elif google_data.get('cover'):
             book_data['cover'] = google_data['cover']
     
     # Ensure ISBN field is consistently available for frontend
@@ -505,16 +511,41 @@ def search_book_details():
                     'source': 'OpenLibrary'
                 }
                 
-                # Try to get cover image
-                if result.get('openlibrary_id'):
-                    cover_url = f"https://covers.openlibrary.org/w/id/{result['openlibrary_id']}-L.jpg"
-                    try:
-                        cover_response = requests.head(cover_url, timeout=3)
-                        if cover_response.status_code == 200:
-                            result['cover_url'] = cover_url
-                    except Exception:
-                        # Set the cover URL anyway, let the frontend handle broken images
-                        result['cover_url'] = cover_url
+                # Try to get cover image - start simple and enhance if possible
+                cover_url = None
+                
+                # Primary: Use cover_i (most reliable)
+                if doc.get('cover_i'):
+                    cover_id = doc['cover_i']
+                    cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
+                    
+                # Fallback: Use ISBN if no cover_i
+                elif doc.get('isbn') and len(doc['isbn']) > 0:
+                    isbn = doc['isbn'][0]
+                    cover_url = f"https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg"
+                    
+                # Last resort: Try editions
+                elif doc.get('key'):
+                    work_key = doc.get('key', '').replace('/works/', '')
+                    if work_key:
+                        try:
+                            editions_url = f"https://openlibrary.org/works/{work_key}/editions.json?limit=3"
+                            editions_response = requests.get(editions_url, timeout=2)
+                            if editions_response.status_code == 200:
+                                editions_data = editions_response.json()
+                                for edition in editions_data.get('entries', []):
+                                    if edition.get('covers'):
+                                        cover_id = edition['covers'][0]
+                                        cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
+                                        break
+                        except Exception as e:
+                            current_app.logger.debug(f"Failed to get editions: {e}")
+                
+                # Always include the cover URL if we found one
+                if cover_url:
+                    result['cover_url'] = cover_url
+                else:
+                    current_app.logger.debug(f"No cover URL found for result: {result.get('title', 'Unknown')}")
                 
                 # If we have an ISBN, try to get enhanced data
                 if best_isbn:
@@ -555,7 +586,6 @@ def search_book_details():
                 google_data = response.json()
                 
                 if 'items' in google_data:
-                    current_app.logger.info(f"Found {len(google_data['items'])} Google Books results")
                     
                     for item in google_data['items']:
                         book_info = item['volumeInfo']
@@ -579,13 +609,29 @@ def search_book_details():
                                 elif identifier.get('type') == 'ISBN_10':
                                     gb_isbn = identifier.get('identifier')
                         
-                        # Get cover image
+                        # Get cover image with highest quality priority
                         gb_cover = None
                         image_links = book_info.get('imageLinks', {})
-                        for size in ['large', 'medium', 'small', 'thumbnail']:
+                        # Prioritize highest quality images first
+                        for size in ['extraLarge', 'large', 'medium', 'thumbnail', 'smallThumbnail']:
                             if size in image_links:
                                 gb_cover = image_links[size].replace('http:', 'https:')
                                 break
+                        
+                        # Enhance Google Books cover URLs for higher resolution
+                        if gb_cover and 'books.google.com' in gb_cover:
+                            # Add zoom parameter for higher quality if not already present
+                            if 'zoom=' not in gb_cover:
+                                separator = '&' if '?' in gb_cover else '?'
+                                gb_cover = f"{gb_cover}{separator}zoom=1"
+                            
+                            # Replace small thumbnail sizes with larger ones in the URL
+                            if 'zoom=0' in gb_cover:
+                                gb_cover = gb_cover.replace('zoom=0', 'zoom=1')
+                            if 'zoom=2' in gb_cover:
+                                gb_cover = gb_cover.replace('zoom=2', 'zoom=1')
+                            if 'zoom=3' in gb_cover:
+                                gb_cover = gb_cover.replace('zoom=3', 'zoom=1')
                         
                         # Check if this result is already in our list (avoid duplicates)
                         duplicate = False
@@ -1128,7 +1174,7 @@ def edit_book(uid):
                 book_metadata_keys = {
                     'csrf_token', 'publisher', 'isbn13', 'isbn10', 'published_date', 
                     'language', 'asin', 'google_books_id', 'openlibrary_id', 
-                    'average_rating', 'rating_count'
+                    'average_rating', 'rating_count', 'cover_url', 'action'
                 }
                 
                 # Check for contributor fields in the form
@@ -1170,7 +1216,7 @@ def edit_book(uid):
                 book_metadata_keys = {
                     'csrf_token', 'publisher', 'isbn13', 'isbn10', 'published_date', 
                     'language', 'asin', 'google_books_id', 'openlibrary_id', 
-                    'average_rating', 'rating_count'
+                    'average_rating', 'rating_count', 'cover_url', 'action'
                 }
                 personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
                 book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
@@ -1646,6 +1692,10 @@ def edit_book(uid):
                 )
                 contributors.append(contribution)
         
+        # Debug what's being submitted
+        print(f"DEBUG: Form keys: {list(request.form.keys())}")
+        print(f"DEBUG: cover_url from form: '{request.form.get('cover_url', 'NOT_FOUND')}'")
+        
         update_data = {
             'title': request.form['title'],
             'subtitle': request.form.get('subtitle', '').strip() or None,
@@ -1687,7 +1737,7 @@ def edit_book(uid):
         # Remove None values except for specific fields that can be null
         filtered_data = {}
         for k, v in update_data.items():
-            if k in ['contributors', 'raw_categories', 'series', 'series_volume', 'series_order', 'publisher', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count'] or v is not None:
+            if k in ['contributors', 'raw_categories', 'series', 'series_volume', 'series_order', 'publisher', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count', 'cover_url'] or v is not None:
                 filtered_data[k] = v
         
         try:
@@ -2225,6 +2275,176 @@ def update_book_details(uid):
         flash(f'Error updating book: {str(e)}', 'error')
     
     return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+
+@book_bp.route('/book/<uid>/replace_cover', methods=['POST'])
+@login_required
+def replace_cover(uid):
+    """Replace the book's cover image with a new image from URL."""
+    try:
+        user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
+        if not user_book:
+            return jsonify({'success': False, 'error': 'Book not found'}), 404
+        
+        data = request.get_json()
+        new_cover_url = data.get('new_cover_url')
+        
+        if not new_cover_url:
+            return jsonify({'success': False, 'error': 'No cover URL provided'}), 400
+        
+        # Store old cover URL for cleanup
+        old_cover_url = user_book.cover_url
+        
+        # Download and cache the new cover image (same process as manual addition)
+        try:
+            # Use persistent covers directory
+            covers_dir = Path('/app/static/covers')
+            
+            # Fallback to local development path if Docker path doesn't exist
+            if not covers_dir.exists():
+                static_folder = current_app.static_folder or 'app/static'
+                if static_folder:
+                    covers_dir = Path(static_folder) / 'covers'
+            
+            covers_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate new filename with UUID
+            book_temp_id = str(uuid.uuid4())
+            file_extension = '.jpg'
+            if new_cover_url.lower().endswith('.png'):
+                file_extension = '.png'
+            elif new_cover_url.lower().endswith('.gif'):
+                file_extension = '.gif'
+            
+            filename = f"{book_temp_id}{file_extension}"
+            filepath = covers_dir / filename
+            
+            # Download the image
+            response = requests.get(new_cover_url, timeout=10, stream=True)
+            response.raise_for_status()
+            
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            # Generate new cover URL
+            new_cached_cover_url = f"/static/covers/{filename}"
+            
+            # Update the book with the new cover URL
+            book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=new_cached_cover_url)
+            
+            # Clean up old cover file if it exists and is a local file
+            if old_cover_url and old_cover_url.startswith('/static/covers/'):
+                try:
+                    old_filename = old_cover_url.split('/')[-1]
+                    old_filepath = covers_dir / old_filename
+                    if old_filepath.exists():
+                        old_filepath.unlink()
+                        current_app.logger.info(f"Cleaned up old cover file: {old_filename}")
+                except Exception as cleanup_error:
+                    current_app.logger.warning(f"Failed to clean up old cover file: {cleanup_error}")
+            
+            current_app.logger.info(f"Updated cover for book {uid} with new image from {new_cover_url}")
+            
+            return jsonify({
+                'success': True, 
+                'cover_url': new_cached_cover_url,
+                'message': 'Cover updated successfully'
+            })
+            
+        except requests.RequestException as e:
+            current_app.logger.error(f"Failed to download new cover image: {e}")
+            return jsonify({'success': False, 'error': 'Failed to download new cover image'}), 500
+            
+    except Exception as e:
+        current_app.logger.error(f"Error replacing cover: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@book_bp.route('/book/<uid>/upload_cover', methods=['POST'])
+@login_required
+def upload_cover(uid):
+    """Upload a cover image file from user's device."""
+    try:
+        user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
+        if not user_book:
+            return jsonify({'success': False, 'error': 'Book not found'}), 404
+        
+        # Check if file was uploaded
+        if 'cover_file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+        
+        file = request.files['cover_file']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+        
+        # Validate file type
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif'}
+        if not file.filename:
+            return jsonify({'success': False, 'error': 'Invalid filename'}), 400
+        
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in allowed_extensions:
+            return jsonify({'success': False, 'error': 'Invalid file type. Please use JPG, PNG, or GIF.'}), 400
+        
+        # Validate file size (10MB limit)
+        file.seek(0, 2)  # Seek to end to get file size
+        file_size = file.tell()
+        file.seek(0)  # Reset to beginning
+        
+        if file_size > 10 * 1024 * 1024:  # 10MB
+            return jsonify({'success': False, 'error': 'File size must be less than 10MB.'}), 400
+        
+        # Store old cover URL for cleanup
+        old_cover_url = user_book.cover_url
+        
+        # Set up covers directory
+        covers_dir = Path('/app/static/covers')
+        
+        # Fallback to local development path if Docker path doesn't exist
+        if not covers_dir.exists():
+            static_folder = current_app.static_folder or 'app/static'
+            if static_folder:
+                covers_dir = Path(static_folder) / 'covers'
+        
+        covers_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate new filename with UUID
+        book_temp_id = str(uuid.uuid4())
+        filename = f"{book_temp_id}{file_ext}"
+        filepath = covers_dir / filename
+        
+        # Save the uploaded file
+        file.save(str(filepath))
+        
+        # Generate new cover URL
+        new_cover_url = f"/static/covers/{filename}"
+        
+        # Update the book with the new cover URL
+        book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=new_cover_url)
+        
+        # Clean up old cover file if it exists and is a local file
+        if old_cover_url and old_cover_url.startswith('/static/covers/'):
+            try:
+                old_filename = old_cover_url.split('/')[-1]
+                old_filepath = covers_dir / old_filename
+                if old_filepath.exists():
+                    old_filepath.unlink()
+                    current_app.logger.info(f"Cleaned up old cover file: {old_filename}")
+            except Exception as cleanup_error:
+                current_app.logger.warning(f"Failed to clean up old cover file: {cleanup_error}")
+        
+        current_app.logger.info(f"Uploaded new cover for book {uid}: {filename}")
+        
+        return jsonify({
+            'success': True, 
+            'cover_url': new_cover_url,
+            'message': 'Cover uploaded successfully'
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error uploading cover: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @book_bp.route('/book/<uid>/update_reading_dates', methods=['POST'])

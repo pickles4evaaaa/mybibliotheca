@@ -34,7 +34,7 @@
                             <button type="button" class="btn btn-outline-primary action-icon-btn" id="editToggle" title="Edit Book Details">
                                 <i class="bi bi-pencil" id="edit-icon"></i>
                             </button>
-                            <button type="button" class="btn btn-outline-secondary action-icon-btn" data-bs-toggle="modal" data-bs-target="#coverEditModal" title="Edit Cover">
+                            <button type="button" class="btn btn-outline-secondary action-icon-btn" id="coverEditBtn" title="Edit Cover">
                                 <i class="bi bi-image"></i>
                             </button>
                             <form method="post" action="{{ url_for('book.delete_book', uid=book.uid) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book? This action cannot be undone.');">
@@ -48,23 +48,23 @@
                     
                     <div class="row">
                         <!-- Cover Image -->
-                        <div class="col-md-3 text-center mb-3 mb-md-0">
+                        <div class="col-md-4 text-center mb-3 mb-md-0">
                             <div class="position-relative d-inline-block">
                                 {% if book.cover_url %}
                                     <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                         class="img-fluid rounded shadow-sm" style="max-height: 300px;" id="book-cover"
+                                         class="img-fluid rounded shadow-sm" style="height: 500px; min-width: 300px; width: auto;" id="book-cover"
                                          onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
                                 {% else %}
                                     <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                         style="height: 300px; width: 200px; margin: 0 auto;" id="book-cover">
-                                        <i class="bi bi-book text-muted" style="font-size: 4rem;"></i>
+                                         style="height: 500px; width: 350px; margin: 0 auto;" id="book-cover">
+                                        <i class="bi bi-book text-muted" style="font-size: 6rem;"></i>
                                     </div>
                                 {% endif %}
                             </div>
                         </div>
                         
                         <!-- Core Book Information -->
-                        <div class="col-md-9">
+                        <div class="col-md-8">
                             <!-- View Mode -->
                             <div class="view-mode">
                                 <!-- Title & Subtitle -->
@@ -1564,158 +1564,6 @@
 
 
 
-<!-- Cover Edit Modal -->
-<div class="modal fade" id="coverEditModal" tabindex="-1" aria-labelledby="coverEditModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="coverEditModalLabel">
-                    <i class="bi bi-image me-2"></i>Edit Book Cover
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="row mb-3">
-                    <div class="col-md-6">
-                        <!-- Current Cover Preview -->
-                        <div class="text-center mb-3">
-                            <h6 class="text-muted mb-2">Current Cover</h6>
-                            <div class="cover-preview-container">
-                                {% if book.cover_url %}
-                                    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                         class="img-fluid rounded shadow-sm" style="max-height: 200px;" id="current-cover-preview">
-                                {% else %}
-                                    <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                         style="height: 200px; width: 133px; margin: 0 auto;" id="current-cover-preview">
-                                        <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
-                                    </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <!-- New Cover Preview -->
-                        <div class="text-center mb-3">
-                            <h6 class="text-muted mb-2">New Cover Preview</h6>
-                            <div class="cover-preview-container">
-                                <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                     style="height: 200px; width: 133px; margin: 0 auto;" id="new-cover-preview">
-                                    <i class="bi bi-eye text-muted" style="font-size: 3rem;"></i>
-                                    <span class="text-muted ms-2">Preview</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <form id="cover-edit-form" method="post" action="{{ url_for('book.edit_book', uid=book.uid) }}" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                    <input type="hidden" name="action" value="update_cover"/>
-                    
-                    <!-- Cover Edit Options Accordion -->
-                    <div class="accordion" id="coverEditAccordion">
-                        <!-- Cover Image URL -->
-                        <div class="accordion-item">
-                            <h2 class="accordion-header">
-                                <button class="accordion-button bg-primary text-white" type="button" 
-                                        data-bs-toggle="collapse" data-bs-target="#collapseCoverUrl" 
-                                        aria-expanded="true" aria-controls="collapseCoverUrl">
-                                    <i class="bi bi-link me-2"></i>Cover Image URL
-                                </button>
-                            </h2>
-                            <div id="collapseCoverUrl" class="accordion-collapse collapse show" data-bs-parent="#coverEditAccordion">
-                                <div class="accordion-body">
-                                    <div class="mb-3">
-                                        <label for="cover_url" class="form-label">Enter a direct URL to an image</label>
-                                        <div class="input-group">
-                                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
-                                                   value="{{ book.cover_url or '' }}" placeholder="https://example.com/cover.jpg">
-                                            <button type="button" class="btn btn-outline-secondary" id="preview-url-btn">
-                                                <i class="bi bi-eye me-1"></i>Preview
-                                            </button>
-                                        </div>
-                                        <div class="form-text">Paste a direct link to an image file (JPG, PNG, GIF, WebP)</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Upload from Device -->
-                        <div class="accordion-item">
-                            <h2 class="accordion-header">
-                                <button class="accordion-button collapsed bg-success text-white" type="button" 
-                                        data-bs-toggle="collapse" data-bs-target="#collapseUpload" 
-                                        aria-expanded="false" aria-controls="collapseUpload">
-                                    <i class="bi bi-upload me-2"></i>Upload from Device
-                                </button>
-                            </h2>
-                            <div id="collapseUpload" class="accordion-collapse collapse" data-bs-parent="#coverEditAccordion">
-                                <div class="accordion-body">
-                                    <div class="mb-3">
-                                        <label for="cover_file" class="form-label">Choose an image file from your device</label>
-                                        <input type="file" class="form-control" id="cover_file" name="cover_file" 
-                                               accept="image/*">
-                                        <div class="form-text">Supported formats: JPG, PNG, GIF, WebP (max 5MB)</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Fetch from API -->
-                        <div class="accordion-item">
-                            <h2 class="accordion-header">
-                                <button class="accordion-button collapsed bg-info text-white" type="button" 
-                                        data-bs-toggle="collapse" data-bs-target="#collapseFetchApi" 
-                                        aria-expanded="false" aria-controls="collapseFetchApi">
-                                    <i class="bi bi-cloud-download me-2"></i>Fetch from API
-                                </button>
-                            </h2>
-                            <div id="collapseFetchApi" class="accordion-collapse collapse" data-bs-parent="#coverEditAccordion">
-                                <div class="accordion-body">
-                                    <div class="mb-3">
-                                        <label class="form-label">Search for cover image automatically</label>
-                                        <div class="d-grid gap-2">
-                                            <button type="button" class="btn btn-outline-info" id="fetch-cover-btn">
-                                                <i class="bi bi-search me-1"></i>Search for Cover by ISBN
-                                            </button>
-                                            {% if book.title and book.authors %}
-                                            <button type="button" class="btn btn-outline-info" id="fetch-cover-title-btn">
-                                                <i class="bi bi-search me-1"></i>Search by Title & Author
-                                            </button>
-                                            {% endif %}
-                                        </div>
-                                        <div class="form-text">
-                                            This will search for a cover image using the book's ISBN or title/author information
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Remove Cover Option -->
-                    <div class="mt-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="remove_cover" name="remove_cover">
-                            <label class="form-check-label text-danger" for="remove_cover">
-                                <i class="bi bi-trash me-1"></i>Remove current cover image
-                            </label>
-                        </div>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                    <i class="bi bi-x-circle me-1"></i>Cancel
-                </button>
-                <button type="submit" form="cover-edit-form" class="btn btn-primary">
-                    <i class="bi bi-check-circle me-1"></i>Update Cover
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Edit mode toggle functionality for main card
@@ -2050,138 +1898,155 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initializeCoverEditing() {
-    const coverUrlInput = document.getElementById('cover_url');
-    const previewUrlBtn = document.getElementById('preview-url-btn');
-    const coverFileInput = document.getElementById('cover_file');
-    const fetchCoverBtn = document.getElementById('fetch-cover-btn');
-    const fetchCoverTitleBtn = document.getElementById('fetch-cover-title-btn');
-    const newCoverPreview = document.getElementById('new-cover-preview');
-    const removeCoverCheck = document.getElementById('remove_cover');
-    
-    // Preview URL functionality
-    if (previewUrlBtn && coverUrlInput) {
-        previewUrlBtn.addEventListener('click', function() {
-            const url = coverUrlInput.value.trim();
-            if (url) {
-                previewCoverImage(url);
-            } else {
-                alert('Please enter a URL first.');
-            }
-        });
-        
-        // Auto-preview when URL changes
-        coverUrlInput.addEventListener('blur', function() {
-            const url = this.value.trim();
-            if (url) {
-                previewCoverImage(url);
-            }
+    // Initialize the cover edit button
+    const coverEditBtn = document.getElementById('coverEditBtn');
+    if (coverEditBtn) {
+        coverEditBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Show dropdown menu for cover options
+            showCoverEditOptions();
         });
     }
-    
-    // File upload preview
-    if (coverFileInput) {
-        coverFileInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                if (coverUrlInput) coverUrlInput.value = '';
-                
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    previewCoverImage(e.target.result);
-                };
-                reader.readAsDataURL(file);
-            }
-        });
+}
+
+function showCoverEditOptions() {
+    // Create a simple dropdown menu for cover editing options
+    const existingDropdown = document.getElementById('coverEditDropdown');
+    if (existingDropdown) {
+        existingDropdown.remove();
     }
     
-    // Fetch cover by ISBN
-    if (fetchCoverBtn) {
-        fetchCoverBtn.addEventListener('click', function() {
-            const isbn = '{{ book.isbn13 or book.isbn10 or book.isbn or "" }}';
-            if (isbn) {
+    const dropdown = document.createElement('div');
+    dropdown.id = 'coverEditDropdown';
+    dropdown.className = 'dropdown-menu show position-absolute';
+    dropdown.style.cssText = 'z-index: 1050; top: 40px; right: 0px;';
+    
+    const isbn = '{{ book.isbn13 or book.isbn10 or book.isbn or "" }}';
+    const title = '{{ book.title|e }}';
+    const author = '{{ (book.authors[0].name if book.authors else "")|e }}';
+    
+    dropdown.innerHTML = `
+        ${isbn ? `
+        <button class="dropdown-item" type="button" id="searchByISBN">
+            <i class="bi bi-search me-2"></i>Search by ISBN
+        </button>
+        ` : ''}
+        ${title && author ? `
+        <button class="dropdown-item" type="button" id="searchByTitle">
+            <i class="bi bi-search me-2"></i>Search by Title & Author
+        </button>
+        ` : ''}
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item" type="button" id="uploadFile">
+            <i class="bi bi-upload me-2"></i>Upload from Device
+        </button>
+    `;
+    
+    // Position dropdown relative to the button
+    const coverEditBtn = document.getElementById('coverEditBtn');
+    const btnRect = coverEditBtn.getBoundingClientRect();
+    const container = coverEditBtn.closest('.position-relative') || coverEditBtn.parentElement;
+    container.style.position = 'relative';
+    container.appendChild(dropdown);
+    
+    // Add event listeners to dropdown buttons
+    if (isbn) {
+        const searchISBNBtn = document.getElementById('searchByISBN');
+        if (searchISBNBtn) {
+            searchISBNBtn.addEventListener('click', function() {
+                dropdown.remove();
                 fetchCoverFromAPI(isbn, 'isbn');
-            } else {
-                alert('No ISBN available for this book.');
-            }
-        });
+            });
+        }
     }
     
-    // Fetch cover by title and author
-    if (fetchCoverTitleBtn) {
-        fetchCoverTitleBtn.addEventListener('click', function() {
-            const title = '{{ book.title|e }}';
-            const author = '{{ (book.authors[0].name if book.authors else "")|e }}';
-            if (title && author) {
+    if (title && author) {
+        const searchTitleBtn = document.getElementById('searchByTitle');
+        if (searchTitleBtn) {
+            searchTitleBtn.addEventListener('click', function() {
+                dropdown.remove();
                 fetchCoverFromAPI(`${title} ${author}`, 'title');
-            } else {
-                alert('Missing title or author information.');
-            }
+            });
+        }
+    }
+    
+    const uploadBtn = document.getElementById('uploadFile');
+    if (uploadBtn) {
+        uploadBtn.addEventListener('click', function() {
+            dropdown.remove();
+            showFileUploadModal();
         });
     }
     
-    // Remove cover checkbox
-    if (removeCoverCheck) {
-        removeCoverCheck.addEventListener('change', function() {
-            if (this.checked) {
-                if (coverUrlInput) coverUrlInput.value = '';
-                if (coverFileInput) coverFileInput.value = '';
-                showPlaceholderPreview();
-            }
-        });
-    }
-}
-
-function previewCoverImage(src) {
-    const preview = document.getElementById('new-cover-preview');
-    if (preview && src) {
-        preview.innerHTML = `<img src="${src}" alt="Cover Preview" class="img-fluid rounded shadow-sm" style="max-height: 200px;">`;
-        
-        // Uncheck remove cover if checked
-        const removeCoverCheck = document.getElementById('remove_cover');
-        if (removeCoverCheck) removeCoverCheck.checked = false;
-    }
-}
-
-function showPlaceholderPreview() {
-    const preview = document.getElementById('new-cover-preview');
-    if (preview) {
-        preview.innerHTML = `
-            <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                 style="height: 200px; width: 133px; margin: 0 auto;">
-                <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
-            </div>
-        `;
-    }
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function closeDropdown(e) {
+        if (!dropdown.contains(e.target) && e.target !== coverEditBtn) {
+            dropdown.remove();
+            document.removeEventListener('click', closeDropdown);
+        }
+    });
 }
 
 function fetchCoverFromAPI(query, type) {
-    const fetchBtn = type === 'isbn' ? document.getElementById('fetch-cover-btn') : document.getElementById('fetch-cover-title-btn');
-    const originalText = fetchBtn.innerHTML;
+    const fetchBtn = type === 'isbn' ? document.getElementById('searchByISBN') : document.getElementById('searchByTitle');
+    let originalText = '';
     
-    // Show loading state
-    fetchBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Searching...';
-    fetchBtn.disabled = true;
+    if (fetchBtn) {
+        originalText = fetchBtn.innerHTML;
+        // Show loading state
+        fetchBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Searching...';
+        fetchBtn.disabled = true;
+    }
     
-    const endpoint = type === 'isbn' ? 
-        `/api/search/book/${query}` :
-        `/api/search/cover?q=${encodeURIComponent(query)}`;
+    let endpoint;
+    let fetchOptions = {
+        method: 'GET'
+    };
     
-    fetch(endpoint)
-        .then(response => response.json())
+    if (type === 'isbn') {
+        // Use the existing fetch_book endpoint for ISBN searches
+        endpoint = `{{ url_for('book.fetch_book', isbn='') }}${query}`;
+    } else {
+        // For title/author searches, use the search_book_details endpoint
+        endpoint = `{{ url_for('book.search_book_details') }}`;
+        fetchOptions = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            },
+            body: JSON.stringify({
+                'title': '{{ book.title|e }}',
+                'author': '{{ (book.authors[0].name if book.authors else "")|e }}'
+            })
+        };
+    }
+    
+    fetch(endpoint, fetchOptions)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
-            if (data.cover) {
-                // Update URL input and preview
-                const coverUrlInput = document.getElementById('cover_url');
-                if (coverUrlInput) {
-                    coverUrlInput.value = data.cover;
+            if (type === 'isbn') {
+                // For ISBN search, directly apply the cover if found
+                if (data.cover) {
+                    applyCoverUrl(data.cover);
+                    // applyCoverUrl already shows success message
+                } else {
+                    alert('No cover image found for this ISBN.');
                 }
-                previewCoverImage(data.cover);
-                
-                // Clear file input
-                const coverFileInput = document.getElementById('cover_file');
-                if (coverFileInput) coverFileInput.value = '';
             } else {
-                alert('No cover image found for this book.');
+                // For title/author search, show selection modal
+                if (data.success && data.results && data.results.length > 0) {
+                    showCoverSelectionModal(data.results);
+                } else {
+                    const message = data.message || 'No cover options found for this book.';
+                    alert(message);
+                }
             }
         })
         .catch(error => {
@@ -2190,9 +2055,337 @@ function fetchCoverFromAPI(query, type) {
         })
         .finally(() => {
             // Restore button state
-            fetchBtn.innerHTML = originalText;
-            fetchBtn.disabled = false;
+            if (fetchBtn) {
+                fetchBtn.innerHTML = originalText;
+                fetchBtn.disabled = false;
+            }
         });
+}
+
+function applyCoverUrl(coverUrl) {
+    // Show loading state
+    const currentCover = document.getElementById('coverEditBtn');
+    if (currentCover) {
+        currentCover.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+        currentCover.disabled = true;
+    }
+    
+    // Send request to replace the current cover file with new image
+    fetch('{{ url_for("book.replace_cover", uid=book.uid) }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            'new_cover_url': coverUrl
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update the main cover image if visible
+            const mainCoverImg = document.querySelector('#book-cover');
+            if (mainCoverImg) {
+                // If it's an img element, update src; if it's a div, replace with img
+                if (mainCoverImg.tagName === 'IMG') {
+                    mainCoverImg.src = data.cover_url + '?t=' + Date.now(); // Cache bust
+                } else {
+                    // Replace the div with an img element
+                    mainCoverImg.outerHTML = `<img src="${data.cover_url}?t=${Date.now()}" alt="{{ book.title }}" 
+                         class="img-fluid rounded shadow-sm" style="height: 500px; min-width: 300px; width: auto;" id="book-cover"
+                         onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">`;
+                }
+            }
+            
+            alert('Cover updated successfully!');
+        } else {
+            alert('Failed to update cover: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error updating cover:', error);
+        alert('Failed to update cover. Please try again.');
+    })
+    .finally(() => {
+        // Restore button state
+        if (currentCover) {
+            currentCover.innerHTML = '<i class="bi bi-image"></i>';
+            currentCover.disabled = false;
+        }
+    });
+}
+
+function showCoverSelectionModal(results) {
+    // Filter results that have valid cover images
+    const resultsWithCovers = results.filter(result => {
+        // Check if cover_url exists and is not empty
+        if (!result.cover_url || result.cover_url.trim() === '') {
+            return false;
+        }
+        
+        // Only filter out obvious placeholders - be less strict since backend validates
+        const url = result.cover_url.toLowerCase();
+        if (url.includes('placeholder') || 
+            url.includes('no-image') || 
+            url.includes('not-available') ||
+            url.includes('default.jpg') ||
+            url.includes('missing.jpg')) {
+            return false;
+        }
+        
+        return true;
+    });
+    
+    if (resultsWithCovers.length === 0) {
+        alert('No cover images found in the search results.');
+        return;
+    }
+    
+    // Create modal HTML
+    const modalHTML = `
+        <div class="modal fade" id="coverSelectionModal" tabindex="-1" aria-labelledby="coverSelectionModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="coverSelectionModalLabel">
+                            <i class="bi bi-images me-2"></i>Select Cover Image
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">Choose a cover image from the search results:</p>
+                        <div class="row g-3" id="coverOptions">
+                            ${resultsWithCovers.map((result, index) => {
+                                // Clean and escape the data
+                                const title = (result.title || 'Unknown Title').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                                const authors = result.authors_list ? 
+                                    result.authors_list.join(', ').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : 
+                                    (result.authors || 'Unknown Author').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                                const publishedDate = result.published_date ? 
+                                    result.published_date.replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
+                                const coverUrl = result.cover_url.replace(/"/g, '&quot;');
+                                
+                                return `
+                                <div class="col-md-4 col-sm-6">
+                                    <div class="card h-100 cover-option" data-cover-url="${coverUrl}" style="cursor: pointer;">
+                                        <div class="card-img-top d-flex align-items-center justify-content-center" style="height: 250px; background-color: #f8f9fa;" id="img-container-${index}">
+                                            <img src="${coverUrl}" 
+                                                 alt="Cover ${index + 1}" 
+                                                 class="img-fluid rounded"
+                                                 style="max-height: 240px; max-width: 100%; object-fit: contain;"
+                                                 data-container-id="img-container-${index}">
+                                        </div>
+                                        <div class="card-body p-2">
+                                            <h6 class="card-title small mb-1" title="${title}">${title.length > 50 ? title.substring(0, 50) + '...' : title}</h6>
+                                            <p class="card-text small text-muted mb-0" title="${authors}">
+                                                ${authors.length > 40 ? authors.substring(0, 40) + '...' : authors}
+                                            </p>
+                                            ${publishedDate ? `<p class="card-text small text-muted mb-0">${publishedDate}</p>` : ''}
+                                        </div>
+                                    </div>
+                                </div>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if present
+    const existingModal = document.getElementById('coverSelectionModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to page
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    // Show the modal first
+    const modal = new bootstrap.Modal(document.getElementById('coverSelectionModal'));
+    modal.show();
+    
+    // Add click handlers to cover options AFTER modal is in DOM
+    setTimeout(() => {
+        document.querySelectorAll('.cover-option').forEach(option => {
+            option.addEventListener('click', function() {
+                const coverUrl = this.dataset.coverUrl;
+                
+                // Close the modal first
+                modal.hide();
+                
+                // Apply the cover
+                applyCoverUrl(coverUrl);
+            });
+            
+            // Add hover effect
+            option.addEventListener('mouseenter', function() {
+                this.style.transform = 'scale(1.02)';
+                this.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+                this.style.transition = 'all 0.2s ease';
+            });
+            
+            option.addEventListener('mouseleave', function() {
+                this.style.transform = 'scale(1)';
+                this.style.boxShadow = '';
+            });
+        });
+        
+        // Add proper image load/error handlers
+        document.querySelectorAll('.cover-option img').forEach(img => {
+            img.addEventListener('error', function() {
+                const containerId = this.dataset.containerId;
+                const container = document.getElementById(containerId);
+                if (container) {
+                    container.innerHTML = '<div class="text-muted text-center p-3"><i class="bi bi-exclamation-triangle"></i><br><small>Image failed to load</small></div>';
+                }
+            });
+        });
+    }, 100);
+    
+    // Clean up when modal is hidden
+    document.getElementById('coverSelectionModal').addEventListener('hidden.bs.modal', function() {
+        this.remove();
+    });
+}
+
+function showFileUploadModal() {
+    // Create file upload modal HTML
+    const modalHTML = `
+        <div class="modal fade" id="fileUploadModal" tabindex="-1" aria-labelledby="fileUploadModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="fileUploadModalLabel">
+                            <i class="bi bi-upload me-2"></i>Upload Cover Image
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">Select an image file from your device to use as the book cover:</p>
+                        <div class="mb-3">
+                            <input type="file" class="form-control" id="coverFileInput" accept="image/*">
+                            <div class="form-text">Supported formats: JPG, PNG, GIF. Maximum size: 10MB</div>
+                        </div>
+                        <div id="imagePreview" class="text-center mb-3" style="display: none;">
+                            <img id="previewImg" class="img-fluid rounded" style="max-height: 200px;">
+                            <p class="text-muted mt-2" id="previewText"></p>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="uploadCoverBtn" disabled>
+                            <i class="bi bi-upload me-1"></i>Upload Cover
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if present
+    const existingModal = document.getElementById('fileUploadModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to page
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('fileUploadModal'));
+    modal.show();
+    
+    // Set up file input handler
+    const fileInput = document.getElementById('coverFileInput');
+    const uploadBtn = document.getElementById('uploadCoverBtn');
+    const imagePreview = document.getElementById('imagePreview');
+    const previewImg = document.getElementById('previewImg');
+    const previewText = document.getElementById('previewText');
+    
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file.');
+                return;
+            }
+            
+            // Validate file size (10MB limit)
+            if (file.size > 10 * 1024 * 1024) {
+                alert('File size must be less than 10MB.');
+                return;
+            }
+            
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                previewImg.src = e.target.result;
+                previewText.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+                imagePreview.style.display = 'block';
+                uploadBtn.disabled = false;
+            };
+            reader.readAsDataURL(file);
+        } else {
+            imagePreview.style.display = 'none';
+            uploadBtn.disabled = true;
+        }
+    });
+    
+    // Set up upload handler
+    uploadBtn.addEventListener('click', function() {
+        const file = fileInput.files[0];
+        if (!file) return;
+        
+        // Show loading state
+        uploadBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Uploading...';
+        uploadBtn.disabled = true;
+        
+        // Create FormData and upload
+        const formData = new FormData();
+        formData.append('cover_file', file);
+        formData.append('csrf_token', '{{ csrf_token() }}');
+        
+        fetch('{{ url_for("book.upload_cover", uid=book.uid) }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update the main cover image if visible
+                const mainCoverImg = document.querySelector('#book-cover img');
+                if (mainCoverImg) {
+                    mainCoverImg.src = data.cover_url + '?t=' + Date.now(); // Cache bust
+                }
+                
+                alert('Cover uploaded successfully!');
+                modal.hide();
+            } else {
+                alert('Failed to upload cover: ' + (data.error || 'Unknown error'));
+                // Restore button state
+                uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload Cover';
+                uploadBtn.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error uploading cover:', error);
+            alert('Failed to upload cover. Please try again.');
+            // Restore button state
+            uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload Cover';
+            uploadBtn.disabled = false;
+        });
+    });
+    
+    // Clean up when modal is hidden
+    document.getElementById('fileUploadModal').addEventListener('hidden.bs.modal', function() {
+        this.remove();
+    });
 }
 
 // Autocomplete functionality
