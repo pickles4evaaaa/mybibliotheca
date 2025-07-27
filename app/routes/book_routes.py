@@ -512,8 +512,9 @@ def search_book_details():
                         cover_response = requests.head(cover_url, timeout=3)
                         if cover_response.status_code == 200:
                             result['cover_url'] = cover_url
-                    except:
-                        pass
+                    except Exception:
+                        # Set the cover URL anyway, let the frontend handle broken images
+                        result['cover_url'] = cover_url
                 
                 # If we have an ISBN, try to get enhanced data
                 if best_isbn:

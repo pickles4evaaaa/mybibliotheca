@@ -598,6 +598,8 @@ function safeSetValue(elementId, value) {
     const element = document.getElementById(elementId);
     if (element && value !== null && value !== undefined) {
         element.value = value;
+        // Trigger change event to ensure any listeners are notified
+        element.dispatchEvent(new Event('change', { bubbles: true }));
         return true;
     }
     return false;
@@ -1381,7 +1383,13 @@ function selectBookResult(index) {
   if (book.publisher) safeSetValue('publisher', book.publisher);
   if (book.page_count) safeSetValue('page_count', book.page_count);
   if (book.language) safeSetValue('language', book.language);
-  if (book.cover_url || book.cover) safeSetValue('cover_url', book.cover_url || book.cover);
+  
+  // Enhanced cover URL handling
+  const coverUrl = book.cover_url || book.cover;
+  if (coverUrl) {
+    safeSetValue('cover_url', coverUrl);
+  }
+  
   if (book.published_date || book.publication_year) safeSetValue('published_date', book.published_date || book.publication_year);
   if (book.description) safeSetValue('description', book.description);
   
