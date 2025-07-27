@@ -26,8 +26,18 @@ from app.services import book_service, import_mapping_service, custom_field_serv
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import CustomFieldDefinition, CustomFieldType
 from app.utils import normalize_goodreads_value
+from app.utils.safe_import_manager import (
+    safe_import_manager, 
+    safe_create_import_job,
+    safe_update_import_job, 
+    safe_get_import_job,
+    safe_get_user_import_jobs,
+    safe_delete_import_job
+)
 
-# Global dictionary to store import jobs (shared with routes.py for now)
+# DEPRECATED: Global dictionary to store import jobs 
+# This is being replaced with safe_import_manager for thread safety and user isolation
+# TODO: Remove this after all code is migrated to safe_import_manager
 import_jobs = {}
 
 # Create import blueprint
@@ -949,8 +959,16 @@ def import_books_execute():
     print(f"🏗️ [EXECUTE] Creating job {task_id} for user {current_user.id}")
     kuzu_success = store_job_in_kuzu(task_id, job_data)
     
-    # Also keep in memory for backward compatibility
+    # Store in safe import manager with proper user isolation
+    safe_success = safe_create_import_job(current_user.id, task_id, job_data)
+    
+    # Also keep in global dict for backward compatibility during migration
+    # TODO: Remove this after migration is complete
     import_jobs[task_id] = job_data
+    
+    print(f"📊 [EXECUTE] Kuzu storage: {'✅' if kuzu_success else '❌'}")
+    print(f"🔒 [EXECUTE] Safe storage: {'✅' if safe_success else '❌'}")
+    print(f"💾 [EXECUTE] Legacy storage: ✅")
     
     # Start the import in background thread
     # Store necessary data for background processing
@@ -979,6 +997,12 @@ def import_books_execute():
                     'error_messages': [str(e)]
                 }
                 update_job_in_kuzu(task_id, error_update)
+                
+                # Update safely with user isolation
+                safe_update_import_job(current_user.id, task_id, error_update)
+                
+                # Legacy update for backward compatibility
+                # TODO: Remove this after migration is complete
                 if task_id in import_jobs:
                     import_jobs[task_id]['status'] = 'failed'
                     if 'error_messages' not in import_jobs[task_id]:
@@ -1020,28 +1044,72 @@ def import_books_progress(task_id):
 @import_bp.route('/api/import/progress/<task_id>')
 @login_required
 def api_import_progress(task_id):
-    """API endpoint for import progress."""
-    job = import_jobs.get(task_id)
+    """API endpoint for import progress with proper user isolation."""
+    # Get job safely with user isolation
+    job = safe_get_import_job(current_user.id, task_id)
+    
     if not job:
-        return jsonify({'error': 'Job not found'}), 404
+        # Fallback to legacy storage during migration
+        # TODO: Remove this after migration is complete
+        legacy_job = import_jobs.get(task_id)
+        if legacy_job and legacy_job.get('user_id') == current_user.id:
+            job = legacy_job
+        else:
+            return jsonify({'error': 'Job not found'}), 404
     
     return jsonify(job)
 
 @import_bp.route('/api/import/errors/<task_id>')
 @login_required
 def api_import_errors(task_id):
-    """API endpoint for import errors."""
-    job = import_jobs.get(task_id)
+    """API endpoint for import errors with proper user isolation."""
+    # Get job safely with user isolation
+    job = safe_get_import_job(current_user.id, task_id)
+    
     if not job:
-        return jsonify({'error': 'Job not found'}), 404
+        # Fallback to legacy storage during migration
+        # TODO: Remove this after migration is complete
+        legacy_job = import_jobs.get(task_id)
+        if legacy_job and legacy_job.get('user_id') == current_user.id:
+            job = legacy_job
+        else:
+            return jsonify({'error': 'Job not found'}), 404
     
     return jsonify({'errors': job.get('error_messages', [])})
 
 @import_bp.route('/debug/import-jobs')
 @login_required
 def debug_import_jobs():
-    """Debug endpoint to view all import jobs."""
-    return jsonify(import_jobs)
+    """Debug endpoint to view import jobs with proper user isolation."""
+    # Check if user is admin for full debug access
+    is_admin = getattr(current_user, 'is_admin', False)
+    
+    if is_admin:
+        # Admin gets comprehensive debug info
+        debug_info = safe_import_manager.get_jobs_for_admin_debug(
+            current_user.id, 
+            include_user_data=True
+        )
+        
+        # Also include legacy data during migration
+        # TODO: Remove this after migration is complete
+        debug_info['legacy_jobs_count'] = len(import_jobs)
+        debug_info['migration_status'] = 'in_progress'
+        
+        return jsonify(debug_info)
+    else:
+        # Regular users only see their own jobs
+        user_jobs = safe_get_user_import_jobs(current_user.id)
+        
+        # Include basic statistics
+        stats = safe_import_manager.get_statistics()
+        
+        return jsonify({
+            'your_jobs': user_jobs,
+            'your_job_count': len(user_jobs),
+            'system_uptime_hours': stats.get('uptime_hours', 0),
+            'note': 'Only your own jobs are visible for privacy protection'
+        })
 
 @import_bp.route('/direct_import', methods=['GET', 'POST'])
 @login_required
