@@ -3,6 +3,9 @@ Kuzu Search Service
 
 Handles search, filtering, and discovery functionality using Kuzu.
 Focused responsibility: Search operations and book discovery.
+
+This service has been migrated to use the SafeKuzuManager pattern for
+improved thread safety and connection management.
 """
 
 import traceback
@@ -11,18 +14,78 @@ from datetime import date, timedelta
 
 from ..domain.models import Book
 from ..infrastructure.kuzu_repositories import KuzuUserRepository
-from ..infrastructure.kuzu_graph import get_graph_storage
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query, safe_get_kuzu_connection
 from .kuzu_async_helper import run_async
 from .kuzu_relationship_service import KuzuRelationshipService
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multiple columns - create dict with column names
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        else:
+            # Fallback: if it's already a list or other format
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict):
+                return [result]
+            else:
+                # Try to convert to string representation
+                rows.append({'result': str(result)})
+    except Exception as e:
+        logger.warning(f"Error converting query result: {e}")
+        # Return empty list if conversion fails
+        return []
+    
+    return rows
 
 
 class KuzuSearchService:
-    """Service for search and discovery operations."""
+    """
+    Service for search and discovery operations with thread-safe operations.
     
-    def __init__(self):
-        self.graph_storage = get_graph_storage()
+    This service has been migrated to use the SafeKuzuManager pattern for
+    improved thread safety and connection management.
+    """
+    
+    def __init__(self, user_id: Optional[str] = None):
+        """
+        Initialize search service with thread-safe database access.
+        
+        Args:
+            user_id: User identifier for tracking and isolation
+        """
+        self.user_id = user_id or "search_service"
         self.user_repo = KuzuUserRepository()
-        self.relationship_service = KuzuRelationshipService()
+        self.relationship_service = KuzuRelationshipService()  # This service may not be migrated yet
     
     async def search_books(self, query: str, user_id: str, limit: int = 50) -> List[Book]:
         """Search books for a user."""
@@ -59,10 +122,18 @@ class KuzuSearchService:
             LIMIT $limit
             """
             
-            results = self.graph_storage.query(search_query, {
-                "query": query_lower,
-                "limit": limit
-            })
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=search_query,
+                params={
+                    "query": query_lower,
+                    "limit": limit
+                },
+                user_id=self.user_id,
+                operation="search_books"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             books = []
             for result in results:
@@ -185,7 +256,15 @@ class KuzuSearchService:
             LIMIT 10
             """
             
-            results = self.graph_storage.query(similar_users_query, {"user_id": user_id})
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=similar_users_query,
+                params={"user_id": user_id},
+                user_id=self.user_id,
+                operation="find_similar_users"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             similar_user_ids = [result['col_0'] for result in results if 'col_0' in result]
             
             # Get books from similar users that this user doesn't have

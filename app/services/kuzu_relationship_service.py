@@ -3,6 +3,9 @@ Kuzu Relationship Service
 
 Handles user-book relationships, custom metadata, and ownership tracking using Kuzu.
 Focused responsibility: User-book relationship management and metadata.
+
+This service has been migrated to use the SafeKuzuManager pattern for
+improved thread safety and connection management.
 """
 
 import json
@@ -12,19 +15,79 @@ from datetime import datetime, date
 
 from ..domain.models import Book, UserBookRelationship, ReadingStatus, OwnershipStatus, Person, BookContribution, ContributionType
 from ..infrastructure.kuzu_repositories import KuzuUserRepository
-from ..infrastructure.kuzu_graph import get_graph_storage
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query, safe_get_kuzu_connection
 from .kuzu_async_helper import run_async
 from .kuzu_book_service import KuzuBookService
 from ..debug_system import debug_log
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multiple columns - create dict with column names
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        else:
+            # Fallback: if it's already a list or other format
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict):
+                return [result]
+            else:
+                # Try to convert to string representation
+                rows.append({'result': str(result)})
+    except Exception as e:
+        logger.warning(f"Error converting query result: {e}")
+        # Return empty list if conversion fails
+        return []
+    
+    return rows
 
 
 class KuzuRelationshipService:
-    """Service for user-book relationship and metadata management."""
+    """
+    Service for user-book relationship and metadata management with thread-safe operations.
     
-    def __init__(self):
-        self.graph_storage = get_graph_storage()
+    This service has been migrated to use the SafeKuzuManager pattern for
+    improved thread safety and connection management.
+    """
+    
+    def __init__(self, user_id: Optional[str] = None):
+        """
+        Initialize relationship service with thread-safe database access.
+        
+        Args:
+            user_id: User identifier for tracking and isolation
+        """
+        self.user_id = user_id or "relationship_service"
         self.user_repo = KuzuUserRepository()
-        self.book_service = KuzuBookService()
+        self.book_service = KuzuBookService(user_id)
     
     def _load_contributors_for_book(self, book: Book) -> None:
         """Load contributors for a book from the database."""
@@ -39,7 +102,8 @@ class KuzuRelationshipService:
             ORDER BY rel.order_index ASC
             """
             
-            results = self.graph_storage.query(query, {"book_id": book.id})
+            result = safe_execute_kuzu_query(query, {"book_id": book.id})
+            results = _convert_query_result_to_list(result)
             
             import logging
             logger = logging.getLogger(__name__)
@@ -117,17 +181,17 @@ class KuzuRelationshipService:
                 # Look up the actual location name
                 location_name = location_id  # Default fallback
                 try:
-                    from app.infrastructure.kuzu_graph import get_kuzu_connection
+                    from app.utils.safe_kuzu_manager import safe_get_connection
                     from app.location_service import LocationService
                     
-                    kuzu_connection = get_kuzu_connection()
-                    location_service = LocationService(kuzu_connection.connect())
-                    location = location_service.get_location(location_id)
-                    if location:
-                        location_name = location.name
-                        debug_log(f"Resolved legacy location {location_id} to name '{location_name}'", "RELATIONSHIP")
-                    else:
-                        debug_log(f"Legacy location {location_id} not found, using ID as name", "RELATIONSHIP")
+                    with safe_get_connection(user_id=None, operation="resolve_legacy_location") as kuzu_connection:
+                        location_service = LocationService(kuzu_connection)
+                        location = location_service.get_location(location_id)
+                        if location:
+                            location_name = location.name
+                            debug_log(f"Resolved legacy location {location_id} to name '{location_name}'", "RELATIONSHIP")
+                        else:
+                            debug_log(f"Legacy location {location_id} not found, using ID as name", "RELATIONSHIP")
                 except Exception as e:
                     debug_log(f"Error resolving legacy location name for {location_id}: {e}", "RELATIONSHIP")
                 
@@ -169,11 +233,12 @@ class KuzuRelationshipService:
             SKIP $offset LIMIT $limit
             """
             
-            results = self.graph_storage.query(query, {
+            result = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "offset": offset,
                 "limit": limit
             })
+            results = _convert_query_result_to_list(result)
             
             books = []
             for result in results:
@@ -207,10 +272,11 @@ class KuzuRelationshipService:
             RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
             """
             
-            results = self.graph_storage.query(query, {
+            result = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "book_id": book_id
             })
+            results = _convert_query_result_to_list(result)
             
             if not results:
                 return None
@@ -313,10 +379,19 @@ class KuzuRelationshipService:
             if custom_metadata:
                 rel_data['custom_metadata'] = json.dumps(custom_metadata)
             
-            # Create the relationship
-            success = self.graph_storage.create_relationship(
-                'User', user_id, 'OWNS', 'Book', book_id, rel_data
-            )
+            # Create the relationship using a safe query
+            create_query = """
+            MATCH (u:User {id: $user_id}), (b:Book {id: $book_id})
+            CREATE (u)-[r:OWNS $rel_data]->(b)
+            RETURN r
+            """
+            
+            result = safe_execute_kuzu_query(create_query, {
+                "user_id": user_id,
+                "book_id": book_id,
+                "rel_data": rel_data
+            })
+            success = result is not None
             
             if success:
                 if custom_metadata:
@@ -339,10 +414,11 @@ class KuzuRelationshipService:
             LIMIT 1
             """
             
-            results = self.graph_storage.query(query, {
+            result = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "book_id": book_id
             })
+            results = _convert_query_result_to_list(result)
             
             if results:
                 pass  # Process results
@@ -416,7 +492,7 @@ class KuzuRelationshipService:
             print(f"🔧 [UPDATE_RELATIONSHIP] Executing query: {update_query}")
             print(f"🔧 [UPDATE_RELATIONSHIP] With params: {params}")
             
-            self.graph_storage.query(update_query, params)
+            safe_execute_kuzu_query(update_query, params)
             
             return True
             
@@ -435,7 +511,7 @@ class KuzuRelationshipService:
             DELETE owns
             """
             
-            self.graph_storage.query(delete_rel_query, {
+            safe_execute_kuzu_query(delete_rel_query, {
                 "user_id": user_id,
                 "book_id": book_id
             })
@@ -488,10 +564,11 @@ class KuzuRelationshipService:
         RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
         """
         
-        results = self.graph_storage.query(query, {
+        result = safe_execute_kuzu_query(query, {
             "user_id": user_id,
             "book_id": uid
         })
+        results = _convert_query_result_to_list(result)
         
         if not results:
             return None
@@ -551,10 +628,11 @@ class KuzuRelationshipService:
             LIMIT $limit
             """
             
-            results = self.graph_storage.query(query, {
+            result = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "limit": limit
             })
+            results = _convert_query_result_to_list(result)
             
             books = []
             for result in results:

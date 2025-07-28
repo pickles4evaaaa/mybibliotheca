@@ -1301,17 +1301,19 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
         location_name = site_config.get('location', '').strip()
         if location_name:
             try:
-                # Initialize location service with Kuzu connection
-                storage = get_graph_storage()
-                location_service = LocationService(storage.kuzu_conn)
+                # Initialize location service with safe Kuzu connection
+                from app.utils.safe_kuzu_manager import safe_get_connection
                 
-                # Create the location
-                location = location_service.create_location(
-                    name=location_name,
-                    description=f"Default location set during onboarding",
-                    location_type="home",  # Default to home type
-                    is_default=site_config.get('location_set_as_default', True)
-                )
+                with safe_get_connection(user_id=admin_user.id, operation="create_location") as conn:
+                    location_service = LocationService(conn)
+                    
+                    # Create the location
+                    location = location_service.create_location(
+                        name=location_name,
+                        description=f"Default location set during onboarding",
+                        location_type="home",  # Default to home type
+                        is_default=site_config.get('location_set_as_default', True)
+                    )
                 
                 logger.info(f"✅ Created location: {location.name} (ID: {location.id})")
                 
@@ -1611,14 +1613,9 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 print(f"🏠 [SETUP] Site config: {site_config}")
                 logger.info(f"Creating location: {location_name}")
                 
-                # Initialize location service with Kuzu connection
-                print(f"🏠 [SETUP] Getting graph storage...")
-                storage = get_graph_storage()
-                print(f"🏠 [SETUP] Graph storage obtained: {storage}")
-                
-                print(f"🏠 [SETUP] Creating LocationService...")
-                location_service = LocationService(storage.kuzu_conn)
-                print(f"🏠 [SETUP] LocationService created: {location_service}")
+                # Initialize location service with safe Kuzu connection
+                print(f"🏠 [SETUP] Getting safe Kuzu connection...")
+                from app.utils.safe_kuzu_manager import safe_get_connection
                 
                 # Check if admin user has an ID
                 admin_user_id = getattr(admin_user, 'id', None)
@@ -1626,6 +1623,11 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 if not admin_user_id:
                     logger.error(f"❌ Admin user has no ID for location creation")
                     raise Exception("Admin user has no ID")
+                
+                with safe_get_connection(user_id=admin_user_id, operation="create_location") as conn:
+                    print(f"🏠 [SETUP] Creating LocationService...")
+                    location_service = LocationService(conn)
+                    print(f"🏠 [SETUP] LocationService created: {location_service}")
                 
                 # Create the location
                 print(f"🏠 [SETUP] Calling location_service.create_location...")
@@ -2058,67 +2060,14 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         traceback.print_exc()
         return None
 
-# Removed complex onboarding-specific import functions.
-# Now using the proven post-onboarding import system directly via start_import_job().
-    """Execute the onboarding import job in the background."""
-    try:
-        # Import the job functions from routes
-        
-        # Get the job data
-        job = import_jobs.get(task_id)
-        if not job:
-            logger.error(f"❌ Onboarding import job {task_id} not found")
-            return
-        
-        logger.info(f"🚀 Starting onboarding import job {task_id}")
-        
-        # Mark job as running
-        job['status'] = 'running'
-        update_job_in_kuzu(task_id, {'status': 'running'})
-        
-        # Get import configuration
-        user_id = job['user_id']
-        import_config = {
-            'csv_file_path': job['csv_file_path'],
-            'field_mappings': job['field_mappings'],
-            'custom_fields': job['custom_fields'],
-            'import_options': job['import_options']
-        }
-        
-        # Execute the actual CSV import with progress tracking
-        success = execute_csv_import_with_progress(
-            task_id=task_id,
-            csv_file_path=import_config['csv_file_path'], 
-            field_mappings=import_config['field_mappings'],
-            user_id=user_id,
-            default_locations=[]  # Will be created during execution
-        )
-        
-        # Update final job status
-        if success:
-            job['status'] = 'completed'
-            update_job_in_kuzu(task_id, {'status': 'completed'})
-            logger.info(f"✅ Onboarding import job {task_id} completed successfully")
-        else:
-            job['status'] = 'failed'
-            if 'error_messages' not in job:
-                job['error_messages'] = []
-            job['error_messages'].append('Import failed')
-            update_job_in_kuzu(task_id, {'status': 'failed', 'error_messages': job['error_messages']})
-            logger.error(f"❌ Onboarding import job {task_id} failed")
-            
-    except Exception as e:
-        logger.error(f"❌ Error in onboarding import job {task_id}: {e}")
-        # Update job status to failed safely
-        try:
-            error_update = {
-                'status': 'failed',
-                'error_messages': [str(e)]
-            }
-            safe_update_import_job(user_id, task_id, error_update)
-            update_job_in_kuzu(task_id, error_update)
-        except:
-            pass
+
+# ==============================================================================
+# CSV IMPORT EXECUTION - THREAD-SAFE VERSION
+# ==============================================================================
+# 
+# SECURITY NOTE: All legacy functions with global import_jobs access have been 
+# removed to prevent privacy violations and race conditions. Import job 
+# management now uses SafeImportJobManager with proper user isolation.
 
 def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_mappings: Dict[str, str], user_id: str, default_locations: List[str]) -> bool:
     """Execute CSV import with progress tracking."""
@@ -2136,34 +2085,34 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
         # During onboarding, we need to ensure the user has a default location
         if not default_locations:
             from .location_service import LocationService
-            from .infrastructure.kuzu_graph import get_graph_storage
+            from app.utils.safe_kuzu_manager import safe_get_connection
             
-            storage = get_graph_storage()
-            location_service = LocationService(storage.kuzu_conn)
-            
-            # Get or create default location for this user
-            default_location = location_service.get_default_location(user_id)
-            if not default_location:
-                logger.info(f"� Creating default location for user during onboarding import")
-                created_locations = location_service.setup_default_locations()
-                if created_locations:
-                    default_location = location_service.get_default_location(user_id)
-                    if default_location and default_location.id:
-                        default_locations = [default_location.id]
-                        logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")
+            with safe_get_connection(user_id=user_id, operation="setup_default_locations") as conn:
+                location_service = LocationService(conn)
+                
+                # Get or create default location for this user
+                default_location = location_service.get_default_location(user_id)
+                if not default_location:
+                    logger.info(f"🏠 Creating default location for user during onboarding import")
+                    created_locations = location_service.setup_default_locations()
+                    if created_locations:
+                        default_location = location_service.get_default_location(user_id)
+                        if default_location and default_location.id:
+                            default_locations = [default_location.id]
+                            logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")
+                        else:
+                            logger.error(f"❌ Failed to get default location after creation")
+                            default_locations = []
                     else:
-                        logger.error(f"❌ Failed to get default location after creation")
+                        logger.error(f"❌ Failed to create default locations")
                         default_locations = []
                 else:
-                    logger.error(f"❌ Failed to create default locations")
-                    default_locations = []
-            else:
-                if default_location.id:
-                    default_locations = [default_location.id]
-                    logger.info(f"✅ Using existing default location: {default_location.name} (ID: {default_location.id})")
-                else:
-                    logger.error(f"❌ Default location has no ID")
-                    default_locations = []
+                    if default_location.id:
+                        default_locations = [default_location.id]
+                        logger.info(f"✅ Using existing default location: {default_location.name} (ID: {default_location.id})")
+                    else:
+                        logger.error(f"❌ Default location has no ID")
+                        default_locations = []
         
         logger.info(f"�📊 Starting CSV import with mappings: {field_mappings}")
         logger.info(f"📍 Using default locations: {default_locations}")

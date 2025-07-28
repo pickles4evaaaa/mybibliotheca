@@ -1048,13 +1048,7 @@ def api_import_progress(task_id):
     job = safe_get_import_job(current_user.id, task_id)
     
     if not job:
-        # Fallback to legacy storage during migration
-        # TODO: Remove this after migration is complete
-        legacy_job = import_jobs.get(task_id)
-        if legacy_job and legacy_job.get('user_id') == current_user.id:
-            job = legacy_job
-        else:
-            return jsonify({'error': 'Job not found'}), 404
+        return jsonify({'error': 'Job not found'}), 404
     
     return jsonify(job)
 
@@ -1066,13 +1060,7 @@ def api_import_errors(task_id):
     job = safe_get_import_job(current_user.id, task_id)
     
     if not job:
-        # Fallback to legacy storage during migration
-        # TODO: Remove this after migration is complete
-        legacy_job = import_jobs.get(task_id)
-        if legacy_job and legacy_job.get('user_id') == current_user.id:
-            job = legacy_job
-        else:
-            return jsonify({'error': 'Job not found'}), 404
+        return jsonify({'error': 'Job not found'}), 404
     
     return jsonify({'errors': job.get('error_messages', [])})
 
@@ -1090,10 +1078,9 @@ def debug_import_jobs():
             include_user_data=True
         )
         
-        # Also include legacy data during migration
-        # TODO: Remove this after migration is complete
-        debug_info['legacy_jobs_count'] = len(import_jobs)
-        debug_info['migration_status'] = 'in_progress'
+        # Migration is complete - no legacy jobs should exist
+        debug_info['migration_status'] = 'completed'
+        debug_info['security_note'] = 'All import jobs now use SafeImportJobManager with user isolation'
         
         return jsonify(debug_info)
     else:

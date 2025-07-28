@@ -1,26 +1,78 @@
 """
-Kuzu Category Service
-
-Handles category management and hierarchy operations using Kuzu.
-Focused responsibility: Category entity management and hierarchical relationships.
+Category service for KuzuDB operations.
 """
-
-import traceback
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 import uuid
+import traceback
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any
+from app.domain.models import Category
+from app.infrastructure.kuzu_repositories import KuzuCategoryRepository
+from app.infrastructure.kuzu_graph import safe_execute_kuzu_query, safe_get_kuzu_connection
+import logging
 
-from ..domain.models import Category
-from ..infrastructure.kuzu_graph import get_graph_storage, get_kuzu_database
-from ..infrastructure.kuzu_repositories import KuzuCategoryRepository
+logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multiple columns - create dict with column names
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        else:
+            # Fallback: if it's already a list or other format
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict):
+                return [result]
+            else:
+                # Try to convert to string representation
+                rows.append({'result': str(result)})
+    except Exception as e:
+        logger.warning(f"Error converting query result: {e}")
+        # Return empty list if conversion fails
+        return []
+    
+    return rows
+
+
 from .kuzu_async_helper import run_async
 
 
 class KuzuCategoryService:
     """Service for category management and hierarchy operations."""
     
-    def __init__(self):
-        self.graph_storage = get_graph_storage()
+    def __init__(self, user_id: Optional[str] = None):
+        """
+        Initialize category service with thread-safe database access.
+        
+        Args:
+            user_id: User identifier for tracking and isolation
+        """
+        self.user_id = user_id or "category_service"
         self.category_repo = KuzuCategoryRepository()
     
     async def list_all_categories(self) -> List[Dict[str, Any]]:
@@ -32,22 +84,31 @@ class KuzuCategoryService:
             ORDER BY c.name ASC
             """
             
-            results = self.graph_storage.query(query)
+            # Use safe query execution
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                user_id=self.user_id,
+                operation="list_all_categories"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             categories = []
-            for result in results:
-                if 'result' in result:
-                    categories.append(result['result'])
-                elif 'col_0' in result:
-                    categories.append(result['col_0'])
-                elif 'c' in result:
-                    categories.append(result['c'])
-                else:
-                    # Return the first value if it looks like a category
-                    for key, value in result.items():
-                        if isinstance(value, dict) and 'id' in value and 'name' in value:
-                            categories.append(value)
-                            break
+            if results:
+                for result in results:
+                    if 'result' in result:
+                        categories.append(result['result'])
+                    elif 'col_0' in result:
+                        categories.append(result['col_0'])
+                    elif 'c' in result:
+                        categories.append(result['c'])
+                    else:
+                        # Return the first value if it looks like a category
+                        for key, value in result.items():
+                            if isinstance(value, dict) and 'id' in value and 'name' in value:
+                                categories.append(value)
+                                break
             
             return categories
             
@@ -62,7 +123,15 @@ class KuzuCategoryService:
             RETURN c
             """
             
-            results = self.graph_storage.query(query, {"category_id": category_id})
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                params={"category_id": category_id},
+                user_id=self.user_id,
+                operation="get_category_by_id"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             if results and len(results) > 0:
                 result = results[0]
@@ -100,7 +169,15 @@ class KuzuCategoryService:
             RETURN c
             """
             
-            results = self.graph_storage.query(query, {"category_id": category_id})
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                params={"category_id": category_id},
+                user_id=self.user_id,
+                operation="_build_category_with_hierarchy"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             if not results or len(results) == 0:
                 return None
@@ -166,7 +243,15 @@ class KuzuCategoryService:
             ORDER BY c.name ASC
             """
             
-            results = self.graph_storage.query(query, {"parent_id": parent_id})
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                params={"parent_id": parent_id},
+                user_id=self.user_id,
+                operation="get_child_categories"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             categories = []
             for result in results:
@@ -198,8 +283,6 @@ class KuzuCategoryService:
     async def get_books_by_category(self, category_id: str, include_subcategories: bool = False) -> List[Dict[str, Any]]:
         """Get books in a category."""
         try:
-            db = get_kuzu_database()
-            
             if include_subcategories:
                 # Get all descendant categories
                 descendant_ids = await self._get_all_descendant_categories(category_id)
@@ -213,7 +296,13 @@ class KuzuCategoryService:
                 ORDER BY b.title ASC
                 """
                 
-                results = db.query(query, {"category_ids": descendant_ids})
+                # Use safe query execution and convert result
+                raw_result = safe_execute_kuzu_query(
+                    query=query,
+                    params={"category_ids": descendant_ids},
+                    user_id=self.user_id,
+                    operation="get_books_by_category_with_subcategories"
+                )
             else:
                 # Query for books in this specific category
                 query = """
@@ -222,7 +311,16 @@ class KuzuCategoryService:
                 ORDER BY b.title ASC
                 """
                 
-                results = db.query(query, {"category_id": category_id})
+                # Use safe query execution and convert result
+                raw_result = safe_execute_kuzu_query(
+                    query=query,
+                    params={"category_id": category_id},
+                    user_id=self.user_id,
+                    operation="get_books_by_category_single"
+                )
+            
+            # Convert results for both cases
+            results = _convert_query_result_to_list(raw_result)
             
             books = []
             for result in results:
@@ -311,7 +409,13 @@ class KuzuCategoryService:
             DETACH DELETE c
             """
             
-            self.graph_storage.query(query, {"category_id": category_id})
+            # Use safe query execution
+            safe_execute_kuzu_query(
+                query=query,
+                params={"category_id": category_id},
+                user_id=self.user_id,
+                operation="delete_category"
+            )
             return True
             
         except Exception as e:
@@ -333,10 +437,16 @@ class KuzuCategoryService:
                 CREATE (b)-[:CATEGORIZED_AS]->(primary)
                 """
                 
-                self.graph_storage.query(move_books_query, {
-                    "merge_id": merge_id,
-                    "primary_id": primary_category_id
-                })
+                # Use safe query execution
+                safe_execute_kuzu_query(
+                    query=move_books_query,
+                    params={
+                        "merge_id": merge_id,
+                        "primary_id": primary_category_id
+                    },
+                    user_id=self.user_id,
+                    operation="merge_categories_move_books"
+                )
                 
                 # Move all child categories from merge category to primary category
                 move_children_query = """
@@ -344,10 +454,16 @@ class KuzuCategoryService:
                 SET child.parent_id = $primary_id
                 """
                 
-                self.graph_storage.query(move_children_query, {
-                    "merge_id": merge_id,
-                    "primary_id": primary_category_id
-                })
+                # Use safe query execution
+                safe_execute_kuzu_query(
+                    query=move_children_query,
+                    params={
+                        "merge_id": merge_id,
+                        "primary_id": primary_category_id
+                    },
+                    user_id=self.user_id,
+                    operation="merge_categories_move_children"
+                )
                 
                 # Delete the merge category
                 await self.delete_category(merge_id)
@@ -370,10 +486,18 @@ class KuzuCategoryService:
             LIMIT $limit
             """
             
-            results = self.graph_storage.query(search_query, {
-                "query": query,
-                "limit": limit
-            })
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=search_query,
+                params={
+                    "query": query,
+                    "limit": limit
+                },
+                user_id=self.user_id,
+                operation="search_categories"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             categories = []
             for result in results:
@@ -413,7 +537,15 @@ class KuzuCategoryService:
             ORDER BY c.name ASC
             """
             
-            results = self.graph_storage.query(query)
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                params={},
+                user_id=self.user_id,
+                operation="get_root_categories"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             categories = []
             for result in results:
@@ -434,15 +566,21 @@ class KuzuCategoryService:
     async def get_category_book_counts(self) -> Dict[str, int]:
         """Get book counts for all categories efficiently."""
         try:
-            db = get_kuzu_database()
-            
             # Query to count books per category
             query = """
             MATCH (b:Book)-[:CATEGORIZED_AS]->(c:Category)
             RETURN c.id as category_id, COUNT(DISTINCT b) as book_count
             """
             
-            results = db.query(query)
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                params={},
+                user_id=self.user_id,
+                operation="get_category_book_counts"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             counts = {}
             for result in results:

@@ -12,7 +12,7 @@ from datetime import datetime
 
 from ..domain.models import Book, Category
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
-from ..infrastructure.kuzu_graph import get_graph_storage
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .kuzu_book_service import KuzuBookService
 from .kuzu_category_service import KuzuCategoryService
 from .kuzu_person_service import KuzuPersonService
@@ -21,6 +21,42 @@ from .kuzu_search_service import KuzuSearchService
 from .kuzu_custom_field_service import KuzuCustomFieldService
 from .kuzu_reading_log_service import KuzuReadingLogService
 from .kuzu_async_helper import run_async
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multi-column result - use col_0, col_1, etc. format for compatibility
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        
+        return rows
+    except Exception as e:
+        print(f"Error converting query result to list: {e}")
+        return []
 
 
 class KuzuServiceFacade:
@@ -195,7 +231,8 @@ class KuzuServiceFacade:
                 RETURN count(u) as owner_count
                 """
                 
-                results = self.graph_storage.query(query, {"book_id": book_id})
+                result = safe_execute_kuzu_query(query, {"book_id": book_id})
+                results = _convert_query_result_to_list(result)
                 owner_count = 0
                 if results:
                     # Use proper result key based on query structure
@@ -222,7 +259,7 @@ class KuzuServiceFacade:
                         DELETE owns
                         """
                         try:
-                            self.graph_storage.query(cleanup_query, {"book_id": book_id})
+                            safe_execute_kuzu_query(cleanup_query, {"book_id": book_id})
                         except Exception as cleanup_error:
                             pass  # Cleanup errors are not critical
                 else:
@@ -453,11 +490,6 @@ class KuzuServiceFacade:
     
     # Property to maintain compatibility with existing code that accesses these attributes
     @property
-    def graph_storage(self):
-        """Access to graph storage through book service."""
-        return self.book_service.graph_storage
-    
-    @property
     def user_repo(self):
         """Access to user repository through relationship service."""
         return self.relationship_service.user_repo
@@ -554,7 +586,7 @@ class KuzuServiceFacade:
             MATCH (p:Person)-[r:AUTHORED]->(b:Book {id: $book_id})
             DELETE r
             """
-            result = self.book_repo.db.query(delete_query, {"book_id": book_id})
+            result = safe_execute_kuzu_query(delete_query, {"book_id": book_id})
             
             # Then add the new contributor relationships
             if contributors:
@@ -575,7 +607,7 @@ class KuzuServiceFacade:
             MATCH (b:Book {id: $book_id})-[r:CATEGORIZED_AS]->(c:Category)
             DELETE r
             """
-            result = self.book_repo.db.query(delete_query, {"book_id": book_id})
+            result = safe_execute_kuzu_query(delete_query, {"book_id": book_id})
             
             # Then add the new category relationships using the existing method
             if raw_categories:

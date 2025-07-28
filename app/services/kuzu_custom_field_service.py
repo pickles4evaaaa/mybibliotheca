@@ -11,19 +11,52 @@ import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from ..infrastructure.kuzu_graph import KuzuGraphStorage
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .kuzu_async_helper import run_async
 
 logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multi-column result - use col_0, col_1, etc. format for compatibility
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        
+        return rows
+    except Exception as e:
+        print(f"Error converting query result to list: {e}")
+        return []
 
 
 class KuzuCustomFieldService:
     """Service for managing custom metadata fields in KuzuDB."""
     
     def __init__(self):
-        from ..infrastructure.kuzu_graph import get_kuzu_connection
-        connection = get_kuzu_connection()
-        self.graph_storage = KuzuGraphStorage(connection)
         self._ensure_custom_field_tables()
     
     def _ensure_custom_field_tables(self):
@@ -45,7 +78,7 @@ class KuzuCustomFieldService:
             )
             """
             try:
-                self.graph_storage.query(create_table_query)
+                safe_execute_kuzu_query(create_table_query)
                 # Only log table creation in debug mode
                 debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
                 if debug_mode:
@@ -68,7 +101,7 @@ class KuzuCustomFieldService:
             )
             """
             try:
-                self.graph_storage.query(create_personal_rel_query)
+                safe_execute_kuzu_query(create_personal_rel_query)
                 debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
                 if debug_mode:
                     logger.debug("Created HAS_PERSONAL_METADATA relationship")
@@ -89,7 +122,7 @@ class KuzuCustomFieldService:
             )
             """
             try:
-                self.graph_storage.query(create_global_meta_query)
+                safe_execute_kuzu_query(create_global_meta_query)
                 debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
                 if debug_mode:
                     logger.debug("Created GlobalMetadata table")
@@ -110,7 +143,7 @@ class KuzuCustomFieldService:
             )
             """
             try:
-                self.graph_storage.query(create_global_rel_query)
+                safe_execute_kuzu_query(create_global_rel_query)
                 debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
                 if debug_mode:
                     logger.debug("Created HAS_GLOBAL_METADATA relationship")
@@ -157,8 +190,8 @@ class KuzuCustomFieldService:
         
         try:
             query = "MATCH (f:CustomField) WHERE f.name = $name RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at"
-            results = self.graph_storage.query(query, {"name": field_name})
-            
+            result = safe_execute_kuzu_query(query, {"name": field_name})
+            results = _convert_query_result_to_list(result)
             
             if results and len(results) > 0:
                 result = results[0]
@@ -192,7 +225,8 @@ class KuzuCustomFieldService:
             ORDER BY f.created_at DESC
             """
             
-            results = self.graph_storage.query(query, {"user_id": user_id})
+            result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            results = _convert_query_result_to_list(result)
             
             fields = []
             for result in results:
@@ -243,7 +277,8 @@ class KuzuCustomFieldService:
                 """
                 check_params = {"name": field_name, "user_id": user_id}
             
-            existing_results = self.graph_storage.query(check_query, check_params)
+            existing_query_result = safe_execute_kuzu_query(check_query, check_params)
+            existing_results = _convert_query_result_to_list(existing_query_result)
             
             if existing_results and len(existing_results) > 0:
                 # Field already exists, return it
@@ -298,7 +333,8 @@ class KuzuCustomFieldService:
                 'updated_at': current_time
             }
             
-            result = self.graph_storage.query(query, params)
+            create_query_result = safe_execute_kuzu_query(query, params)
+            result = _convert_query_result_to_list(create_query_result)
             
             if result and len(result) > 0:
                 created_field = result[0].get('f', {})
@@ -359,9 +395,10 @@ class KuzuCustomFieldService:
                 RETURN r.global_custom_fields
                 """
                 
-                existing_global_results = self.graph_storage.query(check_global_query, {
+                existing_global_query_result = safe_execute_kuzu_query(check_global_query, {
                     "book_id": book_id
                 })
+                existing_global_results = _convert_query_result_to_list(existing_global_query_result)
                 
                 # Get existing global metadata and merge
                 existing_global_metadata = {}
@@ -395,7 +432,7 @@ class KuzuCustomFieldService:
                     SET r.global_custom_fields = $global_custom_fields, r.updated_at = $updated_at
                     """
                     
-                    self.graph_storage.query(update_global_query, {
+                    safe_execute_kuzu_query(update_global_query, {
                         "book_id": book_id,
                         "global_custom_fields": json.dumps(merged_global_metadata),
                         "updated_at": current_time
@@ -413,7 +450,7 @@ class KuzuCustomFieldService:
                         r.updated_at = $updated_at
                     """
                     
-                    self.graph_storage.query(create_global_query, {
+                    safe_execute_kuzu_query(create_global_query, {
                         "book_id": book_id,
                         "global_custom_fields": json.dumps(merged_global_metadata),
                         "created_at": current_time,
@@ -432,10 +469,11 @@ class KuzuCustomFieldService:
                 RETURN u.id AS user_exists, b.id AS book_exists
                 """
                 
-                verify_results = self.graph_storage.query(verify_nodes_query, {
+                verify_query_result = safe_execute_kuzu_query(verify_nodes_query, {
                     "user_id": user_id,
                     "book_id": book_id
                 })
+                verify_results = _convert_query_result_to_list(verify_query_result)
                 
                 if not verify_results or len(verify_results) == 0:
                     return False
@@ -446,10 +484,11 @@ class KuzuCustomFieldService:
                 RETURN r.personal_custom_fields
                 """
                 
-                existing_results = self.graph_storage.query(check_query, {
+                existing_query_result = safe_execute_kuzu_query(check_query, {
                     "user_id": user_id,
                     "book_id": book_id
                 })
+                existing_results = _convert_query_result_to_list(existing_query_result)
                 
                 if existing_results:
                     if len(existing_results) > 0:
@@ -489,7 +528,7 @@ class KuzuCustomFieldService:
                     """
                     
                     try:
-                        update_result = self.graph_storage.query(update_personal_query, {
+                        update_result = safe_execute_kuzu_query(update_personal_query, {
                             "user_id": user_id,
                             "book_id": book_id,
                             "personal_custom_fields": json.dumps(merged_personal_metadata),
@@ -513,7 +552,7 @@ class KuzuCustomFieldService:
                     """
                     
                     try:
-                        create_result = self.graph_storage.query(create_personal_query, {
+                        create_result = safe_execute_kuzu_query(create_personal_query, {
                             "user_id": user_id,
                             "book_id": book_id,
                             "personal_custom_fields": json.dumps(merged_personal_metadata),
@@ -547,8 +586,8 @@ class KuzuCustomFieldService:
             RETURN r.global_custom_fields
             """
             
-            global_results = self.graph_storage.query(global_query, {"book_id": book_id})
-            
+            global_results_temp = safe_execute_kuzu_query(global_query, {"book_id": book_id})
+            global_results = _convert_query_result_to_list(global_results_temp)
             if global_results and len(global_results) > 0:
                 result = global_results[0]
                 # KuzuDB returns results with column-based keys, but we need to handle both cases
@@ -588,18 +627,19 @@ class KuzuCustomFieldService:
             RETURN COUNT(r) AS rel_count
             """
             
-            exists_results = self.graph_storage.query(exists_query, {
+            exists_results_temp = safe_execute_kuzu_query(exists_query, {
                 "book_id": book_id,
                 "user_id": user_id
             })
-            
+            exists_results = _convert_query_result_to_list(exists_results_temp)
             if exists_results and len(exists_results) > 0:
                 rel_count = exists_results[0].get('col_0') or exists_results[0].get('rel_count') or exists_results[0].get('result') or 0
             
-            personal_results = self.graph_storage.query(personal_query, {
+            personal_results_temp = safe_execute_kuzu_query(personal_query, {
                 "book_id": book_id,
                 "user_id": user_id
             })
+            personal_results = _convert_query_result_to_list(personal_results_temp)
             
             if personal_results:
                 if len(personal_results) > 0:
@@ -639,10 +679,11 @@ class KuzuCustomFieldService:
                 RETURN r.custom_metadata AS custom_metadata
                 """
                 
-                owns_results = self.graph_storage.query(owns_query, {
+                owns_query_result = safe_execute_kuzu_query(owns_query, {
                     "book_id": book_id,
                     "user_id": user_id
                 })
+                owns_results = _convert_query_result_to_list(owns_query_result)
                 
                 if owns_results and owns_results[0].get('custom_metadata'):
                     metadata_json = owns_results[0].get('custom_metadata')
@@ -670,7 +711,8 @@ class KuzuCustomFieldService:
         try:
             # First, let's debug what's actually in the database
             debug_query = "MATCH (f:CustomField) RETURN f.id, f.name, f.created_by_user_id, f.is_global LIMIT 10"
-            debug_results = self.graph_storage.query(debug_query)
+            debug_query_result = safe_execute_kuzu_query(debug_query)
+            debug_results = _convert_query_result_to_list(debug_query_result)
             logger.debug(f" DEBUG: Found {len(debug_results)} CustomField nodes in total")
             for i, result in enumerate(debug_results):
                 logger.debug(f" DEBUG: Field {i}: {result}")
@@ -688,7 +730,8 @@ class KuzuCustomFieldService:
             logger.debug(f" Query: {query}")
             logger.debug(f" Parameters: user_id={user_id}")
             
-            results = self.graph_storage.query(query, {"user_id": user_id})
+            query_result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            results = _convert_query_result_to_list(query_result)
             
             logger.debug(f" Raw query results: {len(results)} rows")
             for i, result in enumerate(results):
@@ -757,7 +800,8 @@ class KuzuCustomFieldService:
                 """
                 params = {}
             
-            results = self.graph_storage.query(query, params)
+            results_temp = safe_execute_kuzu_query(query, params)
+            results = _convert_query_result_to_list(results_temp)
             
             fields = []
             for result in results:
@@ -807,7 +851,8 @@ class KuzuCustomFieldService:
                    f.updated_at AS field_updated_at, f.created_by_user_id AS created_by_user_id
             """
             
-            results = self.graph_storage.query(query, {"field_id": field_id})
+            results_temp = safe_execute_kuzu_query(query, {"field_id": field_id})
+            results = _convert_query_result_to_list(results_temp)
             
             if results and len(results) > 0:
                 result = results[0]
@@ -874,7 +919,8 @@ class KuzuCustomFieldService:
                 'updated_at': current_time
             }
             
-            result = self.graph_storage.query(query, params)
+            result_temp = safe_execute_kuzu_query(query, params)
+            result = _convert_query_result_to_list(result_temp)
             
             if result and len(result) > 0:
                 row = result[0]
@@ -909,7 +955,7 @@ class KuzuCustomFieldService:
             RETURN f
             """
             
-            results = self.graph_storage.query(check_query, {
+            results = safe_execute_kuzu_query(check_query, {
                 "field_id": field_id,
                 "user_id": user_id
             })
@@ -923,7 +969,7 @@ class KuzuCustomFieldService:
             DELETE cfv
             """
             
-            self.graph_storage.query(delete_values_query, {"field_id": field_id})
+            safe_execute_kuzu_query(delete_values_query, {"field_id": field_id})
             logger.debug(f" Deleted field values for field {field_id}")
             
             # Step 2: Delete the field itself
@@ -932,7 +978,7 @@ class KuzuCustomFieldService:
             DELETE f
             """
             
-            self.graph_storage.query(delete_field_query, {"field_id": field_id})
+            safe_execute_kuzu_query(delete_field_query, {"field_id": field_id})
             
             return True
             
@@ -972,7 +1018,8 @@ class KuzuCustomFieldService:
                 """
                 params = {"user_id": user_id}
             
-            results = self.graph_storage.query(query, params)
+            results_temp = safe_execute_kuzu_query(query, params)
+            results = _convert_query_result_to_list(results_temp)
             
             fields = []
             for result in results:
@@ -1056,10 +1103,11 @@ class KuzuCustomFieldService:
             RETURN r.custom_metadata AS custom_metadata
             """
             
-            owns_results = self.graph_storage.query(owns_query, {
+            owns_results_temp = safe_execute_kuzu_query(owns_query, {
                 "book_id": book_id,
                 "user_id": user_id
             })
+            owns_results = _convert_query_result_to_list(owns_results_temp)
             
             if owns_results and owns_results[0].get('custom_metadata'):
                 metadata_json = owns_results[0].get('custom_metadata')
@@ -1085,7 +1133,7 @@ class KuzuCustomFieldService:
                                 SET r.custom_metadata = NULL
                                 """
                                 
-                                self.graph_storage.query(clear_owns_query, {
+                                safe_execute_kuzu_query(clear_owns_query, {
                                     "book_id": book_id,
                                     "user_id": user_id
                                 })
@@ -1115,7 +1163,8 @@ class KuzuCustomFieldService:
             RETURN u.id AS user_id, b.id AS book_id, r.custom_metadata AS custom_metadata
             """
             
-            migration_results = self.graph_storage.query(migration_query)
+            migration_results_temp = safe_execute_kuzu_query(migration_query)
+            migration_results = _convert_query_result_to_list(migration_results_temp)
             
             if not migration_results:
                 logger.debug(f" No OWNS relationships with custom metadata found")
@@ -1153,7 +1202,7 @@ class KuzuCustomFieldService:
             DETACH DELETE cfv
             """
             
-            self.graph_storage.query(cleanup_query)
+            safe_execute_kuzu_query(cleanup_query)
             return True
             
         except Exception as e:
@@ -1171,7 +1220,8 @@ class KuzuCustomFieldService:
                 RETURN b.id, r.global_custom_fields, gm.book_id
                 LIMIT 5
                 """
-                debug_results = self.graph_storage.query(debug_global_query)
+                debug_results_temp = safe_execute_kuzu_query(debug_global_query)
+                debug_results = _convert_query_result_to_list(debug_results_temp)
                 for i, result in enumerate(debug_results):
                     print(f"  {i}: book_id={result.get('col_0')}, global_custom_fields={result.get('col_1')}, gm_book_id={result.get('col_2')}")
                 
@@ -1180,7 +1230,8 @@ class KuzuCustomFieldService:
                 MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
                 RETURN b.id, r.global_custom_fields, gm.book_id
                 """
-                global_results = self.graph_storage.query(global_query)
+                global_results_temp = safe_execute_kuzu_query(global_query)
+                global_results = _convert_query_result_to_list(global_results_temp)
                 
                 
                 for i, result in enumerate(global_results):
@@ -1211,7 +1262,8 @@ class KuzuCustomFieldService:
                 RETURN u.id, b.id, r.personal_custom_fields
                 LIMIT 5
                 """
-                debug_results = self.graph_storage.query(debug_personal_query)
+                debug_results_temp = safe_execute_kuzu_query(debug_personal_query)
+                debug_results = _convert_query_result_to_list(debug_results_temp)
                 for i, result in enumerate(debug_results):
                     print(f"  {i}: user_id={result.get('col_0')}, book_id={result.get('col_1')}, personal_custom_fields={result.get('col_2')}")
                 
@@ -1220,7 +1272,8 @@ class KuzuCustomFieldService:
                 MATCH (u:User)-[r:HAS_PERSONAL_METADATA]->(b:Book)
                 RETURN u.id, b.id, r.personal_custom_fields
                 """
-                personal_results = self.graph_storage.query(personal_query)
+                personal_results_temp = safe_execute_kuzu_query(personal_query)
+                personal_results = _convert_query_result_to_list(personal_results_temp)
                 
                 
                 for i, result in enumerate(personal_results):

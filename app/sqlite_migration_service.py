@@ -11,6 +11,24 @@ import os
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any
 from app.simplified_book_service import SimplifiedBook
+from app.utils.safe_kuzu_manager import SafeKuzuManager
+
+# Helper function for query result conversion
+def _convert_query_result_to_list(result) -> list:
+    """Convert KuzuDB query result to list of dictionaries."""
+    if not result:
+        return []
+    
+    data = []
+    while result.has_next():
+        row = result.get_next()
+        record = {}
+        for i in range(len(row)):
+            column_name = result.get_column_names()[i]
+            record[column_name] = row[i]
+        data.append(record)
+    
+    return data
 
 
 class SQLiteMigrationService:
@@ -462,9 +480,8 @@ class SQLiteMigrationService:
             from app.services.kuzu_async_helper import run_async
             run_async(user_book_repo.update_reading_status(user_id, book_id, reading_status.value))
             
-            # Update the OWNS relationship with additional personal data using direct graph query
-            from app.infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
+            # Update the OWNS relationship with additional personal data using SafeKuzuManager
+            safe_manager = SafeKuzuManager()
             
             # Build update properties
             update_props = {
@@ -497,7 +514,7 @@ class SQLiteMigrationService:
                     **update_props
                 }
                 
-                storage.query(query, params)
+                safe_manager.execute_query(query, params)
                 
         except Exception as e:
             print(f"❌ [MIGRATION] Error updating personal information: {e}")

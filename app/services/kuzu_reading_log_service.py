@@ -10,10 +10,93 @@ from datetime import datetime, date, timedelta
 import logging
 import uuid
 
-from app.infrastructure.kuzu_graph import get_graph_storage
+from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.domain.models import ReadingLog
 
 logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multi-column result - use col_0, col_1, etc. format for compatibility
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        
+        return rows
+    except Exception as e:
+        print(f"Error converting query result to list: {e}")
+        return []
+
+
+def _extract_single_value(result: Any, index: int = 0) -> Any:
+    """
+    Helper function to safely extract a single value from KuzuDB QueryResult objects.
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        index: Column index to extract (default: 0)
+        
+    Returns:
+        The extracted value or None if not available
+    """
+    if not result:
+        return None
+        
+    try:
+        if hasattr(result, 'has_next') and result.has_next():
+            row = result.get_next()
+            if row and len(row) > index:
+                return row[index]
+    except Exception as e:
+        logger.debug(f"Error extracting single value at index {index}: {e}")
+        
+    return None
+
+
+def _extract_first_row(result: Any) -> Optional[List[Any]]:
+    """
+    Helper function to safely extract the first row from KuzuDB QueryResult objects.
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of values from the first row, or None if not available
+    """
+    if not result:
+        return None
+        
+    try:
+        if hasattr(result, 'has_next') and result.has_next():
+            return result.get_next()
+    except Exception as e:
+        logger.debug(f"Error extracting first row: {e}")
+        
+    return None
 
 
 class KuzuReadingLogService:
@@ -21,7 +104,7 @@ class KuzuReadingLogService:
     
     def __init__(self):
         """Initialize the reading log service."""
-        self.graph_storage = get_graph_storage()
+        pass  # No longer need graph_storage instance
     
     def get_recent_shared_logs_sync(self, days_back: int = 7, limit: int = 50) -> List[Dict[str, Any]]:
         """
@@ -61,11 +144,12 @@ class KuzuReadingLogService:
             LIMIT $limit
             """
             
-            results = self.graph_storage.query(query, {
+            results = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "cutoff_date": cutoff_date,
                 "limit": limit
             })
+            results = _convert_query_result_to_list(results)
             
             logs = []
             for result in results:
@@ -104,15 +188,16 @@ class KuzuReadingLogService:
             RETURN rl
             """
             
-            existing_results = self.graph_storage.query(existing_query, {
-                "user_id": reading_log.user_id,
-                "book_id": reading_log.book_id,
-                "log_date": reading_log.date  # Pass date object directly, not isoformat string
+            existing_results = safe_execute_kuzu_query(existing_query, {
+                'user_id': reading_log.user_id,
+                'book_id': reading_log.book_id,
+                'log_date': reading_log.date.isoformat() if reading_log.date else None
             })
+            existing_list = _convert_query_result_to_list(existing_results)
             
-            if existing_results:
-                # Update existing log instead of creating new one
-                return self._update_existing_log(existing_results[0]['col_0'], reading_log)
+            if existing_list:
+                # Update existing reading log
+                return self._update_existing_log(existing_list[0]['col_0'], reading_log)
             
             # Create new reading log node
             create_log_query = """
@@ -127,7 +212,7 @@ class KuzuReadingLogService:
             RETURN rl
             """
             
-            log_result = self.graph_storage.query(create_log_query, {
+            log_result = safe_execute_kuzu_query(create_log_query, {
                 "log_id": log_id,
                 "log_date": reading_log.date,  # Pass date object directly
                 "pages_read": reading_log.pages_read,
@@ -143,9 +228,10 @@ class KuzuReadingLogService:
             # Debug: Check the structure of log_result
             logger.debug(f"log_result structure: {log_result}")
             logger.debug(f"log_result type: {type(log_result)}")
-            if log_result and len(log_result) > 0:
-                logger.debug(f"log_result[0]: {log_result[0]}")
-                logger.debug(f"log_result[0] keys: {log_result[0].keys() if hasattr(log_result[0], 'keys') else 'No keys method'}")
+            log_list = _convert_query_result_to_list(log_result)
+            if log_list:
+                logger.debug(f"log_list[0]: {log_list[0]}")
+                logger.debug(f"log_list[0] keys: {log_list[0].keys() if hasattr(log_list[0], 'keys') else 'No keys method'}")
             
             # Create relationships
             user_rel_query = """
@@ -158,12 +244,12 @@ class KuzuReadingLogService:
             CREATE (rl)-[:FOR_BOOK]->(b)
             """
             
-            self.graph_storage.query(user_rel_query, {
+            safe_execute_kuzu_query(user_rel_query, {
                 "user_id": reading_log.user_id,
                 "log_id": log_id
             })
             
-            self.graph_storage.query(book_rel_query, {
+            safe_execute_kuzu_query(book_rel_query, {
                 "log_id": log_id,
                 "book_id": reading_log.book_id
             })
@@ -214,7 +300,7 @@ class KuzuReadingLogService:
             RETURN rl
             """
             
-            result = self.graph_storage.query(update_query, {
+            result = safe_execute_kuzu_query(update_query, {
                 "log_id": log_id,
                 "pages_read": new_pages,
                 "minutes_read": new_minutes,
@@ -223,8 +309,10 @@ class KuzuReadingLogService:
             
             if result:
                 logger.info(f"Updated existing reading log {log_id}")
-                return dict(result[0]['col_0'])
-            
+                result_list = _convert_query_result_to_list(result)
+                if result_list:
+                    return dict(result_list[0]['col_0'])
+                
             return None
             
         except Exception as e:
@@ -249,7 +337,7 @@ class KuzuReadingLogService:
             RETURN rl
             """
             
-            verify_result = self.graph_storage.query(verify_query, {
+            verify_result = safe_execute_kuzu_query(verify_query, {
                 "user_id": user_id,
                 "log_id": log_id
             })
@@ -264,7 +352,7 @@ class KuzuReadingLogService:
             DETACH DELETE rl
             """
             
-            self.graph_storage.query(delete_query, {"log_id": log_id})
+            safe_execute_kuzu_query(delete_query, {"log_id": log_id})
             
             logger.info(f"Deleted reading log {log_id} for user {user_id}")
             return True
@@ -297,17 +385,19 @@ class KuzuReadingLogService:
                 COUNT(DISTINCT rl.date) as days_read
             """
             
-            result = self.graph_storage.query(stats_query, {
+            result = safe_execute_kuzu_query(stats_query, {
                 "user_id": user_id,
                 "cutoff_date": cutoff_date
             })
             
-            if result and 'col_0' in result[0]:
+            result_list = _convert_query_result_to_list(result)
+            if result_list:
+                row = result_list[0]
                 stats = {
-                    'total_sessions': result[0].get('col_0', 0),
-                    'total_pages': result[0].get('col_1', 0),
-                    'total_minutes': result[0].get('col_2', 0),
-                    'days_read': result[0].get('col_3', 0),
+                    'total_sessions': row.get('col_0', 0),
+                    'total_pages': row.get('col_1', 0),
+                    'total_minutes': row.get('col_2', 0),
+                    'days_read': row.get('col_3', 0),
                     'days_back': days_back
                 }
                 
@@ -362,14 +452,15 @@ class KuzuReadingLogService:
             RETURN rl
             """
             
-            result = self.graph_storage.query(query, {
+            result = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "book_id": book_id,
                 "log_date": log_date  # Pass date object directly
             })
             
-            if result and 'col_0' in result[0]:
-                return dict(result[0]['col_0'])
+            result_list = _convert_query_result_to_list(result)
+            if result_list and result_list[0].get('col_0'):
+                return dict(result_list[0]['col_0'])
             
             return None
             
@@ -398,13 +489,15 @@ class KuzuReadingLogService:
             LIMIT $limit
             """
             
-            results = self.graph_storage.query(query, {
+            results = safe_execute_kuzu_query(query, {
                 "user_id": user_id,
                 "limit": limit
             })
             
+            results_list = _convert_query_result_to_list(results)
+            
             books = []
-            for result in results:
+            for result in results_list:
                 if 'col_0' in result:
                     book_data = dict(result['col_0'])
                     book_data['latest_log_date'] = result.get('col_1')
@@ -435,19 +528,20 @@ class KuzuReadingLogService:
             RETURN rl, b
             """
             
-            logs_result = self.graph_storage.query(all_logs_query, {
+            logs_result = safe_execute_kuzu_query(all_logs_query, {
                 "user_id": user_id
             })
             
             # Process the results manually to count everything
-            if logs_result:
-                total_log_entries = len(logs_result)
+            logs_list = _convert_query_result_to_list(logs_result)
+            if logs_list:
+                total_log_entries = len(logs_list)
                 total_pages = 0
                 total_minutes = 0
                 distinct_books = set()
                 distinct_days = set()
                 
-                for result in logs_result:
+                for result in logs_list:
                     if 'col_0' in result and 'col_1' in result:
                         log_data = dict(result['col_0'])
                         book_data = dict(result['col_1'])
@@ -527,8 +621,9 @@ class KuzuReadingLogService:
             RETURN COUNT(rl) as total_count
             """
             
-            count_result = self.graph_storage.query(count_query, {"user_id": user_id})
-            total_count = count_result[0].get('col_0', 0) if count_result else 0
+            count_result = safe_execute_kuzu_query(count_query, {"user_id": user_id})
+            count_list = _convert_query_result_to_list(count_result)
+            total_count = count_list[0].get('col_0', 0) if count_list else 0
             
             # Calculate offset
             offset = (page - 1) * per_page
@@ -542,14 +637,15 @@ class KuzuReadingLogService:
             LIMIT $limit
             """
             
-            logs_result = self.graph_storage.query(logs_query, {
+            logs_result = safe_execute_kuzu_query(logs_query, {
                 "user_id": user_id,
                 "offset": offset,
                 "limit": per_page
             })
             
+            logs_list = _convert_query_result_to_list(logs_result)
             logs = []
-            for result in logs_result:
+            for result in logs_list:
                 if 'col_0' in result and 'col_1' in result:
                     log_data = dict(result['col_0'])
                     book_data = dict(result['col_1'])

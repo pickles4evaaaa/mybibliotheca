@@ -12,8 +12,21 @@ from .forms import UserProfileForm, AdminPasswordResetForm
 from datetime import datetime, timedelta, timezone
 import pytz
 import os
+from app.utils.safe_kuzu_manager import SafeKuzuManager
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
+
+def _convert_query_result_to_list(result):
+    """Convert SafeKuzuManager query result to legacy list format"""
+    if hasattr(result, 'get_as_df'):
+        return result.get_as_df().to_dict('records')
+    elif hasattr(result, 'get_next'):
+        rows = []
+        while result.has_next():
+            rows.append(result.get_next())
+        return rows
+    else:
+        return list(result) if result else []
 
 def load_ai_config():
     """Load AI configuration from .env file in data directory"""
@@ -467,8 +480,7 @@ def delete_user(user_id):
 @admin_required
 def settings():
     """Admin settings page"""
-    from .infrastructure.kuzu_graph import get_graph_storage
-    storage = get_graph_storage()
+    safe_manager = SafeKuzuManager()
     
     if request.method == 'POST':
         site_name = request.form.get('site_name', 'MyBibliotheca')

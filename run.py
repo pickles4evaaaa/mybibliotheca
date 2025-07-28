@@ -13,7 +13,7 @@ if __name__ == '__main__':
 
     command = [
         "gunicorn",
-        "-w", "6",
+        "-w", "1",
         "-b", "0.0.0.0:5054",
         "run:app"
     ]

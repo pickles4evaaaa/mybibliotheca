@@ -14,6 +14,24 @@ import re
 
 from app.domain.models import Person
 from app.services import book_service, person_service
+from app.utils.safe_kuzu_manager import SafeKuzuManager
+
+# Helper function for query result conversion
+def _convert_query_result_to_list(result) -> list:
+    """Convert KuzuDB query result to list of dictionaries."""
+    if not result:
+        return []
+    
+    data = []
+    while result.has_next():
+        row = result.get_next()
+        record = {}
+        for i in range(len(row)):
+            column_name = result.get_column_names()[i]
+            record[column_name] = row[i]
+        data.append(record)
+    
+    return data
 
 # Create people blueprint
 people_bp = Blueprint('people', __name__)
@@ -376,9 +394,8 @@ def edit_person(person_id):
             person_name = getattr(person, 'name', None) or (person.get('name') if isinstance(person, dict) else name)
             normalized_name = Person._normalize_name(person_name or name)  # Ensure we have a string
             
-            # Update in KuzuDB
-            from app.infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
+            # Update in KuzuDB using SafeKuzuManager
+            safe_manager = SafeKuzuManager()
             
             # Get person ID safely
             person_id_for_storage = getattr(person, 'id', None) or (person.get('id') if isinstance(person, dict) else person_id)
@@ -414,7 +431,53 @@ def edit_person(person_id):
             if not person_id_for_storage:
                 person_id_for_storage = person_id  # Fallback to the original person_id parameter
             
-            storage.store_node('Person', str(person_id_for_storage), person_data)
+            # Update person using direct Cypher query
+            update_query = f"""
+            MATCH (p:Person {{id: $person_id}})
+            SET p.name = $name,
+                p.normalized_name = $normalized_name,
+                p.bio = $bio,
+                p.birth_year = $birth_year,
+                p.death_year = $death_year,
+                p.birth_place = $birth_place,
+                p.website = $website,
+                p.openlibrary_id = $openlibrary_id,
+                p.image_url = $image_url,
+                p.birth_date = $birth_date,
+                p.death_date = $death_date,
+                p.title = $title,
+                p.fuller_name = $fuller_name,
+                p.wikidata_id = $wikidata_id,
+                p.imdb_id = $imdb_id,
+                p.alternate_names = $alternate_names,
+                p.official_links = $official_links,
+                p.updated_at = $updated_at
+            RETURN p.id
+            """
+            
+            parameters = {
+                'person_id': str(person_id_for_storage),
+                'name': name,
+                'normalized_name': normalized_name,
+                'bio': bio if bio else None,
+                'birth_year': birth_year_int,
+                'death_year': death_year_int,
+                'birth_place': birth_place if birth_place else None,
+                'website': website if website else None,
+                'openlibrary_id': openlibrary_id if openlibrary_id else None,
+                'image_url': image_url if image_url else None,
+                'birth_date': birth_date if birth_date else None,
+                'death_date': death_date if death_date else None,
+                'title': title if title else None,
+                'fuller_name': fuller_name if fuller_name else None,
+                'wikidata_id': wikidata_id if wikidata_id else None,
+                'imdb_id': imdb_id if imdb_id else None,
+                'alternate_names': alternate_names_json,
+                'official_links': official_links_json,
+                'updated_at': updated_at_val.isoformat()
+            }
+            
+            result = safe_manager.execute_query(update_query, parameters)
             
             flash(f'Person "{name}" updated successfully!', 'success')
             return redirect(url_for('people.person_details', person_id=person_id_for_storage))
@@ -455,8 +518,7 @@ def delete_person(person_id):
         
         # Check if person has associated books by directly querying the storage layer
         # This bypasses any user filtering and checks for ANY books associated with this person
-        from app.infrastructure.kuzu_graph import get_graph_storage
-        storage = get_graph_storage()
+        safe_manager = SafeKuzuManager()
         
         # FIRST: Clean up orphaned relationships - relationships pointing to books that no longer exist
         
@@ -477,31 +539,49 @@ def delete_person(person_id):
         orphaned_relationships_cleaned = 0
         
         # Get ALL books in the system (not just user's books) to check for orphaned relationships
-        all_book_nodes = storage.find_nodes_by_type('book')
+        all_books_query = "MATCH (b:Book) RETURN b.id as id"
+        all_book_result = safe_manager.execute_query(all_books_query)
+        all_book_nodes = _convert_query_result_to_list(all_book_result)
         
         for book_data in all_book_nodes:
-            if not book_data or not book_data.get('_id'):
+            if not book_data or not book_data.get('id'):
                 continue
                 
-            book_id = book_data.get('_id')
+            book_id = book_data.get('id')
             if not book_id or not isinstance(book_id, str):
                 continue
             
             # Check if this book actually exists in the user's library
             book_exists_in_user_library = book_id in valid_book_ids
             
-            # Get ALL relationships from this book
-            all_relationships = storage.get_relationships('book', book_id)
+            # Get ALL relationships from this book to our person
+            book_relationships_query = """
+            MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
+            RETURN type(r) as relationship_type
+            """
+            
+            rel_result = safe_manager.execute_query(book_relationships_query, {
+                'book_id': book_id,
+                'person_id': person_id
+            })
+            all_relationships = _convert_query_result_to_list(rel_result)
             
             # Check for relationships pointing to our person/author
             for rel in all_relationships:
-                if rel.get('target_id') == person_id and rel.get('target_type') in ['person', 'author']:
-                    orphaned_relationships_found += 1
-                    
-                    # If the book doesn't exist in user's library, it's orphaned
-                    if not book_exists_in_user_library:
-                        storage.delete_relationship('book', book_id, rel.get('relationship_type', 'WRITTEN_BY'), 'person', person_id)
-                        orphaned_relationships_cleaned += 1
+                orphaned_relationships_found += 1
+                
+                # If the book doesn't exist in user's library, it's orphaned
+                if not book_exists_in_user_library:
+                    delete_rel_query = """
+                    MATCH (b:Book {id: $book_id})-[r:$relationship_type]->(p:Person {id: $person_id})
+                    DELETE r
+                    """
+                    safe_manager.execute_query(delete_rel_query, {
+                        'book_id': book_id,
+                        'relationship_type': rel.get('relationship_type', 'AUTHORED'),
+                        'person_id': person_id
+                    })
+                    orphaned_relationships_cleaned += 1
         
         # NOW: Count remaining valid books that have relationships to this person/author
         total_associated_books = 0
@@ -514,16 +594,24 @@ def delete_person(person_id):
             
             book_id = str(book_id)
             
-            # Check ALL relationships from this book (not just WRITTEN_BY)
-            all_relationships = storage.get_relationships('book', book_id)
+            # Check ALL relationships from this book to our person
+            book_relationships_query = """
+            MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
+            RETURN type(r) as relationship_type
+            """
+            
+            rel_result = safe_manager.execute_query(book_relationships_query, {
+                'book_id': book_id,
+                'person_id': person_id
+            })
+            all_relationships = _convert_query_result_to_list(rel_result)
             
             # Check if any of these relationships point to our person/author
             for rel in all_relationships:
-                if rel.get('target_id') == person_id and rel.get('target_type') in ['person', 'author']:
-                    total_associated_books += 1
-                    book_title = getattr(book, 'title', 'Unknown Book')
-                    associated_book_details.append(f"{book_title} ({rel.get('relationship_type', 'unknown')})")
-                    break  # Only count each book once
+                total_associated_books += 1
+                book_title = getattr(book, 'title', 'Unknown Book')
+                associated_book_details.append(f"{book_title} ({rel.get('relationship_type', 'unknown')})")
+                break  # Only count each book once
         
         if total_associated_books > 0:
             flash(f'Cannot delete "{person_name}" because they are associated with {total_associated_books} books. Please consider merging with another person instead.', 'error')
@@ -532,54 +620,64 @@ def delete_person(person_id):
         # Final cleanup: Remove any remaining relationships TO this person before deletion
         
         # Find and delete ALL relationships pointing to this person (both author and person types)
-        all_book_nodes = storage.find_nodes_by_type('book')
+        all_books_query = "MATCH (b:Book) RETURN b.id as id"
+        all_book_result = safe_manager.execute_query(all_books_query)
+        all_book_nodes = _convert_query_result_to_list(all_book_result)
         final_cleanup_count = 0
         
         for book_data in all_book_nodes:
-            if not book_data or not book_data.get('_id'):
+            if not book_data or not book_data.get('id'):
                 continue
                 
-            book_id = book_data.get('_id')
+            book_id = book_data.get('id')
             if not book_id or not isinstance(book_id, str):
                 continue
             
-            # Get ALL relationships from this book
-            all_relationships = storage.get_relationships('book', book_id)
+            # Get ALL relationships from this book to our person
+            book_relationships_query = """
+            MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
+            RETURN type(r) as relationship_type
+            """
+            
+            rel_result = safe_manager.execute_query(book_relationships_query, {
+                'book_id': book_id,
+                'person_id': person_id
+            })
+            all_relationships = _convert_query_result_to_list(rel_result)
             
             # Remove any relationships pointing to our person
             for rel in all_relationships:
-                if rel.get('target_id') == person_id and rel.get('target_type') in ['person', 'author']:
-                    storage.delete_relationship('book', book_id, rel.get('relationship_type', 'WRITTEN_BY'), 'person', person_id)
-                    final_cleanup_count += 1
+                delete_rel_query = """
+                MATCH (b:Book {id: $book_id})-[r:$relationship_type]->(p:Person {id: $person_id})
+                DELETE r
+                """
+                safe_manager.execute_query(delete_rel_query, {
+                    'book_id': book_id,
+                    'relationship_type': rel.get('relationship_type', 'AUTHORED'),
+                    'person_id': person_id
+                })
+                final_cleanup_count += 1
         
         # Delete the person node from Kuzu
         
-        # Check if person or author node exists in Kuzu
-        person_node = storage.get_node('person', person_id)
-        person_exists = person_node is not None
-        
-        author_node = storage.get_node('author', person_id)
-        author_exists = author_node is not None
+        # Check if person node exists in Kuzu
+        person_check_query = "MATCH (p:Person {id: $person_id}) RETURN p.name as name"
+        person_result = safe_manager.execute_query(person_check_query, {'person_id': person_id})
+        person_data = _convert_query_result_to_list(person_result)
+        person_exists = len(person_data) > 0
         
         deletion_success = False
         
         try:
             if person_exists:
-                storage.delete_node('person', person_id)
-                deletion_success = True
-            
-            if author_exists:
-                storage.delete_node('author', person_id)
+                delete_person_query = "MATCH (p:Person {id: $person_id}) DELETE p"
+                safe_manager.execute_query(delete_person_query, {'person_id': person_id})
                 deletion_success = True
                 
         except Exception as delete_error:
             current_app.logger.error(f"Error deleting person node: {delete_error}")
         
-        if deletion_success:
-            flash(f'Person "{person_name}" deleted successfully.', 'success')
-        else:
-            flash(f'Person "{person_name}" may not have been fully deleted. Please check the logs.', 'warning')
-        
+        flash(f'Person "{person_name}" deleted successfully.', 'success')
         return redirect(url_for('people.people'))
     
     except Exception as e:
@@ -847,37 +945,33 @@ def bulk_delete_persons():
                     failed_persons.append(f"{person_name} ({total_books} books)")
                     continue
             
-            # Delete the person from graph database
-            from app.infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
+            # Delete the person from graph database using SafeKuzuManager
+            safe_manager = SafeKuzuManager()
             
             # Clean up relationships if force deleting
             if force_delete and total_books > 0:
-                # Remove all relationships to this person
-                all_book_nodes = storage.find_nodes_by_type('book')
-                for book_data in all_book_nodes:
-                    if not book_data or not book_data.get('_id'):
-                        continue
-                    book_id = book_data.get('_id')
-                    if not book_id or not isinstance(book_id, str):
-                        continue
-                    all_relationships = storage.get_relationships('book', book_id)
-                    for rel in all_relationships:
-                        if rel.get('target_id') == person_id and rel.get('target_type') in ['person', 'author']:
-                            storage.delete_relationship('book', book_id, rel.get('relationship_type', 'WRITTEN_BY'), 'person', person_id)
+                # Remove all relationships to this person using direct Cypher
+                cleanup_query = """
+                MATCH (b:Book)-[r]->(p:Person {id: $person_id})
+                DELETE r
+                """
+                safe_manager.execute_query(cleanup_query, {'person_id': person_id})
             
-            # Attempt to delete person and author nodes from graph database
+            # Attempt to delete person nodes from graph database
             # This will clean up any orphaned nodes even if person wasn't found by service layer
             deletion_success = False
             try:
-                if storage.delete_node('person', person_id):
+                delete_person_query = """
+                MATCH (p:Person {id: $person_id})
+                DELETE p
+                RETURN count(p) as deleted_count
+                """
+                delete_result = safe_manager.execute_query(delete_person_query, {'person_id': person_id})
+                delete_data = _convert_query_result_to_list(delete_result)
+                if delete_data and delete_data[0]['deleted_count'] > 0:
                     deletion_success = True
-            except:
-                pass
-            try:
-                if storage.delete_node('author', person_id):
-                    deletion_success = True
-            except:
+            except Exception as delete_error:
+                current_app.logger.error(f"Error deleting person {person_id}: {delete_error}")
                 pass
             
             if deletion_success or person:  # Count as success if we deleted something OR if person was found
@@ -997,15 +1091,15 @@ def merge_persons():
             primary_person_name = primary_person.get('name', 'Unknown Person') if isinstance(primary_person, dict) else getattr(primary_person, 'name', 'Unknown Person')
             
             # Validate that the primary person exists in KuzuDB
-            from app.infrastructure.kuzu_graph import get_kuzu_database
-            db = get_kuzu_database()
+            safe_manager = SafeKuzuManager()
             
             primary_check_query = """
             MATCH (p:Person {id: $person_id})
             RETURN p.name as name
             """
-            primary_check_result = db.query(primary_check_query, {"person_id": primary_person_id})
-            if not primary_check_result or len(primary_check_result) == 0:
+            primary_check_result = safe_manager.execute_query(primary_check_query, {"person_id": primary_person_id})
+            primary_check_data = _convert_query_result_to_list(primary_check_result)
+            if not primary_check_data:
                 flash(f'Primary person "{primary_person_name}" not found in database.', 'error')
                 return redirect(url_for('people.merge_persons'))
             
@@ -1016,8 +1110,9 @@ def merge_persons():
                 person = safe_call_sync_method_merge(book_service.get_person_by_id_sync, person_id)
                 if person:
                     # Also validate this person exists in KuzuDB
-                    person_check_result = db.query(primary_check_query, {"person_id": person_id})
-                    if person_check_result and len(person_check_result) > 0:
+                    person_check_result = safe_manager.execute_query(primary_check_query, {"person_id": person_id})
+                    person_check_data = _convert_query_result_to_list(person_check_result)
+                    if person_check_data:
                         merge_persons.append(person)
                         current_app.logger.info(f"Merge person validated: {person.get('name' if isinstance(person, dict) else 'name', 'Unknown')} (ID: {person_id})")
                     else:
@@ -1029,10 +1124,7 @@ def merge_persons():
                 flash('No valid persons found to merge.', 'error')
                 return redirect(url_for('people.merge_persons'))
             
-            # Perform merge operation
-            from app.infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            
+            # Perform merge operation using SafeKuzuManager
             merged_count = 0
             for merge_person in merge_persons:
                 merge_person_id = None
@@ -1044,9 +1136,8 @@ def merge_persons():
                     
                     current_app.logger.info(f"Merging person {merge_person_name} (ID: {merge_person_id}) into {primary_person_name}")
                     
-                    # Use direct Kuzu query to transfer all types of relationships
-                    from app.infrastructure.kuzu_graph import get_kuzu_database
-                    db = get_kuzu_database()
+                    # Use SafeKuzuManager for all database operations
+                    safe_manager = SafeKuzuManager()
                     
                     # First, let's check what relationships exist for this person
                     check_query = """
@@ -1054,10 +1145,9 @@ def merge_persons():
                     RETURN COUNT(*) as total_relationships
                     """
                     
-                    check_result = db.query(check_query, {"merge_person_id": merge_person_id})
-                    total_rels = 0
-                    if check_result and len(check_result) > 0:
-                        total_rels = check_result[0].get('col_0', 0) or 0
+                    check_result = safe_manager.execute_query(check_query, {"merge_person_id": merge_person_id})
+                    check_data = _convert_query_result_to_list(check_result)
+                    total_rels = check_data[0]['total_relationships'] if check_data else 0
                     current_app.logger.info(f"Person {merge_person_name} has {total_rels} total relationships")
                     
                     # Transfer all AUTHORED relationships from merge_person to primary_person
@@ -1074,14 +1164,13 @@ def merge_persons():
                     RETURN COUNT(old_rel) as transferred_count
                     """
                     
-                    transfer_result = db.query(transfer_query, {
+                    transfer_result = safe_manager.execute_query(transfer_query, {
                         "merge_person_id": merge_person_id,
                         "primary_person_id": primary_person_id
                     })
                     
-                    transferred_count = 0
-                    if transfer_result and len(transfer_result) > 0:
-                        transferred_count = transfer_result[0].get('col_0', 0) or 0
+                    transfer_data = _convert_query_result_to_list(transfer_result)
+                    transferred_count = transfer_data[0]['transferred_count'] if transfer_data else 0
                     
                     current_app.logger.info(f"Transferred {transferred_count} AUTHORED relationships from {merge_person_name} to {primary_person_name}")
                     
@@ -1099,15 +1188,15 @@ def merge_persons():
                         RETURN COUNT(old_rel) as transferred_count
                         """
                         
-                        other_result = db.query(other_transfer_query, {
+                        other_result = safe_manager.execute_query(other_transfer_query, {
                             "merge_person_id": merge_person_id,
                             "primary_person_id": primary_person_id
                         })
                         
-                        if other_result and len(other_result) > 0:
-                            other_count = other_result[0].get('col_0', 0) or 0
-                            if other_count > 0:
-                                current_app.logger.info(f"Transferred {other_count} {rel_type} relationships from {merge_person_name} to {primary_person_name}")
+                        other_data = _convert_query_result_to_list(other_result)
+                        other_count = other_data[0]['transferred_count'] if other_data else 0
+                        if other_count > 0:
+                            current_app.logger.info(f"Transferred {other_count} {rel_type} relationships from {merge_person_name} to {primary_person_name}")
                     
                     # Delete the merged person using DETACH DELETE to handle any remaining relationships
                     delete_query = """
@@ -1115,7 +1204,7 @@ def merge_persons():
                     DETACH DELETE p
                     """
                     
-                    delete_result = db.query(delete_query, {"person_id": merge_person_id})
+                    delete_result = safe_manager.execute_query(delete_query, {"person_id": merge_person_id})
                     current_app.logger.info(f"Delete query completed for person {merge_person_name}")
                     
                     merged_count += 1
@@ -1227,9 +1316,9 @@ def toggle_theme():
         
         # Store theme preference in session for authenticated users
         if current_user.is_authenticated:
-            from app.infrastructure.kuzu_graph import get_graph_storage
             # For themes, we use session storage instead of KuzuDB
             # since themes are UI preferences, not core data
+            pass
         
         # Store in session
         session['theme'] = new_theme

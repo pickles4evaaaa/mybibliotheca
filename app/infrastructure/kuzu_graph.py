@@ -1561,9 +1561,19 @@ def get_kuzu_connection() -> 'KuzuGraphDB':
 
 
 def get_kuzu_database() -> 'KuzuGraphDB':
-    """Get the single global KuzuGraphDB instance."""
+    """
+    Get the single global KuzuGraphDB instance.
+    
+    ⚠️ WARNING: This function is NOT thread-safe and should be avoided in production!
+    It will cause concurrency issues with multiple users. Use safe_execute_query() 
+    or safe_get_connection() from app.utils.safe_kuzu_manager instead.
+    
+    This function is deprecated and will be removed in a future version.
+    """
     global _kuzu_database
     if _kuzu_database is None:
+        logger.warning("🚨 DANGEROUS: Using thread-unsafe global KuzuDB singleton! "
+                      "This will cause concurrency issues. Use safe_execute_query() instead.")
         _kuzu_database = KuzuGraphDB()
         _kuzu_database.connect()
         logger.info(f"Single global KuzuDB instance established")
@@ -1572,9 +1582,94 @@ def get_kuzu_database() -> 'KuzuGraphDB':
 
 
 def get_graph_storage() -> 'KuzuGraphStorage':
-    """Get global KuzuGraphStorage instance using the single database."""
+    """
+    Get global KuzuGraphStorage instance using the single database.
+    
+    ⚠️ WARNING: This function is NOT thread-safe and should be avoided in production!
+    It will cause concurrency issues with multiple users. Use safe_execute_query() 
+    or safe_get_connection() from app.utils.safe_kuzu_manager instead.
+    
+    This function is deprecated and will be removed in a future version.
+    """
     global _graph_storage
     if _graph_storage is None:
+        logger.warning("🚨 DANGEROUS: Using thread-unsafe global KuzuDB storage! "
+                      "This will cause concurrency issues. Use safe_get_connection() instead.")
         database = get_kuzu_database()  # Always use the same database instance
         _graph_storage = KuzuGraphStorage(database)
     return _graph_storage
+
+
+# ==============================================================================
+# SAFE THREAD-SAFE ALTERNATIVES - USE THESE INSTEAD!
+# ==============================================================================
+
+# Safe alternatives will be imported when needed to avoid circular imports
+# Use safe_execute_kuzu_query() and safe_get_kuzu_connection() instead of the dangerous globals
+
+
+# Convenience functions for migration
+def safe_execute_kuzu_query(query: str, params: Optional[Dict[str, Any]] = None, 
+                           user_id: Optional[str] = None, operation: str = "query"):
+    """
+    Execute a KuzuDB query safely with automatic connection management.
+    
+    This is the recommended way to execute KuzuDB queries. It provides
+    thread-safe access and automatic connection lifecycle management.
+    
+    Args:
+        query: Cypher query string
+        params: Query parameters
+        user_id: User identifier for tracking and isolation
+        operation: Description of operation for debugging
+        
+    Returns:
+        Query result
+        
+    Example:
+        result = safe_execute_kuzu_query(
+            "MATCH (b:Book) WHERE b.user_id = $user_id RETURN b",
+            {"user_id": "user123"},
+            user_id="user123",
+            operation="get_user_books"
+        )
+    """
+    try:
+        # Import here to avoid circular imports
+        from ..utils.safe_kuzu_manager import safe_execute_query
+        return safe_execute_query(query, params, user_id, operation)
+    except ImportError:
+        logger.error("🚨 CRITICAL: safe_execute_query not available! Using dangerous fallback.")
+        # Fallback to dangerous global (temporary during migration)
+        db = get_kuzu_database()
+        conn = db.connect()
+        return conn.execute(query, params or {})
+
+
+def safe_get_kuzu_connection(user_id: Optional[str] = None, operation: str = "connection"):
+    """
+    Get a thread-safe KuzuDB connection context manager.
+    
+    This is the recommended way to get KuzuDB connections for complex operations.
+    
+    Args:
+        user_id: User identifier for tracking and isolation
+        operation: Description of operation for debugging
+        
+    Returns:
+        Context manager yielding a KuzuDB connection
+        
+    Example:
+        with safe_get_kuzu_connection(user_id="user123", operation="book_import") as conn:
+            conn.execute("CREATE (b:Book {title: $title})", {"title": "Test"})
+            result = conn.execute("MATCH (b:Book) RETURN count(b)")
+    """
+    try:
+        # Import here to avoid circular imports
+        from ..utils.safe_kuzu_manager import safe_get_connection
+        return safe_get_connection(user_id, operation)
+    except ImportError:
+        logger.error("🚨 CRITICAL: safe_get_connection not available! Using dangerous fallback.")
+        # Fallback to dangerous global (temporary during migration)
+        db = get_kuzu_database()
+        return db.connect()

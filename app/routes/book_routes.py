@@ -18,6 +18,24 @@ from io import BytesIO
 from app.services import book_service, reading_log_service, custom_field_service, user_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
+from app.utils.safe_kuzu_manager import SafeKuzuManager
+
+# Helper function for query result conversion
+def _convert_query_result_to_list(result) -> list:
+    """Convert KuzuDB query result to list of dictionaries."""
+    if not result:
+        return []
+    
+    data = []
+    while result.has_next():
+        row = result.get_next()
+        record = {}
+        for i in range(len(row)):
+            column_name = result.get_column_names()[i]
+            record[column_name] = row[i]
+        data.append(record)
+    
+    return data
 from app.domain.models import Book as DomainBook
 
 # Create book blueprint
@@ -1587,52 +1605,60 @@ def edit_book(uid):
                 try:
                     # Always use find_or_create approach - the most reliable method
                     
-                    # Use the same logic as the repository's find_or_create_person method
-                    from app.infrastructure.kuzu_graph import get_graph_storage
-                    storage = get_graph_storage()
+                    # Use SafeKuzuManager for all database operations
+                    safe_manager = SafeKuzuManager()
                     
                     # Search for existing person by name (same as repository method)
                     normalized_name = person_name.strip().lower()
-                    all_persons = storage.find_nodes_by_type('person')
-                    person = None
                     
-                    for person_data in all_persons:
-                        existing_name = person_data.get('name', '').strip().lower()
-                        existing_normalized = person_data.get('normalized_name', '').strip().lower()
-                        
-                        if existing_name == normalized_name or existing_normalized == normalized_name:
-                            # Convert back to Person object
-                            person = Person(
-                                id=person_data.get('id'),
-                                name=person_data.get('name', ''),
-                                normalized_name=person_data.get('normalized_name', ''),
-                                birth_year=person_data.get('birth_year'),
-                                death_year=person_data.get('death_year'),
-                                birth_place=person_data.get('birth_place'),
-                                bio=person_data.get('bio'),
-                                website=person_data.get('website'),
-                                created_at=datetime.now(),  # Set defaults for dates
-                                updated_at=datetime.now()
-                            )
-                            break
+                    # Query for existing person by normalized name
+                    find_person_query = """
+                    MATCH (p:Person)
+                    WHERE toLower(p.name) = $normalized_name OR toLower(p.normalized_name) = $normalized_name
+                    RETURN p.id as id, p.name as name, p.normalized_name as normalized_name,
+                           p.birth_year as birth_year, p.death_year as death_year,
+                           p.birth_place as birth_place, p.bio as bio, p.website as website
+                    LIMIT 1
+                    """
+                    
+                    person_result = safe_manager.execute_query(find_person_query, {'normalized_name': normalized_name})
+                    person_data_list = _convert_query_result_to_list(person_result)
+                    
+                    person = None
+                    if person_data_list:
+                        person_data = person_data_list[0]
+                        # Convert back to Person object
+                        person = Person(
+                            id=person_data.get('id'),
+                            name=person_data.get('name', ''),
+                            normalized_name=person_data.get('normalized_name', ''),
+                            birth_year=person_data.get('birth_year'),
+                            death_year=person_data.get('death_year'),
+                            birth_place=person_data.get('birth_place'),
+                            bio=person_data.get('bio'),
+                            website=person_data.get('website'),
+                            created_at=datetime.now(),  # Set defaults for dates
+                            updated_at=datetime.now()
+                        )
                     
                     # If not found, create new person using clean repository (with auto-fetch)
                     if not person:
                         from app.infrastructure.kuzu_repositories import KuzuPersonRepository
-                        from app.infrastructure.kuzu_graph import get_kuzu_connection
+                        from app.utils.safe_kuzu_manager import safe_get_connection
                         
                         try:
                             # Use clean repository with auto-fetch capability
-                            person_repo = KuzuPersonRepository()
-                            
-                            # Create person using repository (will auto-fetch OpenLibrary metadata)
-                            person_dict = {
-                                'id': str(uuid.uuid4()),
-                                'name': person_name,
-                                'normalized_name': normalized_name,
-                                'created_at': datetime.now().isoformat(),
-                                'updated_at': datetime.now().isoformat()
-                            }
+                            with safe_get_connection(user_id=str(current_user.id), operation="create_contributor") as kuzu_connection:
+                                person_repo = KuzuPersonRepository()
+                                
+                                # Create person using repository (will auto-fetch OpenLibrary metadata)
+                                person_dict = {
+                                    'id': str(uuid.uuid4()),
+                                    'name': person_name,
+                                    'normalized_name': normalized_name,
+                                    'created_at': datetime.now().isoformat(),
+                                    'updated_at': datetime.now().isoformat()
+                                }
                             
                             created_person = person_repo.create(person_dict)
                             if created_person:
@@ -1754,20 +1780,19 @@ def edit_book(uid):
             # Use the location service to update the book location
             try:
                 from app.location_service import LocationService
-                from app.infrastructure.kuzu_graph import get_kuzu_connection
+                from app.utils.safe_kuzu_manager import safe_get_connection
                 
-                db = get_kuzu_connection()
-                connection = db.connect()
-                location_service = LocationService(connection)
-                
-                # Convert empty string to None for clearing location
-                location_success = location_service.set_book_location(
-                    uid, 
-                    location_id if location_id else None, 
-                    str(current_user.id)
-                )
-                if not location_success:
-                    pass
+                with safe_get_connection(user_id=current_user.id, operation="update_book_location") as connection:
+                    location_service = LocationService(connection)
+                    
+                    # Convert empty string to None for clearing location
+                    location_success = location_service.set_book_location(
+                        uid, 
+                        location_id if location_id else None, 
+                        str(current_user.id)
+                    )
+                    if not location_success:
+                        pass
             except Exception as e:
                 pass
         
@@ -1924,21 +1949,21 @@ def view_book_enhanced(uid):
                 if hasattr(self, 'location_id') and location_id and (not hasattr(self, 'locations') or not getattr(self, 'locations', None)):
                     try:
                         from app.location_service import LocationService
-                        from app.infrastructure.kuzu_graph import get_kuzu_connection
-                        
-                        kuzu_connection = get_kuzu_connection()
-                        location_service = LocationService(kuzu_connection.connect())
+                        from app.utils.safe_kuzu_manager import safe_get_connection
                         
                         # Get current user ID properly
                         user_id_for_location = str(current_user.id) if 'current_user' in globals() and hasattr(current_user, 'id') else str(data.get('user_id', ''))
                         if user_id_for_location:
-                            # Get all available locations, not just those with books
-                            user_locations = location_service.get_all_locations()
-                            
-                            # Find the location object by ID
-                            for user_loc in user_locations:
-                                if hasattr(user_loc, 'id') and str(user_loc.id) == str(location_id):
-                                    self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
+                            with safe_get_connection(user_id=user_id_for_location, operation="get_location_info") as connection:
+                                location_service = LocationService(connection)
+                                
+                                # Get all available locations, not just those with books
+                                user_locations = location_service.get_all_locations()
+                                
+                                # Find the location object by ID
+                                for user_loc in user_locations:
+                                    if hasattr(user_loc, 'id') and str(user_loc.id) == str(location_id):
+                                        self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
                                     break
                             
                             # If location not found by ID, check if location_id is actually a name
@@ -2015,38 +2040,49 @@ def view_book_enhanced(uid):
         book_id = getattr(user_book, 'id', None)
         if book_id and (hasattr(user_book, 'contributors') and not user_book.contributors):
             # Fetch authors from database using the same pattern as categories
-            from app.infrastructure.kuzu_graph import get_kuzu_connection
+            from app.utils.safe_kuzu_manager import safe_get_connection
             from app.domain.models import BookContribution, Person, ContributionType
-            kuzu_connection = get_kuzu_connection()
             
-            query = """
-            MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
-            RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
-            ORDER BY rel.order_index ASC
-            """
-            
-            results = kuzu_connection.query(query, {"book_id": book_id})
-            
-            contributors = []
-            for result in results:
-                person_id = result.get('col_1', '')
-                person_name = result.get('col_0', '')
-                if person_name and person_id:  # Ensure both name and id exist
-                    person = Person(
-                        id=person_id,
-                        name=person_name,
-                        normalized_name=person_name.lower()
-                    )
-                    
-                    contribution = BookContribution(
-                        person_id=person_id,
-                        book_id=book_id,
-                        contribution_type=ContributionType.AUTHORED,
-                        order=result.get('col_3', 0),
-                        person=person
-                    )
-                    
-                    contributors.append(contribution)
+            with safe_get_connection(user_id=str(current_user.id), operation="fetch_book_authors") as kuzu_connection:
+                
+                query = """
+                MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
+                RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
+                ORDER BY rel.order_index ASC
+                """
+                
+                results = kuzu_connection.execute(query, {"book_id": book_id})
+                
+                # Handle both single QueryResult and list[QueryResult]
+                if isinstance(results, list):
+                    result = results[0] if results else None
+                else:
+                    result = results
+                
+                contributors = []
+                if result:
+                    result_list = _convert_query_result_to_list(result)
+                    for row_data in result_list:
+                        person_name = row_data.get('name', '')
+                        person_id = row_data.get('id', '')
+                        order_index = row_data.get('order_index', 0)
+                        
+                        if person_name and person_id:  # Ensure both name and id exist
+                            person = Person(
+                                id=person_id,
+                                name=person_name,
+                                normalized_name=person_name.lower()
+                            )
+                            
+                            contribution = BookContribution(
+                                person_id=person_id,
+                                book_id=book_id,
+                                contribution_type=ContributionType.AUTHORED,
+                                order=order_index,
+                                person=person
+                            )
+                            
+                            contributors.append(contribution)
             
             # Update the book object with the fetched contributors
             user_book.contributors = contributors
@@ -2124,13 +2160,13 @@ def view_book_enhanced(uid):
     user_locations = []
     try:
         from app.location_service import LocationService
-        from app.infrastructure.kuzu_graph import get_kuzu_connection
+        from app.utils.safe_kuzu_manager import safe_get_connection
         from config import Config
         
-        kuzu_connection = get_kuzu_connection()
-        location_service = LocationService(kuzu_connection.connect())
-        # Get all available locations, not just those with books
-        user_locations = location_service.get_all_locations()
+        with safe_get_connection(user_id=str(current_user.id), operation="fetch_user_locations") as kuzu_connection:
+            location_service = LocationService(kuzu_connection)
+            # Get all available locations, not just those with books
+            user_locations = location_service.get_all_locations()
     except Exception as e:
         current_app.logger.error(f"Error loading user locations: {e}")
     
@@ -2234,20 +2270,19 @@ def update_book_details(uid):
             # Use the location service to update the book location
             try:
                 from app.location_service import LocationService
-                from app.infrastructure.kuzu_graph import get_kuzu_connection
+                from app.utils.safe_kuzu_manager import safe_get_connection
                 
-                db = get_kuzu_connection()
-                connection = db.connect()
-                location_service = LocationService(connection)
-                
-                # Convert empty string to None for clearing location
-                location_success = location_service.set_book_location(
-                    uid, 
-                    location_id if location_id.strip() else None, 
-                    str(current_user.id)
-                )
-                if not location_success:
-                    pass
+                with safe_get_connection(user_id=str(current_user.id), operation="update_book_location") as kuzu_connection:
+                    location_service = LocationService(kuzu_connection)
+                    
+                    # Convert empty string to None for clearing location
+                    location_success = location_service.set_book_location(
+                        uid, 
+                        location_id if location_id.strip() else None, 
+                        str(current_user.id)
+                    )
+                    if not location_success:
+                        pass
             except Exception as e:
                 pass
         else:
@@ -2574,11 +2609,8 @@ def edit_book_custom_metadata(uid):
             if valid:
                 print(f"📝 [EDIT_META] Updating personal metadata: {personal_metadata}")
                 
-                # Update user book relationship with personal metadata using graph storage directly
+                # Update user book relationship with personal metadata
                 try:
-                    from app.infrastructure.kuzu_graph import get_graph_storage
-                    storage = get_graph_storage()
-                    
                     # Store custom metadata using the custom field service
                     success = custom_field_service.save_custom_metadata_sync(
                         uid, str(current_user.id), personal_metadata
@@ -3979,12 +4011,12 @@ def add_book_manual():
         # Determine location to use: form-selected location takes priority, then default location
         final_locations = []
         try:
-            from .location_service import LocationService
-            from .infrastructure.kuzu_graph import get_kuzu_connection
+            from app.location_service import LocationService
+            from app.utils.safe_kuzu_manager import safe_get_connection
             from config import Config
             
-            kuzu_connection = get_kuzu_connection()
-            location_service = LocationService(kuzu_connection.connect())
+            with safe_get_connection(user_id=str(current_user.id), operation="set_book_location") as kuzu_connection:
+                location_service = LocationService(kuzu_connection)
             
             # Check if user selected a location in the form
             if location_id:

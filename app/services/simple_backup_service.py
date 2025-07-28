@@ -18,6 +18,24 @@ from dataclasses import dataclass
 import uuid
 
 from flask import current_app
+from app.utils.safe_kuzu_manager import SafeKuzuManager
+
+# Helper function for query result conversion
+def _convert_query_result_to_list(result) -> list:
+    """Convert KuzuDB query result to list of dictionaries."""
+    if not result:
+        return []
+    
+    data = []
+    while result.has_next():
+        row = result.get_next()
+        record = {}
+        for i in range(len(row)):
+            column_name = result.get_column_names()[i]
+            record[column_name] = row[i]
+        data.append(record)
+    
+    return data
 
 logger = logging.getLogger(__name__)
 
@@ -379,26 +397,22 @@ class SimpleBackupService:
         """Cleanly disconnect from KuzuDB."""
         try:
             # Step 1: Close connection and database instances
-            from app.infrastructure.kuzu_graph import get_kuzu_database
-            database = get_kuzu_database()
-            if database:
+            # For backup operations, we need to ensure complete disconnection
+            # Use the safe manager's health status to check connections
+            safe_manager = SafeKuzuManager()
+            health_status = safe_manager.get_health_status()
+            
+            if health_status.get('database_initialized', False):
                 try:
-                    # Explicitly close connection first
-                    if hasattr(database, '_connection') and database._connection:
-                        database._connection.close()
-                        database._connection = None
-                        logger.info("Closed Kuzu connection")
+                    # Force cleanup of any active connections
+                    cleaned_connections = safe_manager.cleanup_stale_connections(max_age_minutes=0)
+                    logger.info(f"Cleaned up {cleaned_connections} stale connections")
                     
-                    # Then close database
-                    if hasattr(database, '_database') and database._database:
-                        database._database = None
-                        logger.info("Closed Kuzu database")
-                    
-                    # Call the disconnect method
-                    database.disconnect()
-                    logger.info("Called Kuzu database disconnect")
+                    # Force reset if needed for backup operations
+                    safe_manager.force_reset()
+                    logger.info("Forced SafeKuzuManager reset for backup operation")
                 except Exception as e:
-                    logger.warning(f"Error closing Kuzu database connection: {e}")
+                    logger.warning(f"Error during SafeKuzuManager cleanup: {e}")
             
             # Step 2: Clear cached graph storage instance
             try:
@@ -542,17 +556,16 @@ class SimpleBackupService:
                 wait_time = 2.0 + (retry_count * 1.0)  # 2, 3, 4 seconds
                 time.sleep(wait_time)
                 
-                # Initialize fresh database connection
-                from app.infrastructure.kuzu_graph import get_kuzu_database
-                database = get_kuzu_database()
-                if database:
-                    connection = database.connect()
-                    if connection:
-                        logger.info("Successfully reconnected to Kuzu database")
-                    else:
-                        raise Exception("Failed to get connection from Kuzu database")
-                else:
-                    raise Exception("Failed to get Kuzu database instance")
+                # Initialize fresh database connection using SafeKuzuManager
+                safe_manager = SafeKuzuManager()
+                
+                # Test the connection by executing a simple query
+                try:
+                    test_query = "MATCH (n) RETURN count(n) as node_count LIMIT 1"
+                    test_result = safe_manager.execute_query(test_query)
+                    logger.info("Successfully reconnected to Kuzu database via SafeKuzuManager")
+                except Exception as e:
+                    raise Exception(f"Failed to test Kuzu database connection: {e}")
                 
                 # Initialize Kuzu service
                 try:

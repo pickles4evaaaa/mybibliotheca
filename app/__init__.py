@@ -449,23 +449,57 @@ def create_app():
         if verbose_init:
             print("🚀 Initializing Kuzu-based MyBibliotheca...")
         
-        # Test Kuzu connection
+        # Test Kuzu connection (only if not in gunicorn worker spawn)
+        # Skip KuzuDB connection test during import/fork to avoid lock conflicts
+        kuzu_init_attempted = False
         try:
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
-            # Simple connection test
+            from .utils.kuzu_migration_helper import safe_execute_query
+            # Simple connection test using safe method
+            test_result = safe_execute_query("RETURN 1 AS test", {})
+            kuzu_init_attempted = True
             if verbose_init:
                 print("✅ Kuzu connection successful")
                 
                 # Log database state at app startup
                 try:
-                    user_count = storage.count_nodes('User')
-                    book_count = storage.count_nodes('Book')
-                    owns_count = storage.count_relationships('OWNS')
+                    user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
+                    book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
+                    owns_result = safe_execute_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r) AS count", {})
+                    
+                    user_count = 0
+                    if user_result and user_result.has_next():
+                        row = user_result.get_next()
+                        user_count = row[0] if row else 0
+                    
+                    book_count = 0
+                    if book_result and book_result.has_next():
+                        row = book_result.get_next()
+                        book_count = row[0] if row else 0
+                    
+                    owns_count = 0
+                    if owns_result and owns_result.has_next():
+                        row = owns_result.get_next()
+                        owns_count = row[0] if row else 0
+                        
+                    if verbose_init:
+                        print(f"📊 Database state: Users: {user_count}, Books: {book_count}, Ownership relationships: {owns_count}")
                 except Exception as count_e:
                     if verbose_init:
                         print(f"Error counting nodes: {count_e}")
             
+        except Exception as e:
+            if "Could not set lock on file" in str(e):
+                if verbose_init:
+                    print("⏳ KuzuDB connection deferred - will initialize on first request")
+                kuzu_init_attempted = False  # Mark as not attempted due to lock conflict
+            else:
+                print("🔧 Make sure KuzuDB is running and accessible")
+                if verbose_init:
+                    import traceback
+                    traceback.print_exc()
+        
+        # Only initialize services if KuzuDB connection was successful
+        if kuzu_init_attempted:
             # Initialize services and attach to app using Kuzu service instances
             from .services import (
                 book_service, user_service, reading_log_service,
@@ -494,11 +528,9 @@ def create_app():
                     _initialize_default_templates()
                 except Exception:
                     pass  # Fail silently for worker processes
-            
-        except Exception as e:
-            print("🔧 Make sure KuzuDB is running and accessible")
-            import traceback
-            traceback.print_exc()
+        else:
+            if verbose_init:
+                print("⚠️ Services initialization deferred - will initialize on first request")
         
         # Development mode - skip auto admin creation, use setup page instead
         if verbose_init:
@@ -765,13 +797,19 @@ def create_app():
             print(f"🛑 [APP_SHUTDOWN] Process ID: {os.getpid()}")
             print(f"🛑 [APP_SHUTDOWN] Shutdown time: {datetime.now()}")
             
-            # Try to get final database state
-            from .infrastructure.kuzu_graph import get_graph_storage
-            storage = get_graph_storage()
+            # Try to get final database state using safe methods
+            from .utils.kuzu_migration_helper import safe_execute_query
             
-            user_count = storage.count_nodes('User')
-            book_count = storage.count_nodes('Book')
-            owns_count = storage.count_relationships('OWNS')
+            try:
+                user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
+                book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
+                owns_result = safe_execute_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r) AS count", {})
+                
+                user_count = user_result[0].get('count', 0) if user_result else 0
+                book_count = book_result[0].get('count', 0) if book_result else 0
+                owns_count = owns_result[0].get('count', 0) if owns_result else 0
+            except Exception:
+                user_count = book_count = owns_count = "unknown"
             
             print(f"🛑 [APP_SHUTDOWN] Final database state:")
             print(f"🛑 [APP_SHUTDOWN]   - Users: {user_count}")
@@ -785,19 +823,21 @@ def create_app():
                 total_size = sum(f.stat().st_size for f in files if f.is_file())
                 print(f"🛑 [APP_SHUTDOWN] Database files: {len(files)} files, {total_size} bytes total")
             
-            # 🔥 CRITICAL FIX: Properly close the KuzuDB connection
-            print(f"🛑 [APP_SHUTDOWN] Closing KuzuDB connection to ensure data persistence...")
-            storage.connection.disconnect()  # Call disconnect on the KuzuGraphDB connection, not storage
-            print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connection closed successfully")
+            # 🔥 CRITICAL FIX: Close KuzuDB connections properly
+            print(f"🛑 [APP_SHUTDOWN] Closing KuzuDB connections to ensure data persistence...")
+            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
+            manager = get_safe_kuzu_manager()
+            stale_count = manager.cleanup_stale_connections(max_age_minutes=0)  # Clean up all
+            print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connections closed ({stale_count} cleaned up)")
             
         except Exception as e:
             print(f"🛑 [APP_SHUTDOWN] Error during shutdown logging: {e}")
-            # Even if logging fails, try to close the connection
+            # Even if logging fails, try to close connections
             try:
-                from .infrastructure.kuzu_graph import get_graph_storage
-                storage = get_graph_storage()
-                storage.connection.disconnect()  # Call disconnect on the KuzuGraphDB connection, not storage
-                print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connection closed after error")
+                from .utils.safe_kuzu_manager import get_safe_kuzu_manager
+                manager = get_safe_kuzu_manager()
+                manager.cleanup_stale_connections(max_age_minutes=0)
+                print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connections closed after error")
             except Exception as close_error:
                 print(f"🛑 [APP_SHUTDOWN] ❌ Failed to close KuzuDB connection: {close_error}")
     

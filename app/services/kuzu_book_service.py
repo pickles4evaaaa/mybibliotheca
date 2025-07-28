@@ -3,6 +3,9 @@ Kuzu Book Service
 
 Handles core book CRUD operations using Kuzu as the primary database.
 Focused responsibility: Book entity management only.
+
+This service has been migrated to use the SafeKuzuManager pattern for
+improved thread safety and connection management.
 """
 
 import uuid
@@ -12,15 +15,75 @@ from datetime import datetime
 
 from ..domain.models import Book, ReadingStatus
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
-from ..infrastructure.kuzu_graph import get_graph_storage
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query, safe_get_kuzu_connection
 from .kuzu_async_helper import run_async
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multiple columns - create dict with column names
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        else:
+            # Fallback: if it's already a list or other format
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict):
+                return [result]
+            else:
+                # Try to convert to string representation
+                rows.append({'result': str(result)})
+    except Exception as e:
+        logger.warning(f"Error converting query result: {e}")
+        # Return empty list if conversion fails
+        return []
+    
+    return rows
 
 
 class KuzuBookService:
-    """Service for core book CRUD operations using Kuzu."""
+    """
+    Service for core book CRUD operations using Kuzu with thread-safe operations.
     
-    def __init__(self):
-        self.graph_storage = get_graph_storage()
+    This service has been migrated to use the SafeKuzuManager pattern for
+    improved thread safety and connection management.
+    """
+    
+    def __init__(self, user_id: Optional[str] = None):
+        """
+        Initialize book service with thread-safe database access.
+        
+        Args:
+            user_id: User identifier for tracking and isolation
+        """
+        self.user_id = user_id or "book_service"
         self.book_repo = KuzuBookRepository()
         
     def _dict_to_book(self, book_data: Dict[str, Any]) -> Book:
@@ -128,7 +191,8 @@ class KuzuBookService:
             ORDER BY rel.order_index ASC
             """
             
-            results = self.book_repo.db.query(query, {"book_id": book.id})
+            results = safe_execute_kuzu_query(query, {"book_id": book.id})
+            results = _convert_query_result_to_list(results)
             
             from ..domain.models import Person, BookContribution, ContributionType
             import logging
@@ -189,7 +253,8 @@ class KuzuBookService:
             ORDER BY c.name ASC
             """
             
-            results = self.book_repo.db.query(query, {"book_id": book.id})
+            results = safe_execute_kuzu_query(query, {"book_id": book.id})
+            results = _convert_query_result_to_list(results)
             
             from ..domain.models import Category
             import logging
@@ -238,7 +303,8 @@ class KuzuBookService:
             LIMIT 1
             """
             
-            results = self.book_repo.db.query(query, {"book_id": book.id})
+            results = safe_execute_kuzu_query(query, {"book_id": book.id})
+            results = _convert_query_result_to_list(results)
             
             from ..domain.models import Publisher
             import logging
@@ -364,9 +430,30 @@ class KuzuBookService:
                 'updated_at': book.updated_at
             }
             
-            # Update the book node in Kuzu
-            success = self.graph_storage.update_node('Book', book_id, book_dict)
-            if not success:
+            # Update the book node in Kuzu using safe query execution
+            set_clauses = []
+            params = {"book_id": book_id}
+            
+            for key, value in book_dict.items():
+                set_clauses.append(f"b.{key} = ${key}")
+                params[key] = value
+            
+            update_query = f"""
+            MATCH (b:Book {{id: $book_id}})
+            SET {', '.join(set_clauses)}
+            RETURN b
+            """
+            
+            # Use safe query execution
+            raw_result = safe_execute_kuzu_query(
+                query=update_query,
+                params=params,
+                user_id=self.user_id,
+                operation="update_book"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
+            if not results:
                 return None
                 
             return book
@@ -386,7 +473,13 @@ class KuzuBookService:
             DETACH DELETE b
             """
             
-            self.graph_storage.query(delete_query, {"book_id": book_id})
+            # Use safe query execution
+            safe_execute_kuzu_query(
+                query=delete_query,
+                params={"book_id": book_id},
+                user_id=self.user_id,
+                operation="delete_book"
+            )
             return True
             
         except Exception as e:
@@ -404,7 +497,15 @@ class KuzuBookService:
             LIMIT 1
             """
             
-            results = self.graph_storage.query(query, {"isbn": isbn})
+            # Use safe query execution and convert result
+            raw_result = safe_execute_kuzu_query(
+                query=query,
+                params={"isbn": isbn},
+                user_id=self.user_id,
+                operation="get_book_by_isbn"
+            )
+            
+            results = _convert_query_result_to_list(raw_result)
             
             if results and 'col_0' in results[0]:
                 book_data = results[0]['col_0']
@@ -438,7 +539,15 @@ class KuzuBookService:
                 LIMIT 1
                 """
                 
-                results = self.graph_storage.query(query, {"title": domain_book.title})
+                # Use safe query execution and convert result
+                raw_result = safe_execute_kuzu_query(
+                    query=query,
+                    params={"title": domain_book.title},
+                    user_id=self.user_id,
+                    operation="find_or_create_book_by_title"
+                )
+                
+                results = _convert_query_result_to_list(raw_result)
                 
                 if results and results[0].get('col_0'):
                     book_data = results[0]['col_0']

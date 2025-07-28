@@ -19,6 +19,25 @@ try:
 except ImportError:
     from kuzu_graph import get_kuzu_database
 
+from ..utils.safe_kuzu_manager import SafeKuzuManager
+
+# Helper function for query result conversion
+def _convert_query_result_to_list(result) -> list:
+    """Convert KuzuDB query result to list of dictionaries."""
+    if not result:
+        return []
+    
+    data = []
+    while result.has_next():
+        row = result.get_next()
+        record = {}
+        for i in range(len(row)):
+            column_name = result.get_column_names()[i]
+            record[column_name] = row[i]
+        data.append(record)
+    
+    return data
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +45,15 @@ class KuzuUserRepository:
     """Clean user repository using simplified Kuzu schema."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._safe_manager = None
+    
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
     
     async def create(self, user: Any) -> Optional[Any]:
         """Create a new user."""
@@ -48,8 +75,27 @@ class KuzuUserRepository:
                 'created_at': getattr(user, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(user, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
-            success = self.db.create_node('User', user_data)
-            if success:
+            # Create user using SafeKuzuManager with direct Cypher query
+            create_query = """
+            CREATE (u:User {
+                id: $id,
+                username: $username,
+                email: $email,
+                password_hash: $password_hash,
+                display_name: $display_name,
+                bio: $bio,
+                timezone: $timezone,
+                is_admin: $is_admin,
+                is_active: $is_active,
+                created_at: $created_at
+            })
+            RETURN u.id as id
+            """
+            
+            result = self.safe_manager.execute_query(create_query, user_data)
+            result_data = _convert_query_result_to_list(result)
+            
+            if result_data:
                 logger.info(f"✅ Created user: {getattr(user, 'username', 'unknown')} (ID: {user_data['id']})")
                 return user
             return None
@@ -61,9 +107,12 @@ class KuzuUserRepository:
     async def get_by_id(self, user_id: str) -> Optional[Any]:
         """Get a user by ID."""
         try:
-            user_data = self.db.get_node('User', user_id)
-            if user_data:
-                return user_data
+            query = "MATCH (u:User {id: $user_id}) RETURN u"
+            result = self.safe_manager.execute_query(query, {"user_id": user_id})
+            result_data = _convert_query_result_to_list(result)
+            
+            if result_data:
+                return result_data[0]['u']
             return None
             
         except Exception as e:
@@ -74,15 +123,13 @@ class KuzuUserRepository:
         """Get a user by username."""
         try:
             query = "MATCH (u:User {username: $username}) RETURN u"
-            results = self.db.query(query, {"username": username})
+            result = self.safe_manager.execute_query(query, {"username": username})
+            result_data = _convert_query_result_to_list(result)
             
-            if results:
-                # The query returns a single column, so check both 'result' and 'col_0' keys
-                user_data = results[0].get('result') or results[0].get('col_0')
-                if user_data:
-                    logger.debug(f"Found user by username: {username}")
-                    user_dict = dict(user_data)
-                    return user_dict
+            if result_data:
+                user_data = result_data[0]['u']
+                logger.debug(f"Found user by username: {username}")
+                return dict(user_data) if hasattr(user_data, '__dict__') else user_data
             return None
             
         except Exception as e:
@@ -93,14 +140,13 @@ class KuzuUserRepository:
         """Get a user by email."""
         try:
             query = "MATCH (u:User {email: $email}) RETURN u"
-            results = self.db.query(query, {"email": email})
+            result = self.safe_manager.execute_query(query, {"email": email})
+            result_data = _convert_query_result_to_list(result)
             
-            if results:
-                # The query returns a single column, so check both 'result' and 'col_0' keys
-                user_data = results[0].get('result') or results[0].get('col_0')
-                if user_data:
-                    logger.debug(f"Found user by email: {email}")
-                    return dict(user_data)
+            if result_data:
+                user_data = result_data[0]['u']
+                logger.debug(f"Found user by email: {email}")
+                return dict(user_data) if hasattr(user_data, '__dict__') else user_data
             return None
             
         except Exception as e:
@@ -111,15 +157,13 @@ class KuzuUserRepository:
         """Get all users with pagination."""
         try:
             query = f"MATCH (u:User) RETURN u SKIP {offset} LIMIT {limit}"
-            results = self.db.query(query)
+            result = self.safe_manager.execute_query(query)
+            result_data = _convert_query_result_to_list(result)
             
             users = []
-            for result in results:
-                # Handle both result formats for single column queries
-                if 'result' in result:
-                    users.append(dict(result['result']))
-                elif 'col_0' in result:
-                    users.append(dict(result['col_0']))
+            for row in result_data:
+                user_data = row['u']
+                users.append(dict(user_data) if hasattr(user_data, '__dict__') else user_data)
             
             return users
             
@@ -132,7 +176,24 @@ class KuzuPersonRepository:
     """Clean person repository using simplified Kuzu schema."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._safe_manager = None
+    
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
+    
+    @property
+    def db(self):
+        """Backward compatibility: provide legacy db interface."""
+        # For now, return the old connection for backward compatibility
+        # TODO: Migrate all repository calls to use safe_manager
+        if not hasattr(self, '_db') or self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     def create(self, person: Any) -> Optional[Any]:
         """Create a new person."""
@@ -396,7 +457,24 @@ class KuzuBookRepository:
     """Clean book repository using simplified Kuzu schema."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._safe_manager = None
+    
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
+    
+    @property
+    def db(self):
+        """Backward compatibility: provide legacy db interface."""
+        # For now, return the old connection for backward compatibility
+        # TODO: Migrate all repository calls to use safe_manager
+        if not hasattr(self, '_db') or self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     async def create(self, book: Any) -> Optional[Any]:
         """Create a new book with relationships."""
@@ -1221,7 +1299,24 @@ class KuzuUserBookRepository:
     """Repository for user-book relationships."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._safe_manager = None
+
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
+    
+    @property
+    def db(self):
+        """Backward compatibility: provide legacy db interface."""
+        # For now, return the old connection for backward compatibility
+        # TODO: Migrate all repository calls to use safe_manager
+        if not hasattr(self, '_db') or self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     async def add_book_to_library(self, user_id: str, book_id: str, 
                                  reading_status: str = "plan_to_read",
@@ -1531,7 +1626,16 @@ class KuzuLocationRepository:
     """Clean location repository."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._db = None
+
+    
+    @property
+    def db(self):
+        """Lazy database connection - only connect when needed."""
+        if self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     async def create(self, location: Any, user_id: str) -> Optional[Any]:
         """Create a new location for a user."""
@@ -1630,7 +1734,16 @@ class KuzuCategoryRepository:
     """Clean category repository using simplified Kuzu schema."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._db = None
+
+    
+    @property
+    def db(self):
+        """Lazy database connection - only connect when needed."""
+        if self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     async def create(self, category: Any) -> Optional[Any]:
         """Create a new category."""
@@ -1821,7 +1934,16 @@ class KuzuCustomFieldRepository:
     """Clean custom field repository using simplified Kuzu schema."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._db = None
+
+    
+    @property
+    def db(self):
+        """Lazy database connection - only connect when needed."""
+        if self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     async def create(self, field_def: Any) -> Optional[Any]:
         """Create a new custom field definition."""
@@ -2021,7 +2143,16 @@ class KuzuImportMappingRepository:
     """Clean import mapping repository using simplified Kuzu schema."""
     
     def __init__(self):
-        self.db = get_kuzu_database()
+        # Lazy initialization - don't connect during startup
+        self._db = None
+
+    
+    @property
+    def db(self):
+        """Lazy database connection - only connect when needed."""
+        if self._db is None:
+            self._db = get_kuzu_database()
+        return self._db
     
     async def create(self, template: Any) -> Optional[Any]:
         """Create a new import mapping template."""

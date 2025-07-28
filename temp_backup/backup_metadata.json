@@ -1,0 +1,7 @@
+{
+  "backup_id": "222aea2e-639f-4bf5-a458-cdb9fb2c4122",
+  "created_at": "2025-07-27T14:14:27.220787",
+  "kuzu_db_path": "/app/data/kuzu/bibliotheca.db",
+  "original_size": 81420288,
+  "backup_type": "simple_database_backup"
+}

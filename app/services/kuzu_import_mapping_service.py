@@ -10,20 +10,53 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from ..infrastructure.kuzu_graph import KuzuGraphStorage
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..domain.models import ImportMappingTemplate
 from .kuzu_async_helper import run_async
 
 logger = logging.getLogger(__name__)
 
 
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """
+    Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
+    
+    Args:
+        result: QueryResult object from KuzuDB
+        
+    Returns:
+        List of dictionaries representing rows
+    """
+    if result is None:
+        return []
+    
+    rows = []
+    try:
+        # Check if result has the iterator interface
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multi-column result - use col_0, col_1, etc. format for compatibility
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+        
+        return rows
+    except Exception as e:
+        print(f"Error converting query result to list: {e}")
+        return []
+
+
 class KuzuImportMappingService:
     """Service for managing import mapping templates in KuzuDB."""
     
     def __init__(self):
-        from ..infrastructure.kuzu_graph import get_kuzu_connection
-        connection = get_kuzu_connection()
-        self.graph_storage = KuzuGraphStorage(connection)
         self._ensure_import_mapping_tables()
     
     def _ensure_import_mapping_tables(self):
@@ -47,7 +80,7 @@ class KuzuImportMappingService:
             )
             """
             try:
-                self.graph_storage.query(create_table_query)
+                safe_execute_kuzu_query(create_table_query)
                 logger.debug("Created ImportMappingTemplate table")
             except Exception as e:
                 if "already exists" in str(e):
@@ -65,10 +98,11 @@ class KuzuImportMappingService:
         
         try:
             query = "MATCH (t:ImportMappingTemplate) WHERE t.id = $template_id RETURN t"
-            results = self.graph_storage.query(query, {"template_id": template_id})
+            result = safe_execute_kuzu_query(query, {"template_id": template_id})
+            results = _convert_query_result_to_list(result)
             
             if results and len(results) > 0:
-                template_data = results[0].get('t', {})
+                template_data = results[0].get('col_0', {})
                 return self._dict_to_template(template_data)
             return None
             
@@ -89,12 +123,13 @@ class KuzuImportMappingService:
             """
             
             print(f"📋 [IMPORT_MAPPING] Step 2: Executing existing template query")
-            existing_results = self.graph_storage.query(existing_query, {"id": template.id})
+            existing_result = safe_execute_kuzu_query(existing_query, {"id": template.id})
+            existing_results = _convert_query_result_to_list(existing_result)
             print(f"📋 [IMPORT_MAPPING] Step 3: Existing results: {existing_results}")
             
             if existing_results and len(existing_results) > 0:
                 print(f"📋 [IMPORT_MAPPING] Template already exists: {template.name}")
-                return self._dict_to_template(existing_results[0].get('t', {}))
+                return self._dict_to_template(existing_results[0].get('col_0', {}))
             
             print(f"📋 [IMPORT_MAPPING] Step 4: Setting IDs and timestamps")
             # Generate ID if not provided
@@ -171,12 +206,13 @@ class KuzuImportMappingService:
             print(f"📋 [IMPORT_MAPPING] Params prepared")
             
             print(f"📋 [IMPORT_MAPPING] Step 10: Executing query now...")
-            result = self.graph_storage.query(query, params)
+            query_result = safe_execute_kuzu_query(query, params)
+            result = _convert_query_result_to_list(query_result)
             print(f"📋 [IMPORT_MAPPING] Step 11: Query executed successfully")
             print(f"📋 [IMPORT_MAPPING] Query result: {result}")
             
             if result and len(result) > 0:
-                created_template_data = result[0].get('t', {})
+                created_template_data = result[0].get('col_0', {})
                 print(f"📋 [IMPORT_MAPPING] Created template data: {created_template_data}")
                 
                 created_template = self._dict_to_template(created_template_data)
@@ -227,10 +263,11 @@ class KuzuImportMappingService:
                 'updated_at': template.updated_at
             }
             
-            result = self.graph_storage.query(query, params)
+            query_result = safe_execute_kuzu_query(query, params)
+            result = _convert_query_result_to_list(query_result)
             
             if result and len(result) > 0:
-                updated_template_data = result[0].get('t', {})
+                updated_template_data = result[0].get('col_0', {})
                 updated_template = self._dict_to_template(updated_template_data)
                 return updated_template
             else:
@@ -253,12 +290,13 @@ class KuzuImportMappingService:
             ORDER BY t.created_at DESC
             """
             
-            results = self.graph_storage.query(query, {"user_id": user_id})
+            query_result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            results = _convert_query_result_to_list(query_result)
             
             templates = []
             for result in results:
-                if 't' in result:
-                    template_data = result['t']
+                if 'col_0' in result:
+                    template_data = result['col_0']
                     template = self._dict_to_template(template_data)
                     if template:
                         templates.append(template)
@@ -330,7 +368,7 @@ class KuzuImportMappingService:
             RETURN t
             """
             
-            results = self.graph_storage.query(check_query, {
+            results = safe_execute_kuzu_query(check_query, {
                 "template_id": template_id,
                 "user_id": user_id
             })
@@ -344,7 +382,7 @@ class KuzuImportMappingService:
             DELETE t
             """
             
-            self.graph_storage.query(delete_query, {"template_id": template_id})
+            safe_execute_kuzu_query(delete_query, {"template_id": template_id})
             
             return True
             

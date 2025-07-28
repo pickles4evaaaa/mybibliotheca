@@ -7,8 +7,22 @@ particularly after backup/restore operations.
 
 import logging
 from typing import Optional
+from app.utils.safe_kuzu_manager import SafeKuzuManager
 
 logger = logging.getLogger(__name__)
+
+
+def _convert_query_result_to_list(result):
+    """Convert SafeKuzuManager query result to legacy list format"""
+    if hasattr(result, 'get_as_df'):
+        return result.get_as_df().to_dict('records')
+    elif hasattr(result, 'get_next'):
+        rows = []
+        while result.has_next():
+            rows.append(result.get_next())
+        return rows
+    else:
+        return list(result) if result else []
 
 
 def handle_connection_error(error_message: str) -> bool:
@@ -47,9 +61,10 @@ def handle_connection_error(error_message: str) -> bool:
         
         # Simple connection refresh by getting fresh database instance
         try:
-            from app.infrastructure.kuzu_graph import get_kuzu_database
-            db = get_kuzu_database()
-            success = db is not None
+            safe_manager = SafeKuzuManager()
+            # Test connection by running a simple query
+            test_result = safe_manager.execute_query("RETURN 1 as test")
+            success = test_result is not None
         except Exception:
             success = False
         
@@ -106,13 +121,12 @@ def check_and_refresh_connections() -> bool:
         True if connections are healthy or were successfully refreshed, False otherwise
     """
     try:
-        from app.infrastructure.kuzu_graph import get_kuzu_database
-        db = get_kuzu_database()
+        safe_manager = SafeKuzuManager()
         
         # Check if database connection is working
         try:
-            conn = db.connect() if db else None
-            health_status = 'healthy' if conn else 'unhealthy'
+            test_result = safe_manager.execute_query("RETURN 1 as test")
+            health_status = 'healthy' if test_result is not None else 'unhealthy'
         except Exception:
             health_status = 'unhealthy'
         
@@ -121,11 +135,11 @@ def check_and_refresh_connections() -> bool:
             return True
         else:
             logger.warning("Database connections are unhealthy, attempting refresh...")
-            # Simple refresh by creating a new database instance
+            # Simple refresh by creating a new SafeKuzuManager instance
             try:
-                from app.infrastructure.kuzu_graph import get_kuzu_database
-                db = get_kuzu_database()
-                return db is not None
+                safe_manager = SafeKuzuManager()
+                test_result = safe_manager.execute_query("RETURN 1 as test")
+                return test_result is not None
             except Exception:
                 return False
             

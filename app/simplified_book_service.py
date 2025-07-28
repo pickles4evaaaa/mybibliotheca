@@ -9,8 +9,21 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
 from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType
-from .infrastructure.kuzu_graph import get_graph_storage
+from .utils.safe_kuzu_manager import SafeKuzuManager
 from .services.kuzu_custom_field_service import KuzuCustomFieldService
+
+
+def _convert_query_result_to_list(result):
+    """Convert SafeKuzuManager query result to legacy list format"""
+    if hasattr(result, 'get_as_df'):
+        return result.get_as_df().to_dict('records')
+    elif hasattr(result, 'get_next'):
+        rows = []
+        while result.has_next():
+            rows.append(result.get_next())
+        return rows
+    else:
+        return list(result) if result else []
 
 
 class BookAlreadyExistsError(Exception):
@@ -116,10 +129,38 @@ class SimplifiedBookService:
     """
     
     def __init__(self):
-        self.storage = get_graph_storage()
+        # Use SafeKuzuManager for thread-safe database operations
+        self.kuzu_manager = SafeKuzuManager()
         self.custom_field_service = KuzuCustomFieldService()
-        # Log the database instance ID to verify single instance usage
-        print(f"🔥 [SIMPLIFIED_SERVICE] Using KuzuDB instance: {id(self.storage.connection)}")
+        print(f"🔥 [SIMPLIFIED_SERVICE] Using SafeKuzuManager for thread-safe database access")
+    
+    def _convert_query_result_to_list(self, query_result):
+        """Convert QueryResult to list format for backward compatibility."""
+        if not query_result or not hasattr(query_result, '__iter__'):
+            return []
+        
+        try:
+            # Convert QueryResult to list of dictionaries
+            result_list = []
+            for row in query_result:
+                # Handle both tuple-like and dict-like row formats
+                if hasattr(row, '_asdict'):
+                    # NamedTuple-like result
+                    row_dict = row._asdict()
+                elif hasattr(row, 'keys'):
+                    # Dict-like result
+                    row_dict = dict(row)
+                else:
+                    # Tuple-like result - create numbered columns
+                    row_dict = {f'col_{i}': val for i, val in enumerate(row)}
+                
+                result_list.append(row_dict)
+            
+            return result_list
+            
+        except Exception as e:
+            print(f"⚠️ [QUERY_CONVERT] Error converting QueryResult: {e}")
+            return []
     
     async def create_standalone_book(self, book_data: SimplifiedBook) -> Optional[str]:
         """
@@ -176,8 +217,11 @@ class SimplifiedBookService:
             print(f"   Description: {description[:50] + '...' if description else 'None'}")
             
             # 1. Create book node (SINGLE TRANSACTION)
-            book_success = self.storage.store_node('Book', book_id, book_node_data)
-            if not book_success:
+            book_result = self.kuzu_manager.execute_query(
+                "CREATE (b:Book $props) RETURN b.id",
+                {"props": book_node_data}
+            )
+            if not book_result:
                 return None
             
             
@@ -212,15 +256,23 @@ class SimplifiedBookService:
                     if author_id:
                         
                         # Create AUTHORED relationship
-                        authored_success = self.storage.create_relationship(
-                            'Person', author_id, 'AUTHORED', 'Book', book_id,
+                        authored_result = self.kuzu_manager.execute_query(
+                            """
+                            MATCH (p:Person {id: $author_id}), (b:Book {id: $book_id})
+                            CREATE (p)-[r:AUTHORED $rel_props]->(b)
+                            RETURN r
+                            """,
                             {
-                                'role': 'authored',
-                                'order_index': 0,
-                                'created_at': datetime.utcnow()
+                                "author_id": author_id,
+                                "book_id": book_id,
+                                "rel_props": {
+                                    'role': 'authored',
+                                    'order_index': 0,
+                                    'created_at': datetime.utcnow().isoformat()
+                                }
                             }
                         )
-                        if authored_success:
+                        if authored_result:
                             pass  # Author relationship created successfully
                         else:
                             pass  # Author relationship creation failed
@@ -240,15 +292,23 @@ class SimplifiedBookService:
                         author_id = await book_repo._ensure_person_exists(person_data)
                         
                         if author_id:
-                            authored_success = self.storage.create_relationship(
-                                'Person', author_id, 'AUTHORED', 'Book', book_id,
+                            authored_result = self.kuzu_manager.execute_query(
+                                """
+                                MATCH (p:Person {id: $author_id}), (b:Book {id: $book_id})
+                                CREATE (p)-[r:AUTHORED $rel_props]->(b)
+                                RETURN r
+                                """,
                                 {
-                                    'role': 'authored',
-                                    'order_index': index + 1,
-                                    'created_at': datetime.utcnow()
+                                    "author_id": author_id,
+                                    "book_id": book_id,
+                                    "rel_props": {
+                                        'role': 'authored',
+                                        'order_index': index + 1,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }
                                 }
                             )
-                            if authored_success:
+                            if authored_result:
                                 pass  # Author relationship created successfully
                             else:
                                 pass  # Author relationship creation failed
@@ -269,15 +329,23 @@ class SimplifiedBookService:
                         narrator_id = await book_repo._ensure_person_exists(person_data)
                         
                         if narrator_id:
-                            narrated_success = self.storage.create_relationship(
-                                'Person', narrator_id, 'NARRATED', 'Book', book_id,
+                            narrated_result = self.kuzu_manager.execute_query(
+                                """
+                                MATCH (p:Person {id: $narrator_id}), (b:Book {id: $book_id})
+                                CREATE (p)-[r:NARRATED $rel_props]->(b)
+                                RETURN r
+                                """,
                                 {
-                                    'role': 'narrated',
-                                    'order_index': index,
-                                    'created_at': datetime.utcnow()
+                                    "narrator_id": narrator_id,
+                                    "book_id": book_id,
+                                    "rel_props": {
+                                        'role': 'narrated',
+                                        'order_index': index,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }
                                 }
                             )
-                            if narrated_success:
+                            if narrated_result:
                                 pass  # Narrator relationship created successfully
                             else:
                                 pass  # Narrator relationship creation failed
@@ -298,15 +366,23 @@ class SimplifiedBookService:
                         editor_id = await book_repo._ensure_person_exists(person_data)
                         
                         if editor_id:
-                            edited_success = self.storage.create_relationship(
-                                'Person', editor_id, 'EDITED', 'Book', book_id,
+                            edited_result = self.kuzu_manager.execute_query(
+                                """
+                                MATCH (p:Person {id: $editor_id}), (b:Book {id: $book_id})
+                                CREATE (p)-[r:EDITED $rel_props]->(b)
+                                RETURN r
+                                """,
                                 {
-                                    'role': 'edited',
-                                    'order_index': index,
-                                    'created_at': datetime.utcnow()
+                                    "editor_id": editor_id,
+                                    "book_id": book_id,
+                                    "rel_props": {
+                                        'role': 'edited',
+                                        'order_index': index,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }
                                 }
                             )
-                            if edited_success:
+                            if edited_result:
                                 print(f"✅ [SIMPLIFIED] Created EDITED relationship for {editor_name}")
                             else:
                                 print(f"❌ [SIMPLIFIED] Failed to create EDITED relationship for {editor_name}")
@@ -325,15 +401,23 @@ class SimplifiedBookService:
                         translator_id = await book_repo._ensure_person_exists(person_data)
                         
                         if translator_id:
-                            translated_success = self.storage.create_relationship(
-                                'Person', translator_id, 'TRANSLATED', 'Book', book_id,
+                            translated_result = self.kuzu_manager.execute_query(
+                                """
+                                MATCH (p:Person {id: $translator_id}), (b:Book {id: $book_id})
+                                CREATE (p)-[r:TRANSLATED $rel_props]->(b)
+                                RETURN r
+                                """,
                                 {
-                                    'role': 'translated',
-                                    'order_index': index,
-                                    'created_at': datetime.utcnow()
+                                    "translator_id": translator_id,
+                                    "book_id": book_id,
+                                    "rel_props": {
+                                        'role': 'translated',
+                                        'order_index': index,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }
                                 }
                             )
-                            if translated_success:
+                            if translated_result:
                                 print(f"✅ [SIMPLIFIED] Created TRANSLATED relationship for {translator_name}")
                             else:
                                 print(f"❌ [SIMPLIFIED] Failed to create TRANSLATED relationship for {translator_name}")
@@ -352,15 +436,23 @@ class SimplifiedBookService:
                         illustrator_id = await book_repo._ensure_person_exists(person_data)
                         
                         if illustrator_id:
-                            illustrated_success = self.storage.create_relationship(
-                                'Person', illustrator_id, 'ILLUSTRATED', 'Book', book_id,
+                            illustrated_result = self.kuzu_manager.execute_query(
+                                """
+                                MATCH (p:Person {id: $illustrator_id}), (b:Book {id: $book_id})
+                                CREATE (p)-[r:ILLUSTRATED $rel_props]->(b)
+                                RETURN r
+                                """,
                                 {
-                                    'role': 'illustrated',
-                                    'order_index': index,
-                                    'created_at': datetime.utcnow()
+                                    "illustrator_id": illustrator_id,
+                                    "book_id": book_id,
+                                    "rel_props": {
+                                        'role': 'illustrated',
+                                        'order_index': index,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }
                                 }
                             )
-                            if illustrated_success:
+                            if illustrated_result:
                                 print(f"✅ [SIMPLIFIED] Created ILLUSTRATED relationship for {illustrator_name}")
                             else:
                                 print(f"❌ [SIMPLIFIED] Failed to create ILLUSTRATED relationship for {illustrator_name}")
@@ -427,14 +519,22 @@ class SimplifiedBookService:
                         else:
                             print(f"📅 [BOOK_SERVICE] No published_date provided")
                         
-                        published_success = self.storage.create_relationship(
-                            'Book', book_id, 'PUBLISHED_BY', 'Publisher', publisher_id,
+                        published_result = self.kuzu_manager.execute_query(
+                            """
+                            MATCH (b:Book {id: $book_id}), (pub:Publisher {id: $publisher_id})
+                            CREATE (b)-[r:PUBLISHED_BY $rel_props]->(pub)
+                            RETURN r
+                            """,
                             {
-                                'publication_date': pub_date,
-                                'created_at': datetime.utcnow()
+                                "book_id": book_id,
+                                "publisher_id": publisher_id,
+                                "rel_props": {
+                                    'publication_date': pub_date.isoformat() if pub_date else None,
+                                    'created_at': datetime.utcnow().isoformat()
+                                }
                             }
                         )
-                        if published_success:
+                        if published_result:
                             pass  # Publisher relationship created successfully
                         else:
                             pass  # Publisher relationship creation failed
@@ -453,13 +553,21 @@ class SimplifiedBookService:
                         category_id = await book_repo._ensure_category_exists(category_name.strip())
                         if category_id:
                             # Create CATEGORIZED_AS relationship
-                            categorized_success = self.storage.create_relationship(
-                                'Book', book_id, 'CATEGORIZED_AS', 'Category', category_id,
+                            categorized_result = self.kuzu_manager.execute_query(
+                                """
+                                MATCH (b:Book {id: $book_id}), (c:Category {id: $category_id})
+                                CREATE (b)-[r:CATEGORIZED_AS $rel_props]->(c)
+                                RETURN r
+                                """,
                                 {
-                                    'created_at': datetime.utcnow()
+                                    "book_id": book_id,
+                                    "category_id": category_id,
+                                    "rel_props": {
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }
                                 }
                             )
-                            if categorized_success:
+                            if categorized_result:
                                 pass  # Category relationship created successfully
                             else:
                                 pass  # Category relationship creation failed
@@ -502,7 +610,7 @@ class SimplifiedBookService:
             
             # Use safe checkpoint to ensure data is visible after container restarts
             # This is done AFTER all operations complete to avoid corruption
-            self.storage.safe_checkpoint()
+            # SafeKuzuManager handles persistence automatically
             
             return book_id
             
@@ -542,12 +650,23 @@ class SimplifiedBookService:
                 ownership_data['custom_metadata'] = json.dumps(ownership.custom_metadata)
             
             # Create OWNS relationship (SINGLE TRANSACTION)
-            success = self.storage.create_relationship(
-                'User', ownership.user_id, 'OWNS', 'Book', ownership.book_id,
-                ownership_data
+            result = self.kuzu_manager.execute_query(
+                """
+                MATCH (u:User {id: $user_id}), (b:Book {id: $book_id})
+                CREATE (u)-[r:OWNS $ownership_props]->(b)
+                RETURN r
+                """,
+                {
+                    "user_id": ownership.user_id,
+                    "book_id": ownership.book_id,
+                    "ownership_props": {
+                        k: v.isoformat() if hasattr(v, 'isoformat') else v 
+                        for k, v in ownership_data.items()
+                    }
+                }
             )
             
-            if success:
+            if result:
                 
                 # Handle personal custom metadata through custom field service
                 if ownership.custom_metadata:
@@ -594,16 +713,18 @@ class SimplifiedBookService:
             # Search by ISBN13
             if len(normalized_isbn) == 13:
                 query = "MATCH (b:Book {isbn13: $isbn}) RETURN b.id"
-                result = self.storage.execute_cypher(query, {"isbn": normalized_isbn})
-                if result:
-                    return result[0]['col_0']
+                result = self.kuzu_manager.execute_query(query, {"isbn": normalized_isbn})
+                result_list = self._convert_query_result_to_list(result)
+                if result_list:
+                    return result_list[0]['col_0']
             
             # Search by ISBN10  
             elif len(normalized_isbn) == 10:
                 query = "MATCH (b:Book {isbn10: $isbn}) RETURN b.id"
-                result = self.storage.execute_cypher(query, {"isbn": normalized_isbn})
-                if result:
-                    return result[0]['col_0']
+                result = self.kuzu_manager.execute_query(query, {"isbn": normalized_isbn})
+                result_list = self._convert_query_result_to_list(result)
+                if result_list:
+                    return result_list[0]['col_0']
             
             return None
             
@@ -624,11 +745,12 @@ class SimplifiedBookService:
             RETURN b.id, b.title
             """
             
-            title_results = self.storage.execute_cypher(title_query, {"title": normalized_title})
+            title_results = self.kuzu_manager.execute_query(title_query, {"title": normalized_title})
+            title_results_list = self._convert_query_result_to_list(title_results)
             
-            if title_results:
+            if title_results_list:
                 # If we found books with matching titles, check if any have matching authors
-                for result in title_results:
+                for result in title_results_list:
                     book_id = result['col_0']
                     
                     # Check if this book has the author we're looking for
@@ -639,12 +761,13 @@ class SimplifiedBookService:
                     LIMIT 1
                     """
                     
-                    author_results = self.storage.execute_cypher(author_query, {
+                    author_results = self.kuzu_manager.execute_query(author_query, {
                         "book_id": book_id,
                         "author": normalized_author
                     })
+                    author_results_list = self._convert_query_result_to_list(author_results)
                     
-                    if author_results:
+                    if author_results_list:
                         print(f"🔍 [DUPLICATE] Found matching book: '{title}' by author containing '{author}'")
                         return book_id
             
@@ -662,13 +785,14 @@ class SimplifiedBookService:
             title_words = normalized_title.split()
             title_part = ' '.join(title_words[:3]) if len(title_words) >= 3 else normalized_title
             
-            fuzzy_results = self.storage.execute_cypher(fuzzy_query, {
+            fuzzy_results = self.kuzu_manager.execute_query(fuzzy_query, {
                 "title_part": title_part,
                 "author": normalized_author
             })
+            fuzzy_results_list = self._convert_query_result_to_list(fuzzy_results)
             
-            if fuzzy_results:
-                result = fuzzy_results[0]
+            if fuzzy_results_list:
+                result = fuzzy_results_list[0]
                 if result.get('col_2'):  # Has matching author
                     print(f"🔍 [DUPLICATE] Found fuzzy matching book: '{result['col_1']}' by '{result['col_2']}'")
                     return result['col_0']
@@ -943,52 +1067,52 @@ class SimplifiedBookService:
             if location_id:
                 try:
                     from .location_service import LocationService
-                    from .infrastructure.kuzu_graph import get_kuzu_connection
+                    from .utils.safe_kuzu_manager import safe_get_connection
                     
-                    kuzu_connection = get_kuzu_connection()
-                    print(f"🔥 [LOCATION_SERVICE] Using KuzuDB instance: {id(kuzu_connection)}")
-                    location_service = LocationService(kuzu_connection.connect())
-                    
-                    location_success = location_service.add_book_to_location(book_id, location_id, user_id)
-                    if location_success:
-                        pass  # Book added to location successfully
-                    else:
-                        pass  # Failed to add book to location
+                    with safe_get_connection(user_id=user_id, operation="add_book_to_location") as connection:
+                        print(f"🔥 [LOCATION_SERVICE] Using safe Kuzu connection for user {user_id}")
+                        location_service = LocationService(connection)
                         
+                        location_success = location_service.add_book_to_location(book_id, location_id, user_id)
+                        if location_success:
+                            pass  # Book added to location successfully
+                        else:
+                            pass  # Failed to add book to location
+                            
                 except Exception as e:
                     pass  # Don't fail the entire operation for location assignment issues
             else:
                 try:
                     from .location_service import LocationService
-                    from .infrastructure.kuzu_graph import get_kuzu_connection
+                    from .utils.safe_kuzu_manager import safe_get_connection
                     
-                    kuzu_connection = get_kuzu_connection()
-                    print(f"🔥 [DEFAULT_LOCATION] Using KuzuDB instance: {id(kuzu_connection)}")
-                    location_service = LocationService(kuzu_connection.connect())
-                    
-                    # Get or create default location
-                    default_location = location_service.get_default_location(user_id)
-                    if not default_location:
-                        default_locations = location_service.setup_default_locations()
-                        if default_locations:
-                            default_location = default_locations[0]
-                    
-                    if default_location and default_location.id:
-                        location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
-                        if location_success:
-                            pass  # Book added to default location successfully
-                        else:
-                            pass  # Failed to add book to default location
-                    else:
-                        pass  # No default location available
+                    with safe_get_connection(user_id=user_id, operation="setup_default_location") as connection:
+                        print(f"🔥 [DEFAULT_LOCATION] Using safe Kuzu connection for user {user_id}")
+                        location_service = LocationService(connection)
                         
+                        # Get or create default location
+                        default_location = location_service.get_default_location(user_id)
+                        if not default_location:
+                            default_locations = location_service.setup_default_locations()
+                            if default_locations:
+                                default_location = default_locations[0]
+                        
+                        if default_location and default_location.id:
+                            location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
+                            if location_success:
+                                pass  # Book added to default location successfully
+                            else:
+                                pass  # Failed to add book to default location
+                        else:
+                            pass  # No default location available
+                            
                 except Exception as e:
                     pass  # Don't fail the entire operation for location assignment issues
             
             print(f"🎉 [SIMPLIFIED] Successfully added book to user library")
             
             # Use safe checkpoint to ensure ownership data is visible after container restarts
-            self.storage.safe_checkpoint()
+            # SafeKuzuManager handles persistence automatically
             
             return True
             

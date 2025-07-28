@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from app.domain.models import User
@@ -459,8 +459,6 @@ def debug_info():
 @login_required
 def settings():
     """Main user settings page."""
-    from .infrastructure.kuzu_graph import get_graph_storage
-    
     # Get site name for admin users
     site_name = None
     if current_user.is_admin:
@@ -694,3 +692,53 @@ def update_timezone():
         flash('Error updating timezone. Please try again.', 'danger')
     
     return redirect(url_for('auth.privacy_settings'))
+
+
+@auth.route('/debug/user-count')
+def debug_user_count():
+    """Debug route to check user count - TEMPORARY"""
+    try:
+        
+        # Test multiple methods
+        results = {}
+        
+        # Method 1: Direct service call
+        try:
+            count1 = user_service.get_user_count_sync()
+            results['service_count'] = count1
+        except Exception as e:
+            results['service_error'] = str(e)
+        
+        # Method 2: Direct repository call
+        try:
+            from .infrastructure.kuzu_repositories import KuzuUserRepository
+            user_repo = KuzuUserRepository()
+            from .services.kuzu_async_helper import run_async
+            all_users = run_async(user_repo.get_all(limit=10000))
+            results['repo_count'] = len(all_users)
+        except Exception as e:
+            results['repo_error'] = str(e)
+        
+        # Method 3: Direct SafeKuzuManager call
+        try:
+            from .utils.safe_kuzu_manager import SafeKuzuManager
+            safe_manager = SafeKuzuManager()
+            query_result = safe_manager.execute_query("MATCH (u:User) RETURN COUNT(u) as count")
+            
+            if query_result and hasattr(query_result, 'get_next') and query_result.has_next():
+                count3 = query_result.get_next()[0]
+                results['direct_count'] = count3
+            elif query_result and hasattr(query_result, 'get_as_df'):
+                df = query_result.get_as_df()
+                if not df.empty:
+                    count3 = df.iloc[0]['count']
+                    results['direct_count'] = count3
+            else:
+                results['direct_error'] = f"Could not parse result: {query_result}"
+        except Exception as e:
+            results['direct_error'] = str(e)
+        
+        return jsonify(results)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

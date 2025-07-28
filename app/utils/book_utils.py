@@ -1,6 +1,5 @@
 from datetime import date, timedelta, datetime
 import pytz
-from ..services import reading_log_service
 import calendar
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO

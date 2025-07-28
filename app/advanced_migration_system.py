@@ -28,6 +28,7 @@ import logging
 import asyncio
 import time
 import random
+import re
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any, Union
 from pathlib import Path
@@ -45,7 +46,25 @@ from app.domain.models import (
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
 from app.infrastructure.kuzu_graph import KuzuGraphStorage, get_graph_storage
 from app.services import book_service, user_service, run_async
+from app.utils.safe_kuzu_manager import SafeKuzuManager
 from config import Config
+
+# Helper function for query result conversion
+def _convert_query_result_to_list(result) -> list:
+    """Convert KuzuDB query result to list of dictionaries."""
+    if not result:
+        return []
+    
+    data = []
+    while result.has_next():
+        row = result.get_next()
+        record = {}
+        for i in range(len(row)):
+            column_name = result.get_column_names()[i]
+            record[column_name] = row[i]
+        data.append(record)
+    
+    return data
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -87,7 +106,9 @@ class AdvancedMigrationSystem:
         self.backup_dir = Path("migration_backups") / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup Kuzu connection
+        # Setup Kuzu connection using SafeKuzuManager
+        self.safe_manager = SafeKuzuManager()
+        # Keep graph_store for backward compatibility during migration
         self.graph_store = get_graph_storage()
         self.book_repo = KuzuBookRepository()
         self.user_repo = KuzuUserRepository()
@@ -904,8 +925,6 @@ class AdvancedMigrationSystem:
         if should_fetch_api:
             try:
                 from app.utils import get_google_books_cover, fetch_book_data
-                import time
-                import random
                 
                 # Add small random delay for migration to avoid overwhelming APIs
                 delay = random.uniform(0.4, 0.8)  # Random delay between 400-800ms
@@ -1007,7 +1026,6 @@ class AdvancedMigrationSystem:
                 authors_to_process = [name.strip() for name in raw_author.split(';') if name.strip()]
             elif ' and ' in raw_author.lower():
                 # Split on " and " (case insensitive)
-                import re
                 authors_to_process = [name.strip() for name in re.split(r'\s+and\s+', raw_author, flags=re.IGNORECASE) if name.strip()]
             elif ' & ' in raw_author:
                 authors_to_process = [name.strip() for name in raw_author.split(' & ') if name.strip()]
