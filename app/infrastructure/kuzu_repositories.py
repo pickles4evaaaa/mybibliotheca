@@ -14,12 +14,114 @@ if TYPE_CHECKING:
         ReadingStatus, OwnershipStatus, MediaType
     )
 
-try:
-    from .kuzu_graph import get_kuzu_database
-except ImportError:
-    from kuzu_graph import get_kuzu_database
+from ..utils.safe_kuzu_manager import SafeKuzuManager, safe_get_connection
 
-from ..utils.safe_kuzu_manager import SafeKuzuManager
+# Compatibility adapter for repository patterns
+class KuzuRepositoryAdapter:
+    """
+    Adapter that provides the old repository interface (create_node, query, etc.)
+    while using SafeKuzuManager underneath for thread safety.
+    """
+    
+    def __init__(self, safe_manager: SafeKuzuManager):
+        self.safe_manager = safe_manager
+    
+    def create_node(self, node_type: str, node_data: Dict[str, Any]) -> bool:
+        """Create a node using SafeKuzuManager."""
+        try:
+            # Build dynamic CREATE query
+            props = []
+            for key, value in node_data.items():
+                props.append(f"{key}: ${key}")
+            
+            query = f"""
+            CREATE (n:{node_type} {{{', '.join(props)}}})
+            RETURN n.id as id
+            """
+            
+            result = self.safe_manager.execute_query(query, node_data)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Failed to create {node_type} node: {e}")
+            return False
+    
+    def query(self, cypher_query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Execute a query using SafeKuzuManager and return results in old format."""
+        try:
+            result = self.safe_manager.execute_query(cypher_query, params or {})
+            return _convert_query_result_to_list(result) if result else []
+        except Exception as e:
+            logger.error(f"Query failed: {e}")
+            return []
+    
+    def create_relationship(self, from_type: str, from_id: str, rel_type: str, 
+                          to_type: str, to_id: str, rel_props: Optional[Dict[str, Any]] = None) -> bool:
+        """Create a relationship using SafeKuzuManager."""
+        try:
+            if rel_props:
+                props = []
+                for key, value in rel_props.items():
+                    props.append(f"{key}: ${key}")
+                rel_clause = f" {{{', '.join(props)}}}"
+                params = {**rel_props, 'from_id': from_id, 'to_id': to_id}
+            else:
+                rel_clause = ""
+                params = {'from_id': from_id, 'to_id': to_id}
+            
+            query = f"""
+            MATCH (from:{from_type} {{id: $from_id}}), (to:{to_type} {{id: $to_id}})
+            CREATE (from)-[r:{rel_type}{rel_clause}]->(to)
+            RETURN r
+            """
+            
+            result = self.safe_manager.execute_query(query, params)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Failed to create {rel_type} relationship: {e}")
+            return False
+    
+    def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
+        """Get a node by ID using SafeKuzuManager."""
+        try:
+            query = f"MATCH (n:{node_type} {{id: $node_id}}) RETURN n"
+            result = self.safe_manager.execute_query(query, {"node_id": node_id})
+            result_list = _convert_query_result_to_list(result) if result else []
+            return result_list[0]['n'] if result_list else None
+        except Exception as e:
+            logger.error(f"Failed to get {node_type} node: {e}")
+            return None
+    
+    def update_node(self, node_type: str, node_id: str, updates: Dict[str, Any]) -> bool:
+        """Update a node using SafeKuzuManager."""
+        try:
+            set_clauses = []
+            params = {"node_id": node_id}
+            
+            for key, value in updates.items():
+                set_clauses.append(f"n.{key} = ${key}")
+                params[key] = value
+            
+            query = f"""
+            MATCH (n:{node_type} {{id: $node_id}})
+            SET {', '.join(set_clauses)}
+            RETURN n
+            """
+            
+            result = self.safe_manager.execute_query(query, params)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Failed to update {node_type} node: {e}")
+            return False
+    
+    def delete_node(self, node_type: str, node_id: str) -> bool:
+        """Delete a node using SafeKuzuManager."""
+        try:
+            query = f"MATCH (n:{node_type} {{id: $node_id}}) DETACH DELETE n"
+            result = self.safe_manager.execute_query(query, {"node_id": node_id})
+            return True  # KuzuDB doesn't return explicit success for DELETE
+        except Exception as e:
+            logger.error(f"Failed to delete {node_type} node: {e}")
+            return False
 
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
@@ -189,10 +291,11 @@ class KuzuPersonRepository:
     @property
     def db(self):
         """Backward compatibility: provide legacy db interface."""
-        # For now, return the old connection for backward compatibility
-        # TODO: Migrate all repository calls to use safe_manager
+        # DEPRECATED: Use safe_manager.get_connection() context manager instead
+        # This property is only for backward compatibility during migration
         if not hasattr(self, '_db') or self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     def create(self, person: Any) -> Optional[Any]:
@@ -289,7 +392,24 @@ class KuzuPersonRepository:
                 'updated_at': datetime.utcnow().isoformat()
             }
             
-            success = self.db.create_node('Person', person_data)
+            success = self.safe_manager.execute_query("""
+                CREATE (p:Person {
+                    id: $id,
+                    name: $name,
+                    normalized_name: $normalized_name,
+                    birth_year: $birth_year,
+                    death_year: $death_year,
+                    birth_place: $birth_place,
+                    bio: $bio,
+                    website: $website,
+                    openlibrary_id: $openlibrary_id,
+                    image_url: $image_url,
+                    created_at: $created_at,
+                    updated_at: $updated_at
+                })
+                RETURN p.id as id
+            """, person_data)
+            
             if success:
                 logger.info(f"✅ Created new person: {person_name} (ID: {person_id})")
                 return person
@@ -470,10 +590,11 @@ class KuzuBookRepository:
     @property
     def db(self):
         """Backward compatibility: provide legacy db interface."""
-        # For now, return the old connection for backward compatibility
-        # TODO: Migrate all repository calls to use safe_manager
+        # DEPRECATED: Use safe_manager.get_connection() context manager instead
+        # This property is only for backward compatibility during migration
         if not hasattr(self, '_db') or self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     async def create(self, book: Any) -> Optional[Any]:
@@ -1312,10 +1433,11 @@ class KuzuUserBookRepository:
     @property
     def db(self):
         """Backward compatibility: provide legacy db interface."""
-        # For now, return the old connection for backward compatibility
-        # TODO: Migrate all repository calls to use safe_manager
+        # DEPRECATED: Use safe_manager.get_connection() context manager instead
+        # This property is only for backward compatibility during migration
         if not hasattr(self, '_db') or self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     async def add_book_to_library(self, user_id: str, book_id: str, 
@@ -1468,12 +1590,20 @@ class KuzuUserBookRepository:
             
             if success and custom_metadata:
                 # Also store individual custom field relationships for tracking
-                from app.infrastructure.kuzu_graph import get_graph_storage
-                storage = get_graph_storage()
-                
                 for field_name, field_value in custom_metadata.items():
                     try:
-                        storage.store_custom_metadata(user_id, book_id, field_name, str(field_value))
+                        # Use the adapter to store custom metadata through SafeKuzuManager
+                        custom_field_query = """
+                        MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book {id: $book_id})
+                        MERGE (cf:CustomField {name: $field_name})
+                        MERGE (u)-[:HAS_CUSTOM_FIELD {value: $field_value}]->(cf)
+                        """
+                        self.db.query(custom_field_query, {
+                            "user_id": user_id,
+                            "book_id": book_id,
+                            "field_name": field_name,
+                            "field_value": str(field_value)
+                        })
                     except Exception as e:
                         pass  # Log custom metadata storage error but continue
             
@@ -1627,14 +1757,22 @@ class KuzuLocationRepository:
     
     def __init__(self):
         # Lazy initialization - don't connect during startup
+        self._safe_manager = None
         self._db = None
 
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
     
     @property
     def db(self):
         """Lazy database connection - only connect when needed."""
         if self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     async def create(self, location: Any, user_id: str) -> Optional[Any]:
@@ -1735,14 +1873,22 @@ class KuzuCategoryRepository:
     
     def __init__(self):
         # Lazy initialization - don't connect during startup
+        self._safe_manager = None
         self._db = None
 
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
     
     @property
     def db(self):
         """Lazy database connection - only connect when needed."""
         if self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     async def create(self, category: Any) -> Optional[Any]:
@@ -1935,14 +2081,22 @@ class KuzuCustomFieldRepository:
     
     def __init__(self):
         # Lazy initialization - don't connect during startup
+        self._safe_manager = None
         self._db = None
 
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
     
     @property
     def db(self):
         """Lazy database connection - only connect when needed."""
         if self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     async def create(self, field_def: Any) -> Optional[Any]:
@@ -2144,14 +2298,22 @@ class KuzuImportMappingRepository:
     
     def __init__(self):
         # Lazy initialization - don't connect during startup
+        self._safe_manager = None
         self._db = None
 
+    @property
+    def safe_manager(self):
+        """Lazy SafeKuzuManager connection - only connect when needed."""
+        if self._safe_manager is None:
+            self._safe_manager = SafeKuzuManager()
+        return self._safe_manager
     
     @property
     def db(self):
         """Lazy database connection - only connect when needed."""
         if self._db is None:
-            self._db = get_kuzu_database()
+            # Create a compatibility wrapper that provides the old interface
+            self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
     
     async def create(self, template: Any) -> Optional[Any]:

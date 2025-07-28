@@ -41,7 +41,7 @@ from .services import user_service
 from .location_service import LocationService
 from .forms import SetupForm
 from .debug_utils import debug_route
-from .infrastructure.kuzu_graph import get_graph_storage
+from .utils.safe_kuzu_manager import SafeKuzuManager
 
 # Create blueprint
 onboarding_bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')

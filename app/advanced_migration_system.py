@@ -44,7 +44,7 @@ from app.domain.models import (
     ReadingStatus, Person, BookContribution, ContributionType
 )
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
-from app.infrastructure.kuzu_graph import KuzuGraphStorage, get_graph_storage
+from app.utils.safe_kuzu_manager import SafeKuzuManager
 from app.services import book_service, user_service, run_async
 from app.utils.safe_kuzu_manager import SafeKuzuManager
 from config import Config
@@ -108,8 +108,8 @@ class AdvancedMigrationSystem:
         
         # Setup Kuzu connection using SafeKuzuManager
         self.safe_manager = SafeKuzuManager()
-        # Keep graph_store for backward compatibility during migration
-        self.graph_store = get_graph_storage()
+        # Use safe manager instead of deprecated graph_store
+        self.graph_store = self.safe_manager
         self.book_repo = KuzuBookRepository()
         self.user_repo = KuzuUserRepository()
         
@@ -121,7 +121,7 @@ class AdvancedMigrationSystem:
         
         # Initialize location service
         from app.location_service import LocationService
-        self.location_service = LocationService(self.graph_store.connection.connection)
+        self.location_service = LocationService(self.safe_manager)
         
         # Migration state
         self.current_status = MigrationStatus.NOT_STARTED
@@ -308,7 +308,7 @@ class AdvancedMigrationSystem:
             
             # Count users
             try:
-                user_result = self.graph_store.query("MATCH (u:User) RETURN COUNT(u) as count")
+                user_result = self.safe_manager.execute_query("MATCH (u:User) RETURN COUNT(u) as count")
                 if user_result and len(user_result) > 0:
                     # Handle different result formats
                     result = user_result[0]
@@ -326,7 +326,7 @@ class AdvancedMigrationSystem:
             
             # Count books
             try:
-                book_result = self.graph_store.query("MATCH (b:Book) RETURN COUNT(b) as count")
+                book_result = self.safe_manager.execute_query("MATCH (b:Book) RETURN COUNT(b) as count")
                 if book_result and len(book_result) > 0:
                     # Handle different result formats
                     result = book_result[0]
@@ -344,7 +344,7 @@ class AdvancedMigrationSystem:
             
             # Count user-book relationships (no longer OWNS, but HAS_READ or similar)
             try:
-                reading_result = self.graph_store.query("MATCH ()-[r:HAS_READ]->() RETURN COUNT(r) as count")
+                reading_result = self.safe_manager.execute_query("MATCH ()-[r:HAS_READ]->() RETURN COUNT(r) as count")
                 if reading_result and len(reading_result) > 0:
                     # Handle different result formats
                     result = reading_result[0]

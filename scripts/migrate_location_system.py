@@ -12,7 +12,7 @@ import os
 # Add parent directory to path so we can import app modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.infrastructure.kuzu_graph import get_kuzu_connection
+from app.utils.safe_kuzu_manager import SafeKuzuManager
 from app.location_service import LocationService
 from app.services.kuzu_user_service import KuzuUserService
 from app.debug_system import debug_log
@@ -20,9 +20,7 @@ from app.debug_system import debug_log
 
 def get_users_with_books():
     """Get all users that have books in the system."""
-    from app.infrastructure.kuzu_graph import get_graph_storage
-    
-    storage = get_graph_storage()
+    safe_manager = SafeKuzuManager()
     
     query = """
     MATCH (u:User)-[:OWNS]->(b:Book)
@@ -30,7 +28,7 @@ def get_users_with_books():
     ORDER BY username
     """
     
-    results = storage.query(query, {})
+    results = safe_manager.execute_query(query, {})
     users = []
     
     for result in results:
@@ -47,8 +45,8 @@ def migrate_user_locations(user_id: str, username: str):
     """Migrate one user's books to use STORED_AT relationships."""
     print(f"\n📚 Migrating user: {username} ({user_id})")
     
-    kuzu_conn = get_kuzu_connection().connect()
-    location_service = LocationService(kuzu_conn)
+    safe_manager = SafeKuzuManager()
+    location_service = LocationService(safe_manager)
     
     # Check if user has any locations
     locations = location_service.get_user_locations(user_id)
@@ -61,16 +59,13 @@ def migrate_user_locations(user_id: str, username: str):
         print(f"    - {loc.name} (default: {loc.is_default})")
     
     # Find books with location_id in OWNS relationships
-    from app.infrastructure.kuzu_graph import get_graph_storage
-    storage = get_graph_storage()
-    
     old_system_query = """
     MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
     WHERE owns.location_id IS NOT NULL
     RETURN b.id as book_id, owns.location_id as old_location_id
     """
     
-    results = storage.query(old_system_query, {'user_id': user_id})
+    results = safe_manager.execute_query(old_system_query, {'user_id': user_id})
     
     migrated_count = 0
     old_system_books = []
@@ -119,8 +114,7 @@ def clean_old_location_properties(user_id: str):
     """Remove old location_id properties from OWNS relationships after migration."""
     print(f"  🧹 Cleaning up old location_id properties...")
     
-    from app.infrastructure.kuzu_graph import get_graph_storage
-    storage = get_graph_storage()
+    safe_manager = SafeKuzuManager()
     
     # Remove location_id properties from OWNS relationships
     cleanup_query = """
@@ -130,7 +124,7 @@ def clean_old_location_properties(user_id: str):
     """
     
     try:
-        storage.query(cleanup_query, {'user_id': user_id})
+        safe_manager.execute_query(cleanup_query, {'user_id': user_id})
         print(f"  ✅ Cleaned up old location properties")
     except Exception as e:
         print(f"  ⚠️  Warning: Could not clean up old properties: {e}")
@@ -140,8 +134,8 @@ def verify_migration(user_id: str, username: str):
     """Verify the migration was successful."""
     print(f"  🔍 Verifying migration for {username}...")
     
-    kuzu_conn = get_kuzu_connection().connect()
-    location_service = LocationService(kuzu_conn)
+    safe_manager = SafeKuzuManager()
+    location_service = LocationService(safe_manager)
     
     # Count books in new system
     locations = location_service.get_user_locations(user_id)
@@ -154,15 +148,12 @@ def verify_migration(user_id: str, username: str):
             print(f"    📍 {location.name}: {count} books")
     
     # Count total books owned by user
-    from app.infrastructure.kuzu_graph import get_graph_storage
-    storage = get_graph_storage()
-    
     total_books_query = """
     MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book)
     RETURN COUNT(b) as total_books
     """
     
-    results = storage.query(total_books_query, {'user_id': user_id})
+    results = safe_manager.execute_query(total_books_query, {'user_id': user_id})
     total_books = 0
     if results:
         total_books = results[0].get('total_books', 0)
