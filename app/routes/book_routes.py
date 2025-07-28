@@ -20,6 +20,62 @@ from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, B
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.utils.safe_kuzu_manager import SafeKuzuManager
 
+def _clear_service_cache():
+    """Clear all cached service instances to ensure fresh data after book creation."""
+    try:
+        import app.services
+        import app.kuzu_integration
+        
+        # Clear the lazy service cache instances
+        if hasattr(app.services, '_book_service'):
+            app.services._book_service = None
+        if hasattr(app.services, '_user_service'):
+            app.services._user_service = None
+        if hasattr(app.services, '_custom_field_service'):
+            app.services._custom_field_service = None
+        if hasattr(app.services, '_import_mapping_service'):
+            app.services._import_mapping_service = None
+        if hasattr(app.services, '_person_service'):
+            app.services._person_service = None
+        if hasattr(app.services, '_reading_log_service'):
+            app.services._reading_log_service = None
+        
+        # Clear the lazy service wrapper instances
+        if hasattr(app.services, 'book_service') and hasattr(app.services.book_service, '_service'):
+            app.services.book_service._service = None
+        if hasattr(app.services, 'user_service') and hasattr(app.services.user_service, '_service'):
+            app.services.user_service._service = None
+        if hasattr(app.services, 'custom_field_service') and hasattr(app.services.custom_field_service, '_service'):
+            app.services.custom_field_service._service = None
+        if hasattr(app.services, 'import_mapping_service') and hasattr(app.services.import_mapping_service, '_service'):
+            app.services.import_mapping_service._service = None
+        if hasattr(app.services, 'person_service') and hasattr(app.services.person_service, '_service'):
+            app.services.person_service._service = None
+        if hasattr(app.services, 'reading_log_service') and hasattr(app.services.reading_log_service, '_service'):
+            app.services.reading_log_service._service = None
+        
+        # Force reinitialize kuzu integration service with fresh connection
+        try:
+            if hasattr(app.kuzu_integration, 'kuzu_service'):
+                app.kuzu_integration.kuzu_service = app.kuzu_integration.KuzuIntegrationService()
+                app.kuzu_integration.kuzu_service.initialize()
+        except Exception as e:
+            current_app.logger.warning(f"⚠️ Error reinitializing kuzu integration: {e}")
+        
+        # Clear the global SafeKuzuManager singleton to force fresh database connections
+        try:
+            import app.utils.safe_kuzu_manager as kuzu_manager_module
+            kuzu_manager_module._safe_kuzu_manager = None
+            current_app.logger.info("🔄 Cleared global SafeKuzuManager singleton")
+        except Exception as e:
+            current_app.logger.warning(f"⚠️ Error clearing SafeKuzuManager singleton: {e}")
+            
+        current_app.logger.info("✅ Service cache and database connections cleared after book creation")
+        
+    except Exception as e:
+        current_app.logger.warning(f"⚠️ Error clearing service cache: {e}")
+        # Non-critical error, continue normally
+
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
     """Convert KuzuDB query result to list of dictionaries."""
@@ -867,6 +923,12 @@ def library():
     location_filter = request.args.get('location', '')
     search_query = request.args.get('search', '')
     sort_option = request.args.get('sort', 'title_asc')  # Default to title A-Z
+    refresh = request.args.get('refresh', None)  # Cache busting parameter
+
+    # Force cache clearing if refresh parameter is present
+    if refresh:
+        _clear_service_cache()
+        current_app.logger.info(f"🔄 Forced cache refresh on library view")
 
     # Use service layer with global book visibility
     user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
@@ -3521,7 +3583,11 @@ def add_book_manual():
             )
             
             if success:
+                # Clear service cache to ensure fresh data is loaded
+                _clear_service_cache()
                 flash(f'Successfully added "{title}" to your library!', 'success')
+                # Add cache refresh parameter to force fresh data load
+                return redirect(url_for('main.library', refresh='1'))
             else:
                 flash('Failed to add book. Please try again.', 'danger')
                 
@@ -4104,16 +4170,24 @@ def add_book_manual():
         
         if existing_book.id == domain_book.id:
             # New book was created
+            # Clear service cache to ensure fresh data is loaded  
+            _clear_service_cache()
             if custom_metadata:
                 flash(f'Book "{title}" added successfully with {len(custom_metadata)} custom fields.', 'success')
             else:
                 flash(f'Book "{title}" added successfully to your library.', 'success')
+            # Force fresh data load with cache refresh parameter
+            return redirect(url_for('main.library', refresh='1'))
         else:
             # Existing book was found
+            # Clear service cache to ensure fresh data is loaded
+            _clear_service_cache()
             if custom_metadata:
                 flash(f'Book "{title}" already exists. Added to your collection with {len(custom_metadata)} custom fields.', 'info')
             else:
                 flash(f'Book "{title}" already exists in the library. Added to your collection.', 'info')
+            # Force fresh data load with cache refresh parameter
+            return redirect(url_for('main.library', refresh='1'))
             
     except Exception as e:
         current_app.logger.error(f"Error adding book manually: {e}")

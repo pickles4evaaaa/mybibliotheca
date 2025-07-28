@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 from ..utils.safe_kuzu_manager import SafeKuzuManager, safe_get_connection
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
 # Compatibility adapter for repository patterns
 class KuzuRepositoryAdapter:
     """
@@ -29,10 +32,15 @@ class KuzuRepositoryAdapter:
     def create_node(self, node_type: str, node_data: Dict[str, Any]) -> bool:
         """Create a node using SafeKuzuManager."""
         try:
-            # Build dynamic CREATE query
+            # Build dynamic CREATE query with timestamp handling
             props = []
             for key, value in node_data.items():
-                props.append(f"{key}: ${key}")
+                if key.endswith('_str') and 'created_at' in key or key.endswith('_str') and 'updated_at' in key:
+                    # Handle timestamp fields specially
+                    timestamp_field = key.replace('_str', '')
+                    props.append(f"{timestamp_field}: timestamp(${key})")
+                else:
+                    props.append(f"{key}: ${key}")
             
             query = f"""
             CREATE (n:{node_type} {{{', '.join(props)}}})
@@ -49,7 +57,26 @@ class KuzuRepositoryAdapter:
         """Execute a query using SafeKuzuManager and return results in old format."""
         try:
             result = self.safe_manager.execute_query(cypher_query, params or {})
-            return _convert_query_result_to_list(result) if result else []
+            if not result:
+                return []
+            
+            # Convert to the same format as the old KuzuGraphDB.query() method
+            rows = []
+            while result.has_next():
+                row = result.get_next()
+                # Convert row to dict format expected by services
+                if len(row) == 1:
+                    # Single column result
+                    rows.append({'result': row[0]})
+                else:
+                    # Multiple columns - create dict with generic column names
+                    row_dict = {}
+                    for i in range(len(row)):
+                        row_dict[f'col_{i}'] = row[i]
+                    rows.append(row_dict)
+            
+            logger.info(f"🔍 [ADAPTER] Query returned {len(rows)} rows")
+            return rows
         except Exception as e:
             logger.error(f"Query failed: {e}")
             return []
@@ -140,8 +167,6 @@ def _convert_query_result_to_list(result) -> list:
     
     return data
 
-logger = logging.getLogger(__name__)
-
 
 class KuzuUserRepository:
     """Clean user repository using simplified Kuzu schema."""
@@ -174,7 +199,7 @@ class KuzuUserRepository:
                 'timezone': getattr(user, 'timezone', 'UTC'),
                 'is_admin': getattr(user, 'is_admin', False),
                 'is_active': getattr(user, 'is_active', True),
-                'created_at': getattr(user, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(user, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at_str': getattr(user, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(user, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             # Create user using SafeKuzuManager with direct Cypher query
@@ -189,7 +214,7 @@ class KuzuUserRepository:
                 timezone: $timezone,
                 is_admin: $is_admin,
                 is_active: $is_active,
-                created_at: $created_at
+                created_at: timestamp($created_at_str)
             })
             RETURN u.id as id
             """
@@ -388,8 +413,8 @@ class KuzuPersonRepository:
                 'website': website,
                 'openlibrary_id': openlibrary_id,
                 'image_url': image_url,
-                'created_at': created_at,
-                'updated_at': datetime.utcnow().isoformat()
+                'created_at_str': created_at.isoformat() if hasattr(created_at, 'isoformat') else datetime.utcnow().isoformat(),
+                'updated_at_str': datetime.utcnow().isoformat()
             }
             
             success = self.safe_manager.execute_query("""
@@ -404,8 +429,8 @@ class KuzuPersonRepository:
                     website: $website,
                     openlibrary_id: $openlibrary_id,
                     image_url: $image_url,
-                    created_at: $created_at,
-                    updated_at: $updated_at
+                    created_at: timestamp($created_at_str),
+                    updated_at: timestamp($updated_at_str)
                 })
                 RETURN p.id as id
             """, person_data)
@@ -852,8 +877,8 @@ class KuzuBookRepository:
                 'website': website,
                 'openlibrary_id': openlibrary_id,
                 'image_url': image_url,
-                'created_at': getattr(person, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(person, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
-                'updated_at': datetime.utcnow().isoformat()
+                'created_at_str': getattr(person, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(person, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
+                'updated_at_str': datetime.utcnow().isoformat()
             }
             # Filter out fields that don't exist in the current schema
             # birth_place and website are not in the current schema, but openlibrary_id and image_url are
@@ -866,7 +891,7 @@ class KuzuBookRepository:
                 'bio': person_data['bio'],
                 'openlibrary_id': person_data['openlibrary_id'],
                 'image_url': person_data['image_url'],
-                'created_at': person_data['created_at']
+                'created_at_str': person_data['created_at_str']
             }
             
             success = self.db.create_node('Person', filtered_person_data)
@@ -990,8 +1015,8 @@ class KuzuBookRepository:
                 'icon': '',
                 'book_count': 0,
                 'user_book_count': 0,
-                'created_at': datetime.utcnow().isoformat(),
-                'updated_at': datetime.utcnow().isoformat()
+                'created_at_str': datetime.utcnow().isoformat(),
+                'updated_at_str': datetime.utcnow().isoformat()
             }
             # Note: parent_id and aliases are not included as they need special handling
             
@@ -1066,7 +1091,7 @@ class KuzuBookRepository:
                 'name': publisher_name,
                 'country': publisher_country or '',
                 'founded_year': publisher_founded,
-                'created_at': datetime.utcnow().isoformat()
+                'created_at_str': datetime.utcnow().isoformat()
             }
             # Note: Filtering out updated_at as it doesn't exist in DB schema
             
@@ -1342,10 +1367,14 @@ class KuzuBookRepository:
             ORDER BY p.name ASC
             """
             
+            logger.info(f"🔍 [DEBUG] Executing get_all_persons query")
             results = self.db.query(query)
+            logger.info(f"🔍 [DEBUG] Query returned {len(results)} results")
             
             persons = []
-            for result in results:
+            for i, result in enumerate(results):
+                logger.info(f"🔍 [DEBUG] Result {i}: {result}")
+                
                 # Handle both result formats for two column queries
                 person_data = None
                 book_count = 0
@@ -1353,15 +1382,18 @@ class KuzuBookRepository:
                 if 'col_0' in result and 'col_1' in result:
                     person_data = dict(result['col_0'])
                     book_count = result['col_1'] or 0
+                    logger.info(f"🔍 [DEBUG] Using col_0/col_1 format: {person_data['name'] if 'name' in person_data else 'unknown'} with {book_count} books")
                 elif 'result' in result:
                     # Fallback for single column format
                     person_data = dict(result['result'])
                     book_count = 0
+                    logger.info(f"🔍 [DEBUG] Using result format: {person_data['name'] if 'name' in person_data else 'unknown'}")
                 
                 if person_data:
                     person_data['book_count'] = book_count
                     persons.append(person_data)
             
+            logger.info(f"🔍 [DEBUG] Returning {len(persons)} persons")
             return persons
             
         except Exception as e:
@@ -1377,17 +1409,25 @@ class KuzuBookRepository:
             ORDER BY c.name ASC
             """
             
+            logger.info(f"🔍 [DEBUG] Executing get_all_categories query")
             results = self.db.query(query)
+            logger.info(f"🔍 [DEBUG] Categories query returned {len(results)} results")
             
             categories = []
-            for result in results:
+            for i, result in enumerate(results):
+                logger.info(f"🔍 [DEBUG] Category result {i}: {result}")
+                
                 # Handle both result formats for single column queries
                 if 'result' in result:
-                    categories.append(dict(result['result']))
+                    category_data = dict(result['result'])
+                    logger.info(f"🔍 [DEBUG] Using result format: {category_data['name'] if 'name' in category_data else 'unknown'}")
+                    categories.append(category_data)
                 elif 'col_0' in result:
-                    categories.append(dict(result['col_0']))
+                    category_data = dict(result['col_0'])
+                    logger.info(f"🔍 [DEBUG] Using col_0 format: {category_data['name'] if 'name' in category_data else 'unknown'}")
+                    categories.append(category_data)
             
-            logger.debug(f"Retrieved {len(categories)} categories")
+            logger.info(f"🔍 [DEBUG] Returning {len(categories)} categories")
             return categories
             
         except Exception as e:

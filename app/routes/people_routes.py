@@ -58,7 +58,7 @@ def people():
                     loop.close()
             return result
         
-        all_persons = safe_call_sync_method(book_service.list_all_persons_sync)
+        all_persons = safe_call_sync_method(book_service.list_all_persons_sync, str(current_user.id))
         
         # Ensure we have a list
         if not isinstance(all_persons, list):

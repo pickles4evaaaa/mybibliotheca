@@ -134,6 +134,45 @@ class SimplifiedBookService:
         self.custom_field_service = KuzuCustomFieldService()
         print(f"🔥 [SIMPLIFIED_SERVICE] Using SafeKuzuManager for thread-safe database access")
     
+    def _convert_to_date(self, date_value):
+        """Convert various date formats to a format suitable for KuzuDB DATE type."""
+        from datetime import date, datetime
+        import re
+        
+        if not date_value:
+            return None
+            
+        # If it's already a date object, convert to string
+        if isinstance(date_value, date):
+            return date_value
+        
+        # If it's a datetime object, extract the date
+        if isinstance(date_value, datetime):
+            return date_value.date()
+            
+        # If it's a string, parse it
+        if isinstance(date_value, str):
+            # Handle common date formats
+            date_str = date_value.strip()
+            
+            # Already in YYYY-MM-DD format (perfect for KuzuDB)
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+            
+            # Just a year (like '2006')
+            if re.match(r'^\d{4}$', date_str):
+                return datetime.strptime(f'{date_str}-01-01', '%Y-%m-%d').date()
+                
+            # Try other common formats
+            for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y']:
+                try:
+                    parsed_date = datetime.strptime(date_str, fmt)
+                    return parsed_date.date()
+                except ValueError:
+                    continue
+                    
+        return None
+    
     def _convert_query_result_to_list(self, query_result):
         """Convert QueryResult to list format for backward compatibility."""
         if not query_result or not hasattr(query_result, '__iter__'):
@@ -182,31 +221,34 @@ class SimplifiedBookService:
             # Prepare core book node data
             book_node_data = {
                 'id': book_id,
-                'title': book_data.title,
-                'normalized_title': book_data.title.lower(),
-                'subtitle': book_data.subtitle,
-                'description': book_data.description,
-                'published_date': book_data.published_date,
-                'page_count': book_data.page_count,
-                'language': book_data.language,
+                'title': book_data.title or '',
+                'subtitle': getattr(book_data, 'subtitle', '') or '',
+                'normalized_title': (book_data.title or '').lower(),
+                'description': book_data.description or '',
+                'published_date': self._convert_to_date(book_data.published_date),
+                'page_count': book_data.page_count or 0,
+                'language': book_data.language or 'en',
                 # Only store cover_url (the schema field that exists)
-                'cover_url': book_data.cover_url,
+                'cover_url': book_data.cover_url or '',
                 # Store both ISBN formats 
-                'isbn13': book_data.isbn13,
-                'isbn10': book_data.isbn10,
-                'google_books_id': book_data.google_books_id,
-                'openlibrary_id': book_data.openlibrary_id,
-                'average_rating': book_data.average_rating,
-                'rating_count': book_data.rating_count,
-                'series': book_data.series,
+                'isbn13': book_data.isbn13 or '',
+                'isbn10': book_data.isbn10 or '',
+                'google_books_id': getattr(book_data, 'google_books_id', '') or '',
+                'openlibrary_id': getattr(book_data, 'openlibrary_id', '') or '',
+                'average_rating': book_data.average_rating or 0.0,
+                'rating_count': book_data.rating_count or 0,
+                'series': book_data.series or '',
                 'series_volume': book_data.series_volume,
                 'series_order': book_data.series_order,
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow()
+                'created_at_str': datetime.utcnow().isoformat(),
+                'updated_at_str': datetime.utcnow().isoformat()
             }
             
-            # Remove None values
-            book_node_data = {k: v for k, v in book_node_data.items() if v is not None}
+            # Remove only the fields that can be None (series_volume and series_order)
+            if book_node_data['series_volume'] is None:
+                del book_node_data['series_volume']
+            if book_node_data['series_order'] is None:
+                del book_node_data['series_order']
             
             # Enhanced debugging for ISBN fields
             print(f"   ISBN13: {book_node_data.get('isbn13')}")
@@ -216,10 +258,43 @@ class SimplifiedBookService:
             description = book_node_data.get('description')
             print(f"   Description: {description[:50] + '...' if description else 'None'}")
             
-            # 1. Create book node (SINGLE TRANSACTION)
+            # 1. Create book node (SINGLE TRANSACTION) - Use explicit property syntax for KuzuDB
+            # Handle optional fields that might be None
+            query_params = book_node_data.copy()
+            
+            # Ensure series_volume and series_order have default values if missing
+            if 'series_volume' not in query_params:
+                query_params['series_volume'] = None
+            if 'series_order' not in query_params:
+                query_params['series_order'] = None
+            
             book_result = self.kuzu_manager.execute_query(
-                "CREATE (b:Book $props) RETURN b.id",
-                {"props": book_node_data}
+                """
+                CREATE (b:Book {
+                    id: $id,
+                    title: $title,
+                    subtitle: $subtitle,
+                    normalized_title: $normalized_title,
+                    isbn13: $isbn13,
+                    isbn10: $isbn10,
+                    description: $description,
+                    published_date: $published_date,
+                    page_count: $page_count,
+                    language: $language,
+                    cover_url: $cover_url,
+                    google_books_id: $google_books_id,
+                    openlibrary_id: $openlibrary_id,
+                    average_rating: $average_rating,
+                    rating_count: $rating_count,
+                    series: $series,
+                    series_volume: $series_volume,
+                    series_order: $series_order,
+                    created_at: timestamp($created_at_str),
+                    updated_at: timestamp($updated_at_str)
+                })
+                RETURN b.id
+                """,
+                query_params
             )
             if not book_result:
                 return None
@@ -255,29 +330,31 @@ class SimplifiedBookService:
                     author_id = await book_repo._ensure_person_exists(person_data)
                     if author_id:
                         
-                        # Create AUTHORED relationship
+                        # Create AUTHORED relationship - Use explicit property syntax for KuzuDB
                         authored_result = self.kuzu_manager.execute_query(
                             """
                             MATCH (p:Person {id: $author_id}), (b:Book {id: $book_id})
-                            CREATE (p)-[r:AUTHORED $rel_props]->(b)
+                            CREATE (p)-[r:AUTHORED {
+                                role: $role,
+                                order_index: $order_index,
+                                created_at: timestamp($created_at_str)
+                            }]->(b)
                             RETURN r
                             """,
                             {
                                 "author_id": author_id,
                                 "book_id": book_id,
-                                "rel_props": {
-                                    'role': 'authored',
-                                    'order_index': 0,
-                                    'created_at': datetime.utcnow().isoformat()
-                                }
+                                "role": 'authored',
+                                "order_index": 0,
+                                "created_at_str": datetime.utcnow().isoformat()
                             }
                         )
                         if authored_result:
-                            pass  # Author relationship created successfully
+                            print(f"✅ [SIMPLIFIED] Created AUTHORED relationship for main author: {book_data.author}")
                         else:
-                            pass  # Author relationship creation failed
+                            print(f"❌ [SIMPLIFIED] Failed to create AUTHORED relationship for main author: {book_data.author}")
                     else:
-                        pass  # Author creation failed
+                        print(f"❌ [SIMPLIFIED] Failed to create main author person: {book_data.author}")
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -295,29 +372,29 @@ class SimplifiedBookService:
                             authored_result = self.kuzu_manager.execute_query(
                                 """
                                 MATCH (p:Person {id: $author_id}), (b:Book {id: $book_id})
-                                CREATE (p)-[r:AUTHORED $rel_props]->(b)
+                                CREATE (p)-[r:AUTHORED {
+                                    role: $role,
+                                    order_index: $order_index,
+                                    created_at: timestamp($created_at_str)
+                                }]->(b)
                                 RETURN r
                                 """,
                                 {
                                     "author_id": author_id,
                                     "book_id": book_id,
-                                    "rel_props": {
-                                        'role': 'authored',
-                                        'order_index': index + 1,
-                                        'created_at': datetime.utcnow().isoformat()
-                                    }
+                                    "role": 'authored',
+                                    "order_index": index + 1,
+                                    "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
                             if authored_result:
-                                pass  # Author relationship created successfully
+                                print(f"✅ [SIMPLIFIED] Created AUTHORED relationship for additional author: {author_name}")
                             else:
-                                pass  # Author relationship creation failed
+                                print(f"❌ [SIMPLIFIED] Failed to create AUTHORED relationship for additional author: {author_name}")
                         else:
-                            pass  # Author creation failed
-                    else:
-                        pass  # Author creation failed
+                            print(f"❌ [SIMPLIFIED] Failed to create additional author person: {author_name}")
                 except Exception as e:
-                    pass  # Error creating author relationship
+                    print(f"❌ [SIMPLIFIED] Error creating additional author relationship: {e}")
             
             # 2.6. Handle narrator if present
             if book_data.narrator:
@@ -332,29 +409,29 @@ class SimplifiedBookService:
                             narrated_result = self.kuzu_manager.execute_query(
                                 """
                                 MATCH (p:Person {id: $narrator_id}), (b:Book {id: $book_id})
-                                CREATE (p)-[r:NARRATED $rel_props]->(b)
+                                CREATE (p)-[r:AUTHORED {
+                                    role: $role,
+                                    order_index: $order_index,
+                                    created_at: timestamp($created_at_str)
+                                }]->(b)
                                 RETURN r
                                 """,
                                 {
                                     "narrator_id": narrator_id,
                                     "book_id": book_id,
-                                    "rel_props": {
-                                        'role': 'narrated',
-                                        'order_index': index,
-                                        'created_at': datetime.utcnow().isoformat()
-                                    }
+                                    "role": 'narrated',
+                                    "order_index": index,
+                                    "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
                             if narrated_result:
-                                pass  # Narrator relationship created successfully
+                                print(f"✅ [SIMPLIFIED] Created AUTHORED (narrated) relationship for {narrator_name}")
                             else:
-                                pass  # Narrator relationship creation failed
+                                print(f"❌ [SIMPLIFIED] Failed to create AUTHORED (narrated) relationship for {narrator_name}")
                         else:
-                            pass  # Narrator creation failed
-                    else:
-                        pass  # Narrator creation failed
+                            print(f"❌ [SIMPLIFIED] Failed to create narrator person: {narrator_name}")
                 except Exception as e:
-                    pass  # Error creating narrator relationship
+                    print(f"❌ [SIMPLIFIED] Error creating narrator relationship: {e}")
             
             # 2.7. Handle editor if present
             if book_data.editor:
@@ -369,23 +446,25 @@ class SimplifiedBookService:
                             edited_result = self.kuzu_manager.execute_query(
                                 """
                                 MATCH (p:Person {id: $editor_id}), (b:Book {id: $book_id})
-                                CREATE (p)-[r:EDITED $rel_props]->(b)
+                                CREATE (p)-[r:AUTHORED {
+                                    role: $role,
+                                    order_index: $order_index,
+                                    created_at: timestamp($created_at_str)
+                                }]->(b)
                                 RETURN r
                                 """,
                                 {
                                     "editor_id": editor_id,
                                     "book_id": book_id,
-                                    "rel_props": {
-                                        'role': 'edited',
-                                        'order_index': index,
-                                        'created_at': datetime.utcnow().isoformat()
-                                    }
+                                    "role": 'edited',
+                                    "order_index": index,
+                                    "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
                             if edited_result:
-                                print(f"✅ [SIMPLIFIED] Created EDITED relationship for {editor_name}")
+                                print(f"✅ [SIMPLIFIED] Created AUTHORED (edited) relationship for {editor_name}")
                             else:
-                                print(f"❌ [SIMPLIFIED] Failed to create EDITED relationship for {editor_name}")
+                                print(f"❌ [SIMPLIFIED] Failed to create AUTHORED (edited) relationship for {editor_name}")
                         else:
                             print(f"❌ [SIMPLIFIED] Failed to create editor person: {editor_name}")
                 except Exception as e:
@@ -404,23 +483,25 @@ class SimplifiedBookService:
                             translated_result = self.kuzu_manager.execute_query(
                                 """
                                 MATCH (p:Person {id: $translator_id}), (b:Book {id: $book_id})
-                                CREATE (p)-[r:TRANSLATED $rel_props]->(b)
+                                CREATE (p)-[r:AUTHORED {
+                                    role: $role,
+                                    order_index: $order_index,
+                                    created_at: timestamp($created_at_str)
+                                }]->(b)
                                 RETURN r
                                 """,
                                 {
                                     "translator_id": translator_id,
                                     "book_id": book_id,
-                                    "rel_props": {
-                                        'role': 'translated',
-                                        'order_index': index,
-                                        'created_at': datetime.utcnow().isoformat()
-                                    }
+                                    "role": 'translated',
+                                    "order_index": index,
+                                    "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
                             if translated_result:
-                                print(f"✅ [SIMPLIFIED] Created TRANSLATED relationship for {translator_name}")
+                                print(f"✅ [SIMPLIFIED] Created AUTHORED (translated) relationship for {translator_name}")
                             else:
-                                print(f"❌ [SIMPLIFIED] Failed to create TRANSLATED relationship for {translator_name}")
+                                print(f"❌ [SIMPLIFIED] Failed to create AUTHORED (translated) relationship for {translator_name}")
                         else:
                             print(f"❌ [SIMPLIFIED] Failed to create translator person: {translator_name}")
                 except Exception as e:
@@ -439,23 +520,25 @@ class SimplifiedBookService:
                             illustrated_result = self.kuzu_manager.execute_query(
                                 """
                                 MATCH (p:Person {id: $illustrator_id}), (b:Book {id: $book_id})
-                                CREATE (p)-[r:ILLUSTRATED $rel_props]->(b)
+                                CREATE (p)-[r:AUTHORED {
+                                    role: $role,
+                                    order_index: $order_index,
+                                    created_at: timestamp($created_at_str)
+                                }]->(b)
                                 RETURN r
                                 """,
                                 {
                                     "illustrator_id": illustrator_id,
                                     "book_id": book_id,
-                                    "rel_props": {
-                                        'role': 'illustrated',
-                                        'order_index': index,
-                                        'created_at': datetime.utcnow().isoformat()
-                                    }
+                                    "role": 'illustrated',
+                                    "order_index": index,
+                                    "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
                             if illustrated_result:
-                                print(f"✅ [SIMPLIFIED] Created ILLUSTRATED relationship for {illustrator_name}")
+                                print(f"✅ [SIMPLIFIED] Created AUTHORED (illustrated) relationship for {illustrator_name}")
                             else:
-                                print(f"❌ [SIMPLIFIED] Failed to create ILLUSTRATED relationship for {illustrator_name}")
+                                print(f"❌ [SIMPLIFIED] Failed to create AUTHORED (illustrated) relationship for {illustrator_name}")
                         else:
                             print(f"❌ [SIMPLIFIED] Failed to create illustrator person: {illustrator_name}")
                 except Exception as e:
@@ -467,85 +550,36 @@ class SimplifiedBookService:
                     publisher_id = await book_repo._ensure_publisher_exists(book_data.publisher)
                     if publisher_id:
                         # Create PUBLISHED_BY relationship
-                        # Enhanced publication_date conversion with comprehensive format support
-                        pub_date = None
-                        if book_data.published_date:
-                            print(f"📅 [BOOK_SERVICE] Converting published_date: '{book_data.published_date}' (type: {type(book_data.published_date)})")
-                            if isinstance(book_data.published_date, str):
-                                try:
-                                    # Enhanced date parsing - handle common formats from APIs
-                                    date_str = book_data.published_date.strip()
-                                    formats = [
-                                        '%Y-%m-%d',    # 2023-12-25
-                                        '%Y/%m/%d',    # 2023/12/25
-                                        '%m/%d/%Y',    # 12/25/2023
-                                        '%d/%m/%Y',    # 25/12/2023
-                                        '%Y-%m',       # 2023-12
-                                        '%Y/%m',       # 2023/12
-                                        '%m/%Y',       # 12/2023
-                                        '%Y',          # 2023
-                                        '%B %d, %Y',   # December 25, 2023
-                                        '%b %d, %Y',   # Dec 25, 2023
-                                        '%d %B %Y',    # 25 December 2023
-                                        '%d %b %Y',    # 25 Dec 2023
-                                    ]
-                                    
-                                    for fmt in formats:
-                                        try:
-                                            pub_date = datetime.strptime(date_str, fmt).date()
-                                            print(f"✅ [BOOK_SERVICE] Successfully parsed '{date_str}' using format '{fmt}' -> {pub_date}")
-                                            break
-                                        except ValueError:
-                                            continue
-                                    
-                                    if not pub_date:
-                                        # Try extracting just the year if other formats fail
-                                        import re
-                                        year_match = re.search(r'\b(19|20)\d{2}\b', date_str)
-                                        if year_match:
-                                            year = int(year_match.group())
-                                            pub_date = datetime(year, 1, 1).date()
-                                            print(f"✅ [BOOK_SERVICE] Extracted year {year} from '{date_str}' -> {pub_date}")
-                                        else:
-                                            print(f"❌ [BOOK_SERVICE] Could not parse any date from '{date_str}'")
-                                        
-                                except Exception as e:
-                                    print(f"⚠️ [BOOK_SERVICE] Failed to parse published_date '{book_data.published_date}': {e}")
-                                    pub_date = None
-                            else:
-                                # Already a date object
-                                pub_date = book_data.published_date
-                                print(f"✅ [BOOK_SERVICE] Using existing date object: {pub_date}")
-                        else:
-                            print(f"📅 [BOOK_SERVICE] No published_date provided")
+                        # Use the helper method for date conversion
+                        pub_date = self._convert_to_date(book_data.published_date)
                         
                         published_result = self.kuzu_manager.execute_query(
                             """
                             MATCH (b:Book {id: $book_id}), (pub:Publisher {id: $publisher_id})
-                            CREATE (b)-[r:PUBLISHED_BY $rel_props]->(pub)
+                            CREATE (b)-[r:PUBLISHED_BY {
+                                created_at: timestamp($created_at_str)
+                            }]->(pub)
                             RETURN r
                             """,
                             {
                                 "book_id": book_id,
                                 "publisher_id": publisher_id,
-                                "rel_props": {
-                                    'publication_date': pub_date.isoformat() if pub_date else None,
-                                    'created_at': datetime.utcnow().isoformat()
-                                }
+                                "created_at_str": datetime.utcnow().isoformat()
                             }
                         )
                         if published_result:
-                            pass  # Publisher relationship created successfully
+                            print(f"✅ [SIMPLIFIED] Created PUBLISHED_BY relationship for {book_data.publisher}")
                         else:
-                            pass  # Publisher relationship creation failed
+                            print(f"❌ [SIMPLIFIED] Failed to create PUBLISHED_BY relationship for {book_data.publisher}")
                     else:
-                        pass  # Publisher creation failed
+                        print(f"❌ [SIMPLIFIED] Failed to create publisher: {book_data.publisher}")
                 except Exception as e:
-                    pass  # Error creating publisher relationship
+                    print(f"❌ [SIMPLIFIED] Error creating publisher relationship: {e}")
             
             # 4. Create category relationships using clean repository
             if book_data.categories:
                 try:
+                    print(f"📚 [SIMPLIFIED] Processing {len(book_data.categories)} categories: {book_data.categories}")
                     for category_name in book_data.categories:
                         if not category_name.strip():
                             continue
@@ -556,25 +590,25 @@ class SimplifiedBookService:
                             categorized_result = self.kuzu_manager.execute_query(
                                 """
                                 MATCH (b:Book {id: $book_id}), (c:Category {id: $category_id})
-                                CREATE (b)-[r:CATEGORIZED_AS $rel_props]->(c)
+                                CREATE (b)-[r:CATEGORIZED_AS {
+                                    created_at: timestamp($created_at_str)
+                                }]->(c)
                                 RETURN r
                                 """,
                                 {
                                     "book_id": book_id,
                                     "category_id": category_id,
-                                    "rel_props": {
-                                        'created_at': datetime.utcnow().isoformat()
-                                    }
+                                    "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
                             if categorized_result:
-                                pass  # Category relationship created successfully
+                                print(f"✅ [SIMPLIFIED] Created CATEGORIZED_AS relationship for {category_name}")
                             else:
-                                pass  # Category relationship creation failed
+                                print(f"❌ [SIMPLIFIED] Failed to create CATEGORIZED_AS relationship for {category_name}")
                         else:
-                            pass  # Category creation failed
+                            print(f"❌ [SIMPLIFIED] Failed to create category: {category_name}")
                 except Exception as e:
-                    pass  # Error creating category relationship
+                    print(f"❌ [SIMPLIFIED] Error creating category relationship: {e}")
             
             # 5. Handle global custom metadata (if any)
             if book_data.global_custom_metadata:
@@ -649,20 +683,35 @@ class SimplifiedBookService:
                 import json
                 ownership_data['custom_metadata'] = json.dumps(ownership.custom_metadata)
             
-            # Create OWNS relationship (SINGLE TRANSACTION)
+            # Create OWNS relationship (SINGLE TRANSACTION) - Use explicit property syntax for KuzuDB
+            date_added_str = ownership_data['date_added'].isoformat() if ownership_data.get('date_added') and hasattr(ownership_data.get('date_added'), 'isoformat') else datetime.utcnow().isoformat()
+            
             result = self.kuzu_manager.execute_query(
                 """
                 MATCH (u:User {id: $user_id}), (b:Book {id: $book_id})
-                CREATE (u)-[r:OWNS $ownership_props]->(b)
+                CREATE (u)-[r:OWNS {
+                    reading_status: $reading_status,
+                    ownership_status: $ownership_status,
+                    media_type: $media_type,
+                    date_added: timestamp($date_added_str),
+                    user_rating: $user_rating,
+                    personal_notes: $personal_notes,
+                    location_id: $location_id,
+                    custom_metadata: $custom_metadata
+                }]->(b)
                 RETURN r
                 """,
                 {
                     "user_id": ownership.user_id,
                     "book_id": ownership.book_id,
-                    "ownership_props": {
-                        k: v.isoformat() if hasattr(v, 'isoformat') else v 
-                        for k, v in ownership_data.items()
-                    }
+                    "reading_status": ownership_data.get('reading_status'),
+                    "ownership_status": ownership_data.get('ownership_status'),
+                    "media_type": ownership_data.get('media_type'),
+                    "date_added_str": date_added_str,
+                    "user_rating": ownership_data.get('user_rating'),
+                    "personal_notes": ownership_data.get('personal_notes'),
+                    "location_id": ownership_data.get('location_id'),
+                    "custom_metadata": ownership_data.get('custom_metadata')
                 }
             )
             
@@ -755,7 +804,7 @@ class SimplifiedBookService:
                     
                     # Check if this book has the author we're looking for
                     author_query = """
-                    MATCH (b:Book {id: $book_id})<-[:CONTRIBUTED_TO {role: 'author'}]-(p:Person)
+                    MATCH (b:Book {id: $book_id})<-[:AUTHORED {role: 'authored'}]-(p:Person)
                     WHERE toLower(p.name) CONTAINS $author OR $author CONTAINS toLower(p.name)
                     RETURN p.name
                     LIMIT 1
@@ -775,7 +824,7 @@ class SimplifiedBookService:
             fuzzy_query = """
             MATCH (b:Book)
             WHERE toLower(b.title) CONTAINS $title_part OR $title_part CONTAINS toLower(b.title)
-            OPTIONAL MATCH (b)<-[:CONTRIBUTED_TO {role: 'author'}]-(p:Person)
+            OPTIONAL MATCH (b)<-[:AUTHORED {role: 'authored'}]-(p:Person)
             WHERE toLower(p.name) CONTAINS $author OR $author CONTAINS toLower(p.name)
             RETURN b.id, b.title, p.name
             LIMIT 1
