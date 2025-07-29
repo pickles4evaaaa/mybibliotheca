@@ -180,7 +180,10 @@
         <h1 class="h2 mb-0">
             <i class="bi bi-graph-up me-2"></i>Reading Statistics
         </h1>
-        <div>
+        <div class="btn-group">
+            <a href="{{ url_for('stats.library_journey') }}" class="btn btn-primary">
+                <i class="bi bi-diagram-3 me-1"></i>Library Journey Timeline
+            </a>
             <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left me-1"></i>Back to Library
             </a>

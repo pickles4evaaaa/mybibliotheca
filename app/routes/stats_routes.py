@@ -11,6 +11,12 @@ def _safe_date_to_isoformat(date_obj):
         return date_obj.isoformat()
     return None
 
+@stats_bp.route('/library-journey')
+@login_required
+def library_journey():
+    """Display the Library Journey Timeline visualization."""
+    return render_template('stats/library_journey.html')
+
 @stats_bp.route('/reading_history', methods=['GET'])
 @login_required
 def reading_history():

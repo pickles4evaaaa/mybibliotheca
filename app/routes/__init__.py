@@ -17,6 +17,7 @@ from .stats_routes import stats_bp
 from .misc_routes import misc_bp
 from .genre_routes import genres_bp
 from .reading_log_routes import reading_logs
+from .api_routes import api_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -336,6 +337,9 @@ def register_blueprints(app):
 
     # Register stats blueprint at '/stats'
     app.register_blueprint(stats_bp, url_prefix='/stats')
+    
+    # Register API blueprint at '/api'
+    app.register_blueprint(api_bp)
     
     # Register specific feature blueprints
     app.register_blueprint(book_bp, url_prefix='/books')

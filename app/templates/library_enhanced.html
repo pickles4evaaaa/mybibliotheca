@@ -319,6 +319,14 @@
         <h1 class="h2 mb-0">
             <i class="bi bi-book me-2"></i>My Library
         </h1>
+        <div class="btn-group">
+            <a href="{{ url_for('stats.library_journey') }}" class="btn btn-outline-primary">
+                <i class="bi bi-diagram-3 me-1"></i>Journey Timeline
+            </a>
+            <a href="{{ url_for('stats.index') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-graph-up me-1"></i>Full Stats
+            </a>
+        </div>
     </div>
 
     <!-- Library Stats with Filters -->
