@@ -37,17 +37,9 @@ from app.utils.safe_import_manager import (
 
 # DEPRECATED: Global dictionary to store import jobs 
 # This is being replaced with safe_import_manager for thread safety and user isolation
-# WARNING: This dictionary should no longer be used - kept only for legacy fallback during migration
-# TODO: Remove this completely after all code is verified to use safe_import_manager
-import_jobs = {}
-
-# Add warning for any remaining usage
-import atexit
-def _warn_about_global_dict():
-    if import_jobs:
-        print(f"⚠️ WARNING: {len(import_jobs)} jobs remain in deprecated global import_jobs dictionary")
-        print("   These jobs may indicate incomplete migration to SafeImportJobManager")
-atexit.register(_warn_about_global_dict)
+# ✅ DEPRECATED GLOBAL DICTIONARY REMOVED
+# All import job management now uses SafeImportJobManager for thread safety and user isolation
+# Original global import_jobs = {} pattern was dangerous and has been completely replaced
 
 # Create import blueprint
 import_bp = Blueprint('import', __name__)

@@ -1111,13 +1111,13 @@ def library():
         book_locations = book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', [])
         if book_locations:
             for loc in book_locations:
-                if isinstance(loc, str):
-                    # Location is already a string (location name)
+                if isinstance(loc, str) and loc:
+                    # Location is already a string (location name) and not empty
                     locations.add(loc)
-                elif isinstance(loc, dict):
-                    locations.add(loc.get('name', ''))
-                elif hasattr(loc, 'name'):
-                    locations.add(loc.name)
+                elif isinstance(loc, dict) and loc.get('name'):
+                    locations.add(loc.get('name'))
+                elif hasattr(loc, 'name') and getattr(loc, 'name', None):
+                    locations.add(getattr(loc, 'name'))
                 else:
                     locations.add(str(loc))
 
@@ -1138,10 +1138,10 @@ def library():
         'library_enhanced.html',
         books=books,
         stats=stats,
-        categories=sorted(categories),
-        publishers=sorted(publishers),
-        languages=sorted(languages),
-        locations=sorted(locations),
+        categories=sorted([cat for cat in categories if cat is not None and cat != '']),
+        publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
+        languages=sorted([lang for lang in languages if lang is not None and lang != '']),
+        locations=sorted([loc for loc in locations if loc is not None and loc != '']),
         current_status_filter=status_filter,
         current_category=category_filter,
         current_publisher=publisher_filter,
@@ -3072,12 +3072,14 @@ def search_books_in_library():
         
         book_locations = book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', [])
         if book_locations:
-            # book.locations is a list of Location objects
-            locations.update([
-                loc.get('name', '') if isinstance(loc, dict) else getattr(loc, 'name', '')
-                for loc in book_locations 
-                if (loc.get('name', '') if isinstance(loc, dict) else getattr(loc, 'name', ''))
-            ])
+            for loc in book_locations:
+                if isinstance(loc, str) and loc:
+                    # Location is already a string (location name) and not empty
+                    locations.add(loc)
+                elif isinstance(loc, dict) and loc.get('name'):
+                    locations.add(loc.get('name'))
+                elif hasattr(loc, 'name') and getattr(loc, 'name', None):
+                    locations.add(getattr(loc, 'name'))
 
     # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync() or []
@@ -3106,10 +3108,10 @@ def search_books_in_library():
         'library_enhanced.html',
         books=books,
         stats=stats,
-        categories=sorted(categories),
-        publishers=sorted(publishers),
-        languages=sorted(languages),
-        locations=sorted(locations),
+        categories=sorted([cat for cat in categories if cat is not None and cat != '']),
+        publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
+        languages=sorted([lang for lang in languages if lang is not None and lang != '']),
+        locations=sorted([loc for loc in locations if loc is not None and loc != '']),
         current_status_filter='all',
         current_category=category_filter,
         current_publisher=publisher_filter,
