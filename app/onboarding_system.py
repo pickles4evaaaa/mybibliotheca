@@ -1301,18 +1301,15 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
         location_name = site_config.get('location', '').strip()
         if location_name:
             try:
-                # Initialize location service with safe Kuzu connection
-                from app.utils.safe_kuzu_manager import safe_get_connection
+                # Initialize location service
+                location_service = LocationService()
                 
-                with safe_get_connection(user_id=admin_user.id, operation="create_location") as conn:
-                    location_service = LocationService(conn)
-                    
-                    # Create the location
-                    location = location_service.create_location(
-                        name=location_name,
-                        description=f"Default location set during onboarding",
-                        location_type="home",  # Default to home type
-                        is_default=site_config.get('location_set_as_default', True)
+                # Create the location
+                location = location_service.create_location(
+                    name=location_name,
+                    description=f"Default location set during onboarding",
+                    location_type="home",  # Default to home type
+                    is_default=site_config.get('location_set_as_default', True)
                     )
                 
                 logger.info(f"✅ Created location: {location.name} (ID: {location.id})")
@@ -1617,17 +1614,16 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 print(f"🏠 [SETUP] Getting safe Kuzu connection...")
                 from app.utils.safe_kuzu_manager import safe_get_connection
                 
-                # Check if admin user has an ID
+                # Create location service
                 admin_user_id = getattr(admin_user, 'id', None)
                 print(f"🏠 [SETUP] Admin user ID for location creation: {admin_user_id}")
                 if not admin_user_id:
                     logger.error(f"❌ Admin user has no ID for location creation")
                     raise Exception("Admin user has no ID")
                 
-                with safe_get_connection(user_id=admin_user_id, operation="create_location") as conn:
-                    print(f"🏠 [SETUP] Creating LocationService...")
-                    location_service = LocationService(conn)
-                    print(f"🏠 [SETUP] LocationService created: {location_service}")
+                print(f"🏠 [SETUP] Creating LocationService...")
+                location_service = LocationService()
+                print(f"🏠 [SETUP] LocationService created: {location_service}")
                 
                 # Create the location
                 print(f"🏠 [SETUP] Calling location_service.create_location...")
@@ -2087,32 +2083,32 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
             from .location_service import LocationService
             from app.utils.safe_kuzu_manager import safe_get_connection
             
-            with safe_get_connection(user_id=user_id, operation="setup_default_locations") as conn:
-                location_service = LocationService(conn)
-                
-                # Get or create default location for this user
-                default_location = location_service.get_default_location(user_id)
-                if not default_location:
-                    logger.info(f"🏠 Creating default location for user during onboarding import")
-                    created_locations = location_service.setup_default_locations()
-                    if created_locations:
-                        default_location = location_service.get_default_location(user_id)
-                        if default_location and default_location.id:
-                            default_locations = [default_location.id]
-                            logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")
-                        else:
-                            logger.error(f"❌ Failed to get default location after creation")
-                            default_locations = []
+            # Initialize location service
+            location_service = LocationService()
+            
+            # Get or create default location for this user
+            default_location = location_service.get_default_location(user_id)
+            if not default_location:
+                logger.info(f"🏠 Creating default location for user during onboarding import")
+                created_locations = location_service.setup_default_locations()
+                if created_locations:
+                    default_location = location_service.get_default_location(user_id)
+                    if default_location and default_location.id:
+                        default_locations = [default_location.id]
+                        logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")
                     else:
-                        logger.error(f"❌ Failed to create default locations")
+                        logger.error(f"❌ Failed to get default location after creation")
                         default_locations = []
                 else:
-                    if default_location.id:
-                        default_locations = [default_location.id]
-                        logger.info(f"✅ Using existing default location: {default_location.name} (ID: {default_location.id})")
-                    else:
-                        logger.error(f"❌ Default location has no ID")
-                        default_locations = []
+                    logger.error(f"❌ Failed to create default locations")
+                    default_locations = []
+            else:
+                if default_location.id:
+                    default_locations = [default_location.id]
+                    logger.info(f"✅ Using existing default location: {default_location.name} (ID: {default_location.id})")
+                else:
+                    logger.error(f"❌ Default location has no ID")
+                    default_locations = []
         
         logger.info(f"�📊 Starting CSV import with mappings: {field_mappings}")
         logger.info(f"📍 Using default locations: {default_locations}")

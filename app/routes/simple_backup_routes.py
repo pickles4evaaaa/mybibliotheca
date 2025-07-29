@@ -142,9 +142,14 @@ def restore_backup(backup_id: str):
         success = backup_service.restore_backup(backup_id)
         
         if success:
-            flash(f'✅ Successfully restored from backup "{backup_info.name}"! Your data has been restored and database connections refreshed.', 'success')
-            # Redirect to library page to immediately show restored data
-            return redirect(url_for('main.library'))
+            # Check if restart is required
+            if backup_service.check_restart_required():
+                flash(f'✅ Successfully restored from backup "{backup_info.name}"! You will be logged out while the application restarts to complete the restore process.', 'success')
+                # Trigger container restart and redirect to a completion page
+                return redirect(url_for('simple_backup.restore_complete'))
+            else:
+                flash(f'✅ Successfully restored from backup "{backup_info.name}"! Your data has been restored.', 'success')
+                return redirect(url_for('main.library'))
         else:
             flash('❌ Failed to restore from backup. Check logs for details.', 'danger')
             
@@ -153,6 +158,45 @@ def restore_backup(backup_id: str):
         flash('❌ Error restoring backup.', 'danger')
     
     return redirect(url_for('simple_backup.index'))
+
+
+@simple_backup_bp.route('/restore-complete')
+def restore_complete():
+    """Show restore completion page and trigger logout/restart."""
+    import os
+    import threading
+    import time
+    
+    def delayed_shutdown():
+        time.sleep(3)  # Give time for response to be sent
+        # Use logging instead of current_app.logger to avoid context issues
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Initiating graceful shutdown for container restart after backup restore")
+        os._exit(0)  # Force exit to trigger container restart
+    
+    # Start shutdown in background thread
+    thread = threading.Thread(target=delayed_shutdown)
+    thread.daemon = True
+    thread.start()
+    
+    return render_template('simple_backup/restore_complete.html')
+
+
+@simple_backup_bp.route('/check-restart-status')
+def check_restart_status():
+    """Check if restart is complete and redirect to library."""
+    try:
+        backup_service = get_simple_backup_service()
+        if not backup_service.check_restart_required():
+            # Restart flag cleared, redirect to library
+            return jsonify({'status': 'complete', 'redirect': url_for('main.library')})
+        else:
+            # Still waiting for restart
+            return jsonify({'status': 'waiting'})
+    except Exception as e:
+        # If we can check the service, restart is probably complete
+        return jsonify({'status': 'complete', 'redirect': url_for('main.library')})
 
 
 @simple_backup_bp.route('/delete/<backup_id>', methods=['POST'])

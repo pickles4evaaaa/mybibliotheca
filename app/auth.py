@@ -721,8 +721,8 @@ def debug_user_count():
         
         # Method 3: Direct SafeKuzuManager call
         try:
-            from .utils.safe_kuzu_manager import SafeKuzuManager
-            safe_manager = SafeKuzuManager()
+            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
+            safe_manager = get_safe_kuzu_manager()
             query_result = safe_manager.execute_query("MATCH (u:User) RETURN COUNT(u) as count")
             
             if query_result and hasattr(query_result, 'get_next') and query_result.has_next():

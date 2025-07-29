@@ -184,14 +184,13 @@ class KuzuRelationshipService:
                     from app.utils.safe_kuzu_manager import safe_get_connection
                     from app.location_service import LocationService
                     
-                    with safe_get_connection(user_id=None, operation="resolve_legacy_location") as kuzu_connection:
-                        location_service = LocationService(kuzu_connection)
-                        location = location_service.get_location(location_id)
-                        if location:
-                            location_name = location.name
-                            debug_log(f"Resolved legacy location {location_id} to name '{location_name}'", "RELATIONSHIP")
-                        else:
-                            debug_log(f"Legacy location {location_id} not found, using ID as name", "RELATIONSHIP")
+                    location_service = LocationService()
+                    location = location_service.get_location(location_id)
+                    if location:
+                        location_name = location.name
+                        debug_log(f"Resolved legacy location {location_id} to name '{location_name}'", "RELATIONSHIP")
+                    else:
+                        debug_log(f"Legacy location {location_id} not found, using ID as name", "RELATIONSHIP")
                 except Exception as e:
                     debug_log(f"Error resolving legacy location name for {location_id}: {e}", "RELATIONSHIP")
                 
@@ -523,33 +522,65 @@ class KuzuRelationshipService:
             return False
     
     async def get_all_books_with_user_overlay(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all books with user-specific overlay data."""
+        """Get all books with user-specific overlay data (communal library model)."""
         try:
-            # Use the existing get_books_for_user method to get enriched books
-            books = await self.get_books_for_user(user_id, limit=10000)  # Get all books
+            # FIXED: Communal library - get ALL books regardless of ownership
+            # Use a simple query that doesn't depend on OWNS relationships
+            query = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
+            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            WHERE stored.user_id = $user_id OR stored IS NULL
+            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
+            """
             
-            # Convert Book objects to dictionaries
+            result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            results = _convert_query_result_to_list(result)
+            
+            logger.info(f"[RELATIONSHIP_SERVICE] Raw query returned {len(results)} results for user {user_id}")
+            
+            # Convert all books to dictionaries with user overlay
             book_dicts = []
-            for book in books:
-                if hasattr(book, '__dict__'):
-                    book_dict = book.__dict__.copy()
-                else:
-                    # Fallback for non-standard book objects
-                    book_dict = {
-                        'id': getattr(book, 'id', ''),
-                        'title': getattr(book, 'title', ''),
-                        'uid': getattr(book, 'id', ''),  # Add uid for compatibility
-                    }
-                
-                # Ensure uid is available (some templates expect this)
-                if 'id' in book_dict and 'uid' not in book_dict:
-                    book_dict['uid'] = book_dict['id']
-                
-                book_dicts.append(book_dict)
+            for i, result_row in enumerate(results):
+                try:
+                    if 'col_0' not in result_row:
+                        logger.warning(f"[RELATIONSHIP_SERVICE] Row {i} missing col_0 (book data)")
+                        continue
+                        
+                    book_data = result_row['col_0']
+                    relationship_data = result_row.get('col_1', {}) or {}  # OWNS relationship data (may be None)
+                    locations_data = result_row.get('col_2', []) or []
+                    
+                    # Create enriched book object
+                    book = self._create_enriched_book(book_data, relationship_data, locations_data)
+                    
+                    # Convert to dictionary
+                    if hasattr(book, '__dict__'):
+                        book_dict = book.__dict__.copy()
+                    else:
+                        # Fallback for non-standard book objects
+                        book_dict = {
+                            'id': getattr(book, 'id', ''),
+                            'title': getattr(book, 'title', ''),
+                            'uid': getattr(book, 'id', ''),
+                        }
+                    
+                    # Ensure uid is available (some templates expect this)
+                    if 'id' in book_dict and 'uid' not in book_dict:
+                        book_dict['uid'] = book_dict['id']
+                    
+                    book_dicts.append(book_dict)
+                    logger.debug(f"[RELATIONSHIP_SERVICE] Successfully processed book {i}: {book_dict.get('title', 'Unknown')}")
+                    
+                except Exception as e:
+                    logger.error(f"[RELATIONSHIP_SERVICE] Error processing book {i}: {e}")
+                    continue
             
+            logger.info(f"[RELATIONSHIP_SERVICE] Returning {len(book_dicts)} books for user {user_id}")
             return book_dicts
             
         except Exception as e:
+            logger.error(f"[RELATIONSHIP_SERVICE] Error in get_all_books_with_user_overlay: {e}")
             traceback.print_exc()
             return []
     

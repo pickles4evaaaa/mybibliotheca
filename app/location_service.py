@@ -15,15 +15,16 @@ from dataclasses import asdict
 
 from .domain.models import Location
 from .debug_system import debug_log, get_debug_manager
+from .utils.safe_kuzu_manager import SafeKuzuManager
 
 
 class LocationService:
     """Service for managing user locations and book-location relationships."""
     
-    def __init__(self, kuzu_connection):
-        self.kuzu_conn = kuzu_connection
+    def __init__(self, kuzu_db_path: Optional[str] = None):
+        self.safe_kuzu = SafeKuzuManager(kuzu_db_path)
         self.debug_manager = get_debug_manager()
-        debug_log(f"LocationService initialized with Kuzu connection: {type(kuzu_connection)}", "LOCATION")
+        debug_log(f"LocationService initialized with SafeKuzuManager", "LOCATION")
     
     def create_location(self, name: str, description: Optional[str] = None, 
                        location_type: str = "home", address: Optional[str] = None,
@@ -41,7 +42,7 @@ class LocationService:
             MATCH (l:Location) 
             SET l.is_default = false
             """
-            self.kuzu_conn.execute(clear_defaults_query, {})
+            self.safe_kuzu.execute_query(clear_defaults_query, {}, operation="clear_default_locations")
             debug_log(f"Setting as default location", "LOCATION")
             
         location = Location(
@@ -87,7 +88,7 @@ class LocationService:
         print(f"🏠 [CREATE_LOCATION] Storing location data: {location_data}")
         
         # Create the location node (completely independent of users)
-        self.kuzu_conn.execute(create_query, location_data)
+        self.safe_kuzu.execute_query(create_query, location_data, operation="location_operation")
         
         print(f"🏠 [CREATE_LOCATION] Created location {location_id}: '{name}' (default: {is_default})")
         return location
@@ -101,7 +102,7 @@ class LocationService:
         MATCH (l:Location {id: $location_id}) 
         RETURN l
         """
-        result = self.kuzu_conn.execute(query, {"location_id": location_id})
+        result = self.safe_kuzu.execute_query(query, {"location_id": location_id}, operation="location_operation")
         
         if not result.has_next():
             print(f"🏠 [GET_LOCATION] Location {location_id} not found")
@@ -139,7 +140,7 @@ class LocationService:
             query += " AND l.is_active = true"
         query += " RETURN DISTINCT l ORDER BY l.is_default DESC, l.name ASC"
         
-        result = self.kuzu_conn.execute(query, {"user_id": user_id})
+        result = self.safe_kuzu.execute_query(query, {"user_id": user_id}, operation="location_operation")
         
         locations = []
         while result.has_next():
@@ -173,7 +174,7 @@ class LocationService:
             query += " WHERE l.is_active = true"
         query += " RETURN l ORDER BY l.is_default DESC, l.name ASC"
         
-        result = self.kuzu_conn.execute(query, {})
+        result = self.safe_kuzu.execute_query(query, {}, operation="location_operation")
         
         locations = []
         while result.has_next():
@@ -215,7 +216,7 @@ class LocationService:
             WHERE l.id <> $location_id 
             SET l.is_default = false
             """
-            self.kuzu_conn.execute(clear_defaults_query, {"location_id": location_id})
+            self.safe_kuzu.execute_query(clear_defaults_query, {"location_id": location_id}, operation="location_operation")
         
         # Build update query
         set_clauses = []
@@ -239,7 +240,7 @@ class LocationService:
             """
             
             # Execute with proper typing for KuzuDB
-            self.kuzu_conn.execute(update_query, params)
+            self.safe_kuzu.execute_query(update_query, params, operation="location_operation")
         # Return updated location
         return self.get_location(location_id)
     
@@ -254,7 +255,7 @@ class LocationService:
         
         # Delete from KuzuDB
         delete_query = "MATCH (l:Location) WHERE l.id = $location_id DELETE l"
-        self.kuzu_conn.execute(delete_query, {"location_id": location_id})
+        self.safe_kuzu.execute_query(delete_query, {"location_id": location_id}, operation="location_operation")
         
         print(f"🏠 [DELETE_LOCATION] Deleted location {location_id}: '{location.name}'")
         return True
@@ -270,7 +271,7 @@ class LocationService:
         RETURN DISTINCT l
         LIMIT 1
         """
-        result = self.kuzu_conn.execute(query, {"user_id": user_id})
+        result = self.safe_kuzu.execute_query(query, {"user_id": user_id}, operation="location_operation")
         
         if result.has_next():
             row = result.get_next()
@@ -297,7 +298,7 @@ class LocationService:
         RETURN l
         LIMIT 1
         """
-        result = self.kuzu_conn.execute(default_query, {})
+        result = self.safe_kuzu.execute_query(default_query, {}, operation="location_operation")
         
         if result.has_next():
             row = result.get_next()
@@ -380,7 +381,7 @@ class LocationService:
                 """
                 params = {'location_id': location_id}
             
-            result = self.kuzu_conn.execute(query, params)
+            result = self.safe_kuzu.execute_query(query, params, operation="location_operation")
             
             count = 0
             if result.has_next():
@@ -447,7 +448,7 @@ class LocationService:
                 """
                 params = {'location_id': location_id}
             
-            result = self.kuzu_conn.execute(query, params)
+            result = self.safe_kuzu.execute_query(query, params, operation="location_operation")
             book_ids = []
             
             while result.has_next():
@@ -492,11 +493,11 @@ class LocationService:
             RETURN COUNT(stored) as count
             """
             
-            result = self.kuzu_conn.execute(check_query, {
+            result = self.safe_kuzu.execute_query(check_query, {
                 "book_id": book_id,
                 "location_id": location_id,
                 "user_id": user_id
-            })
+            }, operation="check_book_location")
             
             if result.has_next() and result.get_next()[0] > 0:
                 debug_log(f"Book {book_id} already stored at location {location_id} for user {user_id}", "LOCATION")
@@ -508,12 +509,12 @@ class LocationService:
             CREATE (b)-[:STORED_AT {user_id: $user_id, created_at: $created_at}]->(l)
             """
             
-            self.kuzu_conn.execute(create_query, {
+            self.safe_kuzu.execute_query(create_query, {
                 "book_id": book_id,
                 "location_id": location_id,
                 "user_id": user_id,
                 "created_at": datetime.utcnow()
-            })
+            }, operation="add_book_to_location")
             
             debug_log(f"✅ Book {book_id} added to location {location_id} for user {user_id}", "LOCATION")
             return True
@@ -539,11 +540,11 @@ class LocationService:
             DELETE stored
             """
             
-            self.kuzu_conn.execute(delete_query, {
+            self.safe_kuzu.execute_query(delete_query, {
                 "book_id": book_id,
                 "location_id": location_id,
                 "user_id": user_id
-            })
+            }, operation="remove_book_from_location")
             
             debug_log(f"✅ Book {book_id} removed from location {location_id} for user {user_id}", "LOCATION")
             return True
@@ -581,7 +582,7 @@ class LocationService:
                 """
                 params = {'book_id': book_id}
             
-            result = self.kuzu_conn.execute(query, params)
+            result = self.safe_kuzu.execute_query(query, params, operation="location_operation")
             locations = []
             
             while result.has_next():
@@ -662,7 +663,7 @@ class LocationService:
             RETURN b.id as book_id
             """
             
-            result = self.kuzu_conn.execute(query, {'user_id': user_id})
+            result = self.safe_kuzu.execute_query(query, {'user_id': user_id}, operation="location_operation")
             
             migration_count = 0
             while result.has_next():

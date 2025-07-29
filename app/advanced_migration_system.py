@@ -44,9 +44,8 @@ from app.domain.models import (
     ReadingStatus, Person, BookContribution, ContributionType
 )
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
-from app.utils.safe_kuzu_manager import SafeKuzuManager
+from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.services import book_service, user_service, run_async
-from app.utils.safe_kuzu_manager import SafeKuzuManager
 from config import Config
 
 # Helper function for query result conversion
@@ -107,7 +106,7 @@ class AdvancedMigrationSystem:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
         # Setup Kuzu connection using SafeKuzuManager
-        self.safe_manager = SafeKuzuManager()
+        self.safe_manager = get_safe_kuzu_manager()
         # Use safe manager instead of deprecated graph_store
         self.graph_store = self.safe_manager
         self.book_repo = KuzuBookRepository()
@@ -121,7 +120,7 @@ class AdvancedMigrationSystem:
         
         # Initialize location service
         from app.location_service import LocationService
-        self.location_service = LocationService(self.safe_manager)
+        self.location_service = LocationService()
         
         # Migration state
         self.current_status = MigrationStatus.NOT_STARTED

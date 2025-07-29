@@ -7,7 +7,7 @@ particularly after backup/restore operations.
 
 import logging
 from typing import Optional
-from app.utils.safe_kuzu_manager import SafeKuzuManager
+from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def handle_connection_error(error_message: str) -> bool:
         
         # Simple connection refresh by getting fresh database instance
         try:
-            safe_manager = SafeKuzuManager()
+            safe_manager = get_safe_kuzu_manager()
             # Test connection by running a simple query
             test_result = safe_manager.execute_query("RETURN 1 as test")
             success = test_result is not None
@@ -121,7 +121,7 @@ def check_and_refresh_connections() -> bool:
         True if connections are healthy or were successfully refreshed, False otherwise
     """
     try:
-        safe_manager = SafeKuzuManager()
+        safe_manager = get_safe_kuzu_manager()
         
         # Check if database connection is working
         try:
@@ -137,7 +137,7 @@ def check_and_refresh_connections() -> bool:
             logger.warning("Database connections are unhealthy, attempting refresh...")
             # Simple refresh by creating a new SafeKuzuManager instance
             try:
-                safe_manager = SafeKuzuManager()
+                safe_manager = get_safe_kuzu_manager()
                 test_result = safe_manager.execute_query("RETURN 1 as test")
                 return test_result is not None
             except Exception:

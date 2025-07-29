@@ -14,7 +14,7 @@ import re
 
 from app.domain.models import Person
 from app.services import book_service, person_service
-from app.utils.safe_kuzu_manager import SafeKuzuManager
+from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
@@ -395,7 +395,7 @@ def edit_person(person_id):
             normalized_name = Person._normalize_name(person_name or name)  # Ensure we have a string
             
             # Update in KuzuDB using SafeKuzuManager
-            safe_manager = SafeKuzuManager()
+            safe_manager = get_safe_kuzu_manager()
             
             # Get person ID safely
             person_id_for_storage = getattr(person, 'id', None) or (person.get('id') if isinstance(person, dict) else person_id)
@@ -518,7 +518,7 @@ def delete_person(person_id):
         
         # Check if person has associated books by directly querying the storage layer
         # This bypasses any user filtering and checks for ANY books associated with this person
-        safe_manager = SafeKuzuManager()
+        safe_manager = get_safe_kuzu_manager()
         
         # FIRST: Clean up orphaned relationships - relationships pointing to books that no longer exist
         
@@ -946,7 +946,7 @@ def bulk_delete_persons():
                     continue
             
             # Delete the person from graph database using SafeKuzuManager
-            safe_manager = SafeKuzuManager()
+            safe_manager = get_safe_kuzu_manager()
             
             # Clean up relationships if force deleting
             if force_delete and total_books > 0:
@@ -1091,7 +1091,7 @@ def merge_persons():
             primary_person_name = primary_person.get('name', 'Unknown Person') if isinstance(primary_person, dict) else getattr(primary_person, 'name', 'Unknown Person')
             
             # Validate that the primary person exists in KuzuDB
-            safe_manager = SafeKuzuManager()
+            safe_manager = get_safe_kuzu_manager()
             
             primary_check_query = """
             MATCH (p:Person {id: $person_id})
@@ -1137,7 +1137,7 @@ def merge_persons():
                     current_app.logger.info(f"Merging person {merge_person_name} (ID: {merge_person_id}) into {primary_person_name}")
                     
                     # Use SafeKuzuManager for all database operations
-                    safe_manager = SafeKuzuManager()
+                    safe_manager = get_safe_kuzu_manager()
                     
                     # First, let's check what relationships exist for this person
                     check_query = """

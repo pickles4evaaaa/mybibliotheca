@@ -11,7 +11,7 @@ import os
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any
 from app.simplified_book_service import SimplifiedBook
-from app.utils.safe_kuzu_manager import SafeKuzuManager
+from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
@@ -481,7 +481,7 @@ class SQLiteMigrationService:
             run_async(user_book_repo.update_reading_status(user_id, book_id, reading_status.value))
             
             # Update the OWNS relationship with additional personal data using SafeKuzuManager
-            safe_manager = SafeKuzuManager()
+            safe_manager = get_safe_kuzu_manager()
             
             # Build update properties
             update_props = {

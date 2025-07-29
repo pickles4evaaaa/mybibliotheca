@@ -98,6 +98,39 @@ try:
     person_service = _LazyService(_get_person_service)
     reading_log_service = _LazyService(_get_reading_log_service)
 
+    def reset_all_services():
+        """Reset all service instances to force fresh initialization."""
+        global _book_service, _user_service, _custom_field_service
+        global _import_mapping_service, _person_service, _reading_log_service
+        global book_service, user_service, custom_field_service
+        global import_mapping_service, person_service, reading_log_service
+        
+        # Clear global service instances
+        _book_service = None
+        _user_service = None
+        _custom_field_service = None
+        _import_mapping_service = None
+        _person_service = None
+        _reading_log_service = None
+        
+        # Clear lazy service wrapper instances
+        book_service._service = None
+        user_service._service = None
+        custom_field_service._service = None
+        import_mapping_service._service = None
+        person_service._service = None
+        reading_log_service._service = None
+        
+        # Recreate lazy service wrappers completely
+        book_service = _LazyService(_get_book_service)
+        user_service = _LazyService(_get_user_service)
+        custom_field_service = _LazyService(_get_custom_field_service)
+        import_mapping_service = _LazyService(_get_import_mapping_service)
+        person_service = _LazyService(_get_person_service)
+        reading_log_service = _LazyService(_get_reading_log_service)
+        
+        return True
+
     # Placeholder services for compatibility during migration
     class StubService:
         """Stub service for missing services."""
@@ -123,6 +156,7 @@ try:
         'custom_field_service', # Lazy service instance
         'import_mapping_service', # Lazy service instance
         'run_async',
+        'reset_all_services',  # Service reset function
         # Stub services for compatibility
         'reading_log_service',
         'direct_import_service',

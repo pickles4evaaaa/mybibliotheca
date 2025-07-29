@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import uuid
 
 from flask import current_app
-from app.utils.safe_kuzu_manager import SafeKuzuManager
+from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
@@ -80,8 +80,8 @@ class SimpleBackupService:
         self.backup_dir = self.data_dir / "backups"
         self.backup_index_file = self.backup_dir / "simple_backup_index.json"
         
-        # KuzuDB database path
-        self.kuzu_db_path = self.data_dir / "kuzu" / "bibliotheca.db"
+        # KuzuDB database path - points to the entire kuzu directory
+        self.kuzu_db_path = self.data_dir / "kuzu"
         
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -322,70 +322,22 @@ class SimpleBackupService:
                 
                 logger.info(f"Restored KuzuDB directory with {files_restored} files")
             
-            # Step 5: Reconnect KuzuDB
-            logger.info("Reconnecting KuzuDB...")
-            success = self._reconnect_kuzu_database()
+            # Step 5: Set restart flag instead of immediate reconnection
+            logger.info("Setting restart flag for clean reconnection...")
+            self._set_restart_required_flag()
             
-            # Step 6: Clear service layer cache after successful reconnection
-            if success:
-                logger.info("Clearing service layer cache...")
-                self._clear_service_cache()
-            
-            # Clear the restore flag regardless of success
+            # Clear the restore flag
             self._clear_restore_flag()
             
-            if success:
-                logger.info(f"Simple restore completed successfully from backup: {backup_info.name}")
-                # Clean up temporary backup if restore was successful
-                if current_backup_path and current_backup_path.exists():
-                    shutil.rmtree(current_backup_path)
-                    logger.info("Cleaned up temporary backup")
-                return True
-            else:
-                logger.error("Failed to reconnect to database after restore")
-                # Try to restore the backup we made with retry
-                if current_backup_path and current_backup_path.exists():
-                    logger.info("Attempting to restore previous database...")
-                    if self.kuzu_db_path.exists():
-                        retry_count = 0
-                        max_retries = 3
-                        while retry_count < max_retries:
-                            try:
-                                shutil.rmtree(self.kuzu_db_path)
-                                break
-                            except OSError as e:
-                                if e.errno == 35:
-                                    retry_count += 1
-                                    if retry_count < max_retries:
-                                        import time
-                                        time.sleep(2)
-                                    else:
-                                        logger.warning(f"Could not remove failed database directory: {e}")
-                                        break
-                                else:
-                                    logger.warning(f"Error removing failed database: {e}")
-                                    break
-                    
-                    # Restore previous database directory with retry
-                    retry_count = 0
-                    max_retries = 3
-                    while retry_count < max_retries:
-                        try:
-                            shutil.copytree(current_backup_path, self.kuzu_db_path)
-                            logger.info("Previous database restored")
-                            break
-                        except OSError as e:
-                            if e.errno == 35:
-                                retry_count += 1
-                                if retry_count < max_retries:
-                                    import time
-                                    time.sleep(2)
-                                else:
-                                    logger.error(f"Could not restore previous database after {max_retries} attempts: {e}")
-                            else:
-                                logger.error(f"Error restoring previous database: {e}")
-                                break
-                return False
+            logger.info(f"Simple restore completed successfully from backup: {backup_info.name}")
+            logger.info("Application restart required for clean database reconnection")
+            
+            # Clean up temporary backup if restore was successful
+            if current_backup_path and current_backup_path.exists():
+                shutil.rmtree(current_backup_path)
+                logger.info("Cleaned up temporary backup")
+            
+            return True
             
         except Exception as e:
             logger.error(f"Failed to restore simple backup {backup_id}: {e}")
@@ -399,7 +351,7 @@ class SimpleBackupService:
             # Step 1: Close connection and database instances
             # For backup operations, we need to ensure complete disconnection
             # Use the safe manager's health status to check connections
-            safe_manager = SafeKuzuManager()
+            safe_manager = get_safe_kuzu_manager()
             health_status = safe_manager.get_health_status()
             
             if health_status.get('database_initialized', False):
@@ -476,6 +428,30 @@ class SimpleBackupService:
         """Clear the restore-in-progress flag."""
         # Simplified - no longer using flags
         pass
+    
+    def _set_restart_required_flag(self) -> None:
+        """Set a flag indicating that application restart is required."""
+        try:
+            restart_flag_path = self.backup_dir / '.restart_required'
+            restart_flag_path.write_text(str(datetime.now().isoformat()))
+            logger.info(f"Restart flag set at: {restart_flag_path}")
+        except Exception as e:
+            logger.warning(f"Failed to set restart flag: {e}")
+    
+    def check_restart_required(self) -> bool:
+        """Check if application restart is required."""
+        restart_flag_path = self.backup_dir / '.restart_required'
+        return restart_flag_path.exists()
+    
+    def clear_restart_flag(self) -> None:
+        """Clear the restart required flag."""
+        try:
+            restart_flag_path = self.backup_dir / '.restart_required'
+            if restart_flag_path.exists():
+                restart_flag_path.unlink()
+                logger.info("Restart flag cleared")
+        except Exception as e:
+            logger.warning(f"Failed to clear restart flag: {e}")
     
     def _clear_service_cache(self) -> None:
         """Clear all cached service instances to force reinitialization after restore."""
@@ -557,7 +533,7 @@ class SimpleBackupService:
                 time.sleep(wait_time)
                 
                 # Initialize fresh database connection using SafeKuzuManager
-                safe_manager = SafeKuzuManager()
+                safe_manager = get_safe_kuzu_manager()
                 
                 # Test the connection by executing a simple query
                 try:

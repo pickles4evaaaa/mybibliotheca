@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% set active_page = "admin" %}
+
+{% block title %}Restore Complete - MyBibliotheca{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-success">
+                <div class="card-header bg-success text-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-check-circle"></i>
+                        Restore Complete
+                    </h4>
+                </div>
+                <div class="card-body text-center">
+                    <div class="mb-4">
+                        <i class="fas fa-database text-success" style="font-size: 4rem;"></i>
+                    </div>
+                    
+                    <h5 class="mb-3">Your backup has been restored successfully!</h5>
+                    <p class="mb-3">The application is restarting to finalize the restore process.</p>
+                    <p class="text-muted mb-4">You will be automatically logged out in a few seconds.</p>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Next steps:</strong> Once the restart is complete, log back in to access your restored library.
+                    </div>
+                    
+                    <a href="{{ url_for('auth.login') }}" class="btn btn-primary">
+                        <i class="fas fa-sign-in-alt"></i>
+                        Go to Login Page
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Simple redirect to login after a delay
+setTimeout(function() {
+    window.location.href = "{{ url_for('auth.login') }}";
+}, 5000); // Redirect to login in 5 seconds
+</script>
+{% endblock %}

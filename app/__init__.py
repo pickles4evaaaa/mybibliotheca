@@ -515,6 +515,19 @@ def create_app():
                 app.direct_import_service = direct_import_service  # type: ignore
                 if verbose_init:
                     print("📦 Kuzu services initialized successfully")
+                
+                # Clear restart flag if it exists (after successful restore)
+                try:
+                    from .services.simple_backup_service import get_simple_backup_service
+                    backup_service = get_simple_backup_service()
+                    if backup_service.check_restart_required():
+                        backup_service.clear_restart_flag()
+                        if verbose_init:
+                            print("🔄 Restart flag cleared after successful restoration")
+                except Exception as restart_e:
+                    if verbose_init:
+                        print(f"Note: Could not check/clear restart flag: {restart_e}")
+                    
             except Exception as e:
                 if verbose_init:
                     print(f"Error initializing services: {e}")

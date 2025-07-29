@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
 from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType
-from .utils.safe_kuzu_manager import SafeKuzuManager
+from .utils.safe_kuzu_manager import get_safe_kuzu_manager
 from .services.kuzu_custom_field_service import KuzuCustomFieldService
 
 
@@ -130,7 +130,7 @@ class SimplifiedBookService:
     
     def __init__(self):
         # Use SafeKuzuManager for thread-safe database operations
-        self.kuzu_manager = SafeKuzuManager()
+        self.kuzu_manager = get_safe_kuzu_manager()
         self.custom_field_service = KuzuCustomFieldService()
         print(f"🔥 [SIMPLIFIED_SERVICE] Using SafeKuzuManager for thread-safe database access")
     
@@ -1118,15 +1118,14 @@ class SimplifiedBookService:
                     from .location_service import LocationService
                     from .utils.safe_kuzu_manager import safe_get_connection
                     
-                    with safe_get_connection(user_id=user_id, operation="add_book_to_location") as connection:
-                        print(f"🔥 [LOCATION_SERVICE] Using safe Kuzu connection for user {user_id}")
-                        location_service = LocationService(connection)
-                        
-                        location_success = location_service.add_book_to_location(book_id, location_id, user_id)
-                        if location_success:
-                            pass  # Book added to location successfully
-                        else:
-                            pass  # Failed to add book to location
+                    print(f"🔥 [LOCATION_SERVICE] Using SafeKuzuManager for user {user_id}")
+                    location_service = LocationService()
+                    
+                    location_success = location_service.add_book_to_location(book_id, location_id, user_id)
+                    if location_success:
+                        pass  # Book added to location successfully
+                    else:
+                        pass  # Failed to add book to location
                             
                 except Exception as e:
                     pass  # Don't fail the entire operation for location assignment issues
@@ -1135,25 +1134,24 @@ class SimplifiedBookService:
                     from .location_service import LocationService
                     from .utils.safe_kuzu_manager import safe_get_connection
                     
-                    with safe_get_connection(user_id=user_id, operation="setup_default_location") as connection:
-                        print(f"🔥 [DEFAULT_LOCATION] Using safe Kuzu connection for user {user_id}")
-                        location_service = LocationService(connection)
-                        
-                        # Get or create default location
-                        default_location = location_service.get_default_location(user_id)
-                        if not default_location:
-                            default_locations = location_service.setup_default_locations()
-                            if default_locations:
-                                default_location = default_locations[0]
-                        
-                        if default_location and default_location.id:
-                            location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
-                            if location_success:
-                                pass  # Book added to default location successfully
-                            else:
-                                pass  # Failed to add book to default location
+                    print(f"🔥 [DEFAULT_LOCATION] Using SafeKuzuManager for user {user_id}")
+                    location_service = LocationService()
+                    
+                    # Get or create default location
+                    default_location = location_service.get_default_location(user_id)
+                    if not default_location:
+                        default_locations = location_service.setup_default_locations()
+                        if default_locations:
+                            default_location = default_locations[0]
+                    
+                    if default_location and default_location.id:
+                        location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
+                        if location_success:
+                            pass  # Book added to default location successfully
                         else:
-                            pass  # No default location available
+                            pass  # Failed to add book to default location
+                    else:
+                        pass  # No default location available
                             
                 except Exception as e:
                     pass  # Don't fail the entire operation for location assignment issues

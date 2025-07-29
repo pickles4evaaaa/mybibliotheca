@@ -14,7 +14,7 @@ if TYPE_CHECKING:
         ReadingStatus, OwnershipStatus, MediaType
     )
 
-from ..utils.safe_kuzu_manager import SafeKuzuManager, safe_get_connection
+from ..utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager, safe_get_connection
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ class KuzuUserRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     async def create(self, user: Any) -> Optional[Any]:
@@ -310,7 +310,7 @@ class KuzuPersonRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
@@ -609,7 +609,7 @@ class KuzuBookRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
@@ -1467,7 +1467,7 @@ class KuzuUserBookRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
@@ -1804,7 +1804,7 @@ class KuzuLocationRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
@@ -1920,7 +1920,7 @@ class KuzuCategoryRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
@@ -2128,7 +2128,7 @@ class KuzuCustomFieldRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
@@ -2345,7 +2345,7 @@ class KuzuImportMappingRepository:
     def safe_manager(self):
         """Lazy SafeKuzuManager connection - only connect when needed."""
         if self._safe_manager is None:
-            self._safe_manager = SafeKuzuManager()
+            self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
     
     @property
