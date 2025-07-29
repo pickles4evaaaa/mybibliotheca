@@ -893,18 +893,33 @@ def library():
     # Calculate statistics for filter buttons - handle both dict and object formats
     def get_reading_status(book):
         if isinstance(book, dict):
-            return book.get('ownership', {}).get('reading_status')
+            # Debug: Print the structure of the first book to understand data format
+            if user_books and book == user_books[0]:
+                print(f"🔍 DEBUG: Book structure - Keys: {list(book.keys())}")
+                if 'ownership' in book:
+                    print(f"🔍 DEBUG: Ownership keys: {list(book.get('ownership', {}).keys())}")
+                print(f"🔍 DEBUG: Direct reading_status: {book.get('reading_status')}")
+                print(f"🔍 DEBUG: Nested reading_status: {book.get('ownership', {}).get('reading_status')}")
+            
+            # First try direct field, then nested under ownership, then check for legacy fields
+            status = (book.get('reading_status') or 
+                     book.get('ownership', {}).get('reading_status') or
+                     book.get('status'))  # legacy field
+            return status
         return getattr(book, 'reading_status', None)
     
     def get_ownership_status(book):
         if isinstance(book, dict):
-            return book.get('ownership', {}).get('ownership_status')
+            # First try direct field, then nested under ownership
+            status = (book.get('ownership_status') or 
+                     book.get('ownership', {}).get('ownership_status'))
+            return status
         return getattr(book, 'ownership_status', None)
     
     stats = {
         'total_books': len(user_books),
         'books_read': len([b for b in user_books if get_reading_status(b) == 'read']),
-        'currently_reading': len([b for b in user_books if get_reading_status(b) == 'reading']),
+        'currently_reading': len([b for b in user_books if get_reading_status(b) in ['reading', 'currently_reading']]),
         'want_to_read': len([b for b in user_books if get_reading_status(b) == 'plan_to_read']),
         'on_hold': len([b for b in user_books if get_reading_status(b) == 'on_hold']),
         'wishlist': len([b for b in user_books if get_ownership_status(b) == 'wishlist']),
@@ -919,6 +934,9 @@ def library():
     if status_filter and status_filter != 'all':
         if status_filter == 'wishlist':
             filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
+        elif status_filter == 'reading':
+            # Handle both 'reading' and 'currently_reading' for backwards compatibility
+            filtered_books = [book for book in filtered_books if get_reading_status(book) in ['reading', 'currently_reading']]
         else:
             filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
     

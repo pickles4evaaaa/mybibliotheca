@@ -294,7 +294,7 @@
                                                 <small class="text-muted d-block">Reading Status</small>
                                                 <span class="fw-medium">
                                                     {% if book.reading_status == 'plan_to_read' %}📚 Plan to Read
-                                                    {% elif book.reading_status == 'currently_reading' %}📖 Currently Reading
+                                                    {% elif book.reading_status == 'reading' or book.reading_status == 'currently_reading' %}📖 Currently Reading
                                                     {% elif book.reading_status == 'read' %}✅ Read
                                                     {% elif book.reading_status == 'on_hold' %}⏸️ On Hold
                                                     {% elif book.reading_status == 'did_not_finish' %}❌ Did Not Finish
@@ -1199,7 +1199,7 @@
                                             <small class="text-muted">Current status:</small>
                                             <span class="ms-1 fw-medium">
                                                 {% if book.reading_status == 'plan_to_read' %}📚 Plan to Read
-                                                {% elif book.reading_status == 'reading' %}📖 Currently Reading
+                                                {% elif book.reading_status == 'reading' or book.reading_status == 'currently_reading' %}📖 Currently Reading
                                                 {% elif book.reading_status == 'read' %}✅ Read
                                                 {% elif book.reading_status == 'on_hold' %}⏸️ On Hold
                                                 {% elif book.reading_status == 'did_not_finish' %}❌ Did Not Finish

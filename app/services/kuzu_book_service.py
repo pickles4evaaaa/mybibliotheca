@@ -397,38 +397,26 @@ class KuzuBookService:
             
             book.updated_at = datetime.utcnow()
             
-            # Handle series field conversion
-            series_value = None
-            if hasattr(book, 'series') and book.series:
-                if hasattr(book.series, 'name'):
-                    series_value = book.series.name
-                else:
-                    series_value = str(book.series)
+            # Prepare update data - ONLY include fields that were actually updated
+            book_dict = {}
             
-            # Prepare update data (exclude 'id' as it's the primary key)
-            book_dict = {
-                'title': book.title,
-                'normalized_title': book.normalized_title,
-                'subtitle': book.subtitle,
-                'isbn13': book.isbn13,
-                'isbn10': book.isbn10,
-                'asin': book.asin,
-                'description': book.description,
-                'published_date': book.published_date,
-                'page_count': book.page_count,
-                'language': book.language,
-                'cover_url': book.cover_url,
-                'google_books_id': book.google_books_id,
-                'openlibrary_id': book.openlibrary_id,
-                'average_rating': book.average_rating,
-                'rating_count': book.rating_count,
-                'custom_metadata': book.custom_metadata,
-                'series': series_value,
-                'series_volume': getattr(book, 'series_volume', None),
-                'series_order': getattr(book, 'series_order', None),
-                'created_at': book.created_at,
-                'updated_at': book.updated_at
-            }
+            # Always update the timestamp
+            book_dict['updated_at'] = book.updated_at
+            
+            # Only include fields that were explicitly updated
+            for field, value in updates.items():
+                if field == 'series' and value:
+                    # Handle series field conversion
+                    if hasattr(value, 'name'):
+                        book_dict['series'] = value.name
+                    else:
+                        book_dict['series'] = str(value)
+                elif hasattr(book, field):
+                    # Get the updated value from the book object
+                    book_dict[field] = getattr(book, field)
+                else:
+                    # Field might not exist on book object, use the raw value
+                    book_dict[field] = value
             
             # Update the book node in Kuzu using safe query execution
             set_clauses = []

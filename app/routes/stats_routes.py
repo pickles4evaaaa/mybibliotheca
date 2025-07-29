@@ -65,8 +65,10 @@ def index():
     books_finished_this_month = len([b for b in user_books if (fd := get_finish_date(b)) and fd >= month_start])
     books_finished_this_year = len([b for b in user_books if (fd := get_finish_date(b)) and fd >= year_start])
     books_finished_total = len([b for b in user_books if get_finish_date(b)])
-    currently_reading = [b for b in user_books if not getattr(b, 'finish_date', None) and not getattr(b, 'want_to_read', False) and not getattr(b, 'library_only', False)]
-    want_to_read = [b for b in user_books if getattr(b, 'want_to_read', False)]
+    
+    # Use reading_status field for currently reading (handle both 'reading' and 'currently_reading')
+    currently_reading = [b for b in user_books if getattr(b, 'reading_status', None) in ['reading', 'currently_reading']]
+    want_to_read = [b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']
     streak = current_user.get_reading_streak()
 
     # Community stats
@@ -121,11 +123,9 @@ def index():
                         }
                         recent_finished_books.append(recent_book_data)
                 
-                # Currently reading books
+                # Currently reading books - use reading_status field
                 elif (getattr(user, 'share_current_reading', False) and
-                      getattr(book, 'start_date', None) and 
-                      not getattr(book, 'want_to_read', False) and 
-                      not getattr(book, 'library_only', False)):
+                      getattr(book, 'reading_status', None) in ['reading', 'currently_reading']):
                     book_data = {
                         'title': getattr(book, 'title', 'Unknown'),
                         'author': getattr(book, 'author', 'Unknown'),
@@ -212,8 +212,7 @@ def community_active_readers():
                     total_books += 1
                     if finish_date >= month_start:
                         books_this_month += 1
-                elif (not getattr(book, 'want_to_read', False) and 
-                      not getattr(book, 'library_only', False)):
+                elif getattr(book, 'reading_status', None) in ['reading', 'currently_reading']:
                     currently_reading += 1
             
             user_stats.append({
@@ -293,11 +292,8 @@ def community_currently_reading():
                 continue
                 
             for book in user_books:
-                # Currently reading: has start date but no finish date
-                if (getattr(book, 'start_date', None) and 
-                    not getattr(book, 'finish_date', None) and
-                    not getattr(book, 'want_to_read', False) and 
-                    not getattr(book, 'library_only', False)):
+                # Currently reading: use reading_status field
+                if getattr(book, 'reading_status', None) in ['reading', 'currently_reading']:
                     
                     # Create book dict with user info for template
                     book_data = {
