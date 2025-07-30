@@ -1,0 +1,914 @@
+{% extends "base.html" %}
+
+{% block title %}Reading Journey Calendar - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h2 text-primary">
+                        <i class="bi bi-calendar3"></i>
+                        Reading Journey Calendar
+                    </h1>
+                    <p class="text-muted mb-0">Your reading activity in calendar view</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('stats.index') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to Stats
+                    </a>
+                </div>
+            </div>
+
+            <!-- Stats Summary -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card text-center h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-primary">{{ stats.total_logs }}</h5>
+                            <p class="card-text text-muted">Reading Sessions</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-info">{{ stats.month_name }} {{ stats.year }}</h5>
+                            <p class="card-text text-muted">Current Period</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-warning">{{ stats.active_days }}</h5>
+                            <p class="card-text text-muted">Active Days</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-success">{{ ((stats.active_days / 30) * 100)|round(1) }}%</h5>
+                            <p class="card-text text-muted">Activity Rate</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calendar Container -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-calendar-week"></i> {{ calendar_data.month_name }} {{ calendar_data.year }}
+                        </h5>
+                        <div class="text-muted small">
+                            {{ stats.total_logs }} reading sessions
+                        </div>
+                    </div>
+                    
+                    <!-- Calendar Navigation -->
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <div class="btn-group" role="group">
+                                <a href="{{ url_for('stats.reading_journey', year=(calendar_data.year-1 if calendar_data.month == 1 else calendar_data.year), month=(calendar_data.month-1 if calendar_data.month > 1 else 12)) }}" 
+                                   class="btn btn-outline-secondary btn-sm">
+                                    <i class="bi bi-chevron-left"></i> Previous
+                                </a>
+                                <a href="{{ url_for('stats.reading_journey') }}" 
+                                   class="btn btn-outline-primary btn-sm">
+                                    Today
+                                </a>
+                                <a href="{{ url_for('stats.reading_journey', year=(calendar_data.year+1 if calendar_data.month == 12 else calendar_data.year), month=(calendar_data.month+1 if calendar_data.month < 12 else 1)) }}" 
+                                   class="btn btn-outline-secondary btn-sm">
+                                    Next <i class="bi bi-chevron-right"></i>
+                                </a>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <p class="text-muted small mb-0 text-end">
+                                Click on book covers to view reading session details
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <!-- Calendar Grid -->
+                    <div class="calendar-container">
+                        <!-- Calendar Header (Days of Week) -->
+                        <div class="calendar-header">
+                            <div class="calendar-day-header">Sun</div>
+                            <div class="calendar-day-header">Mon</div>
+                            <div class="calendar-day-header">Tue</div>
+                            <div class="calendar-day-header">Wed</div>
+                            <div class="calendar-day-header">Thu</div>
+                            <div class="calendar-day-header">Fri</div>
+                            <div class="calendar-day-header">Sat</div>
+                        </div>
+                        
+                        <!-- Calendar Days -->
+                        <div class="calendar-grid">
+                            {% for day in calendar_data.days %}
+                            <div class="calendar-day {% if not day.is_current_month %}other-month{% endif %} {% if day.logs or day.clusters %}has-activity{% endif %}">
+                                {% if day.day %}
+                                <div class="day-number">{{ day.day }}</div>
+                                
+                                <!-- Individual Reading Logs (1-2 logs) -->
+                                {% for log in day.logs %}
+                                <div class="calendar-log" 
+                                     data-log-id="{{ log.id }}"
+                                     data-book-title="{{ log.title }}"
+                                     data-book-authors="{{ log.authors_text }}"
+                                     data-log-date="{{ log.log_date }}"
+                                     data-reading-status="{{ log.reading_status }}"
+                                     data-notes="{{ log.personal_notes or '' }}"
+                                     data-pages-current="{{ log.pages_read or '' }}"
+                                     data-pages-total="{{ log.page_count or '' }}"
+                                     data-progress-percent="{{ log.progress_percentage or '' }}"
+                                     data-start-page="{{ log.start_page or '' }}"
+                                     data-end-page="{{ log.end_page or '' }}"
+                                     data-time-read="{{ log.time_read or '' }}"
+                                     onclick="showLogDetails('{{ log.id }}')"
+                                     style="cursor: pointer;"
+                                     title="Click to view reading session details">
+                                    {% if log.cover_url %}
+                                    <img src="{{ log.cover_url }}" 
+                                         alt="{{ log.title }}" 
+                                         class="log-cover-small"
+                                         style="border: 2px solid {{ log.status_color }};">
+                                    {% else %}
+                                    <div class="log-placeholder-small" 
+                                         style="background: {{ log.status_color }}; color: white;">
+                                        {{ log.display_title or log.title[:3] }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                                
+                                <!-- Clusters (3+ logs) -->
+                                {% for cluster in day.clusters %}
+                                <div class="calendar-cluster" 
+                                     data-cluster-count="{{ cluster.count }}"
+                                     data-cluster-date="{{ cluster.date }}"
+                                     data-cluster-logs="{{ cluster.logs | map(attribute='id') | join(',') }}"
+                                     onclick="showClusterDetails(this)"
+                                     style="cursor: pointer;"
+                                     title="Click to view {{ cluster.count }} reading sessions">
+                                    <div class="cluster-circle-small">
+                                        {{ cluster.count }}
+                                    </div>
+                                </div>
+                                <!-- Store cluster log data as hidden elements -->
+                                {% for log in cluster.logs %}
+                                <div class="d-none cluster-log-data"
+                                     data-cluster-date="{{ cluster.date }}"
+                                     data-log-id="{{ log.id }}"
+                                     data-book-title="{{ log.title }}"
+                                     data-book-authors="{{ log.authors_text }}"
+                                     data-log-date="{{ log.log_date }}"
+                                     data-reading-status="{{ log.reading_status }}"
+                                     data-notes="{{ log.personal_notes or '' }}"
+                                     data-pages-current="{{ log.pages_read or '' }}"
+                                     data-pages-total="{{ log.page_count or '' }}"
+                                     data-progress-percent="{{ log.progress_percentage or '' }}"
+                                     data-start-page="{{ log.start_page or '' }}"
+                                     data-end-page="{{ log.end_page or '' }}"
+                                     data-time-read="{{ log.time_read or '' }}"
+                                     data-cover-url="{{ log.cover_url or '' }}">
+                                </div>
+                                {% endfor %}
+                                {% endfor %}
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Reading Log Details Modal -->
+            <div class="modal fade" id="logDetailsModal" tabindex="-1" aria-labelledby="logDetailsModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="logDetailsModalLabel">Reading Session Details</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body" id="logDetailsContent">
+                            <!-- Log details will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="card-title mb-0">
+                                <i class="bi bi-info-circle"></i> Reading Status Legend
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-2 d-flex align-items-center mb-2">
+                                    <div style="width: 16px; height: 16px; background: #28a745; border-radius: 50%; margin-right: 8px;"></div>
+                                    <span class="small">Read</span>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center mb-2">
+                                    <div style="width: 16px; height: 16px; background: #17a2b8; border-radius: 50%; margin-right: 8px;"></div>
+                                    <span class="small">Reading</span>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center mb-2">
+                                    <div style="width: 16px; height: 16px; background: #ffc107; border-radius: 50%; margin-right: 8px;"></div>
+                                    <span class="small">Plan to Read</span>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center mb-2">
+                                    <div style="width: 16px; height: 16px; background: #fd7e14; border-radius: 50%; margin-right: 8px;"></div>
+                                    <span class="small">On Hold</span>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center mb-2">
+                                    <div style="width: 16px; height: 16px; background: #dc3545; border-radius: 50%; margin-right: 8px;"></div>
+                                    <span class="small">Did Not Finish</span>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center mb-2">
+                                    <div style="width: 16px; height: 16px; background: #6c757d; border-radius: 50%; margin-right: 8px;"></div>
+                                    <span class="small">Other</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Calendar Grid Styling */
+.calendar-container {
+    background: #f8f9fa;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.calendar-header {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    background: #343a40;
+    color: white;
+}
+
+.calendar-day-header {
+    padding: 15px 8px;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-right: 1px solid #495057;
+}
+
+.calendar-day-header:last-child {
+    border-right: none;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background: #dee2e6;
+}
+
+.calendar-day {
+    background: white;
+    min-height: 120px;
+    padding: 8px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    transition: background-color 0.2s ease;
+}
+
+.calendar-day:hover {
+    background: #f8f9fa;
+}
+
+.calendar-day.other-month {
+    background: #f8f9fa;
+    color: #6c757d;
+}
+
+.calendar-day.has-activity {
+    background: #e3f2fd;
+}
+
+.day-number {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #343a40;
+    margin-bottom: 4px;
+    align-self: flex-start;
+}
+
+.other-month .day-number {
+    color: #adb5bd;
+}
+
+/* Reading Log Items in Calendar */
+.calendar-log {
+    cursor: pointer;
+    margin: 2px;
+    transition: transform 0.2s ease;
+    max-width: fit-content;
+}
+
+.calendar-log:hover {
+    transform: scale(1.05);
+    z-index: 10;
+}
+
+.log-cover-small {
+    width: 25px;
+    height: 35px;
+    object-fit: cover;
+    border-radius: 3px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.log-placeholder-small {
+    width: 25px;
+    height: 35px;
+    border-radius: 3px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1;
+    padding: 2px;
+}
+
+/* Cluster Circles in Calendar */
+.calendar-cluster {
+    cursor: pointer;
+    margin: 2px;
+    transition: transform 0.2s ease;
+    max-width: fit-content;
+}
+
+.calendar-cluster:hover {
+    transform: scale(1.1);
+    z-index: 10;
+}
+
+.cluster-circle-small {
+    width: 30px;
+    height: 30px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+    font-size: 0.8rem;
+}
+
+.calendar-cluster:hover .cluster-circle-small {
+    background: linear-gradient(135deg, #0056b3 0%, #003d82 100%);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .calendar-day {
+        min-height: 80px;
+        padding: 4px;
+    }
+    
+    .book-cover-small {
+        width: 20px;
+        height: 28px;
+    }
+    
+    .book-placeholder-small {
+        width: 20px;
+        height: 28px;
+        font-size: 0.5rem;
+    }
+    
+    .cluster-circle-small {
+        width: 25px;
+        height: 25px;
+        font-size: 0.7rem;
+    }
+    
+    .day-number {
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .calendar-day {
+        min-height: 60px;
+        padding: 2px;
+    }
+    
+    .book-cover-small {
+        width: 15px;
+        height: 20px;
+    }
+    
+    .book-placeholder-small {
+        width: 15px;
+        height: 20px;
+        font-size: 0.4rem;
+    }
+    
+    .cluster-circle-small {
+        width: 20px;
+        height: 20px;
+        font-size: 0.6rem;
+    }
+    
+    .calendar-day-header {
+        padding: 8px 4px;
+        font-size: 0.8rem;
+    }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize tooltips
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+    
+    // Handle individual book clicks
+    document.querySelectorAll('.calendar-book').forEach(function(bookEl) {
+        bookEl.addEventListener('click', function() {
+            showBookModal(this);
+        });
+    });
+    
+    // Handle cluster clicks
+    document.querySelectorAll('.calendar-cluster').forEach(function(clusterEl) {
+        clusterEl.addEventListener('click', function() {
+            try {
+                const bookCount = parseInt(this.getAttribute('data-cluster-count'));
+                const date = this.getAttribute('data-cluster-date');
+                
+                // Extract book data from individual attributes
+                const books = [];
+                for (let i = 0; i < bookCount; i++) {
+                    const book = {
+                        id: this.getAttribute(`data-book-${i}-id`),
+                        uid: this.getAttribute(`data-book-${i}-uid`),
+                        title: this.getAttribute(`data-book-${i}-title`),
+                        authors_text: this.getAttribute(`data-book-${i}-authors`),
+                        reading_status: this.getAttribute(`data-book-${i}-status`),
+                        status_color: this.getAttribute(`data-book-${i}-status-color`),
+                        cover_url: this.getAttribute(`data-book-${i}-cover`),
+                        user_rating: this.getAttribute(`data-book-${i}-rating`),
+                        page_count: this.getAttribute(`data-book-${i}-pages`),
+                        categories_text: this.getAttribute(`data-book-${i}-categories`),
+                        personal_notes: this.getAttribute(`data-book-${i}-notes`),
+                        date_added: this.getAttribute(`data-book-${i}-date`),
+                        display_title: this.getAttribute(`data-book-${i}-display-title`)
+                    };
+                    books.push(book);
+                }
+                
+                showClusterModal(books, date);
+                
+            } catch (error) {
+                console.error('Error parsing cluster data:', error);
+                alert('Failed to load cluster books: ' + error.message);
+            }
+        });
+    });
+});
+
+function showBookModal(bookEl) {
+    try {
+        // Get book data from individual attributes
+        const book = {
+            id: bookEl.getAttribute('data-book-id'),
+            uid: bookEl.getAttribute('data-book-uid'),
+            title: bookEl.getAttribute('data-book-title'),
+            authors_text: bookEl.getAttribute('data-book-authors'),
+            reading_status: bookEl.getAttribute('data-book-status'),
+            status_color: bookEl.getAttribute('data-book-status-color'),
+            cover_url: bookEl.getAttribute('data-book-cover'),
+            user_rating: bookEl.getAttribute('data-book-rating'),
+            page_count: bookEl.getAttribute('data-book-pages'),
+            categories_text: bookEl.getAttribute('data-book-categories'),
+            personal_notes: bookEl.getAttribute('data-book-notes'),
+            date_added: bookEl.getAttribute('data-book-date')
+        };
+        
+        // Check if modal exists
+        const modalElement = document.getElementById('bookDetailsModal');
+        const modalContent = document.getElementById('bookDetailsContent');
+        
+        if (!modalElement || !modalContent) {
+            throw new Error('Modal elements not found');
+        }
+        
+        // Populate modal with book details
+        modalContent.innerHTML = generateBookModalContent(book);
+        
+        // Show modal
+        const modal = new bootstrap.Modal(modalElement);
+        modal.show();
+        
+    } catch (error) {
+        console.error('Error displaying book details:', error);
+        alert('Failed to display book details: ' + error.message);
+    }
+}
+
+function showClusterModal(books, date) {
+    try {
+        const modalElement = document.getElementById('bookDetailsModal');
+        const modalContent = document.getElementById('bookDetailsContent');
+        const modalTitle = document.getElementById('bookDetailsModalLabel');
+        
+        if (!modalElement || !modalContent || !modalTitle) {
+            throw new Error('Modal elements not found');
+        }
+        
+        // Update modal title
+        modalTitle.textContent = `${books.length} Books on ${formatDate(date)}`;
+        
+        // Create cluster view
+        let clusterHTML = `
+            <div class="cluster-books-container">
+                <div class="row g-3">
+        `;
+        
+        books.forEach(function(book) {
+            clusterHTML += `
+                <div class="col-md-4 col-sm-6">
+                    <div class="cluster-book-item card h-100" onclick="showIndividualBookFromCluster(this)" 
+                         data-book-id="${book.id || ''}"
+                         data-book-uid="${book.uid || ''}"
+                         data-book-title="${book.title || ''}"
+                         data-book-authors="${book.authors_text || ''}"
+                         data-book-status="${book.reading_status || ''}"
+                         data-book-status-color="${book.status_color || ''}"
+                         data-book-cover="${book.cover_url || ''}"
+                         data-book-rating="${book.user_rating || ''}"
+                         data-book-pages="${book.page_count || ''}"
+                         data-book-categories="${book.categories_text || ''}"
+                         data-book-notes="${book.personal_notes || ''}"
+                         data-book-date="${book.date_added || ''}">
+                        <div class="card-body p-2 text-center">
+                            ${book.cover_url ? 
+                                `<img src="${book.cover_url}" alt="${book.title}" class="img-fluid mb-2" style="max-height: 80px; max-width: 60px; object-fit: cover; border-radius: 4px; border: 2px solid ${book.status_color};">` :
+                                `<div class="bg-secondary text-white rounded mb-2 mx-auto d-flex align-items-center justify-content-center" style="height: 80px; width: 60px; font-size: 0.7rem; text-align: center;">${book.display_title || book.title.substring(0, 10)}</div>`
+                            }
+                            <h6 class="card-title small mb-1">${book.title}</h6>
+                            <p class="card-text small text-muted mb-1">${book.authors_text}</p>
+                            <span class="badge" style="background-color: ${book.status_color}; font-size: 0.7rem;">
+                                ${formatStatus(book.reading_status)}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        clusterHTML += `
+                </div>
+                <div class="text-center mt-3">
+                    <button class="btn btn-secondary" onclick="closeClusterModal()">Close</button>
+                </div>
+            </div>
+        `;
+        
+        modalContent.innerHTML = clusterHTML;
+        
+        // Show modal
+        const modal = new bootstrap.Modal(modalElement);
+        modal.show();
+        
+    } catch (error) {
+        console.error('Error displaying cluster:', error);
+        alert('Failed to display cluster: ' + error.message);
+    }
+}
+
+function showIndividualBookFromCluster(bookEl) {
+    // Close cluster modal and show individual book modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('bookDetailsModal'));
+    if (modal) {
+        modal.hide();
+    }
+    
+    // Wait for modal to close then show book details
+    setTimeout(function() {
+        showBookModal(bookEl);
+    }, 300);
+}
+
+function closeClusterModal() {
+    const modal = bootstrap.Modal.getInstance(document.getElementById('bookDetailsModal'));
+    if (modal) {
+        modal.hide();
+    }
+}
+
+function generateBookModalContent(book) {
+    return `
+        <div class="row">
+            <div class="col-md-4">
+                ${book.cover_url ? 
+                    `<img src="${book.cover_url}" alt="${book.title || 'Book cover'}" class="img-fluid rounded shadow">` :
+                    `<div class="bg-secondary text-white rounded d-flex align-items-center justify-content-center" style="height: 200px;">
+                        <i class="bi bi-book" style="font-size: 3rem;"></i>
+                    </div>`
+                }
+            </div>
+            <div class="col-md-8">
+                <h4>${book.title || 'Unknown Title'}</h4>
+                <p class="text-muted">by ${book.authors_text || 'Unknown Author'}</p>
+                
+                <div class="row">
+                    <div class="col-sm-6">
+                        <strong>Status:</strong> 
+                        <span class="badge" style="background-color: ${book.status_color || '#6c757d'};">
+                            ${formatStatus(book.reading_status)}
+                        </span>
+                    </div>
+                    <div class="col-sm-6">
+                        <strong>Added:</strong> ${formatDate(book.date_added)}
+                    </div>
+                    ${book.user_rating ? `
+                    <div class="col-sm-6">
+                        <strong>Rating:</strong> ${'★'.repeat(parseInt(book.user_rating))}${'☆'.repeat(5-parseInt(book.user_rating))}
+                    </div>
+                    ` : ''}
+                    ${book.page_count ? `
+                    <div class="col-sm-6">
+                        <strong>Pages:</strong> ${book.page_count}
+                    </div>
+                    ` : ''}
+                    ${book.categories_text ? `
+                    <div class="col-sm-12 mt-2">
+                        <strong>Categories:</strong> ${book.categories_text}
+                    </div>
+                    ` : ''}
+                </div>
+                
+                ${book.personal_notes ? `
+                <div class="mt-3">
+                    <strong>Notes:</strong>
+                    <p class="text-muted">${book.personal_notes}</p>
+                </div>
+                ` : ''}
+                
+                <div class="mt-3">
+                    <a href="/view_book_enhanced/${book.uid}" class="btn btn-primary btn-sm">View Details</a>
+                    <a href="/view_book_enhanced/${book.uid}" class="btn btn-outline-secondary btn-sm">Edit</a>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function navigateMonth(direction) {
+    const urlParams = new URLSearchParams(window.location.search);
+    let year = parseInt(urlParams.get('year')) || {{ calendar_data.year }};
+    let month = parseInt(urlParams.get('month')) || {{ calendar_data.month }};
+    
+    month += direction;
+    if (month > 12) {
+        month = 1;
+        year++;
+    } else if (month < 1) {
+        month = 12;
+        year--;
+    }
+    
+    urlParams.set('year', year);
+    urlParams.set('month', month);
+    
+    window.location.href = '{{ url_for("stats.reading_journey") }}?' + urlParams.toString();
+}
+
+function showLogDetails(logId) {
+    const logElement = document.querySelector(`[data-log-id="${logId}"]`);
+    if (!logElement) return;
+    
+    const bookTitle = logElement.dataset.bookTitle;
+    const bookAuthors = logElement.dataset.bookAuthors;
+    const logDate = logElement.dataset.logDate;
+    const readingStatus = logElement.dataset.readingStatus;
+    const notes = logElement.dataset.notes || '';
+    const pagesCurrent = logElement.dataset.pagesCurrent || '';
+    const pagesTotal = logElement.dataset.pagesTotal || '';
+    const progressPercent = logElement.dataset.progressPercent || '';
+    const startPage = logElement.dataset.startPage || '';
+    const endPage = logElement.dataset.endPage || '';
+    const timeRead = logElement.dataset.timeRead || '';
+    
+    // Build progress information
+    let progressInfo = '';
+    if (pagesCurrent && pagesTotal) {
+        progressInfo = `Page ${pagesCurrent} of ${pagesTotal}`;
+        if (progressPercent) {
+            progressInfo += ` (${progressPercent}%)`;
+        }
+    } else if (progressPercent) {
+        progressInfo = `${progressPercent}% complete`;
+    }
+    
+    // Build session metrics
+    let metricsHtml = '';
+    const metrics = [];
+    
+    if (startPage && endPage) {
+        metrics.push(`<strong>Pages:</strong> ${startPage} - ${endPage}`);
+    } else if (pagesCurrent) {
+        metrics.push(`<strong>Pages Read:</strong> ${pagesCurrent}`);
+    }
+    
+    if (timeRead && parseFloat(timeRead) > 0) {
+        const timeFormatted = parseFloat(timeRead) >= 60 
+            ? `${Math.floor(parseFloat(timeRead) / 60)}h ${Math.round(parseFloat(timeRead) % 60)}m`
+            : `${Math.round(parseFloat(timeRead))}m`;
+        metrics.push(`<strong>Time Read:</strong> ${timeFormatted}`);
+    }
+    
+    if (progressInfo) {
+        metrics.push(`<strong>Progress:</strong> ${progressInfo}`);
+    }
+    
+    if (metrics.length > 0) {
+        metricsHtml = `
+            <div class="row mt-2">
+                ${metrics.map(metric => `<div class="col-md-6"><small>${metric}</small></div>`).join('')}
+            </div>
+        `;
+    }
+    
+    const modalContent = `
+        <div class="modal fade" id="logDetailsModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Reading Session Details</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <h6 class="fw-bold">${bookTitle}</h6>
+                        ${bookAuthors ? `<p class="text-muted mb-2">by ${bookAuthors}</p>` : ''}
+                        <hr>
+                        <p><strong>Date:</strong> ${new Date(logDate).toLocaleDateString()}</p>
+                        <p><strong>Status:</strong> ${formatStatus(readingStatus)}</p>
+                        ${metricsHtml}
+                        ${notes ? `<div class="mt-3"><strong>Notes:</strong><div class="border rounded p-2 mt-1">${notes}</div></div>` : ''}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal
+    const existingModal = document.getElementById('logDetailsModal');
+    if (existingModal) existingModal.remove();
+    
+    // Add new modal to body
+    document.body.insertAdjacentHTML('beforeend', modalContent);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('logDetailsModal'));
+    modal.show();
+}
+
+function showClusterDetails(clusterElement) {
+    const clusterDate = clusterElement.dataset.clusterDate;
+    const clusterCount = clusterElement.dataset.clusterCount;
+    
+    // Find all log data for this cluster
+    const logDataElements = document.querySelectorAll(`[data-cluster-date="${clusterDate}"].cluster-log-data`);
+    
+    let logsHtml = '';
+    logDataElements.forEach((logData, index) => {
+        const bookTitle = logData.dataset.bookTitle;
+        const bookAuthors = logData.dataset.bookAuthors;
+        const logDate = logData.dataset.logDate;
+        const readingStatus = logData.dataset.readingStatus;
+        const notes = logData.dataset.notes || '';
+        const pagesCurrent = logData.dataset.pagesCurrent || '';
+        const pagesTotal = logData.dataset.pagesTotal || '';
+        const progressPercent = logData.dataset.progressPercent || '';
+        const startPage = logData.dataset.startPage || '';
+        const endPage = logData.dataset.endPage || '';
+        const timeRead = logData.dataset.timeRead || '';
+        
+        // Build metrics for this log
+        const metrics = [];
+        
+        if (startPage && endPage) {
+            metrics.push(`Pages: ${startPage} - ${endPage}`);
+        } else if (pagesCurrent) {
+            metrics.push(`Pages Read: ${pagesCurrent}`);
+        }
+        
+        if (timeRead && parseFloat(timeRead) > 0) {
+            const timeFormatted = parseFloat(timeRead) >= 60 
+                ? `${Math.floor(parseFloat(timeRead) / 60)}h ${Math.round(parseFloat(timeRead) % 60)}m`
+                : `${Math.round(parseFloat(timeRead))}m`;
+            metrics.push(`Time: ${timeFormatted}`);
+        }
+        
+        if (progressPercent) {
+            metrics.push(`Progress: ${progressPercent}%`);
+        }
+        
+        let metricsText = metrics.length > 0 ? ` • ${metrics.join(' • ')}` : '';
+        
+        logsHtml += `
+            <div class="border rounded p-3 mb-3 ${index === logDataElements.length - 1 ? 'mb-0' : ''}">
+                <h6 class="fw-bold mb-1">${bookTitle}</h6>
+                ${bookAuthors ? `<p class="text-muted small mb-2">by ${bookAuthors}</p>` : ''}
+                <div class="row">
+                    <div class="col-md-6">
+                        <small><strong>Status:</strong> ${formatStatus(readingStatus)}</small>
+                    </div>
+                    <div class="col-md-6">
+                        ${metricsText ? `<small>${metricsText}</small>` : ''}
+                    </div>
+                </div>
+                ${notes ? `<div class="mt-2"><small><strong>Notes:</strong></small><div class="border rounded p-2 mt-1 small">${notes}</div></div>` : ''}
+            </div>
+        `;
+    });
+    
+    const modalContent = `
+        <div class="modal fade" id="clusterDetailsModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">${clusterCount} Reading Sessions</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">Sessions on ${new Date(clusterDate).toLocaleDateString()}</p>
+                        ${logsHtml}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal
+    const existingModal = document.getElementById('clusterDetailsModal');
+    if (existingModal) existingModal.remove();
+    
+    // Add new modal to body
+    document.body.insertAdjacentHTML('beforeend', modalContent);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('clusterDetailsModal'));
+    modal.show();
+}
+
+function formatStatus(status) {
+    const labels = {
+        'read': 'Read',
+        'reading': 'Reading',
+        'plan_to_read': 'Plan to Read',
+        'on_hold': 'On Hold',
+        'did_not_finish': 'Did Not Finish'
+    };
+    return labels[status] || 'Unknown';
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'Unknown';
+    try {
+        return new Date(dateString).toLocaleDateString();
+    } catch {
+        return dateString;
+    }
+}
+</script>
+{% endblock %}

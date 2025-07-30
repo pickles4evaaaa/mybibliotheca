@@ -1,8 +1,9 @@
-from flask import Blueprint, jsonify, render_template, current_app, request
+from flask import Blueprint, jsonify, render_template, current_app, request, flash, redirect, url_for
 from flask_login import login_required, current_user
 from app.services import book_service, reading_log_service, user_service
 from datetime import datetime, date, timedelta
 import logging
+import calendar
 
 logger = logging.getLogger(__name__)
 
@@ -787,4 +788,312 @@ def _calculate_timeline_stats(timeline_items):
         'date_range': date_range,
         'avg_rating': avg_rating,
         'total_pages': total_pages
+    }
+
+
+@stats_bp.route('/reading-journey')
+@login_required
+def reading_journey():
+    """Display reading journey calendar based on reading logs."""
+    try:
+        logger.info("Loading Reading Journey calendar view")
+        
+        # Get filter parameters
+        year = request.args.get('year', type=int)
+        month = request.args.get('month', type=int)
+        status_filter = request.args.get('status', '')
+        
+        # Default to current year/month if not specified
+        if not year:
+            year = datetime.now().year
+        if not month:
+            month = datetime.now().month
+            
+        # Get reading logs data (use paginated method with large page size)
+        result = reading_log_service.get_user_reading_logs_paginated_sync(str(current_user.id), page=1, per_page=1000)
+        all_logs = result.get('logs', []) if result else []
+        logger.info(f"Retrieved {len(all_logs) if all_logs else 0} reading logs for user {current_user.id}")
+        
+        # Also get full book data with relationships for author extraction
+        user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+        books_by_id = {book.id if hasattr(book, 'id') else _get_value(book, 'id'): book for book in user_books} if user_books else {}
+        logger.info(f"Retrieved {len(books_by_id)} full book objects for author extraction")
+        
+        if not all_logs:
+            calendar_data = _generate_empty_calendar(year, month)
+            stats = {'total_logs': 0, 'month_name': calendar.month_name[month], 'year': year}
+            filters = {'year': year, 'month': month, 'status': status_filter}
+            return render_template('stats/reading_journey.html', 
+                                calendar_data=calendar_data, 
+                                stats=stats, 
+                                filters=filters)
+        
+        # Process reading logs for calendar display
+        processed_logs = []
+        logger.info(f"Processing logs for {year}-{month:02d}")
+        
+        for log in all_logs:
+            try:
+                # Extract log data
+                log_date_str = log.get('date')
+                if not log_date_str:
+                    continue
+                    
+                # Parse the log date
+                if isinstance(log_date_str, str):
+                    log_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
+                elif hasattr(log_date_str, 'date'):
+                    log_date = log_date_str.date()
+                else:
+                    log_date = log_date_str
+                
+                # Filter by year/month
+                if log_date.year != year or log_date.month != month:
+                    continue
+                
+                # Get book data from the log
+                book_data = log.get('book', {})
+                if not book_data:
+                    continue
+                
+                # Apply status filter based on book reading status
+                if status_filter and book_data.get('reading_status') != status_filter:
+                    continue
+                
+                # Get full book object for proper author extraction
+                book_id = book_data.get('id')
+                full_book = books_by_id.get(book_id) if book_id else None
+                
+                # Extract authors - use full book object if available, otherwise fallback
+                authors_text = 'Unknown Author'
+                
+                if full_book:
+                    # Use the full book object with contributor relationships
+                    try:
+                        authors_list = _extract_authors(full_book)
+                        if authors_list and authors_list != ['Unknown Author']:
+                            authors_text = ', '.join(authors_list)
+                    except Exception as e:
+                        logger.debug(f"Error extracting authors from full book: {e}")
+                
+                # Fallback to basic book data if full book not available or author extraction failed
+                if authors_text == 'Unknown Author':
+                    direct_author = book_data.get('author') or book_data.get('authors_text') or book_data.get('authors')
+                    if direct_author:
+                        if isinstance(direct_author, list):
+                            authors_text = ', '.join(direct_author)
+                        else:
+                            authors_text = str(direct_author)
+                
+                # Get the reading status from the log itself or book (prefer log status)
+                reading_status = log.get('reading_status') or book_data.get('reading_status') or 'read'
+                
+                # Calculate progress percentage if we have page numbers
+                progress_percentage = None
+                pages_read = log.get('pages_read', 0)
+                page_count = book_data.get('page_count', 0)
+                if pages_read and page_count and pages_read > 0 and page_count > 0:
+                    progress_percentage = round((pages_read / page_count) * 100, 1)
+                
+                # Clean and prepare the log data for display
+                processed_log = {
+                    'id': book_data.get('id', ''),
+                    'uid': book_data.get('uid', ''),
+                    'title': book_data.get('title', 'Unknown Title'),
+                    'authors_text': authors_text,
+                    'reading_status': reading_status,
+                    'status_color': _get_status_color(reading_status),
+                    'cover_url': book_data.get('cover_image_url') or book_data.get('cover_url'),
+                    'user_rating': book_data.get('user_rating'),
+                    'page_count': book_data.get('page_count'),
+                    'categories_text': book_data.get('categories_text', ''),
+                    'personal_notes': log.get('notes', ''),
+                    'pages_read': pages_read,
+                    'time_read': log.get('time_read', 0),
+                    'start_page': log.get('start_page', 0),
+                    'end_page': log.get('end_page', 0),
+                    'progress_percentage': progress_percentage,
+                    'log_date': log_date,
+                    'day': log_date.day,
+                    'display_title': book_data.get('title', 'Unknown')[:10] if book_data.get('title') else 'Unknown'
+                }
+                
+                processed_logs.append(processed_log)
+                
+            except Exception as e:
+                logger.warning(f"Error processing reading log: {e}")
+                continue
+        
+        # Generate calendar with logs
+        calendar_data = _generate_calendar_with_logs(year, month, processed_logs)
+        
+        # Calculate stats
+        stats = {
+            'total_logs': len(processed_logs),
+            'month_name': calendar.month_name[month],
+            'year': year,
+            'active_days': len([day for day in calendar_data['days'] if day['logs'] or day['clusters']])
+        }
+        
+        filters = {'year': year, 'month': month, 'status': status_filter}
+        
+        logger.info(f"Successfully generated calendar for {calendar.month_name[month]} {year} with {len(processed_logs)} reading logs")
+        
+        return render_template('stats/reading_journey.html', 
+                             calendar_data=calendar_data, 
+                             stats=stats, 
+                             filters=filters)
+        
+    except Exception as e:
+        logger.error(f"Error in reading_journey route: {e}")
+        flash('Error loading reading journey. Please try again.', 'error')
+        return redirect(url_for('stats.index'))
+
+
+def _generate_empty_calendar(year, month):
+    """Generate empty calendar structure."""
+    cal = calendar.monthcalendar(year, month)
+    days = []
+    
+    for week in cal:
+        for day in week:
+            if day == 0:  # Empty day from previous/next month
+                days.append({
+                    'day': None,
+                    'date': None,
+                    'books': [],
+                    'clusters': [],
+                    'is_current_month': False
+                })
+            else:
+                days.append({
+                    'day': day,
+                    'date': datetime(year, month, day).date(),
+                    'books': [],
+                    'clusters': [],
+                    'is_current_month': True
+                })
+    
+    return {
+        'year': year,
+        'month': month,
+        'month_name': calendar.month_name[month],
+        'days': days,
+        'weeks': len(cal)
+    }
+
+
+def _generate_calendar_with_logs(year, month, logs):
+    """Generate calendar with reading logs placed on appropriate days."""
+    cal = calendar.monthcalendar(year, month)
+    days = []
+    
+    # Group logs by day
+    logs_by_day = {}
+    for log in logs:
+        day = log['day']
+        if day not in logs_by_day:
+            logs_by_day[day] = []
+        logs_by_day[day].append(log)
+    
+    for week in cal:
+        for day in week:
+            if day == 0:  # Empty day from previous/next month
+                days.append({
+                    'day': None,
+                    'date': None,
+                    'logs': [],
+                    'clusters': [],
+                    'is_current_month': False
+                })
+            else:
+                day_logs = logs_by_day.get(day, [])
+                
+                # Apply clustering logic - if 3+ logs on same day, create cluster
+                if len(day_logs) >= 3:
+                    days.append({
+                        'day': day,
+                        'date': datetime(year, month, day).date(),
+                        'logs': [],
+                        'clusters': [{
+                            'type': 'cluster',
+                            'count': len(day_logs),
+                            'logs': day_logs,
+                            'date': datetime(year, month, day).date()
+                        }],
+                        'is_current_month': True
+                    })
+                else:
+                    days.append({
+                        'day': day,
+                        'date': datetime(year, month, day).date(),
+                        'logs': day_logs,
+                        'clusters': [],
+                        'is_current_month': True
+                    })
+    
+    return {
+        'year': year,
+        'month': month,
+        'month_name': calendar.month_name[month],
+        'days': days,
+        'weeks': len(cal)
+    }
+
+
+def _generate_calendar_with_books(year, month, books):
+    """Generate calendar with books placed on appropriate days."""
+    cal = calendar.monthcalendar(year, month)
+    days = []
+    
+    # Group books by day
+    books_by_day = {}
+    for book in books:
+        day = book['day']
+        if day not in books_by_day:
+            books_by_day[day] = []
+        books_by_day[day].append(book)
+    
+    for week in cal:
+        for day in week:
+            if day == 0:  # Empty day from previous/next month
+                days.append({
+                    'day': None,
+                    'date': None,
+                    'books': [],
+                    'clusters': [],
+                    'is_current_month': False
+                })
+            else:
+                day_books = books_by_day.get(day, [])
+                
+                # Apply clustering logic - if 3+ books on same day, create cluster
+                if len(day_books) >= 3:
+                    days.append({
+                        'day': day,
+                        'date': datetime(year, month, day).date(),
+                        'books': [],
+                        'clusters': [{
+                            'type': 'cluster',
+                            'count': len(day_books),
+                            'books': day_books,
+                            'date': datetime(year, month, day).date()
+                        }],
+                        'is_current_month': True
+                    })
+                else:
+                    days.append({
+                        'day': day,
+                        'date': datetime(year, month, day).date(),
+                        'books': day_books,
+                        'clusters': [],
+                        'is_current_month': True
+                    })
+    
+    return {
+        'year': year,
+        'month': month,
+        'month_name': calendar.month_name[month],
+        'days': days,
+        'weeks': len(cal)
     }
