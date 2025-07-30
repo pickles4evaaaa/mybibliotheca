@@ -1,7 +1,10 @@
-from flask import Blueprint, jsonify, render_template, current_app
+from flask import Blueprint, jsonify, render_template, current_app, request
 from flask_login import login_required, current_user
 from app.services import book_service, reading_log_service, user_service
 from datetime import datetime, date, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 stats_bp = Blueprint('stats', __name__)
 
@@ -14,8 +17,117 @@ def _safe_date_to_isoformat(date_obj):
 @stats_bp.route('/library-journey')
 @login_required
 def library_journey():
-    """Display the Library Journey Timeline visualization."""
-    return render_template('stats/library_journey.html')
+    """Display the Library Journey Timeline visualization using HTML/CSS with filtering."""
+    # Get filter parameters from query string
+    date_type = request.args.get('date_type', 'date_added')
+    status_filter = request.args.get('status', '')
+    year_from = request.args.get('year_from', '')
+    year_to = request.args.get('year_to', '')
+    
+    try:
+        
+        # Get user's books using the same API as before
+        user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+        
+        if not user_books:
+            filters = {'date_type': date_type, 'status': status_filter, 'year_from': year_from, 'year_to': year_to}
+            return render_template('stats/library_journey.html', books=[], 
+                                 stats={'total_books': 0, 'date_range': 'No data', 'avg_rating': 'N/A', 'total_pages': 0},
+                                 filters=filters)
+        
+        logger.info(f"Processing {len(user_books)} total books with filters: date_type={date_type}, status={status_filter}")
+        
+        # Process books for timeline positioning
+        processed_books = []
+        
+        for book in user_books:
+            try:
+                # Extract basic book data with robust fallbacks
+                book_data = {
+                    'id': _get_value(book, 'id', ''),
+                    'uid': _get_value(book, 'uid', ''),
+                    'title': _get_value(book, 'title', 'Unknown Title'),
+                    'cover_url': _get_value(book, 'cover_url', None),
+                    'reading_status': _get_value(book, 'reading_status', None),
+                    'user_rating': _get_value(book, 'user_rating', None),
+                    'page_count': _get_value(book, 'page_count', None),
+                    'personal_notes': _get_value(book, 'personal_notes', None),
+                    'description': _get_value(book, 'description', None),
+                }
+                
+                # Extract authors
+                book_data['authors'] = _extract_authors(book)
+                
+                # Extract categories
+                book_data['categories'] = _extract_categories(book)
+                
+                # Extract all date fields for filtering
+                for date_field in ['date_added', 'start_date', 'finish_date', 'publication_date']:
+                    book_data[date_field] = _extract_date(book, date_field)
+                
+                # Apply filters
+                # 1. Status filter
+                if status_filter and book_data['reading_status'] != status_filter:
+                    continue
+                    
+                # 2. Date filter - use the selected date type for positioning, with fallback
+                target_date = book_data.get(date_type)
+                if not target_date:
+                    # Fallback to date_added if the selected date type is not available
+                    target_date = book_data.get('date_added')
+                    if not target_date:
+                        continue  # Skip only if no dates are available at all
+                
+                # 3. Year range filter
+                try:
+                    book_year = datetime.fromisoformat(target_date).year
+                    if year_from and book_year < int(year_from):
+                        continue
+                    if year_to and book_year > int(year_to):
+                        continue
+                except (ValueError, TypeError):
+                    continue
+                
+                # Use the selected date type as the primary date for positioning
+                book_data['timeline_date'] = target_date
+                processed_books.append(book_data)
+                
+            except Exception as book_error:
+                logger.warning(f"Error processing book {_get_value(book, 'title', 'Unknown')}: {book_error}")
+                continue
+        
+        # Sort by the timeline date (selected date type)
+        processed_books.sort(key=lambda x: x['timeline_date'])
+        
+        # Check if we have any books after filtering
+        if not processed_books:
+            stats = {'total_books': 0, 'date_range': 'No data', 'avg_rating': 'N/A', 'total_pages': 0}
+            filters = {'date_type': date_type, 'status': status_filter, 'year_from': year_from, 'year_to': year_to}
+            return render_template('stats/library_journey.html', books=[], stats=stats, filters=filters)
+        
+        # Calculate positions for CSS positioning using timeline_date
+        timeline_books = _calculate_timeline_positions(processed_books, date_type)
+        
+        # Calculate stats
+        stats = _calculate_timeline_stats(timeline_books)
+        
+        logger.info(f"Successfully processed {len(timeline_books)} books for Library Journey timeline using {date_type}")
+        
+        # Pass filter values to template for preserving state
+        filters = {
+            'date_type': date_type,
+            'status': status_filter,
+            'year_from': year_from,
+            'year_to': year_to
+        }
+        
+        return render_template('stats/library_journey.html', books=timeline_books, stats=stats, filters=filters)
+        
+    except Exception as e:
+        logger.error(f"Error generating Library Journey timeline: {str(e)}")
+        stats = {'total_books': 0, 'date_range': 'No data', 'avg_rating': 'N/A', 'total_pages': 0}
+        filters = {'date_type': date_type, 'status': status_filter, 'year_from': year_from, 'year_to': year_to}
+        return render_template('stats/library_journey.html', books=[], stats=stats, filters=filters, error=str(e))
 
 @stats_bp.route('/reading_history', methods=['GET'])
 @login_required
@@ -375,3 +487,304 @@ def community_recent_activity():
     except Exception as e:
         current_app.logger.error(f"Error loading recent activity: {e}")
         return render_template('community_stats/recent_activity.html', logs=[])
+
+
+# Helper functions for timeline processing
+
+def _get_value(obj, key, default=None):
+    """Safely get a value from either a dict or object."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    else:
+        return getattr(obj, key, default)
+
+
+def _extract_authors(book):
+    """Extract author names with robust fallback logic."""
+    contributors = _get_value(book, 'contributors', [])
+    if not contributors:
+        author = _get_value(book, 'author', None)
+        return [author] if author else ['Unknown Author']
+    
+    author_names = []
+    for contributor in contributors:
+        try:
+            contrib_type = _get_value(contributor, 'contribution_type', '')
+            contrib_type_str = str(contrib_type).lower()
+            
+            if 'author' in contrib_type_str or contrib_type_str == 'authored':
+                person = _get_value(contributor, 'person', None)
+                if person:
+                    name = _get_value(person, 'name', None)
+                    if name:
+                        author_names.append(name)
+                else:
+                    name = _get_value(contributor, 'name', None) or _get_value(contributor, 'author_name', None)
+                    if name:
+                        author_names.append(name)
+        except Exception:
+            continue
+    
+    return author_names if author_names else ['Unknown Author']
+
+
+def _extract_categories(book):
+    """Extract category names."""
+    categories = _get_value(book, 'categories', [])
+    if not categories:
+        return []
+    
+    category_names = []
+    for cat in categories:
+        name = _get_value(cat, 'name', None)
+        if name:
+            category_names.append(name)
+        elif isinstance(cat, str):
+            category_names.append(cat)
+    
+    return category_names
+
+
+def _extract_date(book, date_field):
+    """Extract and normalize date fields to ISO strings."""
+    # Handle both 'publication_date' and 'published_date' for compatibility
+    if date_field == 'publication_date':
+        date_value = _get_value(book, 'publication_date', None) or _get_value(book, 'published_date', None)
+    else:
+        date_value = _get_value(book, date_field, None)
+    
+    if not date_value:
+        return None
+    
+    try:
+        if isinstance(date_value, datetime):
+            return date_value.date().isoformat()
+        elif hasattr(date_value, 'isoformat'):
+            return date_value.isoformat()
+        elif isinstance(date_value, str):
+            # Try to parse and reformat
+            try:
+                parsed = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                return parsed.date().isoformat()
+            except:
+                return date_value
+        else:
+            return str(date_value)
+    except Exception:
+        return None
+
+
+def _get_book_date(book, date_type):
+    """Get the appropriate date from book based on date_type."""
+    date_value = None
+    
+    if date_type == 'finish_date' and book.get('finish_date'):
+        date_value = book['finish_date']
+    elif date_type == 'start_date' and book.get('start_date'):
+        date_value = book['start_date']
+    elif date_type == 'publication_date' and book.get('publication_date'):
+        date_value = book['publication_date']
+    elif book.get('date_added'):  # fallback to date_added
+        date_value = book['date_added']
+    
+    # Convert string dates to datetime if needed
+    if isinstance(date_value, str):
+        try:
+            date_value = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            return None
+    
+    return date_value
+
+
+def _calculate_timeline_positions(books, date_type):
+    """Calculate positions for books on the timeline with clustering for nearby books."""
+    if not books:
+        return []
+    
+    # Convert dates to timestamps for calculation
+    book_positions = []
+    for book in books:
+        date_value = _get_book_date(book, date_type)
+        if date_value:
+            timestamp = date_value.timestamp()
+            book_positions.append({
+                'book': book,
+                'timestamp': timestamp,
+                'year': date_value.year
+            })
+    
+    if not book_positions:
+        return []
+    
+    # Sort by timestamp
+    book_positions.sort(key=lambda x: x['timestamp'])
+    
+    # Calculate time range
+    min_timestamp = book_positions[0]['timestamp']
+    max_timestamp = book_positions[-1]['timestamp']
+    time_range = max_timestamp - min_timestamp
+    
+    if time_range == 0:
+        # All books have the same date - create a single cluster
+        cluster = {
+            'type': 'cluster',
+            'books': [item['book'] for item in book_positions],
+            'x_position': 50,
+            'y_position': 50,
+            'timestamp': min_timestamp,
+            'year': book_positions[0]['year']
+        }
+        return [cluster]
+    
+    # Group books by proximity for clustering
+    clusters = []
+    current_cluster_books = [book_positions[0]]
+    cluster_threshold = time_range * 0.03  # 3% of total time range for clustering
+    
+    for i in range(1, len(book_positions)):
+        time_diff = book_positions[i]['timestamp'] - current_cluster_books[-1]['timestamp']
+        if time_diff <= cluster_threshold:
+            current_cluster_books.append(book_positions[i])
+        else:
+            # Finish current cluster/individual book
+            if len(current_cluster_books) >= 3:  # Cluster if 3 or more books
+                avg_timestamp = sum(item['timestamp'] for item in current_cluster_books) / len(current_cluster_books)
+                avg_year = sum(item['year'] for item in current_cluster_books) / len(current_cluster_books)
+                clusters.append({
+                    'type': 'cluster',
+                    'books': [item['book'] for item in current_cluster_books],
+                    'timestamp': avg_timestamp,
+                    'year': int(avg_year)
+                })
+            else:
+                # Individual books
+                for item in current_cluster_books:
+                    clusters.append({
+                        'type': 'individual',
+                        'book': item['book'],
+                        'timestamp': item['timestamp'],
+                        'year': item['year']
+                    })
+            
+            current_cluster_books = [book_positions[i]]
+    
+    # Handle final cluster/books
+    if len(current_cluster_books) >= 3:
+        avg_timestamp = sum(item['timestamp'] for item in current_cluster_books) / len(current_cluster_books)
+        avg_year = sum(item['year'] for item in current_cluster_books) / len(current_cluster_books)
+        clusters.append({
+            'type': 'cluster',
+            'books': [item['book'] for item in current_cluster_books],
+            'timestamp': avg_timestamp,
+            'year': int(avg_year)
+        })
+    else:
+        for item in current_cluster_books:
+            clusters.append({
+                'type': 'individual',
+                'book': item['book'],
+                'timestamp': item['timestamp'],
+                'year': item['year']
+            })
+    
+    # Calculate positions for clusters and individual books
+    usable_height = 85
+    top_margin = 8
+    
+    for i, cluster in enumerate(clusters):
+        # X position based on time (10% to 90% of width)
+        x_percent = 10 + ((cluster['timestamp'] - min_timestamp) / time_range) * 80
+        
+        # Y position with some vertical variation
+        if len(clusters) == 1:
+            y_percent = top_margin + usable_height * 0.5
+        else:
+            # Distribute vertically with some randomness based on position
+            base_y = top_margin + usable_height * 0.3
+            variation = (hash(str(cluster['timestamp'])) % 40) / 100  # ±20%
+            y_percent = base_y + variation * usable_height * 0.4
+        
+        # Ensure positions stay within bounds
+        cluster['x_position'] = max(5, min(95, x_percent))
+        cluster['y_position'] = max(10, min(80, y_percent))
+    
+    return clusters
+
+
+def _clean_book_data_for_json(book):
+    """Clean book data to ensure safe JSON encoding in HTML attributes."""
+    import html
+    
+    # Create a cleaned copy of the book data
+    cleaned = {}
+    for key, value in book.items():
+        if isinstance(value, str):
+            # Remove or escape problematic characters
+            cleaned_value = value.replace('"', '&quot;').replace("'", '&#39;').replace('\n', ' ').replace('\r', ' ')
+            # Limit length to prevent overly long attributes
+            if len(cleaned_value) > 500:
+                cleaned_value = cleaned_value[:500] + '...'
+            cleaned[key] = cleaned_value
+        elif value is None:
+            cleaned[key] = ''
+        else:
+            cleaned[key] = value
+    
+    return cleaned
+
+
+def _get_status_color(status):
+    """Get color for reading status (same as D3.js version)."""
+    status_colors = {
+        'read': '#28a745',
+        'reading': '#17a2b8', 
+        'plan_to_read': '#ffc107',
+        'on_hold': '#fd7e14',
+        'did_not_finish': '#dc3545'
+    }
+    return status_colors.get(status, '#6c757d')
+
+
+def _calculate_timeline_stats(timeline_items):
+    """Calculate statistics for the timeline."""
+    if not timeline_items:
+        return {
+            'total_books': 0,
+            'date_range': '-',
+            'avg_rating': '-',
+            'total_pages': '-'
+        }
+    
+    # Flatten books from clusters and individuals
+    all_books = []
+    all_years = []
+    
+    for item in timeline_items:
+        if item.get('type') == 'cluster':
+            all_books.extend(item['books'])
+            all_years.append(item['year'])
+        else:
+            all_books.append(item['book'])
+            all_years.append(item['year'])
+    
+    # Calculate stats
+    total_books = len(all_books)
+    
+    # Date range
+    date_range = f"{min(all_years)} - {max(all_years)}" if all_years else '-'
+    
+    # Average rating  
+    ratings = [book.get('user_rating') for book in all_books if book.get('user_rating') and book.get('user_rating') > 0]
+    avg_rating = f"{sum(ratings) / len(ratings):.1f}" if ratings else '-'
+    
+    # Total pages
+    pages = [book.get('page_count') for book in all_books if book.get('page_count') and book.get('page_count') > 0]
+    total_pages = f"{sum(pages):,}" if pages else '-'
+    
+    return {
+        'total_books': total_books,
+        'date_range': date_range,
+        'avg_rating': avg_rating,
+        'total_pages': total_pages
+    }

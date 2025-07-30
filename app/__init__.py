@@ -769,6 +769,8 @@ def create_app():
     except Exception as e:
         print(f"Could not register simple backup routes: {e}")
     
+    # Simple backup routes removed - viz comparison routes removed
+    
     # Register debug admin routes
     try:
         from .debug_routes import bp as debug_admin_bp
