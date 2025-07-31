@@ -52,14 +52,33 @@ def inject_site_config():
         system_config = load_system_config()
         site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
         server_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
+        background_config = system_config.get('background_config', {
+            'type': 'default',
+            'solid_color': '#667eea',
+            'gradient_start': '#667eea',
+            'gradient_end': '#764ba2',
+            'gradient_direction': '135deg',
+            'image_url': '',
+            'image_position': 'cover'
+        })
     except Exception:
         # Fallback to environment variables if config loading fails
         site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
         server_timezone = os.getenv('TIMEZONE', 'UTC')
+        background_config = {
+            'type': 'default',
+            'solid_color': '#667eea',
+            'gradient_start': '#667eea',
+            'gradient_end': '#764ba2',
+            'gradient_direction': '135deg',
+            'image_url': '',
+            'image_position': 'cover'
+        }
     
     return {
         'site_name': site_name,
-        'server_timezone': server_timezone
+        'server_timezone': server_timezone,
+        'background_config': background_config
     }
 
 

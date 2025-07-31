@@ -30,6 +30,39 @@
       --gold: #FFC107; /* Changed from #DAA520 for better contrast */
       --shadow: rgba(0,0,0,0.1);
       --hover-shadow: rgba(0,0,0,0.2);
+      
+      /* Dynamic background configuration */
+      {% if background_config.type == 'solid' %}
+        --custom-bg: {{ background_config.solid_color }};
+        --bg-gradient: {{ background_config.solid_color }};
+      {% elif background_config.type == 'gradient' %}
+        --custom-bg: linear-gradient({{ background_config.gradient_direction }}, {{ background_config.gradient_start }} 0%, {{ background_config.gradient_end }} 100%);
+        --bg-gradient: linear-gradient({{ background_config.gradient_direction }}, {{ background_config.gradient_start }} 0%, {{ background_config.gradient_end }} 100%);
+      {% elif background_config.type == 'image' and background_config.image_url %}
+        --custom-bg: url('{{ background_config.image_url }}');
+        --bg-gradient: url('{{ background_config.image_url }}');
+        {% if background_config.image_position == 'cover' %}
+          --bg-size: cover;
+          --bg-repeat: no-repeat;
+          --bg-position: center center;
+        {% elif background_config.image_position == 'contain' %}
+          --bg-size: contain;
+          --bg-repeat: no-repeat;
+          --bg-position: center center;
+        {% elif background_config.image_position == 'center' %}
+          --bg-size: auto;
+          --bg-repeat: no-repeat;
+          --bg-position: center center;
+        {% elif background_config.image_position == 'repeat' %}
+          --bg-size: auto;
+          --bg-repeat: repeat;
+          --bg-position: top left;
+        {% endif %}
+      {% else %}
+        /* Default onboarding-style gradient */
+        --custom-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      {% endif %}
     }
     
     [data-theme="dark"] {
@@ -48,10 +81,15 @@
     }
     
     body {
-      background-image: var(--bookshelf-bg), var(--bg-gradient);
-      background-size: cover;
-      background-repeat: no-repeat;
-      background-attachment: fixed;
+      {% if background_config.type == 'image' and background_config.image_url %}
+        background-image: var(--custom-bg);
+        background-size: var(--bg-size, cover);
+        background-repeat: var(--bg-repeat, no-repeat);
+        background-position: var(--bg-position, center center);
+        background-attachment: fixed;
+      {% else %}
+        background: var(--bg-gradient);
+      {% endif %}
       min-height: 100vh;
       font-family: 'Georgia', serif;
       color: var(--text-color);

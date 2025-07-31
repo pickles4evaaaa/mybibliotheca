@@ -105,10 +105,10 @@
             <i class="bi bi-shield-exclamation me-2"></i>Admin Settings
         </h1>
         <div>
-            <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-secondary">
+            <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-primary">
                 <i class="bi bi-speedometer2 me-1"></i>Dashboard
             </a>
-            <a href="{{ url_for('admin.users') }}" class="btn btn-outline-light btn-sm ms-2">
+            <a href="{{ url_for('admin.users') }}" class="btn btn-primary ms-2">
                 <i class="bi bi-people me-1"></i>User Management
             </a>
         </div>
@@ -132,7 +132,7 @@
                         <div class="accordion-body">
                             <p class="text-muted mb-3">Configure global system settings and site information.</p>
                             
-                            <form method="POST" action="{{ url_for('admin.settings') }}">
+                            <form method="POST" action="{{ url_for('admin.settings') }}" enctype="multipart/form-data">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <div class="row g-3">
                                     <div class="col-md-6">
@@ -159,6 +159,117 @@
                                         </select>
                                         <small class="form-text text-muted">Default timezone for the server and new users</small>
                                     </div>
+                                </div>
+
+                                <!-- Background Configuration -->
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-info mb-3">Background Configuration</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="background_type" class="form-label">Background Type</label>
+                                            <select class="form-select" id="background_type" name="background_type" onchange="toggleBackgroundOptions()">
+                                                <option value="default" {% if background_config.get('type', 'default') == 'default' %}selected{% endif %}>Default (Onboarding Style)</option>
+                                                <option value="solid" {% if background_config.get('type') == 'solid' %}selected{% endif %}>Solid Color</option>
+                                                <option value="gradient" {% if background_config.get('type') == 'gradient' %}selected{% endif %}>Gradient</option>
+                                                <option value="image" {% if background_config.get('type') == 'image' %}selected{% endif %}>Background Image</option>
+                                            </select>
+                                            <small class="form-text text-muted">Choose the type of background for the main application</small>
+                                        </div>
+                                        <div class="col-md-6" id="background-preview">
+                                            <label class="form-label">Preview</label>
+                                            <div id="background-preview-box" class="border rounded p-3 text-center text-white" style="height: 60px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                                <small>Background Preview</small>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Solid Color Options -->
+                                    <div id="solid-color-options" class="mt-3" style="display: none;">
+                                        <div class="row g-3">
+                                            <div class="col-md-6">
+                                                <label for="solid_color" class="form-label">Color</label>
+                                                <input type="color" class="form-control form-control-color" id="solid_color" name="solid_color" 
+                                                       value="{{ background_config.get('solid_color', '#667eea') }}" onchange="updateBackgroundPreview()">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Gradient Options -->
+                                    <div id="gradient-options" class="mt-3" style="display: none;">
+                                        <div class="row g-3">
+                                            <div class="col-md-4">
+                                                <label for="gradient_start" class="form-label">Start Color</label>
+                                                <input type="color" class="form-control form-control-color" id="gradient_start" name="gradient_start" 
+                                                       value="{{ background_config.get('gradient_start', '#667eea') }}" onchange="updateBackgroundPreview()">
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label for="gradient_end" class="form-label">End Color</label>
+                                                <input type="color" class="form-control form-control-color" id="gradient_end" name="gradient_end" 
+                                                       value="{{ background_config.get('gradient_end', '#764ba2') }}" onchange="updateBackgroundPreview()">
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label for="gradient_direction" class="form-label">Direction</label>
+                                                <select class="form-select" id="gradient_direction" name="gradient_direction" onchange="updateBackgroundPreview()">
+                                                    <option value="135deg" {% if background_config.get('gradient_direction', '135deg') == '135deg' %}selected{% endif %}>Diagonal (135°)</option>
+                                                    <option value="90deg" {% if background_config.get('gradient_direction') == '90deg' %}selected{% endif %}>Vertical (90°)</option>
+                                                    <option value="0deg" {% if background_config.get('gradient_direction') == '0deg' %}selected{% endif %}>Horizontal (0°)</option>
+                                                    <option value="45deg" {% if background_config.get('gradient_direction') == '45deg' %}selected{% endif %}>Diagonal (45°)</option>
+                                                    <option value="225deg" {% if background_config.get('gradient_direction') == '225deg' %}selected{% endif %}>Diagonal (225°)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Image Options -->
+                                    <div id="image-options" class="mt-3" style="display: none;">
+                                        <div class="row g-3">
+                                            <div class="col-12">
+                                                <div class="card">
+                                                    <div class="card-header">
+                                                        <h6 class="card-title mb-0">Upload Image File</h6>
+                                                    </div>
+                                                    <div class="card-body">
+                                                        <div class="row g-3">
+                                                            <div class="col-md-8">
+                                                                <label for="background_image_file" class="form-label">Choose Image File</label>
+                                                                <input type="file" class="form-control" id="background_image_file" name="background_image_file" 
+                                                                       accept="image/png,image/jpg,image/jpeg,image/gif,image/webp" onchange="updateBackgroundPreview()">
+                                                                <small class="form-text text-muted">Upload PNG, JPG, JPEG, GIF, or WebP images (max 100MB)</small>
+                                                            </div>
+                                                            <div class="col-md-4">
+                                                                <label for="image_position" class="form-label">Position</label>
+                                                                <select class="form-select" id="image_position" name="image_position" onchange="updateBackgroundPreview()">
+                                                                    <option value="cover" {% if background_config.get('image_position', 'cover') == 'cover' %}selected{% endif %}>Cover</option>
+                                                                    <option value="contain" {% if background_config.get('image_position') == 'contain' %}selected{% endif %}>Contain</option>
+                                                                    <option value="center" {% if background_config.get('image_position') == 'center' %}selected{% endif %}>Center</option>
+                                                                    <option value="repeat" {% if background_config.get('image_position') == 'repeat' %}selected{% endif %}>Repeat</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div class="card mt-3">
+                                                    <div class="card-header">
+                                                        <h6 class="card-title mb-0">Or Use Image URL</h6>
+                                                    </div>
+                                                    <div class="card-body">
+                                                        <div class="row g-3">
+                                                            <div class="col-12">
+                                                                <label for="background_image_url" class="form-label">Image URL</label>
+                                                                <input type="url" class="form-control" id="background_image_url" name="background_image_url" 
+                                                                       value="{{ background_config.get('image_url', '') }}" placeholder="https://example.com/image.jpg" onchange="updateBackgroundPreview()">
+                                                                <small class="form-text text-muted">URL to background image (HTTPS recommended)</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-3">
                                     <div class="col-12">
                                         <button type="submit" class="btn btn-primary">
                                             <i class="bi bi-check-lg me-1"></i>Save Settings
@@ -786,7 +897,124 @@ document.addEventListener('DOMContentLoaded', function() {
 // Initialize provider settings on page load
 document.addEventListener('DOMContentLoaded', function() {
     toggleProviderSettings();
+    toggleBackgroundOptions();
+    updateBackgroundPreview();
 });
+
+// Background configuration functions
+function toggleBackgroundOptions() {
+    const backgroundType = document.getElementById('background_type').value;
+    const solidOptions = document.getElementById('solid-color-options');
+    const gradientOptions = document.getElementById('gradient-options');
+    const imageOptions = document.getElementById('image-options');
+    
+    // Hide all options first
+    solidOptions.style.display = 'none';
+    gradientOptions.style.display = 'none';
+    imageOptions.style.display = 'none';
+    
+    // Clear file input and URL when switching away from image mode
+    if (backgroundType !== 'image') {
+        const fileInput = document.getElementById('background_image_file');
+        const urlInput = document.getElementById('background_image_url');
+        if (fileInput) fileInput.value = '';
+        if (urlInput) urlInput.value = '';
+    }
+    
+    // Show relevant options
+    switch(backgroundType) {
+        case 'solid':
+            solidOptions.style.display = 'block';
+            break;
+        case 'gradient':
+            gradientOptions.style.display = 'block';
+            break;
+        case 'image':
+            imageOptions.style.display = 'block';
+            break;
+    }
+    
+    updateBackgroundPreview();
+}
+
+function updateBackgroundPreview() {
+    const backgroundType = document.getElementById('background_type').value;
+    const previewBox = document.getElementById('background-preview-box');
+    
+    // Clear previous styles first
+    previewBox.style.background = '';
+    previewBox.style.backgroundSize = '';
+    previewBox.style.backgroundRepeat = '';
+    previewBox.style.backgroundPosition = '';
+    previewBox.innerHTML = '';
+    
+    switch(backgroundType) {
+        case 'default':
+            previewBox.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+            previewBox.innerHTML = '<small>Background Preview</small>';
+            break;
+        case 'solid':
+            const solidColor = document.getElementById('solid_color').value;
+            previewBox.style.background = solidColor;
+            previewBox.innerHTML = '<small>Background Preview</small>';
+            break;
+        case 'gradient':
+            const startColor = document.getElementById('gradient_start').value;
+            const endColor = document.getElementById('gradient_end').value;
+            const direction = document.getElementById('gradient_direction').value;
+            previewBox.style.background = `linear-gradient(${direction}, ${startColor} 0%, ${endColor} 100%)`;
+            previewBox.innerHTML = '<small>Background Preview</small>';
+            break;
+        case 'image':
+            const imageUrl = document.getElementById('background_image_url').value;
+            const imageFile = document.getElementById('background_image_file').files[0];
+            const imagePosition = document.getElementById('image_position').value;
+            
+            if (imageFile) {
+                // If there's an uploaded file, preview that
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const fileUrl = e.target.result;
+                    applyImageBackground(previewBox, fileUrl, imagePosition);
+                    previewBox.innerHTML = '<small>Uploaded Image Preview</small>';
+                };
+                reader.readAsDataURL(imageFile);
+            } else if (imageUrl) {
+                // Fall back to URL if no file uploaded
+                applyImageBackground(previewBox, imageUrl, imagePosition);
+                previewBox.innerHTML = '<small>URL Image Preview</small>';
+            } else {
+                previewBox.style.background = '#f8f9fa';
+                previewBox.innerHTML = '<small class="text-muted">Upload file or enter image URL to preview</small>';
+            }
+            break;
+    }
+}
+
+function applyImageBackground(element, imageUrl, position) {
+    switch(position) {
+        case 'cover':
+            element.style.background = `url('${imageUrl}') center center`;
+            element.style.backgroundSize = 'cover';
+            element.style.backgroundRepeat = 'no-repeat';
+            break;
+        case 'contain':
+            element.style.background = `url('${imageUrl}') center center`;
+            element.style.backgroundSize = 'contain';
+            element.style.backgroundRepeat = 'no-repeat';
+            break;
+        case 'center':
+            element.style.background = `url('${imageUrl}') center center`;
+            element.style.backgroundSize = 'auto';
+            element.style.backgroundRepeat = 'no-repeat';
+            break;
+        case 'repeat':
+            element.style.background = `url('${imageUrl}')`;
+            element.style.backgroundSize = 'auto';
+            element.style.backgroundRepeat = 'repeat';
+            break;
+    }
+}
 
 // Add spinning animation for loading states
 const style = document.createElement('style');

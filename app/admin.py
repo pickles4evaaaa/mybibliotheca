@@ -98,6 +98,10 @@ def save_system_config(config):
         # Update with new system settings
         existing_config['site_name'] = config.get('site_name', 'MyBibliotheca')
         existing_config['server_timezone'] = config.get('server_timezone', 'UTC')
+        
+        # Update background configuration if provided
+        if 'background_config' in config:
+            existing_config['background_config'] = config['background_config']
         existing_config['last_updated'] = datetime.now().isoformat()
         
         # Save updated config
@@ -140,7 +144,16 @@ def load_system_config():
     # Return defaults if file doesn't exist or is corrupted
     return {
         'site_name': 'MyBibliotheca',
-        'server_timezone': 'UTC'
+        'server_timezone': 'UTC',
+        'background_config': {
+            'type': 'default',
+            'solid_color': '#667eea',
+            'gradient_start': '#667eea',
+            'gradient_end': '#764ba2',
+            'gradient_direction': '135deg',
+            'image_url': '',
+            'image_position': 'cover'
+        }
     }
 
 def save_ai_config(config):
@@ -489,14 +502,55 @@ def settings():
         site_name = request.form.get('site_name', 'MyBibliotheca')
         server_timezone = request.form.get('server_timezone', 'UTC')
         
+        # Handle background configuration
+        background_config = {
+            'type': request.form.get('background_type', 'default'),
+            'solid_color': request.form.get('solid_color', '#667eea'),
+            'gradient_start': request.form.get('gradient_start', '#667eea'),
+            'gradient_end': request.form.get('gradient_end', '#764ba2'),
+            'gradient_direction': request.form.get('gradient_direction', '135deg'),
+            'image_url': request.form.get('background_image_url', ''),
+            'image_position': request.form.get('image_position', 'cover')
+        }
+        
+        # Handle background image upload
+        if 'background_image_file' in request.files:
+            file = request.files['background_image_file']
+            if file and file.filename:
+                # Validate file type
+                allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+                if '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in allowed_extensions:
+                    try:
+                        import uuid
+                        # Generate unique filename
+                        file_extension = file.filename.rsplit('.', 1)[1].lower()
+                        unique_filename = f"bg_{uuid.uuid4().hex}.{file_extension}"
+                        
+                        # Save to uploads/backgrounds directory
+                        upload_path = os.path.join(current_app.root_path, 'static', 'uploads', 'backgrounds', unique_filename)
+                        file.save(upload_path)
+                        
+                        # Update background config with uploaded image URL
+                        background_config['image_url'] = f"/static/uploads/backgrounds/{unique_filename}"
+                        background_config['type'] = 'image'
+                        
+                        flash(f'Background image uploaded successfully: {file.filename}', 'success')
+                    except Exception as e:
+                        current_app.logger.error(f"Error uploading background image: {e}")
+                        flash('Error uploading background image. Please try again.', 'error')
+                else:
+                    flash('Invalid file type. Please upload a PNG, JPG, JPEG, GIF, or WebP image.', 'error')
+        
         # Save system configuration to .env file
         config = {
             'site_name': site_name,
-            'server_timezone': server_timezone
+            'server_timezone': server_timezone,
+            'background_config': background_config
         }
         
         if save_system_config(config):
-            flash('System settings saved successfully! Changes are now active.', 'success')
+            if 'background_image_file' not in request.files or not request.files['background_image_file'].filename:
+                flash('System settings saved successfully! Changes are now active.', 'success')
         else:
             flash('Error saving system settings. Please check permissions and try again.', 'error')
         
@@ -537,7 +591,16 @@ def settings():
                          common_timezones=common_timezones,
                          available_timezones=sorted(available_timezones),
                          ai_config=load_ai_config(),
-                         debug_manager=debug_manager)
+                         debug_manager=debug_manager,
+                         background_config=system_config.get('background_config', {
+                             'type': 'default',
+                             'solid_color': '#667eea',
+                             'gradient_start': '#667eea', 
+                             'gradient_end': '#764ba2',
+                             'gradient_direction': '135deg',
+                             'image_url': '',
+                             'image_position': 'cover'
+                         }))
 
 @admin.route('/api/stats')
 @login_required
