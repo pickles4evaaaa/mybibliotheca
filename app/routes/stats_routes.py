@@ -983,12 +983,39 @@ def reading_journey():
         # Generate calendar with logs
         calendar_data = _generate_calendar_with_logs(year, month, processed_logs)
         
-        # Calculate stats
+        # Calculate enhanced stats including heatmap metrics
+        active_days = [day for day in calendar_data['days'] if day.get('logs') or day.get('clusters')]
+        activity_counts = [day.get('activity_count', 0) for day in calendar_data['days'] if day.get('is_current_month')]
+        
+        # Calculate current streak
+        current_streak = _calculate_current_streak(calendar_data['days'])
+        
+        # Determine intensity level
+        max_activity = calendar_data.get('max_activity', 0)
+        avg_activity = calendar_data.get('avg_activity', 0)
+        
+        if avg_activity == 0:
+            intensity_level = 'None'
+        elif avg_activity < 1:
+            intensity_level = 'Low'
+        elif avg_activity < 2:
+            intensity_level = 'Medium'
+        elif avg_activity < 3:
+            intensity_level = 'High'
+        else:
+            intensity_level = 'Very High'
+        
         stats = {
             'total_logs': len(processed_logs),
             'month_name': calendar.month_name[month],
             'year': year,
-            'active_days': len([day for day in calendar_data['days'] if day['logs'] or day['clusters']])
+            'active_days': len(active_days),
+            'current_streak': current_streak,
+            'intensity_level': intensity_level,
+            'max_activity': max_activity,
+            'avg_activity': avg_activity,
+            'weekend_activity': _calculate_weekend_activity(calendar_data['days']),
+            'total_activity_count': sum(activity_counts)
         }
         
         filters = {'year': year, 'month': month, 'status': status_filter}
@@ -1040,7 +1067,7 @@ def _generate_empty_calendar(year, month):
 
 
 def _generate_calendar_with_logs(year, month, logs):
-    """Generate calendar with reading logs placed on appropriate days."""
+    """Generate calendar with reading logs placed on appropriate days and enhanced heatmap data."""
     cal = calendar.monthcalendar(year, month)
     days = []
     
@@ -1052,6 +1079,23 @@ def _generate_calendar_with_logs(year, month, logs):
             logs_by_day[day] = []
         logs_by_day[day].append(log)
     
+    # Calculate activity intensity metrics
+    all_activity_counts = []
+    for day_logs in logs_by_day.values():
+        all_activity_counts.append(len(day_logs))
+    
+    max_activity = max(all_activity_counts) if all_activity_counts else 0
+    avg_activity = sum(all_activity_counts) / len(all_activity_counts) if all_activity_counts else 0
+    
+    # Calculate intensity thresholds
+    intensity_thresholds = [
+        0,
+        max(1, int(max_activity * 0.25)),
+        max(1, int(max_activity * 0.5)),
+        max(2, int(max_activity * 0.75)),
+        max_activity
+    ] if max_activity > 0 else [0, 0, 0, 0, 0]
+    
     for week in cal:
         for day in week:
             if day == 0:  # Empty day from previous/next month
@@ -1060,41 +1104,127 @@ def _generate_calendar_with_logs(year, month, logs):
                     'date': None,
                     'logs': [],
                     'clusters': [],
-                    'is_current_month': False
+                    'is_current_month': False,
+                    'activity_intensity': 0,
+                    'day_of_week': 0,
+                    'is_weekend': False,
+                    'day_pattern': 'empty'
                 })
             else:
+                day_date = datetime(year, month, day).date()
                 day_logs = logs_by_day.get(day, [])
                 
-                # Apply clustering logic - if 3+ logs on same day, create cluster
+                # Calculate activity intensity (0-4 scale)
+                activity_count = len(day_logs)
+                intensity = 0
+                for i in range(1, len(intensity_thresholds)):
+                    if activity_count >= intensity_thresholds[i]:
+                        intensity = i
+                
+                # Determine day of week (0=Monday, 6=Sunday)
+                day_of_week = day_date.weekday()
+                is_weekend = day_of_week >= 5  # Saturday=5, Sunday=6
+                
+                # Determine day pattern based on activity and day type
+                day_pattern = 'normal'
+                if activity_count > avg_activity:
+                    day_pattern = 'high_activity'
+                elif is_weekend and activity_count > 0:
+                    day_pattern = 'weekend_active'
+                elif activity_count == 0:
+                    day_pattern = 'inactive'
+                
+                # Separate individual logs from clusters (3+ logs = cluster)
+                individual_logs = day_logs[:2] if len(day_logs) <= 2 else []
+                clusters = []
+                
                 if len(day_logs) >= 3:
-                    days.append({
-                        'day': day,
-                        'date': datetime(year, month, day).date(),
-                        'logs': [],
-                        'clusters': [{
-                            'type': 'cluster',
-                            'count': len(day_logs),
-                            'logs': day_logs,
-                            'date': datetime(year, month, day).date()
-                        }],
-                        'is_current_month': True
+                    clusters.append({
+                        'count': len(day_logs),
+                        'date': day_date.isoformat(),
+                        'logs': day_logs
                     })
-                else:
-                    days.append({
-                        'day': day,
-                        'date': datetime(year, month, day).date(),
-                        'logs': day_logs,
-                        'clusters': [],
-                        'is_current_month': True
-                    })
+                
+                days.append({
+                    'day': day,
+                    'date': day_date,
+                    'logs': individual_logs,
+                    'clusters': clusters,
+                    'is_current_month': True,
+                    'activity_intensity': intensity,
+                    'activity_count': activity_count,
+                    'day_of_week': day_of_week,
+                    'is_weekend': is_weekend,
+                    'day_pattern': day_pattern
+                })
     
     return {
         'year': year,
         'month': month,
         'month_name': calendar.month_name[month],
         'days': days,
-        'weeks': len(cal)
+        'weeks': len(cal),
+        'max_activity': max_activity,
+        'avg_activity': round(avg_activity, 1),
+        'intensity_thresholds': intensity_thresholds
     }
+    
+
+def _calculate_current_streak(days):
+    """Calculate the current reading streak (consecutive days with activity)."""
+    streak = 0
+    today = datetime.now().date()
+    
+    # Reverse the days to start from the most recent
+    for day in reversed(days):
+        if not day.get('is_current_month') or not day.get('day'):
+            continue
+            
+        day_date = day.get('date')
+        if isinstance(day_date, str):
+            day_date = datetime.strptime(day_date, '%Y-%m-%d').date()
+        elif hasattr(day_date, 'date'):
+            day_date = day_date.date()
+            
+        # Only count days up to today
+        if day_date > today:
+            continue
+            
+        activity_count = day.get('activity_count', 0)
+        if activity_count > 0:
+            streak += 1
+        else:
+            break  # Streak is broken
+            
+        # Stop if we've gone too far back
+        if (today - day_date).days > 30:
+            break
+            
+    return streak
+
+
+def _calculate_weekend_activity(days):
+    """Calculate weekend vs weekday activity ratio."""
+    weekend_activity = 0
+    weekday_activity = 0
+    
+    for day in days:
+        if not day.get('is_current_month') or not day.get('day'):
+            continue
+            
+        activity_count = day.get('activity_count', 0)
+        is_weekend = day.get('is_weekend', False)
+        
+        if is_weekend:
+            weekend_activity += activity_count
+        else:
+            weekday_activity += activity_count
+    
+    total_activity = weekend_activity + weekday_activity
+    if total_activity == 0:
+        return 0
+        
+    return round((weekend_activity / total_activity) * 100, 1)
 
 
 def _generate_calendar_with_books(year, month, books):

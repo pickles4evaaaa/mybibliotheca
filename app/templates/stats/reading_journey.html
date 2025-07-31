@@ -22,9 +22,9 @@
                 </div>
             </div>
 
-            <!-- Stats Summary -->
+            <!-- Enhanced Stats Summary with Activity Patterns -->
             <div class="row mb-4">
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="card text-center h-100">
                         <div class="card-body">
                             <h5 class="card-title text-primary">{{ stats.total_logs }}</h5>
@@ -32,7 +32,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="card text-center h-100">
                         <div class="card-body">
                             <h5 class="card-title text-info">{{ stats.month_name }} {{ stats.year }}</h5>
@@ -40,7 +40,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="card text-center h-100">
                         <div class="card-body">
                             <h5 class="card-title text-warning">{{ stats.active_days }}</h5>
@@ -48,11 +48,82 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="card text-center h-100">
                         <div class="card-body">
                             <h5 class="card-title text-success">{{ ((stats.active_days / 30) * 100)|round(1) }}%</h5>
                             <p class="card-text text-muted">Activity Rate</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card text-center h-100">
+                        <div class="card-body">
+                            <div class="activity-streak-display">
+                                <h5 class="card-title text-warning streak-counter">{{ stats.current_streak or 0 }}</h5>
+                                <p class="card-text text-muted">Day Streak</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card text-center h-100">
+                        <div class="card-body">
+                            <div class="reading-intensity-meter">
+                                <h5 class="card-title text-danger intensity-level">{{ stats.intensity_level or 'Low' }}</h5>
+                                <p class="card-text text-muted">Activity Level</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Heatmap Controls -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="card-title mb-0">
+                                    <i class="bi bi-bar-chart-fill"></i> Activity Heatmap Controls
+                                </h6>
+                                <div class="btn-group btn-group-sm" role="group" id="heatmapViewToggle">
+                                    <input type="radio" class="btn-check" name="heatmapView" id="currentYear" value="current" checked>
+                                    <label class="btn btn-outline-primary" for="currentYear">Current Year</label>
+                                    <input type="radio" class="btn-check" name="heatmapView" id="previousYear" value="previous">
+                                    <label class="btn btn-outline-primary" for="previousYear">Previous Year</label>
+                                    <input type="radio" class="btn-check" name="heatmapView" id="compareYears" value="compare">
+                                    <label class="btn btn-outline-primary" for="compareYears">Compare Years</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body p-2">
+                            <div class="row align-items-center">
+                                <div class="col-md-8">
+                                    <div class="d-flex align-items-center">
+                                        <small class="text-muted me-3">Intensity:</small>
+                                        <div class="heatmap-legend d-flex align-items-center">
+                                            <small class="text-muted me-2">Less</small>
+                                            <div class="legend-square" data-intensity="0"></div>
+                                            <div class="legend-square" data-intensity="1"></div>
+                                            <div class="legend-square" data-intensity="2"></div>
+                                            <div class="legend-square" data-intensity="3"></div>
+                                            <div class="legend-square" data-intensity="4"></div>
+                                            <small class="text-muted ms-2">More</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="d-flex justify-content-end">
+                                        <button class="btn btn-sm btn-outline-secondary me-2" onclick="togglePatternHighlighting()">
+                                            <i class="bi bi-pattern"></i> Patterns
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-info" onclick="toggleSeasonalOverlay()">
+                                            <i class="bi bi-sun"></i> Seasonal
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -109,13 +180,26 @@
                             <div class="calendar-day-header">Sat</div>
                         </div>
                         
-                        <!-- Calendar Days -->
+                        <!-- Calendar Days with Enhanced Heatmap Visualization -->
                         <div class="calendar-grid">
                             {% for day in calendar_data.days %}
-                            <div class="calendar-day {% if not day.is_current_month %}other-month{% endif %} {% if day.logs or day.clusters %}has-activity{% endif %}">
+                            <div class="calendar-day {% if not day.is_current_month %}other-month{% endif %} {% if day.logs or day.clusters %}has-activity{% endif %}"
+                                 data-activity-count="{{ (day.logs|length) + (day.clusters|map(attribute='count')|sum or 0) }}"
+                                 data-activity-intensity="{{ day.activity_intensity or 0 }}"
+                                 data-day-of-week="{{ day.day_of_week or 0 }}"
+                                 data-is-weekend="{{ day.is_weekend or false }}"
+                                 style="--activity-intensity: {{ day.activity_intensity or 0 }}; --day-pattern: {{ day.day_pattern or 'normal' }};">
                                 {% if day.day %}
                                 <div class="day-number">{{ day.day }}</div>
                                 
+                                <!-- Activity Intensity Indicator -->
+                                {% if day.logs or day.clusters %}
+                                <div class="activity-indicator" 
+                                     data-intensity="{{ day.activity_intensity or 0 }}"
+                                     title="Activity Level: {{ day.activity_intensity or 0 }}/4">
+                                </div>
+                                {% endif %}
+
                                 <!-- Individual Reading Logs (1-2 logs) -->
                                 {% for log in day.logs %}
                                 <div class="calendar-log" 
@@ -249,7 +333,7 @@
 </div>
 
 <style>
-/* Calendar Grid Styling */
+/* Enhanced Calendar Grid Styling with Heatmap Features */
 .calendar-container {
     background: #f8f9fa;
     border-radius: 8px;
@@ -282,6 +366,7 @@
     background: #dee2e6;
 }
 
+/* Enhanced Calendar Day with Heatmap Intensity */
 .calendar-day {
     background: white;
     min-height: 120px;
@@ -289,20 +374,139 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    transition: background-color 0.2s ease;
+    transition: all 0.3s ease;
+    border: 2px solid transparent;
+}
+
+/* Heatmap Intensity Colors using CSS Custom Properties */
+.calendar-day[data-activity-intensity="0"] {
+    background: #f8f9fa;
+}
+
+.calendar-day[data-activity-intensity="1"] {
+    background: linear-gradient(135deg, #e3f2fd 0%, #f8f9fa 100%);
+    border-color: rgba(33, 150, 243, 0.1);
+}
+
+.calendar-day[data-activity-intensity="2"] {
+    background: linear-gradient(135deg, #bbdefb 0%, #e3f2fd 100%);
+    border-color: rgba(33, 150, 243, 0.2);
+}
+
+.calendar-day[data-activity-intensity="3"] {
+    background: linear-gradient(135deg, #90caf9 0%, #bbdefb 100%);
+    border-color: rgba(33, 150, 243, 0.3);
+    box-shadow: 0 2px 4px rgba(33, 150, 243, 0.1);
+}
+
+.calendar-day[data-activity-intensity="4"] {
+    background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+    border-color: #1976d2;
+    color: white;
+    box-shadow: 0 4px 8px rgba(33, 150, 243, 0.3);
+}
+
+/* Weekend Pattern Highlighting */
+.calendar-day[data-is-weekend="true"] {
+    background: linear-gradient(45deg, transparent 25%, rgba(255, 193, 7, 0.1) 25%, rgba(255, 193, 7, 0.1) 50%, transparent 50%, transparent 75%, rgba(255, 193, 7, 0.1) 75%);
+    background-size: 8px 8px;
+}
+
+/* Seasonal Overlay Patterns */
+.calendar-day.seasonal-spring {
+    background-image: radial-gradient(circle at 20% 80%, rgba(76, 175, 80, 0.1) 0%, transparent 50%);
+}
+
+.calendar-day.seasonal-summer {
+    background-image: radial-gradient(circle at 80% 20%, rgba(255, 193, 7, 0.1) 0%, transparent 50%);
+}
+
+.calendar-day.seasonal-autumn {
+    background-image: radial-gradient(circle at 20% 20%, rgba(255, 152, 0, 0.1) 0%, transparent 50%);
+}
+
+.calendar-day.seasonal-winter {
+    background-image: radial-gradient(circle at 80% 80%, rgba(33, 150, 243, 0.1) 0%, transparent 50%);
+}
+
+/* Day of Week Pattern Recognition */
+.calendar-day:nth-child(7n+1) { /* Sundays */
+    border-left: 3px solid rgba(244, 67, 54, 0.3);
+}
+
+.calendar-day:nth-child(7n) { /* Saturdays */
+    border-right: 3px solid rgba(244, 67, 54, 0.3);
+}
+
+/* Pattern Highlighting */
+.calendar-day.pattern-highlight {
+    animation: patternPulse 2s ease-in-out infinite;
+}
+
+@keyframes patternPulse {
+    0%, 100% { 
+        background-color: rgba(156, 39, 176, 0.1);
+        transform: scale(1);
+    }
+    50% { 
+        background-color: rgba(156, 39, 176, 0.2);
+        transform: scale(1.02);
+    }
 }
 
 .calendar-day:hover {
-    background: #f8f9fa;
+    transform: scale(1.02);
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 
 .calendar-day.other-month {
     background: #f8f9fa;
     color: #6c757d;
+    opacity: 0.6;
 }
 
 .calendar-day.has-activity {
-    background: #e3f2fd;
+    border: 2px solid rgba(33, 150, 243, 0.2);
+}
+
+/* Activity Intensity Indicator */
+.activity-indicator {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.activity-indicator[data-intensity="1"] {
+    background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
+    box-shadow: 0 0 4px rgba(76, 175, 80, 0.4);
+}
+
+.activity-indicator[data-intensity="2"] {
+    background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+    box-shadow: 0 0 6px rgba(255, 152, 0, 0.4);
+}
+
+.activity-indicator[data-intensity="3"] {
+    background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+    box-shadow: 0 0 8px rgba(244, 67, 54, 0.4);
+}
+
+.activity-indicator[data-intensity="4"] {
+    background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+    box-shadow: 0 0 10px rgba(156, 39, 176, 0.4);
+    animation: intensePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes intensePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
 }
 
 .day-number {
@@ -311,10 +515,84 @@
     color: #343a40;
     margin-bottom: 4px;
     align-self: flex-start;
+    position: relative;
+    z-index: 2;
 }
 
 .other-month .day-number {
     color: #adb5bd;
+}
+
+/* Enhanced Calendar Day on High Intensity */
+.calendar-day[data-activity-intensity="4"] .day-number {
+    color: white;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+/* Heatmap Legend Styling */
+.heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.legend-square {
+    width: 16px;
+    height: 16px;
+    border-radius: 2px;
+    border: 1px solid #dee2e6;
+    transition: transform 0.2s ease;
+}
+
+.legend-square:hover {
+    transform: scale(1.1);
+}
+
+.legend-square[data-intensity="0"] {
+    background: #f8f9fa;
+}
+
+.legend-square[data-intensity="1"] {
+    background: #e3f2fd;
+}
+
+.legend-square[data-intensity="2"] {
+    background: #bbdefb;
+}
+
+.legend-square[data-intensity="3"] {
+    background: #90caf9;
+}
+
+.legend-square[data-intensity="4"] {
+    background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+}
+
+/* Activity Streak Display */
+.activity-streak-display .streak-counter {
+    background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+}
+
+/* Reading Intensity Meter */
+.reading-intensity-meter .intensity-level {
+    position: relative;
+}
+
+.reading-intensity-meter .intensity-level::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #4caf50 0%, #ff9800 50%, #f44336 100%);
+    opacity: 0.7;
 }
 
 /* Reading Log Items in Calendar */
@@ -323,6 +601,8 @@
     margin: 2px;
     transition: transform 0.2s ease;
     max-width: fit-content;
+    position: relative;
+    z-index: 3;
 }
 
 .calendar-log:hover {
@@ -336,6 +616,11 @@
     object-fit: cover;
     border-radius: 3px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: all 0.2s ease;
+}
+
+.log-cover-small:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
 }
 
 .log-placeholder-small {
@@ -348,6 +633,409 @@
     justify-content: center;
     font-size: 0.6rem;
     font-weight: 600;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    transition: all 0.2s ease;
+}
+
+.log-placeholder-small:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+}
+
+/* Cluster styling */
+.calendar-cluster {
+    cursor: pointer;
+    margin: 2px;
+    transition: transform 0.2s ease;
+    max-width: fit-content;
+    position: relative;
+    z-index: 3;
+}
+
+.calendar-cluster:hover {
+    transform: scale(1.1);
+    z-index: 10;
+}
+
+.cluster-circle-small {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: bold;
+    box-shadow: 0 2px 6px rgba(0,123,255,0.3);
+    border: 2px solid white;
+    transition: all 0.2s ease;
+}
+
+.cluster-circle-small:hover {
+    background: linear-gradient(135deg, #0056b3 0%, #003d82 100%);
+    box-shadow: 0 4px 10px rgba(0,123,255,0.4);
+    transform: scale(1.1);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .calendar-container {
+        font-size: 0.8rem;
+    }
+    
+    .calendar-day {
+        min-height: 80px;
+        padding: 4px;
+    }
+    
+    .day-number {
+        font-size: 0.8rem;
+    }
+    
+    .log-cover-small, .log-placeholder-small {
+        width: 20px;
+        height: 28px;
+    }
+    
+    .cluster-circle-small {
+        width: 20px;
+        height: 20px;
+        font-size: 0.65rem;
+    }
+    
+    .activity-indicator {
+        width: 8px;
+        height: 8px;
+    }
+    
+    .heatmap-legend {
+        gap: 2px;
+    }
+    
+    .legend-square {
+        width: 12px;
+        height: 12px;
+    }
+}
+
+/* Year Comparison Mode */
+.year-comparison-mode .calendar-day {
+    background: linear-gradient(to right, var(--current-year-bg, #f8f9fa) 50%, var(--previous-year-bg, #f8f9fa) 50%);
+    border-left: 3px solid var(--current-year-color, transparent);
+    border-right: 3px solid var(--previous-year-color, transparent);
+}
+
+.year-comparison-mode .calendar-day::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 1px;
+    height: 100%;
+    background: #dee2e6;
+    z-index: 1;
+}
+
+/* Pattern highlighting animations */
+.pattern-weekends .calendar-day[data-is-weekend="true"] {
+    animation: weekendHighlight 3s ease-in-out infinite;
+}
+
+@keyframes weekendHighlight {
+    0%, 100% { 
+        background-color: rgba(255, 193, 7, 0.1);
+    }
+    50% { 
+        background-color: rgba(255, 193, 7, 0.3);
+    }
+}
+
+/* Goal progress ring animation */
+.goal-progress-ring {
+    position: relative;
+    width: 40px;
+    height: 40px;
+}
+
+.goal-progress-ring svg {
+    transform: rotate(-90deg);
+}
+
+.goal-progress-ring .progress-circle {
+    fill: none;
+    stroke: #e9ecef;
+    stroke-width: 3;
+}
+
+.goal-progress-ring .progress-bar {
+    fill: none;
+    stroke: #28a745;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 0 100;
+    animation: progressFill 2s ease-in-out forwards;
+}
+
+@keyframes progressFill {
+    from {
+        stroke-dasharray: 0 100;
+    }
+    to {
+        stroke-dasharray: var(--progress-value, 0) 100;
+    }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize enhanced heatmap features
+    initializeHeatmapControls();
+    initializePatternRecognition();
+    initializeSeasonalOverlays();
+    
+    // Initialize existing functionality
+    initializeTooltips();
+    restoreFilterValues();
+    initializeEventHandlers();
+    
+    // Apply initial heatmap intensity calculations
+    calculateActivityIntensity();
+});
+
+function initializeHeatmapControls() {
+    const heatmapToggle = document.getElementById('heatmapViewToggle');
+    if (heatmapToggle) {
+        heatmapToggle.addEventListener('change', function(e) {
+            const view = e.target.value;
+            switch(view) {
+                case 'current':
+                    showCurrentYearHeatmap();
+                    break;
+                case 'previous':
+                    showPreviousYearHeatmap();
+                    break;
+                case 'compare':
+                    showYearComparison();
+                    break;
+            }
+        });
+    }
+}
+
+function initializePatternRecognition() {
+    // Calculate and highlight reading patterns
+    const calendarDays = document.querySelectorAll('.calendar-day');
+    const dayPatterns = new Map();
+    
+    calendarDays.forEach(day => {
+        const dayOfWeek = parseInt(day.dataset.dayOfWeek) || 0;
+        const activityCount = parseInt(day.dataset.activityCount) || 0;
+        
+        if (!dayPatterns.has(dayOfWeek)) {
+            dayPatterns.set(dayOfWeek, []);
+        }
+        dayPatterns.get(dayOfWeek).push(activityCount);
+    });
+    
+    // Find patterns and store them
+    window.readingPatterns = {
+        dayPatterns: dayPatterns,
+        weekendPattern: calculateWeekendPattern(),
+        monthlyTrends: calculateMonthlyTrends()
+    };
+}
+
+function initializeSeasonalOverlays() {
+    const calendarDays = document.querySelectorAll('.calendar-day');
+    const currentMonth = {{ calendar_data.month or 1 }};
+    
+    calendarDays.forEach(day => {
+        if (day.dataset.day) {
+            const seasonClass = getSeasonClass(currentMonth);
+            day.classList.add(seasonClass);
+        }
+    });
+}
+
+function calculateActivityIntensity() {
+    const calendarDays = document.querySelectorAll('.calendar-day[data-activity-count]');
+    const activityCounts = Array.from(calendarDays).map(day => 
+        parseInt(day.dataset.activityCount) || 0
+    ).filter(count => count > 0);
+    
+    if (activityCounts.length === 0) return;
+    
+    const maxActivity = Math.max(...activityCounts);
+    const intensityThresholds = [
+        0,
+        Math.ceil(maxActivity * 0.25),
+        Math.ceil(maxActivity * 0.5),
+        Math.ceil(maxActivity * 0.75),
+        maxActivity
+    ];
+    
+    calendarDays.forEach(day => {
+        const count = parseInt(day.dataset.activityCount) || 0;
+        let intensity = 0;
+        
+        for (let i = 1; i < intensityThresholds.length; i++) {
+            if (count >= intensityThresholds[i]) {
+                intensity = i;
+            }
+        }
+        
+        day.dataset.activityIntensity = intensity;
+        
+        // Add activity indicator if there's activity
+        if (count > 0 && !day.querySelector('.activity-indicator')) {
+            const indicator = document.createElement('div');
+            indicator.className = 'activity-indicator';
+            indicator.dataset.intensity = intensity;
+            indicator.title = `Activity Level: ${intensity}/4`;
+            day.appendChild(indicator);
+        }
+    });
+}
+
+function togglePatternHighlighting() {
+    const calendarContainer = document.querySelector('.calendar-container');
+    calendarContainer.classList.toggle('pattern-weekends');
+    
+    // Highlight days with above-average activity
+    const calendarDays = document.querySelectorAll('.calendar-day');
+    const averageActivity = calculateAverageActivity();
+    
+    calendarDays.forEach(day => {
+        const activityCount = parseInt(day.dataset.activityCount) || 0;
+        if (activityCount > averageActivity) {
+            day.classList.toggle('pattern-highlight');
+        }
+    });
+}
+
+function toggleSeasonalOverlay() {
+    const calendarDays = document.querySelectorAll('.calendar-day');
+    const isActive = document.querySelector('.calendar-day.seasonal-spring') !== null;
+    
+    calendarDays.forEach(day => {
+        if (isActive) {
+            day.classList.remove('seasonal-spring', 'seasonal-summer', 'seasonal-autumn', 'seasonal-winter');
+        } else {
+            const month = {{ calendar_data.month or 1 }};
+            const seasonClass = getSeasonClass(month);
+            day.classList.add(seasonClass);
+        }
+    });
+}
+
+function showCurrentYearHeatmap() {
+    const calendarContainer = document.querySelector('.calendar-container');
+    calendarContainer.classList.remove('year-comparison-mode');
+    
+    // Reset to current year data
+    window.location.href = updateUrlParameter('year', {{ calendar_data.year }});
+}
+
+function showPreviousYearHeatmap() {
+    const previousYear = {{ calendar_data.year - 1 }};
+    window.location.href = updateUrlParameter('year', previousYear);
+}
+
+function showYearComparison() {
+    const calendarContainer = document.querySelector('.calendar-container');
+    calendarContainer.classList.add('year-comparison-mode');
+    
+    // This would require additional backend support to load both years
+    console.log('Year comparison mode activated - requires backend enhancement');
+}
+
+function getSeasonClass(month) {
+    if (month >= 3 && month <= 5) return 'seasonal-spring';
+    if (month >= 6 && month <= 8) return 'seasonal-summer';
+    if (month >= 9 && month <= 11) return 'seasonal-autumn';
+    return 'seasonal-winter';
+}
+
+function calculateWeekendPattern() {
+    const weekendDays = document.querySelectorAll('.calendar-day[data-is-weekend="true"]');
+    const totalWeekendActivity = Array.from(weekendDays).reduce((sum, day) => {
+        return sum + (parseInt(day.dataset.activityCount) || 0);
+    }, 0);
+    
+    const weekdayDays = document.querySelectorAll('.calendar-day[data-is-weekend="false"]');
+    const totalWeekdayActivity = Array.from(weekdayDays).reduce((sum, day) => {
+        return sum + (parseInt(day.dataset.activityCount) || 0);
+    }, 0);
+    
+    return {
+        weekendActivity: totalWeekendActivity,
+        weekdayActivity: totalWeekdayActivity,
+        weekendPreference: totalWeekendActivity > totalWeekdayActivity
+    };
+}
+
+function calculateMonthlyTrends() {
+    const days = document.querySelectorAll('.calendar-day[data-day]');
+    const weekTrends = [];
+    
+    for (let week = 0; week < 6; week++) {
+        const weekDays = Array.from(days).slice(week * 7, (week + 1) * 7);
+        const weekActivity = weekDays.reduce((sum, day) => {
+            return sum + (parseInt(day.dataset.activityCount) || 0);
+        }, 0);
+        weekTrends.push(weekActivity);
+    }
+    
+    return weekTrends;
+}
+
+function calculateAverageActivity() {
+    const calendarDays = document.querySelectorAll('.calendar-day[data-activity-count]');
+    const totalActivity = Array.from(calendarDays).reduce((sum, day) => {
+        return sum + (parseInt(day.dataset.activityCount) || 0);
+    }, 0);
+    
+    return totalActivity / calendarDays.length;
+}
+
+function updateUrlParameter(param, value) {
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set(param, value);
+    return `${window.location.pathname}?${urlParams.toString()}`;
+}
+
+// Initialize existing functionality
+function initializeTooltips() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+}
+
+function restoreFilterValues() {
+    const urlParams = new URLSearchParams(window.location.search);
+    // Restore any filter values if needed
+}
+
+function initializeEventHandlers() {
+    // Handle individual log clicks
+    document.querySelectorAll('.calendar-log').forEach(function(logEl) {
+        logEl.addEventListener('click', function(e) {
+            e.stopPropagation();
+            showLogDetails(this.dataset.logId);
+        });
+    });
+    
+    // Handle cluster clicks
+    document.querySelectorAll('.calendar-cluster').forEach(function(clusterEl) {
+        clusterEl.addEventListener('click', function(e) {
+            e.stopPropagation();
+            showClusterDetails(this);
+        });
+    });
+}
     text-align: center;
     line-height: 1;
     padding: 2px;

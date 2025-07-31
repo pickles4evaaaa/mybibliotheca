@@ -617,6 +617,122 @@
       border-color: #FFA000;
       color: #000;
     }
+    
+    /* Reading Streak Indicator Styles */
+    .streak-indicator {
+      position: relative;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      border-radius: 12px !important;
+      padding: 0.4rem 0.6rem !important;
+      text-align: center;
+      min-width: 60px;
+      background: white !important;
+    }
+    
+    /* Dynamic Color Levels - Clean design with colored text and borders */
+    .streak-indicator.streak-level-0 {
+      border: 2px solid #28a745 !important;
+      color: #28a745 !important;
+    }
+    
+    .streak-indicator.streak-level-0:hover {
+      background: #f8f9fa !important;
+      color: #1e7e34 !important;
+    }
+    
+    .streak-indicator.streak-level-1 {
+      border: 2px solid #ffc107 !important;
+      color: #ffc107 !important;
+    }
+    
+    .streak-indicator.streak-level-1:hover {
+      background: #f8f9fa !important;
+      color: #e0a800 !important;
+    }
+    
+    .streak-indicator.streak-level-2 {
+      border: 2px solid #fd7e14 !important;
+      color: #fd7e14 !important;
+    }
+    
+    .streak-indicator.streak-level-2:hover {
+      background: #f8f9fa !important;
+      color: #e8690e !important;
+    }
+    
+    .streak-indicator.streak-level-3 {
+      border: 2px solid #dc3545 !important;
+      color: #dc3545 !important;
+    }
+    
+    .streak-indicator.streak-level-3:hover {
+      background: #f8f9fa !important;
+      color: #c82333 !important;
+    }
+    
+    .streak-indicator.streak-level-4 {
+      border: 2px solid #e83e8c !important;
+      color: #e83e8c !important;
+    }
+    
+    .streak-indicator.streak-level-4:hover {
+      background: #f8f9fa !important;
+      color: #d91a72 !important;
+    }
+    
+    .streak-indicator:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .streak-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1;
+    }
+    
+    .streak-number {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 1px;
+    }
+    
+    .streak-unit {
+      font-size: 0.6rem;
+      font-weight: 600;
+      margin-bottom: 1px;
+      opacity: 0.9;
+    }
+    
+    .streak-label {
+      font-size: 0.6rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      opacity: 0.8;
+    }
+    
+    /* Mobile optimization for streak indicator */
+    @media (max-width: 768px) {
+      .streak-indicator {
+        padding: 0.3rem 0.4rem !important;
+        min-width: 50px;
+      }
+      
+      .streak-number {
+        font-size: 0.9rem;
+      }
+      
+      .streak-unit {
+        font-size: 0.55rem;
+      }
+      
+      .streak-label {
+        font-size: 0.5rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -633,6 +749,21 @@
         <div class="collapse navbar-collapse" id="navbarNav">
           <div class="navbar-nav me-auto">
             {% if current_user.is_authenticated %}
+              <!-- Reading Streak Indicator -->
+              {% if current_reading_streak >= 0 %}
+              <a href="{{ url_for('stats.reading_journey') }}" 
+                 class="btn btn-outline-warning me-2 streak-indicator streak-level-{{ streak_performance_level or 0 }}" 
+                 title="🔥 {{ current_reading_streak }} day reading streak! Click to view your reading journey">
+                <div class="streak-display">
+                  <div class="streak-number">{{ current_reading_streak }}</div>
+                  <div class="streak-unit">{{ 'Day' if current_reading_streak == 1 else 'Days' }}</div>
+                  <div class="streak-label">
+                    {% if is_exceeding_record %}🔥 Streak 🔥{% else %}Streak{% endif %}
+                  </div>
+                </div>
+              </a>
+              {% endif %}
+              
               <a class="btn btn-outline-primary me-2" href="{{ url_for('main.library') }}">Library</a>
               <a class="btn btn-outline-info me-2" href="{{ url_for('main.people') }}">People</a>
               <a class="btn btn-outline-secondary me-2" href="{{ url_for('genres.index') }}">Genres</a>
