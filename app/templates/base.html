@@ -93,9 +93,9 @@
       min-height: 100vh;
       font-family: 'Georgia', serif;
       color: var(--text-color);
+      padding-top: clamp(80px, 15vw, 110px); /* Dynamic padding for floating navbar */
     }
     .overlay {
-      background: var(--overlay-background);
       min-height: 100vh;
       padding: 40px 0;
     }
@@ -130,6 +130,10 @@
         margin-bottom: 8px;
         width: 100%;
         font-size: clamp(0.8rem, 3vw, 1rem);
+        text-align: center;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
       
       .navbar-nav {
@@ -188,16 +192,42 @@
     }
     .navbar {
       background: var(--navbar-background);
-      border-bottom: 1px solid var(--border-color);
+      border: 1px solid var(--border-color);
       margin-bottom: 32px;
+      position: fixed;
+      top: clamp(8px, 2vw, 16px);
+      left: clamp(8px, 2vw, 16px);
+      right: clamp(8px, 2vw, 16px);
+      z-index: 1030;
+      border-radius: clamp(8px, 2vw, 16px);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     
-    /* Additional responsive improvements */
+    /* Slightly more opaque when scrolling for better contrast */
+    .navbar.scrolled {
+      background: rgba(255, 255, 255, 0.98);
+      border-color: rgba(224, 201, 166, 0.8);
+    }
+    
+    [data-theme="dark"] .navbar.scrolled {
+      background: rgba(20, 20, 20, 0.98);
+      border-color: rgba(64, 64, 64, 0.8);
+    }
+    
+    /* Responsive navbar compensation and improvements */
     @media (max-width: 991px) {
+      body {
+        padding-top: clamp(100px, 20vw, 140px); /* More padding for collapsed navbar */
+      }
+      
       .navbar-nav .btn {
         margin-bottom: 0.5rem;
         margin-right: 0 !important;
         width: 100%;
+        text-align: center;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
       
       .navbar-nav {
@@ -207,6 +237,12 @@
       .navbar-text {
         font-size: clamp(0.8rem, 2.5vw, 1rem);
         margin-bottom: 0.5rem;
+      }
+    }
+    
+    @media (max-width: 576px) {
+      body {
+        padding-top: clamp(90px, 18vw, 120px); /* Adjusted for mobile */
       }
     }
     
@@ -220,7 +256,20 @@
     .navbar-nav .btn {
       font-size: clamp(0.75rem, 2.5vw, 1rem);
       padding: clamp(0.3rem, 1.5vw, 0.6rem) clamp(0.8rem, 3vw, 1.2rem);
-      border-radius: clamp(0.25rem, 1vw, 0.5rem);
+      border-radius: clamp(6px, 1.5vw, 12px);
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    /* Ensure consistent rounded corners for all navbar buttons */
+    .navbar .btn {
+      border-radius: clamp(6px, 1.5vw, 12px) !important;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     
     /* Container fluid adjustments */
@@ -986,6 +1035,26 @@
         });
       });
     }
+    
+    // Navbar scroll behavior
+    let ticking = false;
+    
+    function updateNavbar() {
+      const navbar = document.querySelector('.navbar');
+      if (window.scrollY > 10) {
+        navbar.classList.add('scrolled');
+      } else {
+        navbar.classList.remove('scrolled');
+      }
+      ticking = false;
+    }
+    
+    window.addEventListener('scroll', function() {
+      if (!ticking) {
+        requestAnimationFrame(updateNavbar);
+        ticking = true;
+      }
+    });
   </script>
 
   <!-- Reading Log Entry Modal -->
