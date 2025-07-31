@@ -15,6 +15,49 @@ def _safe_date_to_isoformat(date_obj):
         return date_obj.isoformat()
     return None
 
+@stats_bp.route('/network-explorer')
+@login_required
+def network_explorer():
+    """Display the Interactive Library Network Explorer visualization."""
+    try:
+        # Get user's books with all relationships
+        user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+        
+        if not user_books:
+            return render_template('stats/network_explorer.html', 
+                                 network_data={}, 
+                                 stats={'total_books': 0, 'total_authors': 0, 'total_categories': 0})
+        
+        # Process books into network data structure
+        network_data = _build_network_data(user_books)
+        
+        # Calculate summary stats
+        stats = {
+            'total_books': len(user_books),
+            'total_contributors': len(network_data.get('contributors', {})),
+            'total_categories': len(network_data.get('categories', {})),
+            'total_series': len(network_data.get('series', {})),
+            'total_custom_fields': len(network_data.get('custom_fields', {})),
+            'relationships': sum([
+                len(network_data.get('contributor_relationships', [])),
+                len(network_data.get('category_relationships', [])),
+                len(network_data.get('series_relationships', [])),
+                len(network_data.get('publisher_relationships', [])),
+                len(network_data.get('custom_field_relationships', []))
+            ])
+        }
+        
+        return render_template('stats/network_explorer.html', 
+                             network_data=network_data, 
+                             stats=stats)
+        
+    except Exception as e:
+        logger.error(f"Error generating network explorer: {str(e)}")
+        return render_template('stats/network_explorer.html', 
+                             network_data={}, 
+                             stats={'total_books': 0, 'total_authors': 0, 'total_categories': 0},
+                             error=str(e))
+
 @stats_bp.route('/library-journey')
 @login_required
 def library_journey():
@@ -546,13 +589,26 @@ def _extract_categories(book):
     return category_names
 
 
-def _extract_date(book, date_field):
+def _extract_publisher_name(book):
+    """Extract publisher name from book data, handling both string and object types."""
+    publisher = _get_value(book, "publisher", None)
+    if publisher is None:
+        return None
+    
+    # Handle Publisher object
+    if hasattr(publisher, 'name'):
+        return str(publisher.name)
+    
+    # Handle string publisher name
+    return str(publisher)
+
+def _extract_date(book, field_name):
     """Extract and normalize date fields to ISO strings."""
     # Handle both 'publication_date' and 'published_date' for compatibility
-    if date_field == 'publication_date':
+    if field_name == 'publication_date':
         date_value = _get_value(book, 'publication_date', None) or _get_value(book, 'published_date', None)
     else:
-        date_value = _get_value(book, date_field, None)
+        date_value = _get_value(book, field_name, None)
     
     if not date_value:
         return None
@@ -1097,3 +1153,259 @@ def _generate_calendar_with_books(year, month, books):
         'days': days,
         'weeks': len(cal)
     }
+
+
+
+def _build_network_data(user_books):
+    """Build network data structure for the Interactive Library Network Explorer."""
+    import json  # For handling custom metadata that might be JSON strings
+    
+    # Initialize data structures
+    network_data = {
+        "books": {},
+        "contributors": {},  # People with their specific contribution types
+        "categories": {},
+        "series": {},
+        "publishers": {},
+        "custom_fields": {},  # Custom field values as nodes
+        "contributor_relationships": [],
+        "category_relationships": [],
+        "series_relationships": [],
+        "publisher_relationships": [],
+        "custom_field_relationships": []
+    }
+    
+    # Process each book
+    for book in user_books:
+        book_id = _get_value(book, "uid", "") or _get_value(book, "id", "")
+        if not book_id:
+            continue
+            
+        # Extract book data
+        book_data = {
+            "id": book_id,
+            "title": _get_value(book, "title", "Unknown Title"),
+            "cover_url": _get_value(book, "cover_url", None),
+            "reading_status": _get_value(book, "reading_status", None),
+            "user_rating": _get_value(book, "user_rating", None),
+            "page_count": _get_value(book, "page_count", None),
+            "finish_date": _extract_date(book, "finish_date"),
+            "date_added": _extract_date(book, "date_added"),
+            "publisher": _extract_publisher_name(book),
+            "series_name": _get_value(book, "series_name", None),
+            "series_volume": _get_value(book, "series_volume", None)
+        }
+        
+        # Get status color for visual encoding
+        book_data["status_color"] = _get_network_status_color(book_data["reading_status"])
+        
+        # Store book
+        network_data["books"][book_id] = book_data
+        
+        # Extract detailed contributors with contribution types
+        contributors = _get_value(book, "contributors", [])
+        if contributors:
+            for contributor in contributors:
+                person = _get_value(contributor, "person", None)
+                contribution_type = _get_value(contributor, "contribution_type", None)
+                
+                if person and contribution_type:
+                    person_name = _get_value(person, "name", "Unknown")
+                    person_id = _get_value(person, "id", "")
+                    
+                    # Get contribution type value
+                    if hasattr(contribution_type, 'value'):
+                        contrib_type = contribution_type.value
+                    else:
+                        contrib_type = str(contribution_type).lower()
+                    
+                    # Create unique contributor node ID based on person and contribution type
+                    contributor_id = f"contributor_{person_id}_{contrib_type}" if person_id else f"contributor_{person_name.replace(' ', '_').lower()}_{contrib_type}"
+                    
+                    if contributor_id not in network_data["contributors"]:
+                        network_data["contributors"][contributor_id] = {
+                            "id": contributor_id,
+                            "person_id": person_id,
+                            "name": person_name,
+                            "contribution_type": contrib_type,
+                            "book_count": 0,
+                            "books": []
+                        }
+                    
+                    network_data["contributors"][contributor_id]["book_count"] += 1
+                    network_data["contributors"][contributor_id]["books"].append(book_id)
+                    
+                    # Create relationship
+                    network_data["contributor_relationships"].append({
+                        "book_id": book_id,
+                        "contributor_id": contributor_id,
+                        "type": contrib_type
+                    })
+        
+        # Fallback: Extract basic authors if no detailed contributors
+        if not contributors:
+            authors = _extract_authors(book)
+            for author in authors:
+                contributor_id = f"contributor_{author.replace(' ', '_').lower()}_authored"
+                if contributor_id not in network_data["contributors"]:
+                    network_data["contributors"][contributor_id] = {
+                        "id": contributor_id,
+                        "person_id": None,
+                        "name": author,
+                        "contribution_type": "authored",
+                        "book_count": 0,
+                        "books": []
+                    }
+                
+                network_data["contributors"][contributor_id]["book_count"] += 1
+                network_data["contributors"][contributor_id]["books"].append(book_id)
+                
+                # Create relationship
+                network_data["contributor_relationships"].append({
+                    "book_id": book_id,
+                    "contributor_id": contributor_id,
+                    "type": "authored"
+                })
+        
+        # Extract categories and create relationships
+        categories = _extract_categories(book)
+        for category in categories:
+            category_id = f"category_{category.replace(' ', '_').lower()}"
+            if category_id not in network_data["categories"]:
+                network_data["categories"][category_id] = {
+                    "id": category_id,
+                    "name": category,
+                    "book_count": 0,
+                    "books": [],
+                    "color": _get_category_color(category)
+                }
+            
+            network_data["categories"][category_id]["book_count"] += 1
+            network_data["categories"][category_id]["books"].append(book_id)
+            
+            # Create relationship
+            network_data["category_relationships"].append({
+                "book_id": book_id,
+                "category_id": category_id,
+                "type": "categorized_as"
+            })
+        
+        # Extract series and create relationships
+        if book_data["series_name"]:
+            series_id = f"series_{book_data['series_name'].replace(' ', '_').lower()}"
+            if series_id not in network_data["series"]:
+                network_data["series"][series_id] = {
+                    "id": series_id,
+                    "name": book_data["series_name"],
+                    "book_count": 0,
+                    "books": []
+                }
+            
+            network_data["series"][series_id]["book_count"] += 1
+            network_data["series"][series_id]["books"].append(book_id)
+            
+            # Create relationship
+            network_data["series_relationships"].append({
+                "book_id": book_id,
+                "series_id": series_id,
+                "type": "part_of_series",
+                "volume": book_data["series_volume"]
+            })
+        
+        # Extract publishers and create relationships
+        if book_data["publisher"]:
+            # Handle case where publisher might be an object instead of string
+            publisher_name = book_data["publisher"]
+            if hasattr(publisher_name, 'name'):
+                publisher_name = publisher_name.name
+            elif not isinstance(publisher_name, str):
+                publisher_name = str(publisher_name)
+            
+            publisher_id = f"publisher_{publisher_name.replace(' ', '_').lower()}"
+            if publisher_id not in network_data["publishers"]:
+                network_data["publishers"][publisher_id] = {
+                    "id": publisher_id,
+                    "name": publisher_name,
+                    "book_count": 0,
+                    "books": []
+                }
+            
+            network_data["publishers"][publisher_id]["book_count"] += 1
+            network_data["publishers"][publisher_id]["books"].append(book_id)
+            
+            # Create relationship
+            network_data["publisher_relationships"].append({
+                "book_id": book_id,
+                "publisher_id": publisher_id,
+                "type": "published_by"
+            })
+        
+        # Extract custom fields and create relationships
+        custom_metadata = _get_value(book, "custom_metadata", {})
+        if custom_metadata:
+            # Handle case where custom_metadata might be a string (JSON) instead of dict
+            if isinstance(custom_metadata, str):
+                try:
+                    custom_metadata = json.loads(custom_metadata)
+                except (json.JSONDecodeError, TypeError, NameError):
+                    custom_metadata = {}
+            
+            # Ensure it's a dictionary before iterating
+            if isinstance(custom_metadata, dict):
+                for field_name, field_value in custom_metadata.items():
+                    if field_value and str(field_value).strip():
+                        # Clean field value for ID generation
+                        clean_value = str(field_value).strip()
+                        if len(clean_value) > 50:  # Truncate very long values
+                            clean_value = clean_value[:50] + "..."
+                        
+                        custom_field_id = f"custom_{field_name}_{clean_value.replace(' ', '_').lower()}"
+                        
+                        if custom_field_id not in network_data["custom_fields"]:
+                            network_data["custom_fields"][custom_field_id] = {
+                                "id": custom_field_id,
+                                "field_name": field_name,
+                                "field_value": clean_value,
+                                "display_name": field_name.replace('_', ' ').title(),
+                                "book_count": 0,
+                                "books": []
+                            }
+                        
+                        network_data["custom_fields"][custom_field_id]["book_count"] += 1
+                        network_data["custom_fields"][custom_field_id]["books"].append(book_id)
+                        
+                        # Create relationship
+                        network_data["custom_field_relationships"].append({
+                            "book_id": book_id,
+                            "custom_field_id": custom_field_id,
+                            "type": "has_custom_field",
+                            "field_name": field_name,
+                            "field_value": field_value
+                        })
+    
+    return network_data
+
+
+def _get_network_status_color(status):
+    """Get color for reading status in network visualization."""
+    status_colors = {
+        "read": "#28a745",           # Green
+        "reading": "#007bff",        # Blue  
+        "plan_to_read": "#ffc107",   # Yellow
+        "on_hold": "#fd7e14",        # Orange
+        "did_not_finish": "#dc3545", # Red
+        "library_only": "#6c757d"   # Gray
+    }
+    return status_colors.get(status, "#6c757d")
+
+
+def _get_category_color(category_name):
+    """Get color for category based on name."""
+    # Simple hash-based color assignment for consistency
+    import hashlib
+    hash_obj = hashlib.md5(category_name.encode())
+    hash_hex = hash_obj.hexdigest()
+    
+    # Convert first 6 characters to color, ensure good contrast
+    color = f"#{hash_hex[:6]}"
+    return color
