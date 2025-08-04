@@ -78,22 +78,6 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
-                            <h3 class="text-primary">{{ total_category_count }}</h3>
-                            <p class="mb-0">Total Categories</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card stat-card">
-                        <div class="card-body text-center">
-                            <h3 class="text-success">{{ root_categories|length }}</h3>
-                            <p class="mb-0">Root Categories</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card stat-card">
-                        <div class="card-body text-center">
                             <h3 class="text-info">{{ total_book_count }}</h3>
                             <p class="mb-0">Total Books</p>
                         </div>
@@ -102,8 +86,24 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
+                            <h3 class="text-primary">{{ total_category_count }}</h3>
+                            <p class="mb-0">Total Genres</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
+                            <h3 class="text-success">{{ root_categories|length }}</h3>
+                            <p class="mb-0">Parent Genres</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body text-center">
                             <h3 class="text-warning">{{ subcategory_count }}</h3>
-                            <p class="mb-0">Subcategories</p>
+                            <p class="mb-0">Child Genres</p>
                         </div>
                     </div>
                 </div>
