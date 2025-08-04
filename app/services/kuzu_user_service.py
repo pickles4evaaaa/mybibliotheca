@@ -349,7 +349,5 @@ class KuzuUserService:
     async def get_user_locations(self, user_id: str) -> List[Location]:
         """Get all locations for a user."""
         return await self.location_repo.get_user_locations(user_id)
-    
-    async def get_default_location(self, user_id: str) -> Optional[Location]:
-        """Get the default location for a user."""
-        return await self.location_repo.get_default_location(user_id)
+
+    # NOTE: Locations are now universal - use LocationService.get_default_location() directly

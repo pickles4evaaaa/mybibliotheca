@@ -602,15 +602,10 @@ def import_books():
                 if import_templates and hasattr(import_templates, '__iter__'):
                     template_list = list(import_templates)
                 
-                print(f"DEBUG: CSV headers: {headers}")
-                print(f"DEBUG: Force custom mapping: {force_custom}")
-                print(f"DEBUG: Available templates: {[t.get('name', 'Unknown') if isinstance(t, dict) else getattr(t, 'name', 'Unknown') for t in template_list] if template_list else []}")
-                
                 # Skip template detection if user wants custom mapping
                 if force_custom:
                     detected_template = None
                     detected_template_name = None
-                    print(f"DEBUG: Skipping template detection - user requested custom mapping")
                 else:
                     # Detect best matching template based on headers
                     # Ensure headers is a proper List[str] type
@@ -618,18 +613,8 @@ def import_books():
                     detected_template = import_mapping_service.detect_template_sync(headers_list, current_user.id)
                     detected_template_name = detected_template.name if detected_template else None
                     
-                    print(f"DEBUG: Template detection - detected_template: {detected_template}")
-                    print(f"DEBUG: Template detection - detected_template_name: {detected_template_name}")
-                    if detected_template:
-                        print(f"DEBUG: Template detection - template.field_mappings: {detected_template.field_mappings}")
-                        print(f"DEBUG: Template detection - field_mappings type: {type(detected_template.field_mappings)}")
-                        print(f"DEBUG: Template detection - field_mappings bool: {bool(detected_template.field_mappings)}")
-                
                 # If a default system template was detected, auto-create fields but still show mapping UI for review
                 if not force_custom and detected_template and detected_template.user_id == "__system__" and detected_template.field_mappings:
-                    print(f"DEBUG: System template detected - {detected_template.name}")
-                    print(f"DEBUG: Auto-creating custom fields from template mappings: {detected_template.field_mappings}")
-                    
                     # Auto-create any custom fields referenced in the template BEFORE showing mapping screen
                     auto_create_custom_fields(detected_template.field_mappings, current_user.id)
                     
@@ -673,13 +658,10 @@ def import_books():
                         for t in template_list
                     ):
                         template_list.append(template_dict)
-                        print(f"DEBUG: Added detected template to dropdown: {detected_template.name}")
                 
                 # If a custom template was detected, use its mappings
                 elif detected_template and detected_template.field_mappings:
-                    print(f"DEBUG: Custom template detected - Using template mappings")
                     suggested_mappings = detected_template.field_mappings.copy()
-                    print(f"DEBUG: Using template mappings: {suggested_mappings}")
                     # Auto-create any custom fields referenced in the template
                     auto_create_custom_fields(suggested_mappings, current_user.id)
                     # Reload custom fields after creating new ones
@@ -1700,7 +1682,7 @@ async def process_simple_import(import_config):
             # Process each row
             for row_num, row in enumerate(rows_list, 1):
                 try:
-                    print(f"📖 [PROCESS_SIMPLE] Processing row {row_num}/{len(rows_list)}")
+                    # Processing row (reduced logging for performance)
                     
                     # Build book data using mappings
                     simplified_book = simplified_service.build_book_data_from_row(row, mappings)

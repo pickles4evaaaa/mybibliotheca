@@ -26,7 +26,7 @@
 
             <!-- Search Bar -->
             <div class="row mb-4">
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <div class="input-group">
                         <span class="input-group-text">
                             <i class="bi bi-search"></i>
@@ -38,7 +38,7 @@
                                onkeyup="filterCategories()">
                     </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <div class="d-flex align-items-center">
                         <label class="form-label me-2 mb-0">View:</label>
                         <div class="btn-group" role="group">
@@ -59,6 +59,18 @@
                         </div>
                     </div>
                 </div>
+                <div class="col-md-4">
+                    <div class="d-flex align-items-center justify-content-end">
+                        <label for="per-page-select" class="form-label me-2 mb-0">Show:</label>
+                        <select id="per-page-select" class="form-select" style="width: auto;" onchange="changePerPage()">
+                            {% for option in valid_per_page %}
+                            <option value="{{ option }}" {% if pagination.per_page == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                            <option value="all" {% if pagination.per_page == pagination.total_count %}selected{% endif %}>All</option>
+                        </select>
+                        <span class="ms-2 text-muted">categories per page</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Statistics Summary -->
@@ -66,7 +78,7 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
-                            <h3 class="text-primary">{{ categories|length }}</h3>
+                            <h3 class="text-primary">{{ total_category_count }}</h3>
                             <p class="mb-0">Total Categories</p>
                         </div>
                     </div>
@@ -90,15 +102,7 @@
                 <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body text-center">
-                            <h3 class="text-warning">
-                                {% set subcategory_count = 0 %}
-                                {% for category in categories %}
-                                    {% if category.level and category.level > 0 %}
-                                        {% set subcategory_count = subcategory_count + 1 %}
-                                    {% endif %}
-                                {% endfor %}
-                                {{ subcategory_count }}
-                            </h3>
+                            <h3 class="text-warning">{{ subcategory_count }}</h3>
                             <p class="mb-0">Subcategories</p>
                         </div>
                     </div>
@@ -340,6 +344,60 @@
                     </div>
                 {% endif %}
             </div>
+
+            <!-- Pagination -->
+            {% if pagination and categories and pagination.total_pages > 1 %}
+            <nav aria-label="Categories pagination" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if pagination.has_prev %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('genres.index', page=pagination.prev_num, per_page=request.args.get('per_page', '12')) }}" aria-label="Previous">
+                            <span aria-hidden="true">&laquo;</span>
+                        </a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">&laquo;</span>
+                    </li>
+                    {% endif %}
+
+                    {% for page_num in range(1, pagination.total_pages + 1) %}
+                        {% if page_num == pagination.page %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ page_num }}</span>
+                        </li>
+                        {% elif page_num == 1 or page_num == pagination.total_pages or (page_num >= pagination.page - 2 and page_num <= pagination.page + 2) %}
+                        <li class="page-item">
+                            <a class="page-link" href="{{ url_for('genres.index', page=page_num, per_page=request.args.get('per_page', '12')) }}">{{ page_num }}</a>
+                        </li>
+                        {% elif page_num == pagination.page - 3 or page_num == pagination.page + 3 %}
+                        <li class="page-item disabled">
+                            <span class="page-link">...</span>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if pagination.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('genres.index', page=pagination.next_num, per_page=request.args.get('per_page', '12')) }}" aria-label="Next">
+                            <span aria-hidden="true">&raquo;</span>
+                        </a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">&raquo;</span>
+                    </li>
+                    {% endif %}
+                </ul>
+                
+                <!-- Pagination info -->
+                <div class="text-center text-muted small mt-2">
+                    Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }} to 
+                    {{ ((pagination.page - 1) * pagination.per_page) + categories|length }} 
+                    of {{ pagination.total }} categories
+                </div>
+            </nav>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -686,6 +744,17 @@ function confirmBulkDelete() {
 
 function openCategory(categoryId) {
     window.location.href = `/genres/${categoryId}`;
+}
+
+function changePerPage() {
+    const perPageSelect = document.getElementById('per-page-select');
+    const perPage = perPageSelect.value;
+    const currentUrl = new URL(window.location);
+    
+    currentUrl.searchParams.set('per_page', perPage);
+    currentUrl.searchParams.set('page', '1'); // Reset to first page when changing per_page
+    
+    window.location.href = currentUrl.toString();
 }
 
 // Initialize event listeners

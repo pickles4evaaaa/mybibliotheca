@@ -427,18 +427,18 @@ class AdvancedMigrationSystem:
         try:
             self._log_action(f"Starting V1 database migration: {db_path}")
             
-            # Ensure default locations exist for the admin user
-            # Check if admin user has any default location, if not create one
-            default_location = self.location_service.get_default_location(admin_user_id)
+            # Ensure default locations exist
+            # Check if any default location exists, if not create one
+            default_location = self.location_service.get_default_location()
             default_location_id = None
             
             if not default_location:
-                self._log_action("No default location found for admin user. Creating default location...")
+                self._log_action("No default location found. Creating default location...")
                 # Setup default locations (this will create a "Home" location)
                 created_locations = self.location_service.setup_default_locations()
                 if created_locations:
                     # Get the newly created default location
-                    default_location = self.location_service.get_default_location(admin_user_id)
+                    default_location = self.location_service.get_default_location()
                     if default_location:
                         default_location_id = getattr(default_location, 'id', None)
                         loc_name = getattr(default_location, 'name', 'Unknown')
@@ -603,32 +603,26 @@ class AdvancedMigrationSystem:
                 self._log_error("No admin user ID found in user mapping")
                 return False
             
-            # Setup default locations for all users in the mapping
-            # This ensures every user has a default location for book assignment
+            # Setup default locations for the system (universal)
+            # This ensures there's a default location for book assignment
+            default_location = self.location_service.get_default_location()
+            if not default_location:
+                self._log_action(f"No default location found. Creating default location...")
+                created_locations = self.location_service.setup_default_locations()
+                if created_locations:
+                    default_location = self.location_service.get_default_location()
+                    if default_location:
+                        default_location_id = getattr(default_location, 'id', None)
+                        loc_name = getattr(default_location, 'name', 'Unknown')
+                        self._log_action(f"✅ Created default location: {loc_name} (ID: {default_location_id})")
+            
+            # All users will use the same universal default location
             user_default_locations = {}
             for old_user_id, new_user_id in user_mapping.items():
-                default_location = self.location_service.get_default_location(new_user_id)
-                if not default_location:
-                    self._log_action(f"No default location found for user {new_user_id}. Creating default location...")
-                    created_locations = self.location_service.setup_default_locations()
-                    if created_locations:
-                        default_location = self.location_service.get_default_location(new_user_id)
-                        if default_location:
-                            default_location_id = getattr(default_location, 'id', None)
-                            loc_name = getattr(default_location, 'name', 'Unknown')
-                            user_default_locations[new_user_id] = default_location_id
-                            self._log_action(f"✅ Created default location for user {new_user_id}: {loc_name} (ID: {default_location_id})")
-                        else:
-                            self._log_error(f"Failed to get default location after creation for user {new_user_id}")
-                            user_default_locations[new_user_id] = None
-                    else:
-                        self._log_error(f"Failed to create default locations for user {new_user_id}")
-                        user_default_locations[new_user_id] = None
+                if default_location and default_location.id:
+                    user_default_locations[new_user_id] = default_location.id
                 else:
-                    default_location_id = getattr(default_location, 'id', None)
-                    loc_name = getattr(default_location, 'name', 'Unknown')
-                    user_default_locations[new_user_id] = default_location_id
-                    self._log_action(f"Using existing default location for user {new_user_id}: {loc_name} (ID: {default_location_id})")
+                    user_default_locations[new_user_id] = None
             
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row

@@ -83,6 +83,11 @@ class SimpleBackupService:
         # KuzuDB database path - points to the entire kuzu directory
         self.kuzu_db_path = self.data_dir / "kuzu"
         
+        # Static files paths - now stored in data directory
+        self.app_static_dir = self.base_dir / "app" / "static"
+        self.covers_dir = self.data_dir / "covers"
+        self.uploads_dir = self.data_dir / "uploads"
+        
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
@@ -161,7 +166,11 @@ class SimpleBackupService:
                 'created_at': timestamp.isoformat(),
                 'kuzu_db_path': str(self.kuzu_db_path),
                 'original_size': self._get_directory_size(self.kuzu_db_path),
-                'backup_type': 'simple_database_backup'
+                'covers_path': str(self.covers_dir),
+                'uploads_path': str(self.uploads_dir),
+                'covers_size': self._get_directory_size(self.covers_dir) if self.covers_dir.exists() else 0,
+                'uploads_size': self._get_directory_size(self.uploads_dir) if self.uploads_dir.exists() else 0,
+                'backup_type': 'simple_database_backup_with_images'
             }
             
             # Create the backup ZIP file
@@ -170,13 +179,39 @@ class SimpleBackupService:
                 zipf.writestr('backup_metadata.json', json.dumps(metadata, indent=2))
                 
                 # Add the entire KuzuDB directory (it should always be a directory)
+                db_files_count = 0
                 for file_path in self.kuzu_db_path.rglob('*'):
                     if file_path.is_file():
                         relative_path = file_path.relative_to(self.kuzu_db_path)
-                        zipf.write(file_path, str(relative_path))
-                        logger.debug(f"Added to backup: {relative_path}")
+                        zipf.write(file_path, f"kuzu/{relative_path}")
+                        db_files_count += 1
+                        logger.debug(f"Added to backup: kuzu/{relative_path}")
                 
-                logger.info(f"Backed up KuzuDB directory with {len(list(self.kuzu_db_path.rglob('*')))} files")
+                logger.info(f"Backed up KuzuDB directory with {db_files_count} files")
+                
+                # Add cover images
+                covers_count = 0
+                if self.covers_dir.exists():
+                    for file_path in self.covers_dir.rglob('*'):
+                        if file_path.is_file():
+                            relative_path = file_path.relative_to(self.covers_dir)
+                            zipf.write(file_path, f"data/covers/{relative_path}")
+                            covers_count += 1
+                            logger.debug(f"Added cover to backup: data/covers/{relative_path}")
+                    
+                    logger.info(f"Backed up {covers_count} cover images")
+                
+                # Add upload files if they exist
+                uploads_count = 0
+                if self.uploads_dir.exists():
+                    for file_path in self.uploads_dir.rglob('*'):
+                        if file_path.is_file():
+                            relative_path = file_path.relative_to(self.uploads_dir)
+                            zipf.write(file_path, f"data/uploads/{relative_path}")
+                            uploads_count += 1
+                            logger.debug(f"Added upload to backup: data/uploads/{relative_path}")
+                    
+                    logger.info(f"Backed up {uploads_count} uploaded files")
             
             # Get backup file size
             file_size = backup_path.stat().st_size
@@ -271,7 +306,7 @@ class SimpleBackupService:
                             logger.error(f"Error removing current database: {e}")
                             return False
             
-            # Step 4: Extract backup to restore database
+            # Step 4: Extract backup to restore database and static files
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
                 
@@ -279,48 +314,125 @@ class SimpleBackupService:
                 with zipfile.ZipFile(backup_path, 'r') as zipf:
                     zipf.extractall(temp_path)
                 
-                # Restore database files - KuzuDB is always a directory
+                # Load backup metadata to determine backup structure
+                metadata_path = temp_path / 'backup_metadata.json'
+                backup_metadata = {}
+                if metadata_path.exists():
+                    with open(metadata_path, 'r') as f:
+                        backup_metadata = json.load(f)
+                
+                backup_type = backup_metadata.get('backup_type', 'simple_database_backup')
+                logger.info(f"Restoring backup type: {backup_type}")
+                
+                # Restore KuzuDB directory
                 self.kuzu_db_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Check extracted files (excluding metadata)
-                extracted_files = list(temp_path.glob('*'))
-                db_files = [f for f in extracted_files if f.name != 'backup_metadata.json']
-                
-                # Create the KuzuDB directory
                 if not self.kuzu_db_path.exists():
                     self.kuzu_db_path.mkdir(parents=True)
                     logger.info(f"Created KuzuDB directory: {self.kuzu_db_path}")
                 
-                # Copy all database files into the KuzuDB directory with retry
+                # Handle different backup structures
+                kuzu_source_path = temp_path / "kuzu"
                 files_restored = 0
-                for file_path in db_files:
-                    if file_path.is_file():
-                        target_path = self.kuzu_db_path / file_path.name
-                        
-                        # Retry file copy if needed
-                        retry_count = 0
-                        max_retries = 3
-                        while retry_count < max_retries:
-                            try:
-                                shutil.copy2(file_path, target_path)
-                                files_restored += 1
-                                logger.debug(f"Restored: {file_path.name} -> {target_path}")
-                                break
-                            except OSError as e:
-                                if e.errno == 35:  # Resource deadlock avoided
-                                    retry_count += 1
-                                    if retry_count < max_retries:
-                                        logger.warning(f"File copy failed for {file_path.name} (attempt {retry_count}), retrying in 2 seconds...")
-                                        import time
-                                        time.sleep(2)
-                                    else:
-                                        logger.error(f"Failed to copy {file_path.name} after {max_retries} attempts: {e}")
-                                        raise
-                                else:
-                                    logger.error(f"Error copying {file_path.name}: {e}")
-                                    raise
+                
+                if kuzu_source_path.exists():
+                    # New backup format with kuzu/ subdirectory
+                    for file_path in kuzu_source_path.rglob('*'):
+                        if file_path.is_file():
+                            relative_path = file_path.relative_to(kuzu_source_path)
+                            target_path = self.kuzu_db_path / relative_path
+                            target_path.parent.mkdir(parents=True, exist_ok=True)
+                            
+                            self._copy_file_with_retry(file_path, target_path)
+                            files_restored += 1
+                            logger.debug(f"Restored: {relative_path}")
+                else:
+                    # Legacy backup format - files in root (excluding metadata)
+                    for file_path in temp_path.glob('*'):
+                        if file_path.is_file() and file_path.name != 'backup_metadata.json':
+                            target_path = self.kuzu_db_path / file_path.name
+                            self._copy_file_with_retry(file_path, target_path)
+                            files_restored += 1
+                            logger.debug(f"Restored: {file_path.name}")
                 
                 logger.info(f"Restored KuzuDB directory with {files_restored} files")
+                
+                # Restore static files if present (legacy backups)
+                static_source_path = temp_path / "static"
+                if static_source_path.exists():
+                    # Restore cover images from static/covers
+                    covers_source = static_source_path / "covers"
+                    if covers_source.exists():
+                        covers_restored = 0
+                        self.covers_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        for file_path in covers_source.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(covers_source)
+                                target_path = self.covers_dir / relative_path
+                                target_path.parent.mkdir(parents=True, exist_ok=True)
+                                
+                                self._copy_file_with_retry(file_path, target_path)
+                                covers_restored += 1
+                                logger.debug(f"Restored cover: {relative_path}")
+                        
+                        logger.info(f"Restored {covers_restored} cover images from legacy backup")
+                    
+                    # Restore upload files from static/uploads
+                    uploads_source = static_source_path / "uploads"
+                    if uploads_source.exists():
+                        uploads_restored = 0
+                        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        for file_path in uploads_source.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(uploads_source)
+                                target_path = self.uploads_dir / relative_path
+                                target_path.parent.mkdir(parents=True, exist_ok=True)
+                                
+                                self._copy_file_with_retry(file_path, target_path)
+                                uploads_restored += 1
+                                logger.debug(f"Restored upload: {relative_path}")
+                        
+                        logger.info(f"Restored {uploads_restored} uploaded files from legacy backup")
+                
+                # Restore data files if present (new format)
+                data_source_path = temp_path / "data"
+                if data_source_path.exists():
+                    # Restore cover images from data/covers
+                    covers_source = data_source_path / "covers"
+                    if covers_source.exists():
+                        covers_restored = 0
+                        self.covers_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        for file_path in covers_source.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(covers_source)
+                                target_path = self.covers_dir / relative_path
+                                target_path.parent.mkdir(parents=True, exist_ok=True)
+                                
+                                self._copy_file_with_retry(file_path, target_path)
+                                covers_restored += 1
+                                logger.debug(f"Restored cover: {relative_path}")
+                        
+                        logger.info(f"Restored {covers_restored} cover images")
+                    
+                    # Restore upload files from data/uploads
+                    uploads_source = data_source_path / "uploads"
+                    if uploads_source.exists():
+                        uploads_restored = 0
+                        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        for file_path in uploads_source.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(uploads_source)
+                                target_path = self.uploads_dir / relative_path
+                                target_path.parent.mkdir(parents=True, exist_ok=True)
+                                
+                                self._copy_file_with_retry(file_path, target_path)
+                                uploads_restored += 1
+                                logger.debug(f"Restored upload: {relative_path}")
+                        
+                        logger.info(f"Restored {uploads_restored} uploaded files")
             
             # Step 5: Set restart flag instead of immediate reconnection
             logger.info("Setting restart flag for clean reconnection...")
@@ -581,6 +693,27 @@ class SimpleBackupService:
             return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
         return 0
     
+    def _copy_file_with_retry(self, source: Path, target: Path, max_retries: int = 3) -> None:
+        """Copy a file with retry logic for handling resource locks."""
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                shutil.copy2(source, target)
+                return
+            except OSError as e:
+                if e.errno == 35:  # Resource deadlock avoided
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.warning(f"File copy failed for {source.name} (attempt {retry_count}), retrying in 2 seconds...")
+                        import time
+                        time.sleep(2)
+                    else:
+                        logger.error(f"Failed to copy {source.name} after {max_retries} attempts: {e}")
+                        raise
+                else:
+                    logger.error(f"Error copying {source.name}: {e}")
+                    raise
+    
     def list_backups(self) -> List[SimpleBackupInfo]:
         """Get list of all backups."""
         return list(self._backup_index.values())
@@ -621,12 +754,25 @@ class SimpleBackupService:
         database_size = self._get_directory_size(self.kuzu_db_path) if self.kuzu_db_path.exists() else 0
         database_size_formatted = f"{database_size / (1024 * 1024):.1f} MB" if database_size > 0 else "0 MB"
         
+        # Get current static files size
+        covers_size = self._get_directory_size(self.covers_dir) if self.covers_dir.exists() else 0
+        uploads_size = self._get_directory_size(self.uploads_dir) if self.uploads_dir.exists() else 0
+        covers_count = len(list(self.covers_dir.rglob('*'))) if self.covers_dir.exists() else 0
+        uploads_count = len(list(self.uploads_dir.rglob('*'))) if self.uploads_dir.exists() else 0
+        
+        covers_size_formatted = f"{covers_size / (1024 * 1024):.1f} MB" if covers_size > 0 else "0 MB"
+        uploads_size_formatted = f"{uploads_size / (1024 * 1024):.1f} MB" if uploads_size > 0 else "0 MB"
+        
         if not backups:
             return {
                 'total_backups': 0,
                 'total_size_bytes': 0,
                 'total_size_mb': 0,
                 'database_size_formatted': database_size_formatted,
+                'covers_size_formatted': covers_size_formatted,
+                'uploads_size_formatted': uploads_size_formatted,
+                'covers_count': covers_count,
+                'uploads_count': uploads_count,
                 'newest_backup_age': None,
                 'oldest_backup': None,
                 'newest_backup': None
@@ -655,6 +801,10 @@ class SimpleBackupService:
             'total_size_bytes': total_size,
             'total_size_mb': round(total_size / (1024 * 1024), 2),
             'database_size_formatted': database_size_formatted,
+            'covers_size_formatted': covers_size_formatted,
+            'uploads_size_formatted': uploads_size_formatted,
+            'covers_count': covers_count,
+            'uploads_count': uploads_count,
             'newest_backup_age': newest_backup_age,
             'oldest_backup': sorted_backups[0].created_at.isoformat(),
             'newest_backup': sorted_backups[-1].created_at.isoformat()

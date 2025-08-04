@@ -84,7 +84,7 @@
   </a>
   <a href="{{ url_for('main.public_library', filter='want_to_read') }}"
      class="btn btn-outline-info m-1 {% if filter_status == 'want_to_read' %}active{% endif %}">
-    Want to Read
+    Plan to Read
   </a>
 </div>
 
@@ -107,7 +107,7 @@
             {{ book.author }}
           </div>
           <div class="book-badges">
-            {% if book.want_to_read %}<span class="badge bg-info">Want to Read</span>{% endif %}
+            {% if book.want_to_read %}<span class="badge bg-info">Plan to Read</span>{% endif %}
             {% if not book.finish_date and not book.want_to_read and not book.library_only %}<span class="badge bg-warning">Currently Reading</span>{% endif %}
             {% if book.finish_date %}<span class="badge bg-success">Finished</span>{% endif %}
             {% if book.library_only %}<span class="badge bg-secondary">Library Only</span>{% endif %}

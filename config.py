@@ -15,6 +15,12 @@ def ensure_data_directory():
     # Create directory if it doesn't exist
     os.makedirs(data_dir, exist_ok=True)
     
+    # Create subdirectories for user data
+    covers_dir = os.path.join(data_dir, 'covers')
+    uploads_dir = os.path.join(data_dir, 'uploads')
+    os.makedirs(covers_dir, exist_ok=True)
+    os.makedirs(uploads_dir, exist_ok=True)
+    
     # Set permissions for standalone (Docker handles this in entrypoint)
     # Only set Unix permissions on non-Windows systems
     if not os.environ.get('DATABASE_URL'):  # Not in Docker environment
@@ -22,6 +28,8 @@ def ensure_data_directory():
             try:
                 # Set directory permissions (755 = rwxr-xr-x)
                 os.chmod(data_dir, 0o755)
+                os.chmod(covers_dir, 0o755)
+                os.chmod(uploads_dir, 0o755)
             except (OSError, PermissionError):
                 # Ignore permission errors (common on some systems)
                 pass

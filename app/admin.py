@@ -5,6 +5,7 @@ Provides admin-only decorators, middleware, and management functions
 
 import os
 from functools import wraps
+from pathlib import Path
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort, current_app
 from flask_login import login_required, current_user
 from .services import user_service, book_service, reading_log_service
@@ -526,12 +527,22 @@ def settings():
                         file_extension = file.filename.rsplit('.', 1)[1].lower()
                         unique_filename = f"bg_{uuid.uuid4().hex}.{file_extension}"
                         
-                        # Save to uploads/backgrounds directory
-                        upload_path = os.path.join(current_app.root_path, 'static', 'uploads', 'backgrounds', unique_filename)
+                        # Save to uploads/backgrounds directory in data folder
+                        data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                        if data_dir:
+                            upload_dir = os.path.join(data_dir, 'uploads', 'backgrounds')
+                        else:
+                            # Fallback to data directory relative to app root
+                            base_dir = Path(current_app.root_path).parent
+                            upload_dir = os.path.join(base_dir, 'data', 'uploads', 'backgrounds')
+                        
+                        # Ensure directory exists
+                        os.makedirs(upload_dir, exist_ok=True)
+                        upload_path = os.path.join(upload_dir, unique_filename)
                         file.save(upload_path)
                         
                         # Update background config with uploaded image URL
-                        background_config['image_url'] = f"/static/uploads/backgrounds/{unique_filename}"
+                        background_config['image_url'] = f"/uploads/backgrounds/{unique_filename}"
                         background_config['type'] = 'image'
                         
                         flash(f'Background image uploaded successfully: {file.filename}', 'success')

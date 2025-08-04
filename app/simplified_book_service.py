@@ -4,12 +4,13 @@ Separates book creation from user relationships for better persistence.
 """
 
 import uuid
+import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
 from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType
-from .utils.safe_kuzu_manager import get_safe_kuzu_manager
+from .infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .services.kuzu_custom_field_service import KuzuCustomFieldService
 
 
@@ -106,21 +107,19 @@ class SimplifiedBook:
     reading_logs: Optional[List] = field(default_factory=list)  # For tracking reading session dates
 
 
-@dataclass 
-class UserBookOwnership:
-    """Simplified ownership relationship - just the essentials."""
+@dataclass
+class UserBookAnnotation:
+    """User's personal annotations and reading data for a book in universal library."""
     user_id: str
     book_id: str
-    reading_status: str = "plan_to_read"
-    ownership_status: str = "owned" 
-    media_type: str = "physical"
-    date_added: Optional[datetime] = None
-    user_rating: Optional[float] = None
-    personal_notes: Optional[str] = None
-    location_id: Optional[str] = None
-    custom_metadata: Optional[Dict[str, Any]] = None
-
-
+    reading_status: str = "plan_to_read"  # User's reading progress
+    date_added: Optional[datetime] = None  # When user started tracking this book
+    user_rating: Optional[float] = None   # User's personal rating
+    personal_notes: Optional[str] = None  # User's notes about the book
+    custom_metadata: Optional[Dict[str, Any]] = None  # User's custom fields
+    
+    # Removed: ownership_status, media_type, location_id
+    # Books are universal and stored at locations, not owned by users
 class SimplifiedBookService:
     """
     Simplified book service with clean separation:
@@ -129,10 +128,9 @@ class SimplifiedBookService:
     """
     
     def __init__(self):
-        # Use SafeKuzuManager for thread-safe database operations
-        self.kuzu_manager = get_safe_kuzu_manager()
+        # Use global safe connection management instead of separate instance
         self.custom_field_service = KuzuCustomFieldService()
-        print(f"🔥 [SIMPLIFIED_SERVICE] Using SafeKuzuManager for thread-safe database access")
+        # Using global safe_execute_kuzu_query for thread-safe database access
     
     def _convert_to_date(self, date_value):
         """Convert various date formats to a format suitable for KuzuDB DATE type."""
@@ -209,16 +207,7 @@ class SimplifiedBookService:
         try:
             book_id = str(uuid.uuid4())
             
-            # Debug: Print all contributor data
-            print(f"🎯 [SIMPLIFIED] Creating standalone book with contributors:")
-            print(f"   Primary author: '{book_data.author}'")
-            print(f"   Additional authors: '{book_data.additional_authors}'")
-            print(f"   Editor: '{book_data.editor}'")
-            print(f"   Translator: '{book_data.translator}'")
-            print(f"   Narrator: '{book_data.narrator}'")
-            print(f"   Illustrator: '{book_data.illustrator}'")
-            
-            # Prepare core book node data
+            # Create standalone book with contributors            # Prepare core book node data
             book_node_data = {
                 'id': book_id,
                 'title': book_data.title or '',
@@ -251,12 +240,10 @@ class SimplifiedBookService:
                 del book_node_data['series_order']
             
             # Enhanced debugging for ISBN fields
-            print(f"   ISBN13: {book_node_data.get('isbn13')}")
-            print(f"   ISBN10: {book_node_data.get('isbn10')}")
-            print(f"   Cover URL: {book_node_data.get('cover_url')}")
-            print(f"   Title: {book_node_data.get('title')}")
             description = book_node_data.get('description')
-            print(f"   Description: {description[:50] + '...' if description else 'None'}")
+            # Only print basic info to reduce log noise
+            if description:
+                print(f"📖 Creating: {book_node_data.get('title')} by {book_data.author}")
             
             # 1. Create book node (SINGLE TRANSACTION) - Use explicit property syntax for KuzuDB
             # Handle optional fields that might be None
@@ -268,7 +255,7 @@ class SimplifiedBookService:
             if 'series_order' not in query_params:
                 query_params['series_order'] = None
             
-            book_result = self.kuzu_manager.execute_query(
+            book_result = safe_execute_kuzu_query(
                 """
                 CREATE (b:Book {
                     id: $id,
@@ -331,7 +318,7 @@ class SimplifiedBookService:
                     if author_id:
                         
                         # Create AUTHORED relationship - Use explicit property syntax for KuzuDB
-                        authored_result = self.kuzu_manager.execute_query(
+                        authored_result = safe_execute_kuzu_query(
                             """
                             MATCH (p:Person {id: $author_id}), (b:Book {id: $book_id})
                             CREATE (p)-[r:AUTHORED {
@@ -349,9 +336,7 @@ class SimplifiedBookService:
                                 "created_at_str": datetime.utcnow().isoformat()
                             }
                         )
-                        if authored_result:
-                            print(f"✅ [SIMPLIFIED] Created AUTHORED relationship for main author: {book_data.author}")
-                        else:
+                        if not authored_result:
                             print(f"❌ [SIMPLIFIED] Failed to create AUTHORED relationship for main author: {book_data.author}")
                     else:
                         print(f"❌ [SIMPLIFIED] Failed to create main author person: {book_data.author}")
@@ -369,7 +354,7 @@ class SimplifiedBookService:
                         author_id = await book_repo._ensure_person_exists(person_data)
                         
                         if author_id:
-                            authored_result = self.kuzu_manager.execute_query(
+                            authored_result = safe_execute_kuzu_query(
                                 """
                                 MATCH (p:Person {id: $author_id}), (b:Book {id: $book_id})
                                 CREATE (p)-[r:AUTHORED {
@@ -406,7 +391,7 @@ class SimplifiedBookService:
                         narrator_id = await book_repo._ensure_person_exists(person_data)
                         
                         if narrator_id:
-                            narrated_result = self.kuzu_manager.execute_query(
+                            narrated_result = safe_execute_kuzu_query(
                                 """
                                 MATCH (p:Person {id: $narrator_id}), (b:Book {id: $book_id})
                                 CREATE (p)-[r:AUTHORED {
@@ -443,7 +428,7 @@ class SimplifiedBookService:
                         editor_id = await book_repo._ensure_person_exists(person_data)
                         
                         if editor_id:
-                            edited_result = self.kuzu_manager.execute_query(
+                            edited_result = safe_execute_kuzu_query(
                                 """
                                 MATCH (p:Person {id: $editor_id}), (b:Book {id: $book_id})
                                 CREATE (p)-[r:AUTHORED {
@@ -480,7 +465,7 @@ class SimplifiedBookService:
                         translator_id = await book_repo._ensure_person_exists(person_data)
                         
                         if translator_id:
-                            translated_result = self.kuzu_manager.execute_query(
+                            translated_result = safe_execute_kuzu_query(
                                 """
                                 MATCH (p:Person {id: $translator_id}), (b:Book {id: $book_id})
                                 CREATE (p)-[r:AUTHORED {
@@ -517,7 +502,7 @@ class SimplifiedBookService:
                         illustrator_id = await book_repo._ensure_person_exists(person_data)
                         
                         if illustrator_id:
-                            illustrated_result = self.kuzu_manager.execute_query(
+                            illustrated_result = safe_execute_kuzu_query(
                                 """
                                 MATCH (p:Person {id: $illustrator_id}), (b:Book {id: $book_id})
                                 CREATE (p)-[r:AUTHORED {
@@ -553,7 +538,7 @@ class SimplifiedBookService:
                         # Use the helper method for date conversion
                         pub_date = self._convert_to_date(book_data.published_date)
                         
-                        published_result = self.kuzu_manager.execute_query(
+                        published_result = safe_execute_kuzu_query(
                             """
                             MATCH (b:Book {id: $book_id}), (pub:Publisher {id: $publisher_id})
                             CREATE (b)-[r:PUBLISHED_BY {
@@ -579,7 +564,7 @@ class SimplifiedBookService:
             # 4. Create category relationships using clean repository
             if book_data.categories:
                 try:
-                    print(f"📚 [SIMPLIFIED] Processing {len(book_data.categories)} categories: {book_data.categories}")
+                    # Processing categories (reduced logging)
                     for category_name in book_data.categories:
                         if not category_name.strip():
                             continue
@@ -587,7 +572,7 @@ class SimplifiedBookService:
                         category_id = await book_repo._ensure_category_exists(category_name.strip())
                         if category_id:
                             # Create CATEGORIZED_AS relationship
-                            categorized_result = self.kuzu_manager.execute_query(
+                            categorized_result = safe_execute_kuzu_query(
                                 """
                                 MATCH (b:Book {id: $book_id}), (c:Category {id: $category_id})
                                 CREATE (b)-[r:CATEGORIZED_AS {
@@ -651,106 +636,75 @@ class SimplifiedBookService:
         except Exception as e:
             return None
     
-    def create_user_ownership(self, ownership: UserBookOwnership) -> bool:
+    def create_user_annotation(self, annotation: UserBookAnnotation) -> bool:
         """
-        Create user ownership relationship - completely separate from book creation.
+        Create user annotation relationship - completely separate from book creation.
+        In universal library: Books are shared, but users can have personal annotations.
         Returns True if successful, False if failed.
         """
         try:
-            
             # Ensure date_added is set
-            if ownership.date_added is None:
-                ownership.date_added = datetime.utcnow()
+            if annotation.date_added is None:
+                annotation.date_added = datetime.utcnow()
             
-            # Prepare ownership relationship data
-            ownership_data = {
-                'reading_status': ownership.reading_status,
-                'ownership_status': ownership.ownership_status,
-                'media_type': ownership.media_type,
-                'date_added': ownership.date_added,
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow()
-            }
+            # In universal library mode, create a USER_ANNOTATES relationship instead of OWNS
+            # This preserves user's personal data without implying ownership
+            date_added_str = annotation.date_added.isoformat()
             
-            # Add optional fields if present
-            if ownership.user_rating is not None:
-                ownership_data['user_rating'] = ownership.user_rating
-            if ownership.personal_notes:
-                ownership_data['personal_notes'] = ownership.personal_notes
-            if ownership.location_id:
-                ownership_data['location_id'] = ownership.location_id
-            if ownership.custom_metadata:
-                import json
-                ownership_data['custom_metadata'] = json.dumps(ownership.custom_metadata)
-            
-            # Create OWNS relationship (SINGLE TRANSACTION) - Use explicit property syntax for KuzuDB
-            date_added_str = ownership_data['date_added'].isoformat() if ownership_data.get('date_added') and hasattr(ownership_data.get('date_added'), 'isoformat') else datetime.utcnow().isoformat()
-            
-            result = self.kuzu_manager.execute_query(
+            result = safe_execute_kuzu_query(
                 """
                 MATCH (u:User {id: $user_id}), (b:Book {id: $book_id})
-                CREATE (u)-[r:OWNS {
+                CREATE (u)-[r:USER_ANNOTATES {
                     reading_status: $reading_status,
-                    ownership_status: $ownership_status,
-                    media_type: $media_type,
                     date_added: timestamp($date_added_str),
                     user_rating: $user_rating,
                     personal_notes: $personal_notes,
-                    location_id: $location_id,
                     custom_metadata: $custom_metadata
                 }]->(b)
                 RETURN r
                 """,
                 {
-                    "user_id": ownership.user_id,
-                    "book_id": ownership.book_id,
-                    "reading_status": ownership_data.get('reading_status'),
-                    "ownership_status": ownership_data.get('ownership_status'),
-                    "media_type": ownership_data.get('media_type'),
+                    "user_id": annotation.user_id,
+                    "book_id": annotation.book_id,
+                    "reading_status": annotation.reading_status,
                     "date_added_str": date_added_str,
-                    "user_rating": ownership_data.get('user_rating'),
-                    "personal_notes": ownership_data.get('personal_notes'),
-                    "location_id": ownership_data.get('location_id'),
-                    "custom_metadata": ownership_data.get('custom_metadata')
+                    "user_rating": annotation.user_rating,
+                    "personal_notes": annotation.personal_notes,
+                    "custom_metadata": json.dumps(annotation.custom_metadata) if annotation.custom_metadata else None
                 }
             )
             
             if result:
-                
                 # Handle personal custom metadata through custom field service
-                if ownership.custom_metadata:
+                if annotation.custom_metadata:
                     try:
-                        print(f"📝 [SIMPLIFIED] Processing {len(ownership.custom_metadata)} personal custom fields")
+                        print(f"📝 [ANNOTATION] Processing {len(annotation.custom_metadata)} personal custom fields")
                         
                         # Ensure field definitions exist
                         fields_ensured = self.custom_field_service.ensure_custom_fields_exist(
-                            ownership.user_id, {}, ownership.custom_metadata
+                            annotation.user_id, {}, annotation.custom_metadata
                         )
                         
                         if fields_ensured:
                             # Save personal custom metadata
                             personal_saved = self.custom_field_service.save_custom_metadata_sync(
-                                ownership.book_id, ownership.user_id, ownership.custom_metadata
+                                annotation.book_id, annotation.user_id, annotation.custom_metadata
                             )
                             
-                            if personal_saved:
-                                pass  # Personal custom metadata saved successfully
-                            else:
-                                pass  # Personal custom metadata save failed
+                            if not personal_saved:
+                                print(f"⚠️ [ANNOTATION] Failed to save personal custom metadata")
                         else:
-                            pass  # User not found for custom metadata
+                            print(f"⚠️ [ANNOTATION] Failed to ensure custom field definitions exist")
                             
                     except Exception as e:
-                        pass  # Error saving personal custom metadata
-                
-                # KuzuDB handles its own persistence automatically via WAL
-                # No manual checkpoint needed - ownership data is already durable
+                        print(f"❌ [ANNOTATION] Error saving personal custom metadata: {e}")
                 
                 return True
             else:
                 return False
                 
         except Exception as e:
+            print(f"Error creating user annotation: {e}")
             return False
     
     def find_book_by_isbn(self, isbn: str) -> Optional[str]:
@@ -762,7 +716,7 @@ class SimplifiedBookService:
             # Search by ISBN13
             if len(normalized_isbn) == 13:
                 query = "MATCH (b:Book {isbn13: $isbn}) RETURN b.id"
-                result = self.kuzu_manager.execute_query(query, {"isbn": normalized_isbn})
+                result = safe_execute_kuzu_query(query, {"isbn": normalized_isbn})
                 result_list = self._convert_query_result_to_list(result)
                 if result_list:
                     return result_list[0]['col_0']
@@ -770,7 +724,7 @@ class SimplifiedBookService:
             # Search by ISBN10  
             elif len(normalized_isbn) == 10:
                 query = "MATCH (b:Book {isbn10: $isbn}) RETURN b.id"
-                result = self.kuzu_manager.execute_query(query, {"isbn": normalized_isbn})
+                result = safe_execute_kuzu_query(query, {"isbn": normalized_isbn})
                 result_list = self._convert_query_result_to_list(result)
                 if result_list:
                     return result_list[0]['col_0']
@@ -794,7 +748,7 @@ class SimplifiedBookService:
             RETURN b.id, b.title
             """
             
-            title_results = self.kuzu_manager.execute_query(title_query, {"title": normalized_title})
+            title_results = safe_execute_kuzu_query(title_query, {"title": normalized_title})
             title_results_list = self._convert_query_result_to_list(title_results)
             
             if title_results_list:
@@ -810,7 +764,7 @@ class SimplifiedBookService:
                     LIMIT 1
                     """
                     
-                    author_results = self.kuzu_manager.execute_query(author_query, {
+                    author_results = safe_execute_kuzu_query(author_query, {
                         "book_id": book_id,
                         "author": normalized_author
                     })
@@ -834,7 +788,7 @@ class SimplifiedBookService:
             title_words = normalized_title.split()
             title_part = ' '.join(title_words[:3]) if len(title_words) >= 3 else normalized_title
             
-            fuzzy_results = self.kuzu_manager.execute_query(fuzzy_query, {
+            fuzzy_results = safe_execute_kuzu_query(fuzzy_query, {
                 "title_part": title_part,
                 "author": normalized_author
             })
@@ -882,7 +836,6 @@ class SimplifiedBookService:
                     raise BookAlreadyExistsError(existing_id, f"Book already exists: '{book_data.title}' by '{book_data.author}'")
             
             # Book doesn't exist, create new one
-            print(f"📚 [NEW_BOOK] Creating new book: '{book_data.title}' by '{book_data.author}'")
             return await self.create_standalone_book(book_data)
             
         except BookAlreadyExistsError:
@@ -905,7 +858,7 @@ class SimplifiedBookService:
         Returns:
             SimplifiedBook instance
         """
-        print(f"🔧 [BUILD_BOOK] Building book from row: {list(row.keys())[:5]}...")
+        # Building book from row data (reduced logging)
         
         # Initialize book data
         book_data = {
@@ -1054,17 +1007,8 @@ class SimplifiedBookService:
                 if api_value and field in book_data:
                     book_data[field] = api_value
         
-        # Create SimplifiedBook instance
-        print(f"🔧 [BUILD_BOOK] Final book_data before SimplifiedBook creation: {book_data}")
-        print(f"🔧 [BUILD_BOOK] book_data keys: {list(book_data.keys())}")
-        print(f"🔧 [BUILD_BOOK] additional_authors in book_data: {'additional_authors' in book_data}")
-        if 'additional_authors' in book_data:
-            print(f"🔧 [BUILD_BOOK] additional_authors value: '{book_data['additional_authors']}'")
-        
+        # Create SimplifiedBook instance (reduced logging)
         simplified_book = SimplifiedBook(**book_data)
-        print(f"🔧 [BUILD_BOOK] Created SimplifiedBook, has additional_authors: {hasattr(simplified_book, 'additional_authors')}")
-        if hasattr(simplified_book, 'additional_authors'):
-            print(f"🔧 [BUILD_BOOK] SimplifiedBook.additional_authors value: '{simplified_book.additional_authors}'")
         
         return simplified_book
     
@@ -1082,8 +1026,6 @@ class SimplifiedBookService:
         Raises BookAlreadyExistsError if book already exists in communal library.
         """
         try:
-            print(f"🎯 [SIMPLIFIED] Starting add_book_to_user_library for: {book_data.title}")
-            
             # Step 1: Find or create standalone book
             # This will raise BookAlreadyExistsError if duplicate is found
             book_id = await self.find_or_create_book(book_data)
@@ -1094,51 +1036,36 @@ class SimplifiedBookService:
             # Note: In a communal library, we might not need user ownership relationships
             # but keeping this for compatibility with the current system
             
-            # Step 2: Create user ownership relationship (if needed for the current system)
-            ownership = UserBookOwnership(
-                user_id=user_id,
-                book_id=book_id,
-                reading_status=reading_status,
-                ownership_status=ownership_status,
-                media_type=media_type,
-                date_added=datetime.utcnow(),
-                user_rating=user_rating,
-                personal_notes=personal_notes,
-                location_id=location_id,
-                custom_metadata=custom_metadata
-            )
-            
-            ownership_success = self.create_user_ownership(ownership)
-            if not ownership_success:
-                return False
+            # Step 2: Universal library model - no user ownership relationships needed
+            # Books are shared and stored at locations, not owned by users
+            print(f"📚 [UNIVERSAL_LIBRARY] Book {book_id} created in universal library (no ownership)")
 
             # Step 3: Handle location assignment (NEW)
             if location_id:
                 try:
-                    from .location_service import LocationService
-                    from .utils.safe_kuzu_manager import safe_get_connection
+                    from app.location_service import LocationService
+                    from app.utils.safe_kuzu_manager import safe_get_connection
                     
-                    print(f"🔥 [LOCATION_SERVICE] Using SafeKuzuManager for user {user_id}")
                     location_service = LocationService()
-                    
                     location_success = location_service.add_book_to_location(book_id, location_id, user_id)
                     if location_success:
-                        pass  # Book added to location successfully
+                        print(f"✅ [LOCATION_SERVICE] Successfully added book {book_id} to location {location_id}")
                     else:
-                        pass  # Failed to add book to location
+                        print(f"❌ [LOCATION_SERVICE] Failed to add book {book_id} to location {location_id}")
                             
                 except Exception as e:
-                    pass  # Don't fail the entire operation for location assignment issues
+                    print(f"❌ [LOCATION_SERVICE] Exception adding book to location: {e}")
+                    import traceback
+                    traceback.print_exc()
             else:
                 try:
-                    from .location_service import LocationService
-                    from .utils.safe_kuzu_manager import safe_get_connection
+                    from app.location_service import LocationService
+                    from app.utils.safe_kuzu_manager import safe_get_connection
                     
-                    print(f"🔥 [DEFAULT_LOCATION] Using SafeKuzuManager for user {user_id}")
                     location_service = LocationService()
                     
-                    # Get or create default location
-                    default_location = location_service.get_default_location(user_id)
+                    # Get or create default location (universal)
+                    default_location = location_service.get_default_location()
                     if not default_location:
                         default_locations = location_service.setup_default_locations()
                         if default_locations:
@@ -1147,19 +1074,14 @@ class SimplifiedBookService:
                     if default_location and default_location.id:
                         location_success = location_service.add_book_to_location(book_id, default_location.id, user_id)
                         if location_success:
-                            pass  # Book added to default location successfully
+                            print(f"✅ [DEFAULT_LOCATION] Successfully added book {book_id} to default location {default_location.id}")
                         else:
-                            pass  # Failed to add book to default location
+                            print(f"❌ [DEFAULT_LOCATION] Failed to add book {book_id} to default location")
                     else:
-                        pass  # No default location available
+                        print(f"❌ [DEFAULT_LOCATION] No default location available for book {book_id}")
                             
                 except Exception as e:
-                    pass  # Don't fail the entire operation for location assignment issues
-            
-            print(f"🎉 [SIMPLIFIED] Successfully added book to user library")
-            
-            # Use safe checkpoint to ensure ownership data is visible after container restarts
-            # SafeKuzuManager handles persistence automatically
+                    print(f"❌ [DEFAULT_LOCATION] Exception assigning book to default location: {e}")
             
             return True
             

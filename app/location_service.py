@@ -15,16 +15,16 @@ from dataclasses import asdict
 
 from .domain.models import Location
 from .debug_system import debug_log, get_debug_manager
-from .utils.safe_kuzu_manager import SafeKuzuManager
+from .infrastructure.kuzu_graph import safe_execute_kuzu_query
 
 
 class LocationService:
     """Service for managing user locations and book-location relationships."""
     
     def __init__(self, kuzu_db_path: Optional[str] = None):
-        self.safe_kuzu = SafeKuzuManager(kuzu_db_path)
+        # Use global safe connection management instead of separate instance
         self.debug_manager = get_debug_manager()
-        debug_log(f"LocationService initialized with SafeKuzuManager", "LOCATION")
+        debug_log(f"LocationService initialized with global connection management", "LOCATION")
     
     def create_location(self, name: str, description: Optional[str] = None, 
                        location_type: str = "home", address: Optional[str] = None,
@@ -42,7 +42,7 @@ class LocationService:
             MATCH (l:Location) 
             SET l.is_default = false
             """
-            self.safe_kuzu.execute_query(clear_defaults_query, {}, operation="clear_default_locations")
+            safe_execute_kuzu_query(clear_defaults_query, {}, operation="clear_default_locations")
             debug_log(f"Setting as default location", "LOCATION")
             
         location = Location(
@@ -85,62 +85,65 @@ class LocationService:
             "updated_at": location.updated_at
         }
         
-        print(f"🏠 [CREATE_LOCATION] Storing location data: {location_data}")
-        
         # Create the location node (completely independent of users)
-        self.safe_kuzu.execute_query(create_query, location_data, operation="location_operation")
+        safe_execute_kuzu_query(create_query, location_data, operation="location_operation")
         
-        print(f"🏠 [CREATE_LOCATION] Created location {location_id}: '{name}' (default: {is_default})")
         return location
     
     def get_location(self, location_id: str) -> Optional[Location]:
-        """Get a location by ID."""
-        print(f"🏠 [GET_LOCATION] Fetching location {location_id}")
+        """Get a specific location by ID (universal access)."""
+        print(f"DEBUG: get_location called with location_id: {location_id}")
         
-        # Get location by ID
         query = """
-        MATCH (l:Location {id: $location_id}) 
+        MATCH (l:Location {id: $location_id})
         RETURN l
+        LIMIT 1
         """
-        result = self.safe_kuzu.execute_query(query, {"location_id": location_id}, operation="location_operation")
         
-        if not result.has_next():
-            print(f"🏠 [GET_LOCATION] Location {location_id} not found")
+        print(f"DEBUG: Executing query: {query}")
+        results = safe_execute_kuzu_query(query, {"location_id": location_id}, operation="location_operation")
+        print(f"DEBUG: Query results: {results}")
+        print(f"DEBUG: Results has_next: {results.has_next() if results else 'No results'}")
+        
+        if not results or not results.has_next():
+            print("DEBUG: No results found, returning None")
             return None
-            
-        row = result.get_next()
-        location_data = dict(row[0])
         
+        # Process the result and convert to Location object
+        print("DEBUG: Processing results...")
+        row = results.get_next()
+        print(f"DEBUG: Row: {row}")
+        location_data = row[0]
+        print(f"DEBUG: Location data: {location_data}")
+        
+        print("DEBUG: Creating Location object...")
         location = Location(
             id=location_data['id'],
-            user_id="",  # Locations don't belong to users
             name=location_data['name'],
-            description=location_data.get('description'),
-            location_type=location_data['location_type'],
-            address=location_data.get('address'),
-            is_default=location_data['is_default'],
+            description=location_data.get('description') or '',
+            location_type=location_data.get('location_type') or 'general',
+            address=location_data.get('address') or '',
+            is_default=location_data.get('is_default', False),
             is_active=location_data.get('is_active', True),
-            created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-            updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+            created_at=location_data.get('created_at'),
+            updated_at=location_data.get('updated_at')
         )
-        
-        print(f"🏠 [GET_LOCATION] Found location {location_id}: '{location.name}' (default: {location.is_default})")
+        print(f"DEBUG: Created location: {location}")
         return location
     
     def get_user_locations(self, user_id: str, active_only: bool = True) -> List[Location]:
-        """Get all locations that contain books for a user (via STORED_AT relationships)."""
-        print(f"🏠 [GET_USER_LOCATIONS] Fetching locations with books for user {user_id} (active_only: {active_only})")
+        """Get all locations that contain books (via STORED_AT relationships)."""
+        print(f"🏠 [GET_USER_LOCATIONS] Fetching locations with books (active_only: {active_only})")
         
-        # Query locations that have books stored by this user
+        # Query locations that have books stored (universal)
         query = """
         MATCH (b:Book)-[stored:STORED_AT]->(l:Location)
-        WHERE stored.user_id = $user_id
         """
         if active_only:
-            query += " AND l.is_active = true"
+            query += " WHERE l.is_active = true"
         query += " RETURN DISTINCT l ORDER BY l.is_default DESC, l.name ASC"
         
-        result = self.safe_kuzu.execute_query(query, {"user_id": user_id}, operation="location_operation")
+        result = safe_execute_kuzu_query(query, {}, operation="location_operation")
         
         locations = []
         while result.has_next():
@@ -159,14 +162,11 @@ class LocationService:
                 updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
             )
             locations.append(location)
-            print(f"🏠 [GET_USER_LOCATIONS] Added location: '{location.name}' (default: {location.is_default})")
         
-        print(f"🏠 [GET_USER_LOCATIONS] Returning {len(locations)} locations for user {user_id}")
         return locations
     
     def get_all_locations(self, active_only: bool = True) -> List[Location]:
         """Get all locations in the system, regardless of whether they have books."""
-        print(f"🏠 [GET_ALL_LOCATIONS] Fetching all locations (active_only: {active_only})")
         
         # Query all locations in the system
         query = "MATCH (l:Location)"
@@ -174,7 +174,7 @@ class LocationService:
             query += " WHERE l.is_active = true"
         query += " RETURN l ORDER BY l.is_default DESC, l.name ASC"
         
-        result = self.safe_kuzu.execute_query(query, {}, operation="location_operation")
+        result = safe_execute_kuzu_query(query, {}, operation="location_operation")
         
         locations = []
         while result.has_next():
@@ -193,9 +193,7 @@ class LocationService:
                 updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
             )
             locations.append(location)
-            print(f"🏠 [GET_ALL_LOCATIONS] Added location: '{location.name}' (default: {location.is_default})")
         
-        print(f"🏠 [GET_ALL_LOCATIONS] Returning {len(locations)} total locations")
         return locations
     
     def update_location(self, location_id: str, **updates) -> Optional[Location]:
@@ -216,7 +214,7 @@ class LocationService:
             WHERE l.id <> $location_id 
             SET l.is_default = false
             """
-            self.safe_kuzu.execute_query(clear_defaults_query, {"location_id": location_id}, operation="location_operation")
+            safe_execute_kuzu_query(clear_defaults_query, {"location_id": location_id}, operation="location_operation")
         
         # Build update query
         set_clauses = []
@@ -240,7 +238,7 @@ class LocationService:
             """
             
             # Execute with proper typing for KuzuDB
-            self.safe_kuzu.execute_query(update_query, params, operation="location_operation")
+            safe_execute_kuzu_query(update_query, params, operation="location_operation")
         # Return updated location
         return self.get_location(location_id)
     
@@ -255,50 +253,22 @@ class LocationService:
         
         # Delete from KuzuDB
         delete_query = "MATCH (l:Location) WHERE l.id = $location_id DELETE l"
-        self.safe_kuzu.execute_query(delete_query, {"location_id": location_id}, operation="location_operation")
+        safe_execute_kuzu_query(delete_query, {"location_id": location_id}, operation="location_operation")
         
         print(f"🏠 [DELETE_LOCATION] Deleted location {location_id}: '{location.name}'")
         return True
     
-    def get_default_location(self, user_id: str) -> Optional[Location]:
-        """Get the default location."""
-        print(f"🏠 [GET_DEFAULT] Looking for default location for user {user_id}")
+    def get_default_location(self) -> Optional[Location]:
+        """Get the system default location (universal access)."""
         
-        # First try to find a default location that has books for this user
-        query = """
-        MATCH (b:Book)-[stored:STORED_AT]->(l:Location)
-        WHERE stored.user_id = $user_id AND l.is_default = true
-        RETURN DISTINCT l
-        LIMIT 1
-        """
-        result = self.safe_kuzu.execute_query(query, {"user_id": user_id}, operation="location_operation")
-        
-        if result.has_next():
-            row = result.get_next()
-            location_data = dict(row[0])
-            location = Location(
-                id=location_data['id'],
-                user_id="",
-                name=location_data['name'],
-                description=location_data.get('description'),
-                location_type=location_data['location_type'],
-                address=location_data.get('address'),
-                is_default=location_data['is_default'],
-                is_active=location_data.get('is_active', True),
-                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
-            )
-            print(f"🏠 [GET_DEFAULT] Found default location for user {user_id}: '{location.name}' (ID: {location.id})")
-            return location
-        
-        # If no default location with books, try to find any default location in the system
+        # Simply find the default location in the system (locations are universal)
         default_query = """
         MATCH (l:Location)
         WHERE l.is_default = true
         RETURN l
         LIMIT 1
         """
-        result = self.safe_kuzu.execute_query(default_query, {}, operation="location_operation")
+        result = safe_execute_kuzu_query(default_query, {}, operation="location_operation")
         
         if result.has_next():
             row = result.get_next()
@@ -315,22 +285,34 @@ class LocationService:
                 created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
                 updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
             )
-            print(f"🏠 [GET_DEFAULT] Found system default location: '{location.name}' (ID: {location.id})")
             return location
         
-        # If no default location at all, get any location with books for this user
-        locations = self.get_user_locations(user_id)
-        if locations:
-            default_location = locations[0]
-            print(f"🏠 [GET_DEFAULT] No default found, using first location with books for user {user_id}: '{default_location.name}' (ID: {default_location.id})")
-            return default_location
+        # No default found, use first available        # If no default location exists, get any available location as fallback
+        all_locations_query = """
+        MATCH (l:Location)
+        WHERE l.is_active = true
+        RETURN l
+        LIMIT 1
+        """
+        result = safe_execute_kuzu_query(all_locations_query, {}, operation="location_operation")
         
-        # If no locations with books, get any available location
-        all_locations = self.get_all_locations()
-        if all_locations:
-            default_location = all_locations[0]
-            print(f"🏠 [GET_DEFAULT] No locations with books, using first available location: '{default_location.name}' (ID: {default_location.id})")
-            return default_location
+        if result.has_next():
+            row = result.get_next()
+            location_data = dict(row[0])
+            location = Location(
+                id=location_data['id'],
+                user_id="",
+                name=location_data['name'],
+                description=location_data.get('description'),
+                location_type=location_data['location_type'],
+                address=location_data.get('address'),
+                is_default=location_data['is_default'],
+                is_active=location_data.get('is_active', True),
+                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
+                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+            )
+            print(f"🏠 [GET_DEFAULT] No default found, using first available location: '{location.name}' (ID: {location.id})")
+            return location
         
         print(f"🏠 [GET_DEFAULT] No locations found at all")
         return None
@@ -366,13 +348,12 @@ class LocationService:
         
         try:
             if user_id:
-                # Count books stored at this location for a specific user
+                # Count books stored at this location (universal)
                 query = """
                 MATCH (b:Book)-[stored:STORED_AT]->(l:Location {id: $location_id})
-                WHERE stored.user_id = $user_id
                 RETURN COUNT(b) as book_count
                 """
-                params = {'location_id': location_id, 'user_id': user_id}
+                params = {'location_id': location_id}
             else:
                 # Count all books at this location regardless of user
                 query = """
@@ -381,7 +362,7 @@ class LocationService:
                 """
                 params = {'location_id': location_id}
             
-            result = self.safe_kuzu.execute_query(query, params, operation="location_operation")
+            result = safe_execute_kuzu_query(query, params, operation="location_operation")
             
             count = 0
             if result.has_next():
@@ -432,23 +413,14 @@ class LocationService:
                  {"location_id": location_id, "user_id": user_id})
         
         try:
-            if user_id:
-                # Get books stored at this location for a specific user
-                query = """
-                MATCH (b:Book)-[stored:STORED_AT]->(l:Location {id: $location_id})
-                WHERE stored.user_id = $user_id
-                RETURN b.id as book_id
-                """
-                params = {'location_id': location_id, 'user_id': user_id}
-            else:
-                # Get all books at this location regardless of user
-                query = """
-                MATCH (b:Book)-[:STORED_AT]->(l:Location {id: $location_id})
-                RETURN b.id as book_id
-                """
-                params = {'location_id': location_id}
+            # Get books stored at this location (universal)
+            query = """
+            MATCH (b:Book)-[stored:STORED_AT]->(l:Location {id: $location_id})
+            RETURN b.id as book_id
+            """
+            params = {'location_id': location_id}
             
-            result = self.safe_kuzu.execute_query(query, params, operation="location_operation")
+            result = safe_execute_kuzu_query(query, params, operation="location_operation")
             book_ids = []
             
             while result.has_next():
@@ -486,33 +458,30 @@ class LocationService:
                 debug_log(f"Location {location_id} not found", "LOCATION")
                 return False
             
-            # Check if this book-location-user combination already exists
+            # Check if this book-location combination already exists
             check_query = """
             MATCH (b:Book {id: $book_id})-[stored:STORED_AT]->(l:Location {id: $location_id})
-            WHERE stored.user_id = $user_id
             RETURN COUNT(stored) as count
             """
             
-            result = self.safe_kuzu.execute_query(check_query, {
+            result = safe_execute_kuzu_query(check_query, {
                 "book_id": book_id,
-                "location_id": location_id,
-                "user_id": user_id
+                "location_id": location_id
             }, operation="check_book_location")
             
             if result.has_next() and result.get_next()[0] > 0:
-                debug_log(f"Book {book_id} already stored at location {location_id} for user {user_id}", "LOCATION")
+                debug_log(f"Book {book_id} already stored at location {location_id}", "LOCATION")
                 return True  # Already exists, that's fine
             
             # Create the STORED_AT relationship
             create_query = """
             MATCH (b:Book {id: $book_id}), (l:Location {id: $location_id})
-            CREATE (b)-[:STORED_AT {user_id: $user_id, created_at: $created_at}]->(l)
+            CREATE (b)-[:STORED_AT {created_at: $created_at}]->(l)
             """
             
-            self.safe_kuzu.execute_query(create_query, {
+            safe_execute_kuzu_query(create_query, {
                 "book_id": book_id,
                 "location_id": location_id,
-                "user_id": user_id,
                 "created_at": datetime.utcnow()
             }, operation="add_book_to_location")
             
@@ -530,23 +499,21 @@ class LocationService:
         
         Deletes the STORED_AT relationship between the book and location for this user.
         """
-        debug_log(f"Removing book {book_id} from location {location_id} for user {user_id}", "LOCATION")
+        debug_log(f"Removing book {book_id} from location {location_id}", "LOCATION")
         
         try:
             # Delete the STORED_AT relationship
             delete_query = """
             MATCH (b:Book {id: $book_id})-[stored:STORED_AT]->(l:Location {id: $location_id})
-            WHERE stored.user_id = $user_id
             DELETE stored
             """
             
-            self.safe_kuzu.execute_query(delete_query, {
+            safe_execute_kuzu_query(delete_query, {
                 "book_id": book_id,
-                "location_id": location_id,
-                "user_id": user_id
+                "location_id": location_id
             }, operation="remove_book_from_location")
             
-            debug_log(f"✅ Book {book_id} removed from location {location_id} for user {user_id}", "LOCATION")
+            debug_log(f"✅ Book {book_id} removed from location {location_id}", "LOCATION")
             return True
             
         except Exception as e:
@@ -563,26 +530,17 @@ class LocationService:
             user_id: Optional user filter. If provided, only get locations for this user.
                     If None, get all locations where the book is stored.
         """
-        debug_log(f"Getting locations for book {book_id} (user filter: {user_id})", "LOCATION")
+        debug_log(f"Getting locations for book {book_id}", "LOCATION")
         
         try:
-            if user_id:
-                # Get locations for this book for a specific user
-                query = """
-                MATCH (b:Book {id: $book_id})-[stored:STORED_AT]->(l:Location)
-                WHERE stored.user_id = $user_id
-                RETURN l
-                """
-                params = {'book_id': book_id, 'user_id': user_id}
-            else:
-                # Get all locations for this book regardless of user
-                query = """
-                MATCH (b:Book {id: $book_id})-[:STORED_AT]->(l:Location)
-                RETURN l
-                """
-                params = {'book_id': book_id}
+            # Get locations for this book (universal)
+            query = """
+            MATCH (b:Book {id: $book_id})-[stored:STORED_AT]->(l:Location)
+            RETURN l
+            """
+            params = {'book_id': book_id}
             
-            result = self.safe_kuzu.execute_query(query, params, operation="location_operation")
+            result = safe_execute_kuzu_query(query, params, operation="location_operation")
             locations = []
             
             while result.has_next():
@@ -646,8 +604,8 @@ class LocationService:
         """
         debug_log(f"Migrating books without location for user {user_id}", "LOCATION")
         
-        # Get default location
-        default_location = self.get_default_location(user_id)
+        # Get default location (universal)
+        default_location = self.get_default_location()
         if not default_location:
             debug_log(f"No default location found for user {user_id}, cannot migrate", "LOCATION")
             return 0
@@ -658,12 +616,11 @@ class LocationService:
             MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book)
             WHERE NOT EXISTS {
                 MATCH (b)-[stored:STORED_AT]->(:Location)
-                WHERE stored.user_id = $user_id
             }
             RETURN b.id as book_id
             """
             
-            result = self.safe_kuzu.execute_query(query, {'user_id': user_id}, operation="location_operation")
+            result = safe_execute_kuzu_query(query, {'user_id': user_id}, operation="location_operation")
             
             migration_count = 0
             while result.has_next():

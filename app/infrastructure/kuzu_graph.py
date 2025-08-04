@@ -626,7 +626,6 @@ class KuzuGraphDB:
                 """
                 CREATE REL TABLE STORED_AT(
                     FROM Book TO Location,
-                    user_id STRING,
                     created_at TIMESTAMP
                 )
                 """,

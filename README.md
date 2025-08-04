@@ -18,7 +18,7 @@
 ## ✨ Features
 
 - 📖 **Add Books**: Add books quickly by ISBN with automatic cover and metadata fetching. Now featuring bulk-import from Goodreads and other CSV files! 
-- ✅ **Track Progress**: Mark books as *Currently Reading*, *Want to Read*, *Finished*, or *Library Only*.
+- ✅ **Track Progress**: Mark books as *Currently Reading*, *Plan to Read*, *Finished*, or *Library Only*.
 - 📅 **Reading Logs**: Log daily reading activity and maintain streaks.
 - 🖼️ **Monthly Wrap-Ups**: Generate shareable image collages of books completed each month.
 - 🔎 **Search**: Find and import books using the Google Books API.

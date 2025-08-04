@@ -648,7 +648,6 @@ def create_app():
         
         # For API endpoints, skip the session-based authentication checks
         if request.path.startswith('/api/'):
-            print("DEBUG: API request detected, skipping session checks")
             return
         
         # Skip if user is not authenticated (for non-API endpoints)
@@ -708,6 +707,41 @@ def create_app():
             
         return send_from_directory(static_dir, filename)
 
+    # Add routes to serve user data files from data directory
+    @app.route('/covers/<path:filename>')
+    def serve_covers(filename):
+        """Serve cover images from data directory."""
+        import os
+        from flask import send_from_directory
+        
+        # Check for Docker (production) or local development
+        docker_data_dir = '/data/covers'
+        local_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'covers')
+        
+        if os.path.exists(docker_data_dir):
+            covers_dir = docker_data_dir
+        else:
+            covers_dir = local_data_dir
+            
+        return send_from_directory(covers_dir, filename)
+
+    @app.route('/uploads/<path:filename>')
+    def serve_uploads(filename):
+        """Serve uploaded files from data directory."""
+        import os
+        from flask import send_from_directory
+        
+        # Check for Docker (production) or local development
+        docker_data_dir = '/data/uploads'
+        local_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'uploads')
+        
+        if os.path.exists(docker_data_dir):
+            uploads_dir = docker_data_dir
+        else:
+            uploads_dir = local_data_dir
+            
+        return send_from_directory(uploads_dir, filename)
+
     # Register application routes via modular blueprints
     from .routes import register_blueprints
     from .auth import auth
@@ -741,16 +775,6 @@ def create_app():
         app.register_blueprint(onboarding_bp)
     except ImportError as e:
         print(f"Could not import onboarding blueprint: {e}")
-    
-    try:
-        from .routes.test_import_routes import test_import_bp
-        app.register_blueprint(test_import_bp, url_prefix='/test-import')
-        # Only log route registration in debug mode
-        debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
-        if debug_mode:
-            logger.debug("Test import routes registered at /test-import")
-    except ImportError as e:
-        print(f"Could not import test import blueprint: {e}")
     
     # Note: Genre routes are now registered via register_blueprints() in routes/__init__.py
     

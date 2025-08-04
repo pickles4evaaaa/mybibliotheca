@@ -160,7 +160,21 @@ def index():
         
         # Pagination parameters
         page = request.args.get('page', 1, type=int)
-        per_page = 12  # Number of categories per page
+        per_page_param = request.args.get('per_page', '12')
+        
+        # Valid per page options
+        valid_per_page = [6, 12, 24, 48, 96]
+        
+        # Handle per_page parameter
+        if per_page_param == 'all':
+            per_page = len(all_categories)
+        else:
+            try:
+                per_page = int(per_page_param)
+                if per_page not in valid_per_page:
+                    per_page = 12  # Default fallback
+            except (ValueError, TypeError):
+                per_page = 12  # Default fallback
         
         # Calculate pagination
         total = len(all_categories)
@@ -173,6 +187,7 @@ def index():
         has_next = end < total
         prev_num = page - 1 if has_prev else None
         next_num = page + 1 if has_next else None
+        total_pages = (total + per_page - 1) // per_page if per_page > 0 else 1
         
         pagination = {
             'has_prev': has_prev,
@@ -180,14 +195,47 @@ def index():
             'prev_num': prev_num,
             'next_num': next_num,
             'page': page,
-            'pages': (total + per_page - 1) // per_page,
+            'pages': total_pages,
+            'total_pages': total_pages,
             'per_page': per_page,
-            'total': total
+            'total': total,
+            'total_count': total
         }
+        
+        # Calculate stats for the template
+        root_categories = book_service.get_root_categories_sync(str(current_user.id)) or []
+        
+        # Calculate total category count (all categories, not just on current page)
+        total_category_count = len(all_categories)
+        
+        # Calculate subcategories (categories with parents)
+        subcategory_count = 0
+        for category in all_categories:
+            parent_id = get_attr(category, 'parent_id')
+            if parent_id:  # Has a parent, so it's a subcategory
+                subcategory_count += 1
+        
+        # Calculate total books across all categories (prevent double counting)
+        total_book_count = 0
+        counted_books = set()  # Track books to prevent double counting
+        for category in all_categories:
+            category_id = get_attr(category, 'id')
+            if category_id:
+                category_books = book_service.get_books_by_category_sync(category_id, str(current_user.id)) or []
+                for book in category_books:
+                    book_id = get_attr(book, 'id')
+                    if book_id and book_id not in counted_books:
+                        counted_books.add(book_id)
+                        total_book_count += 1
         
         return render_template('genres/index.html', 
                              categories=categories, 
-                             pagination=pagination)
+                             pagination=pagination,
+                             valid_per_page=valid_per_page,
+                             root_categories=root_categories,
+                             total_book_count=total_book_count,
+                             subcategory_count=subcategory_count,
+                             total_category_count=total_category_count)
         
     except Exception as e:
         current_app.logger.error(f"Error loading genres index: {e}")

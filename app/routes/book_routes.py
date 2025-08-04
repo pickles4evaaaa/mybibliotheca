@@ -893,14 +893,6 @@ def library():
     # Calculate statistics for filter buttons - handle both dict and object formats
     def get_reading_status(book):
         if isinstance(book, dict):
-            # Debug: Print the structure of the first book to understand data format
-            if user_books and book == user_books[0]:
-                print(f"🔍 DEBUG: Book structure - Keys: {list(book.keys())}")
-                if 'ownership' in book:
-                    print(f"🔍 DEBUG: Ownership keys: {list(book.get('ownership', {}).keys())}")
-                print(f"🔍 DEBUG: Direct reading_status: {book.get('reading_status')}")
-                print(f"🔍 DEBUG: Nested reading_status: {book.get('ownership', {}).get('reading_status')}")
-            
             # First try direct field, then nested under ownership, then check for legacy fields
             status = (book.get('reading_status') or 
                      book.get('ownership', {}).get('reading_status') or
@@ -1734,10 +1726,6 @@ def edit_book(uid):
                 )
                 contributors.append(contribution)
         
-        # Debug what's being submitted
-        print(f"DEBUG: Form keys: {list(request.form.keys())}")
-        print(f"DEBUG: cover_url from form: '{request.form.get('cover_url', 'NOT_FOUND')}'")
-        
         update_data = {
             'title': request.form['title'],
             'subtitle': request.form.get('subtitle', '').strip() or None,
@@ -1963,34 +1951,27 @@ def view_book_enhanced(uid):
                 if hasattr(self, 'location_id') and location_id and (not hasattr(self, 'locations') or not getattr(self, 'locations', None)):
                     try:
                         from app.location_service import LocationService
-                        from app.utils.safe_kuzu_manager import safe_get_connection
                         
-                        # Get current user ID properly
-                        user_id_for_location = str(current_user.id) if 'current_user' in globals() and hasattr(current_user, 'id') else str(data.get('user_id', ''))
-                        if user_id_for_location:
-                            location_service = LocationService()
-                            
-                            # Get all available locations, not just those with books
-                            user_locations = location_service.get_all_locations()
-                            
-                            # Find the location object by ID
-                            for user_loc in user_locations:
-                                if hasattr(user_loc, 'id') and str(user_loc.id) == str(location_id):
-                                    self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
+                        location_service = LocationService()
+                        
+                        # Get all available locations (universal, no user dependency)
+                        all_locations = location_service.get_all_locations()
+                        
+                        # Find the location object by ID
+                        for location in all_locations:
+                            if hasattr(location, 'id') and str(location.id) == str(location_id):
+                                self.locations = [{'id': location.id, 'name': location.name}]
+                                break
+                        
+                        # If location not found by ID, check if location_id is actually a name
+                        if not hasattr(self, 'locations') or not self.locations:
+                            for location in all_locations:
+                                if hasattr(location, 'name') and str(location.name) == str(location_id):
+                                    self.locations = [{'id': location.id, 'name': location.name}]
                                     break
-                            
-                            # If location not found by ID, check if location_id is actually a name
-                            if not hasattr(self, 'locations') or not self.locations:
-                                for user_loc in user_locations:
-                                    if hasattr(user_loc, 'name') and str(user_loc.name) == str(location_id):
-                                        self.locations = [{'id': user_loc.id, 'name': user_loc.name}]
-                                        break
-                                        
+                                    
                     except Exception as e:
                         print(f"Error populating location data: {e}")
-                        # Fallback: treat location_id as the name
-                        if location_id:
-                            self.locations = [{'id': location_id, 'name': location_id}]
                         # Fallback: treat location_id as the name
                         if location_id:
                             self.locations = [{'id': location_id, 'name': location_id}]
@@ -2340,14 +2321,19 @@ def replace_cover(uid):
         
         # Download and cache the new cover image (same process as manual addition)
         try:
-            # Use persistent covers directory
-            covers_dir = Path('/app/static/covers')
+            # Use persistent covers directory in data folder
+            covers_dir = Path('/data/covers')
             
             # Fallback to local development path if Docker path doesn't exist
             if not covers_dir.exists():
-                static_folder = current_app.static_folder or 'app/static'
-                if static_folder:
-                    covers_dir = Path(static_folder) / 'covers'
+                # Check config for data directory path
+                data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                if data_dir:
+                    covers_dir = Path(data_dir) / 'covers'
+                else:
+                    # Last resort - use relative path from app root
+                    base_dir = Path(current_app.root_path).parent
+                    covers_dir = base_dir / 'data' / 'covers'
             
             covers_dir.mkdir(parents=True, exist_ok=True)
             
@@ -2371,13 +2357,13 @@ def replace_cover(uid):
                     f.write(chunk)
             
             # Generate new cover URL
-            new_cached_cover_url = f"/static/covers/{filename}"
+            new_cached_cover_url = f"/covers/{filename}"
             
             # Update the book with the new cover URL
             book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=new_cached_cover_url)
             
             # Clean up old cover file if it exists and is a local file
-            if old_cover_url and old_cover_url.startswith('/static/covers/'):
+            if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
                 try:
                     old_filename = old_cover_url.split('/')[-1]
                     old_filepath = covers_dir / old_filename
@@ -2441,14 +2427,19 @@ def upload_cover(uid):
         # Store old cover URL for cleanup
         old_cover_url = user_book.cover_url
         
-        # Set up covers directory
-        covers_dir = Path('/app/static/covers')
+        # Set up covers directory in data folder
+        covers_dir = Path('/data/covers')
         
         # Fallback to local development path if Docker path doesn't exist
         if not covers_dir.exists():
-            static_folder = current_app.static_folder or 'app/static'
-            if static_folder:
-                covers_dir = Path(static_folder) / 'covers'
+            # Check config for data directory path
+            data_dir = getattr(current_app.config, 'DATA_DIR', None)
+            if data_dir:
+                covers_dir = Path(data_dir) / 'covers'
+            else:
+                # Last resort - use relative path from app root
+                base_dir = Path(current_app.root_path).parent
+                covers_dir = base_dir / 'data' / 'covers'
         
         covers_dir.mkdir(parents=True, exist_ok=True)
         
@@ -2461,13 +2452,13 @@ def upload_cover(uid):
         file.save(str(filepath))
         
         # Generate new cover URL
-        new_cover_url = f"/static/covers/{filename}"
+        new_cover_url = f"/covers/{filename}"
         
         # Update the book with the new cover URL
         book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=new_cover_url)
         
         # Clean up old cover file if it exists and is a local file
-        if old_cover_url and old_cover_url.startswith('/static/covers/'):
+        if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
             try:
                 old_filename = old_cover_url.split('/')[-1]
                 old_filepath = covers_dir / old_filename
@@ -3347,14 +3338,20 @@ def add_book_manual():
                             try:
                                 book_temp_id = str(uuid.uuid4())
                                 
-                                # Use persistent covers directory
+                                # Use persistent covers directory in data folder
                                 import os
-                                covers_dir = Path('/app/static/covers')
+                                covers_dir = Path('/data/covers')
                                 
                                 # Fallback to local development path if Docker path doesn't exist
                                 if not covers_dir.exists():
-                                    static_folder = current_app.static_folder or 'app/static'
-                                    covers_dir = Path(static_folder) / 'covers'
+                                    # Check config for data directory path
+                                    data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                                    if data_dir:
+                                        covers_dir = Path(data_dir) / 'covers'
+                                    else:
+                                        # Last resort - use relative path from app root
+                                        base_dir = Path(current_app.root_path).parent
+                                        covers_dir = base_dir / 'data' / 'covers'
                                 
                                 covers_dir.mkdir(parents=True, exist_ok=True)
                                 
@@ -3374,7 +3371,7 @@ def add_book_manual():
                                     for chunk in response.iter_content(chunk_size=8192):
                                         f.write(chunk)
                                 
-                                cached_cover_url = f"/static/covers/{filename}"
+                                cached_cover_url = f"/covers/{filename}"
                                 cover_url = cached_cover_url
                                 
                             except Exception as e:
@@ -3867,14 +3864,20 @@ def add_book_manual():
                     import requests
                     from pathlib import Path
                     
-                    # Use persistent covers directory
+                    # Use persistent covers directory in data folder
                     import os
-                    covers_dir = Path('/app/static/covers')
+                    covers_dir = Path('/data/covers')
                     
                     # Fallback to local development path if Docker path doesn't exist
                     if not covers_dir.exists():
-                        static_folder = current_app.static_folder or 'app/static'
-                        covers_dir = Path(static_folder) / 'covers'
+                        # Check config for data directory path
+                        data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                        if data_dir:
+                            covers_dir = Path(data_dir) / 'covers'
+                        else:
+                            # Last resort - use relative path from app root
+                            base_dir = Path(current_app.root_path).parent
+                            covers_dir = base_dir / 'data' / 'covers'
                     
                     covers_dir.mkdir(parents=True, exist_ok=True)
                     
@@ -3897,7 +3900,7 @@ def add_book_manual():
                         for chunk in response.iter_content(chunk_size=8192):
                             f.write(chunk)
                     
-                    cached_cover_url = f"/static/covers/{filename}"
+                    cached_cover_url = f"/covers/{filename}"
                     
                 except Exception as e:
                     cached_cover_url = final_cover_url  # Fallback to original URL
@@ -4032,8 +4035,8 @@ def add_book_manual():
             if location_id:
                 final_locations = [location_id]
             else:
-                
-                default_location = location_service.get_default_location(str(current_user.id))
+                # Get default location (universal)
+                default_location = location_service.get_default_location()
                 
                 if default_location:
                     final_locations = [default_location.id]

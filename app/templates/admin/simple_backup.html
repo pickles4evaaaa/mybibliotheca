@@ -25,10 +25,11 @@
         <div class="col-12">
             <div class="alert alert-info">
                 <h5><i class="bi bi-info-circle me-2"></i>About Simple Backup</h5>
-                <p class="mb-2">This simplified backup system directly backs up your KuzuDB database files as ZIP archives.</p>
+                <p class="mb-2">This simplified backup system backs up your complete Bibliotheca data as ZIP archives.</p>
                 <ul class="mb-0">
-                    <li><strong>Backup:</strong> Creates a ZIP file of your complete database</li>
-                    <li><strong>Restore:</strong> Cleanly disconnects, replaces database files, and reconnects</li>
+                    <li><strong>Database:</strong> Complete KuzuDB database files</li>
+                    <li><strong>Images:</strong> All book cover images and uploaded files</li>
+                    <li><strong>Restore:</strong> Cleanly disconnects, replaces all files, and reconnects</li>
                     <li><strong>Simple:</strong> No complex metadata or multi-step processes</li>
                 </ul>
             </div>
@@ -37,7 +38,7 @@
 
     <!-- Statistics Cards -->
     <div class="row mb-4">
-        <div class="col-md-3">
+        <div class="col-lg-2 col-md-4">
             <div class="card text-center">
                 <div class="card-body">
                     <div class="row align-items-center">
@@ -53,7 +54,7 @@
             </div>
         </div>
         
-        <div class="col-md-3">
+        <div class="col-lg-2 col-md-4">
             <div class="card text-center">
                 <div class="card-body">
                     <div class="row align-items-center">
@@ -68,8 +69,40 @@
                 </div>
             </div>
         </div>
+
+        <div class="col-lg-2 col-md-4">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <h5 class="card-title">{{ backup_stats.covers_count }}</h5>
+                            <p class="card-text text-muted">Cover Images</p>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-image display-6 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-2 col-md-4">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col">
+                            <h5 class="card-title">{{ backup_stats.covers_size_formatted }}</h5>
+                            <p class="card-text text-muted">Images Size</p>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-file-image display-6 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         
-        <div class="col-md-3">
+        <div class="col-lg-2 col-md-4">
             <div class="card text-center">
                 <div class="card-body">
                     <div class="row align-items-center">
@@ -85,7 +118,7 @@
             </div>
         </div>
         
-        <div class="col-md-3">
+        <div class="col-lg-2 col-md-4">
             <div class="card text-center">
                 <div class="card-body">
                     <div class="row align-items-center">

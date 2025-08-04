@@ -2086,13 +2086,13 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
             # Initialize location service
             location_service = LocationService()
             
-            # Get or create default location for this user
-            default_location = location_service.get_default_location(user_id)
+            # Get or create default location (universal)
+            default_location = location_service.get_default_location()
             if not default_location:
-                logger.info(f"🏠 Creating default location for user during onboarding import")
+                logger.info(f"🏠 Creating default location for onboarding import")
                 created_locations = location_service.setup_default_locations()
                 if created_locations:
-                    default_location = location_service.get_default_location(user_id)
+                    default_location = location_service.get_default_location()
                     if default_location and default_location.id:
                         default_locations = [default_location.id]
                         logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")

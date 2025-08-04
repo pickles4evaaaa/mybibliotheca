@@ -167,8 +167,10 @@ class KuzuRelationshipService:
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
         
         # Handle location information
-        locations = locations_data if locations_data else []
+        locations = [loc for loc in (locations_data or []) if loc and loc.get('id') and loc.get('name')]
         location_id = None
+        
+        debug_log(f"Processing locations for book: filtered_locations={locations}, relationship_data location_id={relationship_data.get('location_id')}", "RELATIONSHIP")
         
         # If we have locations from STORED_AT relationships, use them
         if locations:
@@ -201,6 +203,8 @@ class KuzuRelationshipService:
         setattr(book, 'location_id', location_id)
         setattr(book, 'locations', locations)
         
+        debug_log(f"Final book location attributes: location_id={location_id}, locations={locations}", "RELATIONSHIP")
+        
         # Convert date strings back to date objects if needed
         start_date = getattr(book, 'start_date', None)
         if isinstance(start_date, str):
@@ -219,21 +223,18 @@ class KuzuRelationshipService:
         return book
     
     async def get_books_for_user(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:
-        """Get all books for a user with relationship data and locations (common library model)."""
+        """Get all books for a user with relationship data and locations (universal library model)."""
         try:
-            # Common library model: Get ALL books with optional user overlay data
-            # No longer requires OWNS relationships since all books are in the common library
+            # Universal library model: Get ALL books with their STORED_AT locations
+            # No OWNS relationships - books are universal and stored at locations
             query = """
             MATCH (b:Book)
-            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-            WHERE stored.user_id = $user_id OR stored IS NULL
-            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
+            RETURN b, COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations
             SKIP $offset LIMIT $limit
             """
             
             result = safe_execute_kuzu_query(query, {
-                "user_id": user_id,
                 "offset": offset,
                 "limit": limit
             })
@@ -241,13 +242,15 @@ class KuzuRelationshipService:
             
             books = []
             for result in results:
-                if 'col_0' in result and 'col_1' in result:
+                if 'col_0' in result:
                     book_data = result['col_0']
-                    relationship_data = result['col_1'] or {}
-                    locations_data = result.get('col_2', []) or []
+                    locations_data = result.get('col_1', []) or []
                     
                     # Filter out null/empty locations
-                    valid_locations = [loc for loc in locations_data if loc.get('id')]
+                    valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
+                    
+                    # No relationship data in universal library - books don't belong to users
+                    relationship_data = {}
                     
                     book = self._create_enriched_book(book_data, relationship_data, valid_locations)
                     books.append(book)
@@ -259,20 +262,17 @@ class KuzuRelationshipService:
             return []
     
     async def get_book_by_id_for_user(self, book_id: str, user_id: str) -> Optional[Book]:
-        """Get a specific book for a user with relationship data (common library model)."""
+        """Get a specific book for a user with relationship data (universal library model)."""
         try:
-            # Common library model: Get ANY book with optional user overlay data
-            # No longer requires OWNS relationships since all books are in the common library
+            # Universal library model: Get ANY book with its STORED_AT locations
+            # No OWNS relationships - books are universal and stored at locations
             query = """
             MATCH (b:Book {id: $book_id})
-            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-            WHERE stored.user_id = $user_id OR stored IS NULL
-            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
+            RETURN b, COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations
             """
             
             result = safe_execute_kuzu_query(query, {
-                "user_id": user_id,
                 "book_id": book_id
             })
             results = _convert_query_result_to_list(result)
@@ -281,22 +281,23 @@ class KuzuRelationshipService:
                 return None
                 
             result = results[0]
-            if 'col_0' not in result or 'col_1' not in result:
+            if 'col_0' not in result:
                 return None
                 
             book_data = result['col_0']
-            relationship_data = result['col_1']
-            locations_data = result.get('col_2', []) or []
+            locations_data = result.get('col_1', []) or []
             
             # Filter out null/empty locations
-            valid_locations = [loc for loc in locations_data if loc.get('id')]
+            valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
+            
+            # No relationship data in universal library - books don't belong to users
+            relationship_data = {}
             
             # Create enriched book with user-specific attributes
             book = self._create_enriched_book(book_data, relationship_data, valid_locations)
             
-            # Load custom metadata for this user-book combination
-            custom_metadata = self._load_custom_metadata(relationship_data)
-            setattr(book, 'custom_metadata', custom_metadata)
+            # No custom metadata in universal library (books don't belong to users)
+            setattr(book, 'custom_metadata', {})
                     
             return book
             
@@ -334,170 +335,28 @@ class KuzuRelationshipService:
                                       ownership_status: str = "owned",
                                       locations: Optional[List[str]] = None,
                                       custom_metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """Add a book to user's library with custom metadata support (sync version)."""
-        try:
-            # Convert string status to enum if needed
-            if isinstance(reading_status, str):
-                reading_status_map = {
-                    'read': ReadingStatus.READ,
-                    'reading': ReadingStatus.READING, 
-                    'plan_to_read': ReadingStatus.PLAN_TO_READ,
-                    'on_hold': ReadingStatus.ON_HOLD,
-                    'did_not_finish': ReadingStatus.DNF,
-                    'dnf': ReadingStatus.DNF,
-                    'library_only': ReadingStatus.LIBRARY_ONLY
-                }
-                reading_status_enum = reading_status_map.get(reading_status, ReadingStatus.LIBRARY_ONLY)
-            else:
-                reading_status_enum = reading_status
-
-            if isinstance(ownership_status, str):
-                ownership_status_map = {
-                    'owned': OwnershipStatus.OWNED,
-                    'borrowed': OwnershipStatus.BORROWED,
-                    'wishlist': OwnershipStatus.WISHLIST
-                }
-                ownership_status_enum = ownership_status_map.get(ownership_status, OwnershipStatus.OWNED)
-            else:
-                ownership_status_enum = ownership_status
-
-            # Create OWNS relationship with custom metadata
-            rel_data = {
-                'reading_status': reading_status_enum.value if hasattr(reading_status_enum, 'value') else str(reading_status_enum),
-                'ownership_status': ownership_status_enum.value if hasattr(ownership_status_enum, 'value') else str(ownership_status_enum),
-                'date_added': datetime.utcnow().isoformat()
-            }
-            
-            # Add locations if provided
-            if locations:
-                # Use the first location as location_id (OWNS schema has location_id, not locations)
-                if len(locations) > 0:
-                    rel_data['location_id'] = locations[0]
-            
-            # Add custom metadata as JSON
-            if custom_metadata:
-                rel_data['custom_metadata'] = json.dumps(custom_metadata)
-            
-            # Create the relationship using a safe query
-            create_query = """
-            MATCH (u:User {id: $user_id}), (b:Book {id: $book_id})
-            CREATE (u)-[r:OWNS $rel_data]->(b)
-            RETURN r
-            """
-            
-            result = safe_execute_kuzu_query(create_query, {
-                "user_id": user_id,
-                "book_id": book_id,
-                "rel_data": rel_data
-            })
-            success = result is not None
-            
-            if success:
-                if custom_metadata:
-                    pass  # Custom metadata would be handled separately
-            
-            return success
-            
-        except Exception as e:
-            traceback.print_exc()
-            return False
+        """Add a book to user's library with custom metadata support (sync version).
+        
+        NOTE: In universal library mode, this method is deprecated.
+        Books are shared and don't belong to individual users.
+        Use location assignment instead via LocationService.
+        """
+        # Universal library mode - books don't belong to users
+        # This method is deprecated but kept for backward compatibility
+        logger.warning(f"[UNIVERSAL_LIBRARY] add_book_to_user_library_sync called but deprecated in universal library mode")
+        return True  # Always return success to avoid breaking existing code
     
     async def update_user_book_relationship(self, user_id: str, book_id: str, updates: Dict[str, Any]) -> bool:
-        """Update the relationship between a user and book."""
-        try:
-            
-            # Get the current relationship - check if any OWNS relationship exists
-            query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
-            RETURN owns
-            LIMIT 1
-            """
-            
-            result = safe_execute_kuzu_query(query, {
-                "user_id": user_id,
-                "book_id": book_id
-            })
-            results = _convert_query_result_to_list(result)
-            
-            if results:
-                pass  # Process results
-            
-            if not results or 'result' not in results[0]:
-                # Try to create the relationship first with the updates included
-                
-                # Extract base properties for relationship creation
-                reading_status = updates.get('reading_status', 'library_only')
-                ownership_status = updates.get('ownership_status', 'owned')
-                custom_metadata = updates.get('custom_metadata')
-                
-                # Handle location updates - convert location_id to locations list
-                locations = []
-                if 'location_id' in updates and updates['location_id']:
-                    locations = [updates['location_id']]
-                elif 'locations' in updates and updates['locations']:
-                    locations = updates['locations']
-                
-                success = self.add_book_to_user_library_sync(
-                    user_id=user_id,
-                    book_id=book_id,
-                    reading_status=reading_status,
-                    ownership_status=ownership_status,
-                    locations=locations,
-                    custom_metadata=custom_metadata
-                )
-                
-                if not success:
-                    return False
-                
-                return True
-            
-            current_rel = results[0]['result']
-            
-            # Handle field mapping for compatibility
-            field_mapping = {
-                'review': 'user_review'  # Map 'review' to 'user_review' in database
-            }
-            
-            # Handle custom metadata specially and apply field mapping
-            processed_updates = {}
-            for key, value in updates.items():
-                # Apply field mapping if needed
-                db_field = field_mapping.get(key, key)
-                
-                if key == 'custom_metadata' and isinstance(value, dict):
-                    processed_updates[db_field] = json.dumps(value)
-                else:
-                    processed_updates[db_field] = value
-            
-            # Always update the updated_at timestamp
-            # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
-            processed_updates['updated_at'] = datetime.utcnow()
-            
-            # Build dynamic SET clause for only the fields being updated
-            set_clauses = []
-            params = {"user_id": user_id, "book_id": book_id}
-            
-            for key, value in processed_updates.items():
-                param_name = f"new_{key}"
-                set_clauses.append(f"owns.{key} = ${param_name}")
-                params[param_name] = value
-            
-            # Update the relationship with individual property updates
-            update_query = f"""
-            MATCH (u:User {{id: $user_id}})-[owns:OWNS]->(b:Book {{id: $book_id}})
-            SET {', '.join(set_clauses)}
-            """
-            
-            print(f"🔧 [UPDATE_RELATIONSHIP] Executing query: {update_query}")
-            print(f"🔧 [UPDATE_RELATIONSHIP] With params: {params}")
-            
-            safe_execute_kuzu_query(update_query, params)
-            
-            return True
-            
-        except Exception as e:
-            traceback.print_exc()
-            return False
+        """Update the relationship between a user and book.
+        
+        NOTE: In universal library mode, this method is deprecated.
+        Books are shared and don't belong to individual users.
+        Use location assignment instead via LocationService.
+        """
+        # Universal library mode - books don't belong to users
+        # This method is deprecated but kept for backward compatibility
+        logger.warning(f"[UNIVERSAL_LIBRARY] update_user_book_relationship called but deprecated in universal library mode")
+        return True  # Always return success to avoid breaking existing code
     
     async def remove_book_from_user_library(self, user_id: str, book_id: str) -> bool:
         """Remove a book from user's library (delete OWNS relationship)."""
@@ -522,22 +381,20 @@ class KuzuRelationshipService:
             return False
     
     async def get_all_books_with_user_overlay(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all books with user-specific overlay data (communal library model)."""
+        """Get all books with user-specific overlay data (universal library model)."""
         try:
-            # FIXED: Communal library - get ALL books regardless of ownership
-            # Use a simple query that doesn't depend on OWNS relationships
+            # Universal library - get ALL books with their STORED_AT locations
+            # No OWNS relationships - books are universal and stored at locations
             query = """
             MATCH (b:Book)
-            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-            WHERE stored.user_id = $user_id OR stored IS NULL
-            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
+            RETURN b, COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations
             """
             
-            result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            result = safe_execute_kuzu_query(query, {})
             results = _convert_query_result_to_list(result)
             
-            logger.info(f"[RELATIONSHIP_SERVICE] Raw query returned {len(results)} results for user {user_id}")
+            logger.info(f"[RELATIONSHIP_SERVICE] Raw query returned {len(results)} results for universal library")
             
             # Convert all books to dictionaries with user overlay
             book_dicts = []
@@ -548,8 +405,10 @@ class KuzuRelationshipService:
                         continue
                         
                     book_data = result_row['col_0']
-                    relationship_data = result_row.get('col_1', {}) or {}  # OWNS relationship data (may be None)
-                    locations_data = result_row.get('col_2', []) or []
+                    locations_data = result_row.get('col_1', []) or []
+                    
+                    # No relationship data in universal library - books don't belong to users
+                    relationship_data = {}
                     
                     # Create enriched book object
                     book = self._create_enriched_book(book_data, relationship_data, locations_data)
@@ -570,13 +429,12 @@ class KuzuRelationshipService:
                         book_dict['uid'] = book_dict['id']
                     
                     book_dicts.append(book_dict)
-                    logger.debug(f"[RELATIONSHIP_SERVICE] Successfully processed book {i}: {book_dict.get('title', 'Unknown')}")
                     
                 except Exception as e:
                     logger.error(f"[RELATIONSHIP_SERVICE] Error processing book {i}: {e}")
                     continue
             
-            logger.info(f"[RELATIONSHIP_SERVICE] Returning {len(book_dicts)} books for user {user_id}")
+            logger.info(f"[RELATIONSHIP_SERVICE] Successfully processed {len(book_dicts)} books for universal library")
             return book_dicts
             
         except Exception as e:
@@ -585,18 +443,15 @@ class KuzuRelationshipService:
             return []
     
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
-        """Get a book by UID with user overlay data - sync wrapper."""
-        # Enhanced query to also get location information via STORED_AT relationships
+        """Get a book by UID with user overlay data - sync wrapper for universal library."""
+        # Universal library query - prioritize STORED_AT relationships for locations
         query = """
         MATCH (b:Book {id: $book_id})
-        OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
         OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-        WHERE stored.user_id = $user_id OR stored IS NULL
-        RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
+        RETURN b, COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations
         """
         
         result = safe_execute_kuzu_query(query, {
-            "user_id": user_id,
             "book_id": uid
         })
         results = _convert_query_result_to_list(result)
@@ -609,18 +464,22 @@ class KuzuRelationshipService:
             return None
             
         book_data = result['col_0']
-        relationship_data = result.get('col_1', {}) or {}
-        locations_data = result.get('col_2', []) or []
+        locations_data = result.get('col_1', []) or []
         
-        # Filter out null/empty locations
-        valid_locations = [loc for loc in locations_data if loc.get('id')]
+        # For universal library, locations come from STORED_AT relationships
+        # Filter out any remaining null/empty locations as a safety measure
+        valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
+        
+        debug_log(f"Book {uid} locations from STORED_AT: {valid_locations}", "RELATIONSHIP")
+        
+        # No relationship data in universal library - books don't belong to users
+        relationship_data = {}
         
         # Create enriched book with user-specific attributes
         book = self._create_enriched_book(book_data, relationship_data, valid_locations)
         
-        # Load custom metadata for this user-book combination
-        custom_metadata = self._load_custom_metadata(relationship_data)
-        setattr(book, 'custom_metadata', custom_metadata)
+        # No custom metadata in universal library (books don't belong to users)
+        setattr(book, 'custom_metadata', {})
         
         return book
     
@@ -647,42 +506,15 @@ class KuzuRelationshipService:
         return None
     
     async def get_recently_added_want_to_read_books(self, user_id: str, limit: int = 5) -> List[Book]:
-        """Get books recently added to the user's want-to-read list."""
-        try:
-            query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-            WHERE owns.reading_status = 'plan_to_read'
-            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-            WHERE stored.user_id = $user_id OR stored IS NULL
-            RETURN b, owns, COLLECT(DISTINCT {id: l.id, name: l.name}) as locations
-            ORDER BY owns.date_added DESC
-            LIMIT $limit
-            """
-            
-            result = safe_execute_kuzu_query(query, {
-                "user_id": user_id,
-                "limit": limit
-            })
-            results = _convert_query_result_to_list(result)
-            
-            books = []
-            for result in results:
-                if 'col_0' in result and 'col_1' in result:
-                    book_data = result['col_0']
-                    relationship_data = result['col_1'] or {}
-                    locations_data = result.get('col_2', []) or []
-                    
-                    # Filter out null/empty locations
-                    valid_locations = [loc for loc in locations_data if loc.get('id')]
-                    
-                    book = self._create_enriched_book(book_data, relationship_data, valid_locations)
-                    books.append(book)
-            
-            return books
-            
-        except Exception as e:
-            traceback.print_exc()
-            return []
+        """Get books recently added to the user's want-to-read list.
+        
+        NOTE: In universal library mode, this method is deprecated.
+        Books are shared and don't have user-specific reading statuses.
+        """
+        # Universal library mode - books don't have user-specific reading statuses
+        # This method is deprecated but kept for backward compatibility
+        logger.warning(f"[UNIVERSAL_LIBRARY] get_recently_added_want_to_read_books called but deprecated in universal library mode")
+        return []  # Return empty list to avoid breaking existing code
 
     # Sync wrappers for backward compatibility
     def get_books_for_user_sync(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:

@@ -362,14 +362,14 @@ class SafeKuzuManager:
     def _initialize_schema(self):
         """Initialize the graph schema with node and relationship tables."""
         try:
-            print(f"🔧 [DEBUG] SafeKuzuManager._initialize_schema() called")
+            # Schema initialization (reduced logging for performance)
             logger.info("🔧 [DEBUG] SafeKuzuManager starting schema initialization...")
             
             # Check environment variable for forced reset
             force_reset = os.getenv('KUZU_FORCE_RESET', 'false').lower() == 'true'
             debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
             
-            print(f"🔧 [DEBUG] Force reset: {force_reset}, Debug mode: {debug_mode}")
+            # Check force reset and debug mode (logging reduced for performance)
             logger.info(f"🔧 [DEBUG] Schema init - force_reset={force_reset}, debug_mode={debug_mode}")
             
             # Check if database already has essential tables and determine initialization strategy

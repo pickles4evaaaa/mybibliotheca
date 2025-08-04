@@ -40,28 +40,21 @@ class MigrationDetector:
         db_files = []
         
         logger.info("🔍 Searching for SQLite databases...")
-        print("🔍 DEBUG: Searching for SQLite databases...")
         for path in self.search_paths:
             logger.debug(f"   Checking path: {path}")
-            print(f"   DEBUG: Checking path: {path}")
             if path.exists():
                 logger.debug(f"   ✅ Path exists: {path}")
-                print(f"   DEBUG: ✅ Path exists: {path}")
                 found_dbs = list(path.glob("*.db"))
                 logger.debug(f"   Found *.db files: {[f.name for f in found_dbs]}")
-                print(f"   DEBUG: Found *.db files: {[f.name for f in found_dbs]}")
                 
                 for db_file in found_dbs:
                     if self._is_bibliotheca_database(db_file):
                         logger.info(f"   ✅ Valid Bibliotheca database: {db_file}")
-                        print(f"   DEBUG: ✅ Valid Bibliotheca database: {db_file}")
                         db_files.append(db_file)
                     else:
                         logger.debug(f"   ❌ Not a Bibliotheca database: {db_file}")
-                        print(f"   DEBUG: ❌ Not a Bibliotheca database: {db_file}")
             else:
                 logger.debug(f"   ❌ Path does not exist: {path}")
-                print(f"   DEBUG: ❌ Path does not exist: {path}")
         
         logger.info(f"📚 Found {len(db_files)} Bibliotheca database(s): {[f.name for f in db_files]}")
         return db_files
@@ -81,12 +74,10 @@ class MigrationDetector:
             # Must have book table, optionally user and reading_log
             has_book_table = 'book' in tables
             logger.debug(f"   Database {db_path.name}: tables={tables}, has_book_table={has_book_table}")
-            print(f"   DEBUG: Database {db_path.name}: tables={tables}, has_book_table={has_book_table}")
             return has_book_table
             
         except Exception as e:
             logger.debug(f"   Error checking database {db_path}: {e}")
-            print(f"   DEBUG: Error checking database {db_path}: {e}")
             return False
     
     def analyze_database(self, db_path: Path) -> Dict:
