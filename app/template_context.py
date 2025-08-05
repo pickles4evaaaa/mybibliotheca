@@ -4,9 +4,27 @@ Template context processors for making common objects available in templates.
 
 import os
 from datetime import datetime, date
-from flask import current_app
+from flask import current_app, url_for
 from flask_login import current_user
 from app.debug_system import get_debug_manager
+
+
+def _genre_url_for(terminology_preference, endpoint, **values):
+    """Generate URLs for genre routes based on terminology preference."""
+    # Map the generic endpoint to the specific blueprint endpoint
+    if not endpoint.startswith('genres.'):
+        # If it's a relative endpoint, assume it's for genres
+        endpoint = f'genres.{endpoint}'
+    
+    # Generate the URL using the appropriate blueprint name based on preference
+    if terminology_preference == 'category':
+        # Use the categories blueprint registration for category preference
+        endpoint = endpoint.replace('genres.', 'categories.')
+    
+    # Generate the URL - Flask will use the correct blueprint registration
+    base_url = url_for(endpoint, **values)
+    
+    return base_url
 
 
 def inject_debug_manager():
@@ -52,6 +70,7 @@ def inject_site_config():
         system_config = load_system_config()
         site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
         server_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
+        terminology_preference = system_config.get('terminology_preference', 'genre')
         background_config = system_config.get('background_config', {
             'type': 'default',
             'solid_color': '#667eea',
@@ -65,6 +84,7 @@ def inject_site_config():
         # Fallback to environment variables if config loading fails
         site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
         server_timezone = os.getenv('TIMEZONE', 'UTC')
+        terminology_preference = 'genre'
         background_config = {
             'type': 'default',
             'solid_color': '#667eea',
@@ -78,7 +98,18 @@ def inject_site_config():
     return {
         'site_name': site_name,
         'server_timezone': server_timezone,
-        'background_config': background_config
+        'terminology_preference': terminology_preference,
+        'background_config': background_config,
+        # Helper functions for terminology
+        'get_terminology': lambda: terminology_preference,
+        'get_genre_term': lambda: 'Genre' if terminology_preference == 'genre' else 'Category',
+        'get_genre_term_lower': lambda: 'genre' if terminology_preference == 'genre' else 'category',
+        'get_genre_term_plural': lambda: 'Genres' if terminology_preference == 'genre' else 'Categories',
+        'get_genre_term_plural_lower': lambda: 'genres' if terminology_preference == 'genre' else 'categories',
+        # URL helper for genre routes
+        'get_genre_url_prefix': lambda: 'genres' if terminology_preference == 'genre' else 'categories',
+        # Dynamic URL generator for genre routes
+        'genre_url_for': lambda endpoint, **values: _genre_url_for(terminology_preference, endpoint, **values)
     }
 
 

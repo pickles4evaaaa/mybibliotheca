@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Genres & Categories - {{ site_name }}{% endblock %}
+{% block title %}{{ get_genre_term_plural() }} - {{ site_name }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -9,17 +9,17 @@
             <!-- Page Header -->
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h1 class="h2 mb-0">
-                    <i class="bi bi-tags-fill me-2"></i>Genres & Categories
+                    <i class="bi bi-tags-fill me-2"></i>{{ get_genre_term_plural() }}
                 </h1>
                 <div>
-                    <a href="{{ url_for('genres.add_category') }}" class="btn btn-success me-2">
-                        <i class="bi bi-plus-circle"></i> Add Category
+                    <a href="{{ genre_url_for('add_category') }}" class="btn btn-success me-2">
+                        <i class="bi bi-plus-circle"></i> Add {{ get_genre_term() }}
                     </a>
-                    <a href="{{ url_for('genres.hierarchy_view') }}" class="btn btn-info me-2">
+                    <a href="{{ genre_url_for('hierarchy_view') }}" class="btn btn-info me-2">
                         <i class="bi bi-diagram-3"></i> Hierarchy View
                     </a>
-                    <a href="{{ url_for('genres.merge_categories') }}" class="btn btn-warning">
-                        <i class="bi bi-arrow-down-up"></i> Merge Categories
+                    <a href="{{ genre_url_for('merge_categories') }}" class="btn btn-warning">
+                        <i class="bi bi-arrow-down-up"></i> Merge {{ get_genre_term_plural() }}
                     </a>
                 </div>
             </div>
@@ -34,7 +34,7 @@
                         <input type="text" 
                                class="form-control" 
                                id="categorySearch" 
-                               placeholder="Search categories..."
+                               placeholder="Search {{ get_genre_term_plural_lower() }}..."
                                onkeyup="filterCategories()">
                     </div>
                 </div>
@@ -68,7 +68,7 @@
                             {% endfor %}
                             <option value="all" {% if pagination.per_page == pagination.total_count %}selected{% endif %}>All</option>
                         </select>
-                        <span class="ms-2 text-muted">categories per page</span>
+                        <span class="ms-2 text-muted">{{ get_genre_term_plural_lower() }} per page</span>
                     </div>
                 </div>
             </div>
@@ -87,7 +87,7 @@
                     <div class="card stat-card">
                         <div class="card-body text-center">
                             <h3 class="text-primary">{{ total_category_count }}</h3>
-                            <p class="mb-0">Total Genres</p>
+                            <p class="mb-0">Total {{ get_genre_term_plural() }}</p>
                         </div>
                     </div>
                 </div>
@@ -95,7 +95,7 @@
                     <div class="card stat-card">
                         <div class="card-body text-center">
                             <h3 class="text-success">{{ root_categories|length }}</h3>
-                            <p class="mb-0">Parent Genres</p>
+                            <p class="mb-0">Parent {{ get_genre_term_plural() }}</p>
                         </div>
                     </div>
                 </div>
@@ -103,7 +103,7 @@
                     <div class="card stat-card">
                         <div class="card-body text-center">
                             <h3 class="text-warning">{{ subcategory_count }}</h3>
-                            <p class="mb-0">Child Genres</p>
+                            <p class="mb-0">Child {{ get_genre_term_plural() }}</p>
                         </div>
                     </div>
                 </div>
@@ -159,7 +159,7 @@
                                             {% else %}
                                                 <i class="bi bi-tag me-2"></i>
                                             {% endif %}
-                                            <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="text-decoration-none">
+                                            <a href="{{ genre_url_for('category_details', category_id=category.id) }}" class="text-decoration-none">
                                                 {{ category.name }}
                                             </a>
                                         </h5>
@@ -212,11 +212,11 @@
                                         <!-- Actions -->
                                         <div class="mt-3 d-flex justify-content-between">
                                             <div class="btn-group btn-group-sm">
-                                                <a href="{{ url_for('genres.category_details', category_id=category.id) }}" class="btn btn-sm btn-outline-primary">
+                                                <a href="{{ genre_url_for('category_details', category_id=category.id) }}" class="btn btn-sm btn-outline-primary">
                                                     <i class="bi bi-eye"></i> View
                                                 </a>
                                                 <div class="btn-group">
-                                                    <a href="{{ url_for('genres.edit_category', category_id=category.id) }}" class="btn btn-sm btn-outline-secondary">
+                                                    <a href="{{ genre_url_for('edit_category', category_id=category.id) }}" class="btn btn-sm btn-outline-secondary">
                                                         <i class="bi bi-pencil"></i>
                                                     </a>
                                                 </div>
@@ -351,7 +351,7 @@
                 <ul class="pagination justify-content-center">
                     {% if pagination.has_prev %}
                     <li class="page-item">
-                        <a class="page-link" href="{{ url_for('genres.index', page=pagination.prev_num, per_page=request.args.get('per_page', '12')) }}" aria-label="Previous">
+                        <a class="page-link" href="{{ genre_url_for('index', page=pagination.prev_num, per_page=request.args.get('per_page', '12')) }}" aria-label="Previous">
                             <span aria-hidden="true">&laquo;</span>
                         </a>
                     </li>
@@ -368,7 +368,7 @@
                         </li>
                         {% elif page_num == 1 or page_num == pagination.total_pages or (page_num >= pagination.page - 2 and page_num <= pagination.page + 2) %}
                         <li class="page-item">
-                            <a class="page-link" href="{{ url_for('genres.index', page=page_num, per_page=request.args.get('per_page', '12')) }}">{{ page_num }}</a>
+                            <a class="page-link" href="{{ genre_url_for('index', page=page_num, per_page=request.args.get('per_page', '12')) }}">{{ page_num }}</a>
                         </li>
                         {% elif page_num == pagination.page - 3 or page_num == pagination.page + 3 %}
                         <li class="page-item disabled">
@@ -379,7 +379,7 @@
 
                     {% if pagination.has_next %}
                     <li class="page-item">
-                        <a class="page-link" href="{{ url_for('genres.index', page=pagination.next_num, per_page=request.args.get('per_page', '12')) }}" aria-label="Next">
+                        <a class="page-link" href="{{ genre_url_for('index', page=pagination.next_num, per_page=request.args.get('per_page', '12')) }}" aria-label="Next">
                             <span aria-hidden="true">&raquo;</span>
                         </a>
                     </li>

@@ -89,17 +89,39 @@
             </div>
         </div>
     </div>
+
+    <!-- Terminology Preference Field -->
+    <div class="form-group">
+        <label for="terminology_preference" class="form-label">
+            <i class="bi bi-tags me-1"></i>
+            Book Classification Terminology
+        </label>
+        <select id="terminology_preference" 
+                name="terminology_preference" 
+                class="form-control" 
+                tabindex="5">
+            <option value="genre" 
+                    {% if current_config.get('terminology_preference', 'genre') == 'genre' %}selected{% endif %}>
+                Genres (e.g., "Science Fiction", "Romance", "Mystery")
+            </option>
+            <option value="category" 
+                    {% if current_config.get('terminology_preference') == 'category' %}selected{% endif %}>
+                Categories (e.g., "Fiction", "Non-Fiction", "Reference")
+            </option>
+        </select>
+        <div class="form-text">This affects how book classifications are displayed throughout the interface</div>
+    </div>
     
     <!-- Navigation Buttons -->
     <div class="navigation-buttons">
         <a href="{{ url_for('onboarding.step', step_num=1) }}" 
            class="btn btn-outline-secondary" 
-           tabindex="6">
+           tabindex="7">
             <i class="bi bi-arrow-left me-2"></i>Back
         </a>
         <button type="submit" 
                 class="btn btn-primary" 
-                tabindex="5">
+                tabindex="6">
             Continue to Data Options<i class="bi bi-arrow-right ms-2"></i>
         </button>
     </div>

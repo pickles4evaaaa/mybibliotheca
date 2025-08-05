@@ -50,7 +50,7 @@
             {% if import_summary.genres %}
             <div style="text-align: center;">
                 <div style="font-size: 2rem; font-weight: bold; color: #166534;">{{ import_summary.genres }}</div>
-                <div style="color: #166534; font-size: 0.9rem;">Genres</div>
+                <div style="color: #166534; font-size: 0.9rem;">{{ get_genre_term_plural() }}</div>
             </div>
             {% endif %}
         </div>

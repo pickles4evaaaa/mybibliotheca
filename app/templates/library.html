@@ -365,9 +365,9 @@
              value="{{ current_search }}" placeholder="Title, author, description...">
     </div>
     <div>
-      <label for="category" class="form-label fw-semibold">Category</label>
+      <label for="category" class="form-label fw-semibold">{{ get_genre_term() }}</label>
       <select class="form-select" id="category" name="category">
-        <option value="">Categories</option>
+        <option value="">{{ get_genre_term_plural() }}</option>
         {% for category in categories %}
           <option value="{{ category }}" {% if category == current_category %}selected{% endif %}>
             {{ category }}

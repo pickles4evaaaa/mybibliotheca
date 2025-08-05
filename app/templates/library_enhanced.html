@@ -409,13 +409,13 @@
                                            value="{{ current_search }}" placeholder="Title, author, description...">
                                 </div>
                                 <div class="col-md-3">
-                                    <label for="category" class="form-label">Category</label>
+                                    <label for="category" class="form-label">{{ get_genre_term() }}</label>
                                     <div class="dropdown-search-wrapper">
                                         <input type="hidden" name="category" value="{{ current_category }}">
                                         <div class="dropdown">
                                             <button class="btn btn-outline-secondary dropdown-toggle w-100 text-start dropdown-search-btn" 
                                                     type="button" data-bs-toggle="dropdown" data-field="category">
-                                                <span class="selected-text">{{ current_category if current_category else 'All Categories' }}</span>
+                                                <span class="selected-text">{{ current_category if current_category else 'All ' + get_genre_term_plural() }}</span>
                                             </button>
                                             <ul class="dropdown-menu w-100 dropdown-search-menu" data-field="category">
                                                 <li><input type="text" class="form-control dropdown-search-input" placeholder="Search categories..."></li>

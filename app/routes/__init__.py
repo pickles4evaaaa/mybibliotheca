@@ -345,7 +345,9 @@ def register_blueprints(app):
     app.register_blueprint(book_bp, url_prefix='/books')
     app.register_blueprint(people_bp, url_prefix='/people')
     app.register_blueprint(import_bp, url_prefix='/import')
+    # Register genres blueprint under both URL prefixes for terminology flexibility
     app.register_blueprint(genres_bp, url_prefix='/genres')
+    app.register_blueprint(genres_bp, url_prefix='/categories', name='categories')
     app.register_blueprint(reading_logs, url_prefix='/reading-logs')
     
     # Only log route registration in debug mode

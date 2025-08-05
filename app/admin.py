@@ -99,6 +99,7 @@ def save_system_config(config):
         # Update with new system settings
         existing_config['site_name'] = config.get('site_name', 'MyBibliotheca')
         existing_config['server_timezone'] = config.get('server_timezone', 'UTC')
+        existing_config['terminology_preference'] = config.get('terminology_preference', 'genre')
         
         # Update background configuration if provided
         if 'background_config' in config:
@@ -146,6 +147,7 @@ def load_system_config():
     return {
         'site_name': 'MyBibliotheca',
         'server_timezone': 'UTC',
+        'terminology_preference': 'genre',
         'background_config': {
             'type': 'default',
             'solid_color': '#667eea',
@@ -502,6 +504,7 @@ def settings():
     if request.method == 'POST':
         site_name = request.form.get('site_name', 'MyBibliotheca')
         server_timezone = request.form.get('server_timezone', 'UTC')
+        terminology_preference = request.form.get('terminology_preference', 'genre')
         
         # Handle background configuration
         background_config = {
@@ -556,6 +559,7 @@ def settings():
         config = {
             'site_name': site_name,
             'server_timezone': server_timezone,
+            'terminology_preference': terminology_preference,
             'background_config': background_config
         }
         
@@ -571,6 +575,7 @@ def settings():
     system_config = load_system_config()
     current_site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
     current_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
+    current_terminology = system_config.get('terminology_preference', 'genre')
     
     # Get available timezones
     available_timezones = pytz.all_timezones
@@ -599,6 +604,7 @@ def settings():
                          title='Admin Settings', 
                          site_name=current_site_name,
                          server_timezone=current_timezone,
+                         terminology_preference=current_terminology,
                          common_timezones=common_timezones,
                          available_timezones=sorted(available_timezones),
                          ai_config=load_ai_config(),

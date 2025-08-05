@@ -276,10 +276,10 @@
                                 </div>
                                 {% endif %}
                                 
-                                <!-- Genres -->
+                                <!-- {{ get_genre_term_plural() }} -->
                                 {% if book_categories or book.categories %}
                                 <div class="mb-3">
-                                    <small class="text-muted d-block mb-2">Genres:</small>
+                                    <small class="text-muted d-block mb-2">{{ get_genre_term_plural() }}:</small>
                                     {{ display_categories(book, compact=false, show_icon=true, book_categories=book_categories) }}
                                 </div>
                                 {% endif %}
@@ -572,10 +572,10 @@
                                         </div>
                                     </div>
                                     
-                                    <!-- Genres & Categories -->
+                                    <!-- {{ get_genre_term_plural() }} -->
                                     <div class="mb-3">
                                         <label class="form-label fw-medium">
-                                            <i class="bi bi-tag-fill me-1"></i> Genres & Categories
+                                            <i class="bi bi-tag-fill me-1"></i> {{ get_genre_term_plural() }}
                                         </label>
                                         <div class="category-section" data-type="category">
                                             <div class="categories-display mb-2">
@@ -601,13 +601,13 @@
                                             </div>
                                             <div class="category-autocomplete">
                                                 <input type="text" class="form-control category-input" 
-                                                       placeholder="Start typing genre or category name..." data-type="category">
+                                                       placeholder="Start typing {{ get_genre_term_lower() }} name..." data-type="category">
                                                 <div class="autocomplete-dropdown"></div>
                                             </div>
                                             <div class="form-text">
                                                 <small class="text-muted">
                                                     <i class="bi bi-info-circle me-1"></i>
-                                                    Type to search existing genres or add new ones. Popular genres: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
+                                                    Type to search existing {{ get_genre_term_plural_lower() }} or add new ones. Popular {{ get_genre_term_plural_lower() }}: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
                                                 </small>
                                             </div>
                                         </div>
@@ -1565,6 +1565,12 @@
 
 
 <script>
+// Terminology configuration for JavaScript
+const GENRE_TERM = '{{ get_genre_term() }}';
+const GENRE_TERM_PLURAL = '{{ get_genre_term_plural() }}';
+const GENRE_TERM_LOWER = '{{ get_genre_term_lower() }}';
+const GENRE_TERM_PLURAL_LOWER = '{{ get_genre_term_plural_lower() }}';
+
 document.addEventListener('DOMContentLoaded', function() {
     // Edit mode toggle functionality for main card
     const editToggle = document.getElementById('editToggle');
@@ -2449,7 +2455,7 @@ function searchCategories(query, dropdown, addFn, input) {
     fetch(`/api/categories/search?q=${encodeURIComponent(query)}&limit=10`)
         .then(response => response.json())
         .then(data => {
-            showDropdown(dropdown, data.categories || [], query, addFn, input, 'Genre');
+            showDropdown(dropdown, data.categories || [], query, addFn, input, GENRE_TERM);
         })
         .catch(error => {
             console.error('Error searching categories:', error);
@@ -2941,7 +2947,7 @@ function initializeCategories() {
         dropdown.innerHTML = `
             <div class="autocomplete-item">
                 <div class="name text-muted">
-                    <i class="bi bi-hourglass-split"></i> Searching genres...
+                    <i class="bi bi-hourglass-split"></i> Searching ${GENRE_TERM_PLURAL_LOWER}...
                 </div>
             </div>
         `;
@@ -2991,7 +2997,7 @@ function initializeCategories() {
             createItem.innerHTML = `
                 <div class="name">
                     <i class="bi bi-plus-circle me-1"></i> 
-                    Add "${input.value.trim()}" as new genre
+                    Add "${input.value.trim()}" as new ${GENRE_TERM_LOWER}
                 </div>
             `;
             createItem.dataset.name = input.value.trim();

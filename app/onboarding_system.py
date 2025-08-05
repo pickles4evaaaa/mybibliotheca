@@ -388,7 +388,8 @@ def site_config_step():
                 'site_name': request.form.get('site_name', 'MyBibliotheca'),
                 'timezone': request.form.get('timezone', 'UTC'),
                 'location': request.form.get('location', ''),
-                'location_set_as_default': 'location_set_as_default' in request.form
+                'location_set_as_default': 'location_set_as_default' in request.form,
+                'terminology_preference': request.form.get('terminology_preference', 'genre')
             }
             
             logger.info(f"🔍 ONBOARDING DEBUG: Saving site_config: {site_config}")
@@ -1323,7 +1324,8 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
             from .admin import save_system_config
             system_config = {
                 'site_name': site_config.get('site_name', 'MyBibliotheca'),
-                'server_timezone': site_config.get('timezone', 'UTC')
+                'server_timezone': site_config.get('timezone', 'UTC'),
+                'terminology_preference': site_config.get('terminology_preference', 'genre')
             }
             if save_system_config(system_config):
                 logger.info(f"✅ Applied site configuration to system settings: {system_config}")
@@ -1655,7 +1657,8 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             from .admin import save_system_config
             system_config = {
                 'site_name': site_config.get('site_name', 'MyBibliotheca'),
-                'server_timezone': site_config.get('timezone', 'UTC')
+                'server_timezone': site_config.get('timezone', 'UTC'),
+                'terminology_preference': site_config.get('terminology_preference', 'genre')
             }
             print(f"🚀 [SETUP] Applying system config: {system_config}")
             if save_system_config(system_config):

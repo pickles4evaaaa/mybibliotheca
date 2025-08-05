@@ -159,6 +159,20 @@
                                         </select>
                                         <small class="form-text text-muted">Default timezone for the server and new users</small>
                                     </div>
+                                    <div class="col-md-6">
+                                        <label for="terminology_preference" class="form-label">{{ get_genre_term() }} Terminology</label>
+                                        <select class="form-select" id="terminology_preference" name="terminology_preference">
+                                            <option value="genre" 
+                                                    {% if terminology_preference == 'genre' %}selected{% endif %}>
+                                                Genres (e.g., "Science Fiction", "Romance", "Mystery")
+                                            </option>
+                                            <option value="category" 
+                                                    {% if terminology_preference == 'category' %}selected{% endif %}>
+                                                Categories (e.g., "Fiction", "Non-fiction", "Reference")
+                                            </option>
+                                        </select>
+                                        <small class="form-text text-muted">Choose whether to use "Genres" or "Categories" terminology throughout the application</small>
+                                    </div>
                                 </div>
 
                                 <!-- Background Configuration -->
