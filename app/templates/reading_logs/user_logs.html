@@ -1,4 +1,79 @@
 <!-- User Reading Logs Template -->
+<meta name="csrf-token" content="{{ csrf_token() }}">
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="h3 mb-0">
+        <i class="bi bi-journal-text me-2"></i>My Reading Logs
+    </h2>
+    <div>
+        <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#quickLogModal">
+            <i class="bi bi-lightning-charge"></i> Quick Log
+        </button>
+        <a href="{{ url_for('reading_logs.my_reading_logs') }}" class="btn btn-secondary">
+            <i class="bi bi-card-list me-1"></i>Card View
+        </a>
+    </div>
+</div>
+
+<!-- Quick Log Modal -->
+<div class="modal fade" id="quickLogModal" tabindex="-1" aria-labelledby="quickLogModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="quickLogModalLabel">
+                    <i class="bi bi-lightning-charge me-2"></i>Quick Reading Log
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="quickLogForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="quick_date" class="form-label">Date</label>
+                        <input type="date" class="form-control" id="quick_date" name="date" 
+                               value="" required>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-6">
+                            <label for="quick_pages" class="form-label">Pages Read</label>
+                            <input type="number" class="form-control" id="quick_pages" name="pages_read" 
+                                   min="0" placeholder="0">
+                        </div>
+                        <div class="col-6">
+                            <label for="quick_minutes" class="form-label">Minutes Read</label>
+                            <input type="number" class="form-control" id="quick_minutes" name="minutes_read" 
+                                   min="0" placeholder="0">
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3 mt-3">
+                        <label for="quick_book_title" class="form-label">What you read (optional)</label>
+                        <input type="text" class="form-control" id="quick_book_title" name="book_title" 
+                               placeholder="Book title, article, etc.">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="quick_notes" class="form-label">Notes (optional)</label>
+                        <textarea class="form-control" id="quick_notes" name="notes" rows="2" 
+                                  placeholder="Any notes about this reading session..."></textarea>
+                    </div>
+                    
+                    <div class="alert alert-info mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <small>Enter either pages read or minutes read (or both).</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>Log Reading
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <!-- Summary Stats Row -->
 <div class="row mb-4">
@@ -69,15 +144,17 @@
                 <th>Pages Read</th>
                 <th>Time Read</th>
                 <th>Notes</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for log in logs %}
-            <tr>
+            <tr data-log-id="{{ log.id }}">
                 <td>
                     <span class="fw-semibold">{{ log.date.strftime('%Y-%m-%d') if log.date else 'N/A' }}</span>
                 </td>
                 <td>
+                    {% if log.book %}
                     <div class="d-flex align-items-center">
                         {% if log.book.cover_url %}
                         <img src="{{ log.book.cover_url }}" alt="Cover" class="me-2" style="width: 30px; height: 40px; object-fit: cover;">
@@ -89,6 +166,12 @@
                             {% endif %}
                         </div>
                     </div>
+                    {% elif log.book_title %}
+                    <div class="fw-semibold">{{ log.book_title }}</div>
+                    <small class="text-muted">(General Reading)</small>
+                    {% else %}
+                    <span class="text-muted">General Reading Session</span>
+                    {% endif %}
                 </td>
                 <td>
                     {% if log.pages_read %}
@@ -119,6 +202,18 @@
                     <span class="text-muted">-</span>
                     {% endif %}
                 </td>
+                <td>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a href="{{ url_for('reading_logs.edit_reading_log', log_id=log.id) }}" 
+                           class="btn btn-outline-primary btn-sm" title="Edit">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <button type="button" class="btn btn-outline-danger btn-sm" title="Delete" 
+                                onclick="deleteLog('{{ log.id }}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -129,6 +224,7 @@
                 <td>{{ all_time_stats.total_pages }} pages</td>
                 <td>{{ all_time_stats.total_time_formatted }}</td>
                 <td>{{ all_time_stats.total_log_entries }} entries</td>
+                <td>-</td>
             </tr>
         </tfoot>
     </table>
@@ -190,6 +286,120 @@
 {% endif %}
 
 <script>
+// Get CSRF token from meta tag
+function getCSRFToken() {
+    return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+}
+
+// Quick Log Form Submission
+document.getElementById('quickLogForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const submitBtn = this.querySelector('button[type="submit"]');
+    
+    // Disable submit button and show loading
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+    
+    fetch('{{ url_for("reading_logs.quick_add_bookless_log") }}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCSRFToken()
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Close modal and refresh page
+            const modal = bootstrap.Modal.getInstance(document.getElementById('quickLogModal'));
+            modal.hide();
+            window.location.reload();
+        } else {
+            // Show error message
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-danger mt-2';
+            alertDiv.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>' + (data.message || 'Failed to save reading log');
+            this.querySelector('.modal-body').appendChild(alertDiv);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-danger mt-2';
+        alertDiv.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Failed to save reading log. Please try again.';
+        this.querySelector('.modal-body').appendChild(alertDiv);
+    })
+    .finally(() => {
+        // Re-enable submit button
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Log Reading';
+    });
+});
+
+// Reset quick log modal when closed
+document.getElementById('quickLogModal').addEventListener('hidden.bs.modal', function() {
+    const form = this.querySelector('#quickLogForm');
+    form.reset();
+    form.querySelector('input[name="date"]').value = new Date().toISOString().split('T')[0];
+    
+    // Remove any error alerts
+    const alerts = this.querySelectorAll('.alert-danger');
+    alerts.forEach(alert => alert.remove());
+});
+
+// Set today's date when modal opens
+document.getElementById('quickLogModal').addEventListener('show.bs.modal', function() {
+    const dateInput = this.querySelector('input[name="date"]');
+    if (!dateInput.value) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+    }
+});
+
+// Delete Log Function
+function deleteLog(logId) {
+    if (confirm('Are you sure you want to delete this reading log?')) {
+        // Create a form and submit it (same as card view)
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `{{ url_for('reading_logs.delete_reading_log', log_id='') }}${logId}`;
+        
+        // Add CSRF token
+        const csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden';
+        csrfInput.name = 'csrf_token';
+        csrfInput.value = getCSRFToken();
+        form.appendChild(csrfInput);
+        
+        // Add to page and submit
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Helper function to show alerts
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    // Insert at top of content
+    const container = document.querySelector('.container-fluid');
+    container.insertBefore(alertDiv, container.firstChild);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentElement) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
 function loadPage(page) {
     const perPage = document.getElementById('per-page-select').value;
     const url = `/stats/reading-logs?page=${page}&per_page=${perPage}`;

@@ -85,25 +85,37 @@
                     </div>
                     
                     <div class="row text-center">
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <div class="border rounded p-2">
                                 <div class="h4 mb-0" id="processedCount">0</div>
                                 <small class="text-muted">Processed</small>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <div class="border rounded p-2">
                                 <div class="h4 mb-0" id="successCount">0</div>
                                 <small class="text-success">Success</small>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <div class="border rounded p-2">
                                 <div class="h4 mb-0" id="errorCount">0</div>
                                 <small class="text-danger">Errors</small>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="skippedCount">0</div>
+                                <small class="text-warning">Skipped</small>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="border rounded p-2">
+                                <div class="h4 mb-0" id="unmatchedCount">0</div>
+                                <small class="text-info">Unmatched</small>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
                             <div class="border rounded p-2">
                                 <div class="h4 mb-0" id="totalCount">{{ total_books }}</div>
                                 <small class="text-muted">Total</small>
@@ -172,8 +184,16 @@ function updateProgress() {
                 return;
             }
             
-            // Update progress bar
-            const percentage = Math.round((data.processed / totalBooks) * 100);
+            // Update progress bar - handle different total counts for different import types
+            let totalForProgress = totalBooks;
+            if (data.import_type === 'reading_history' && data.total) {
+                // For reading history, use the total distinct books count
+                totalForProgress = data.total;
+                // Also update the total count display
+                document.getElementById('totalCount').textContent = totalForProgress;
+            }
+            
+            const percentage = totalForProgress > 0 ? Math.round((data.processed / totalForProgress) * 100) : 0;
             const progressBar = document.getElementById('progressBar');
             progressBar.style.width = percentage + '%';
             progressBar.setAttribute('aria-valuenow', percentage);
@@ -183,23 +203,104 @@ function updateProgress() {
             document.getElementById('processedCount').textContent = data.processed;
             document.getElementById('successCount').textContent = data.success;
             document.getElementById('errorCount').textContent = data.errors;
+            document.getElementById('skippedCount').textContent = data.skipped || 0;
+            
+            // Update unmatched count - handle different data structures
+            let unmatchedCount = 0;
+            if (data.import_type === 'reading_history') {
+                // For reading history imports, use the unmatched field or calculate from books_for_matching
+                if (data.unmatched !== undefined) {
+                    unmatchedCount = data.unmatched;
+                } else if (data.books_for_matching) {
+                    unmatchedCount = data.books_for_matching.filter(book => !book.matched_book).length;
+                }
+            } else {
+                // For regular book imports
+                unmatchedCount = data.unmatched_books ? data.unmatched_books.length : 0;
+            }
+            document.getElementById('unmatchedCount').textContent = unmatchedCount;
             
             // Update status
             const jobStatus = document.getElementById('jobStatus');
-            if (data.status === 'completed') {
+            if (data.status === 'completed' || data.status === 'completed_with_errors') {
                 jobStatus.textContent = 'Completed';
-                jobStatus.className = 'badge bg-success';
-                progressBar.className = 'progress-bar bg-success';
+                jobStatus.className = data.status === 'completed' ? 'badge bg-success' : 'badge bg-warning';
+                progressBar.className = data.status === 'completed' ? 'progress-bar bg-success' : 'progress-bar bg-warning';
+                
+                // Check if this is a reading history import or regular book import
+                const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
+                
+                if (isReadingHistory) {
+                    // For reading history imports, show reading logs created using the specific count
+                    const readingLogsCreated = data.reading_logs_created || data.success || 0;
+                    const booksProcessed = data.success || 0;
+                    const readingLogErrors = data.reading_log_errors || 0;
+                    
+                    const successMessage = readingLogsCreated > 0 ? 
+                        `Successfully created ${readingLogsCreated} reading log entries from ${booksProcessed} books` : 
+                        'No reading logs were created';
+                    
+                    let statusIcon = '<i class="fas fa-check-circle"></i>';
+                    let alertClass = 'alert alert-success';
+                    
+                    if (data.errors > 0 || readingLogErrors > 0) {
+                        statusIcon = '<i class="fas fa-exclamation-triangle"></i>';
+                        alertClass = 'alert alert-warning';
+                    }
+                    
+                    let errorMessage = '';
+                    if (readingLogErrors > 0) {
+                        errorMessage = ` ${readingLogErrors} reading log entries had errors.`;
+                    }
+                    
+                    document.getElementById('statusMessage').innerHTML = 
+                        `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
+                         <div class="mt-2">
+                             <a href="/reading-log" class="btn btn-primary btn-sm">
+                                 <i class="fas fa-book-reader"></i> View Reading Log
+                             </a>
+                             <a href="/library" class="btn btn-secondary btn-sm ms-2">
+                                 <i class="fas fa-books"></i> Back to Library
+                             </a>
+                         </div>`;
+                    document.getElementById('statusMessage').className = alertClass;
+                } else {
+                    // For book imports, show books imported
+                    document.getElementById('statusMessage').innerHTML = 
+                        `<i class="fas fa-check-circle"></i> Import completed! Successfully imported ${data.success} books.`;
+                    document.getElementById('statusMessage').className = 'alert alert-success';
+                    
+                    document.getElementById('completionButtons').classList.remove('d-none');
+                    
+                    if (data.errors > 0) {
+                        document.getElementById('downloadErrorsBtn').classList.remove('d-none');
+                    }
+                }
+                
+                return; // Stop polling
+            } else if (data.status === 'needs_book_matching') {
+                jobStatus.textContent = 'Needs Book Matching';
+                jobStatus.className = 'badge bg-warning';
+                progressBar.className = 'progress-bar bg-warning';
+                
+                // Handle different data structures for different import types
+                let unmatchedCount = 0;
+                if (data.books_for_matching) {
+                    // Reading history import format
+                    unmatchedCount = data.books_for_matching.length;
+                } else if (data.unmatched_books) {
+                    // Legacy format
+                    unmatchedCount = data.unmatched_books.length;
+                } else {
+                    unmatchedCount = data.skipped || 0;
+                }
                 
                 document.getElementById('statusMessage').innerHTML = 
-                    `<i class="fas fa-check-circle"></i> Import completed! Successfully imported ${data.success} books.`;
-                document.getElementById('statusMessage').className = 'alert alert-success';
-                
-                document.getElementById('completionButtons').classList.remove('d-none');
-                
-                if (data.errors > 0) {
-                    document.getElementById('downloadErrorsBtn').classList.remove('d-none');
-                }
+                    `<i class="fas fa-search"></i> Import paused: ${unmatchedCount} books need manual matching. 
+                     <a href="/import/reading-history/book-matching/${taskId}" class="btn btn-warning btn-sm ms-2">
+                         <i class="bi bi-search"></i> Match Books
+                     </a>`;
+                document.getElementById('statusMessage').className = 'alert alert-warning';
                 
                 return; // Stop polling
             } else if (data.status === 'failed') {
@@ -213,11 +314,20 @@ function updateProgress() {
                 
                 return; // Stop polling
             } else {
-                jobStatus.textContent = 'Running';
-                jobStatus.className = 'badge bg-primary';
-                
-                document.getElementById('statusMessage').innerHTML = 
-                    `<i class="fas fa-cog fa-spin"></i> Processing books... Current: ${data.current_book || 'Unknown'}`;
+                // Handle different running statuses
+                if (data.status === 'analyzing') {
+                    jobStatus.textContent = 'Analyzing';
+                    jobStatus.className = 'badge bg-info';
+                    
+                    document.getElementById('statusMessage').innerHTML = 
+                        `<i class="fas fa-search fa-spin"></i> Analyzing CSV file and identifying distinct books...`;
+                } else {
+                    jobStatus.textContent = 'Running';
+                    jobStatus.className = 'badge bg-primary';
+                    
+                    document.getElementById('statusMessage').innerHTML = 
+                        `<i class="fas fa-cog fa-spin"></i> Processing books... Current: ${data.current_book || 'Unknown'}`;
+                }
             }
             
             // Update activity log
@@ -231,7 +341,7 @@ function updateProgress() {
             }
             
             // Continue polling if not completed
-            if (data.status === 'running' || data.status === 'pending') {
+            if (data.status === 'running' || data.status === 'pending' || data.status === 'analyzing') {
                 setTimeout(updateProgress, 2000); // Poll every 2 seconds
             }
         })

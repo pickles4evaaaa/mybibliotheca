@@ -213,8 +213,26 @@ class KuzuGraphDB:
                                     logger.debug(f"Added {field_name} column to Person table")
                             except Exception as alter_e:
                                 print(f"Note: Could not add {field_name} to Person table: {alter_e}")
-                    else:
-                        print("Schema appears to be up to date")
+                    
+                    # Schema migration completed - updated_at field should be in the base schema
+                    # Check for and add missing columns to ReadingLog table
+                    try:
+                        # Test if updated_at column exists in ReadingLog
+                        if self._connection:
+                            self._connection.execute("MATCH (rl:ReadingLog) RETURN rl.updated_at LIMIT 1")
+                    except Exception as e:
+                        if "Cannot find property updated_at" in str(e):
+                            try:
+                                if self._connection:
+                                    self._connection.execute("ALTER TABLE ReadingLog ADD updated_at TIMESTAMP")
+                                    logger.info("Added updated_at column to ReadingLog table")
+                            except Exception as alter_e:
+                                print(f"Note: Could not add updated_at to ReadingLog table: {alter_e}")
+                    
+                    # Note: ReadingLog table migration completed
+                    
+                else:
+                    print("Schema appears to be up to date")
                         
             else:
                 logger.info("🔧 Creating new database schema...")
@@ -365,6 +383,7 @@ class KuzuGraphDB:
                     minutes_read INT64,
                     notes STRING,
                     created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
                     PRIMARY KEY(id)
                 )
                 """,

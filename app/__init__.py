@@ -715,7 +715,7 @@ def create_app():
         from flask import send_from_directory
         
         # Check for Docker (production) or local development
-        docker_data_dir = '/data/covers'
+        docker_data_dir = '/app/data/covers'
         local_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'covers')
         
         if os.path.exists(docker_data_dir):
@@ -732,7 +732,7 @@ def create_app():
         from flask import send_from_directory
         
         # Check for Docker (production) or local development
-        docker_data_dir = '/data/uploads'
+        docker_data_dir = '/app/data/uploads'
         local_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'uploads')
         
         if os.path.exists(docker_data_dir):

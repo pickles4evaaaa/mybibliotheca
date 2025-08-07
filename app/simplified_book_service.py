@@ -286,26 +286,170 @@ class SimplifiedBookService:
             if not book_result:
                 return None
             
+            # 1.5. Download and cache cover image if cover_url is provided
+            final_cover_url = book_data.cover_url or ''
+            if book_data.cover_url and book_data.cover_url.startswith('http'):
+                try:
+                    print(f"🖼️ [COVER_DOWNLOAD] Downloading cover for '{book_data.title}': {book_data.cover_url}")
+                    
+                    # Use persistent covers directory in data folder (same logic as book_routes.py)
+                    from pathlib import Path
+                    import requests
+                    
+                    covers_dir = Path('/app/data/covers')
+                    
+                    # Fallback to local development path if Docker path doesn't exist
+                    if not covers_dir.exists():
+                        # Check for data directory from app config
+                        try:
+                            from flask import current_app
+                            data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                            if data_dir:
+                                covers_dir = Path(data_dir) / 'covers'
+                            else:
+                                # Last resort - use relative path from app root
+                                base_dir = Path(__file__).parent.parent.parent
+                                covers_dir = base_dir / 'data' / 'covers'
+                        except:
+                            # If no Flask context available, use fallback
+                            covers_dir = Path('./data/covers')
+                    
+                    covers_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Generate new filename with UUID
+                    book_temp_id = str(uuid.uuid4())
+                    file_extension = '.jpg'
+                    if book_data.cover_url.lower().endswith('.png'):
+                        file_extension = '.png'
+                    elif book_data.cover_url.lower().endswith('.gif'):
+                        file_extension = '.gif'
+                    elif book_data.cover_url.lower().endswith('.webp'):
+                        file_extension = '.webp'
+                    
+                    filename = f"{book_temp_id}{file_extension}"
+                    filepath = covers_dir / filename
+                    
+                    # Download the image
+                    response = requests.get(book_data.cover_url, timeout=10, stream=True, 
+                                          headers={'User-Agent': 'Mozilla/5.0 (compatible; BookLibrary/1.0)'})
+                    response.raise_for_status()
+                    
+                    with open(filepath, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    # Update the book node with the local cover URL
+                    final_cover_url = f"/covers/{filename}"
+                    
+                    # Update book record with local cover URL
+                    update_cover_result = safe_execute_kuzu_query(
+                        """
+                        MATCH (b:Book {id: $book_id})
+                        SET b.cover_url = $cover_url, b.updated_at = timestamp($updated_at_str)
+                        RETURN b.id
+                        """,
+                        {
+                            "book_id": book_id,
+                            "cover_url": final_cover_url,
+                            "updated_at_str": datetime.utcnow().isoformat()
+                        }
+                    )
+                    
+                    if update_cover_result:
+                        print(f"✅ [COVER_DOWNLOAD] Successfully downloaded and cached cover: {final_cover_url}")
+                    else:
+                        print(f"❌ [COVER_DOWNLOAD] Failed to update book record with local cover URL")
+                        
+                except Exception as cover_error:
+                    print(f"⚠️ [COVER_DOWNLOAD] Failed to download cover for '{book_data.title}': {cover_error}")
+                    # Continue with original cover URL if download fails
+                    final_cover_url = book_data.cover_url
+            
+            # Update the book_data with the final cover URL for logging
+            book_data.cover_url = final_cover_url
+            
             
             # Initialize book repository for relationship creation
             from .infrastructure.kuzu_repositories import KuzuBookRepository
             book_repo = KuzuBookRepository()
             
-            # Helper function to create person data objects
-            def create_person_data(name):
+            # Helper function to create person data objects with API enhancement
+            def create_person_data(name, enhance_with_api=True):
                 class PersonData:
                     def __init__(self, name):
                         self.id = str(uuid.uuid4())
                         self.name = name
-                        self.birth_year = None
-                        self.death_year = None
-                        self.bio = ""
-                        self.openlibrary_id = None
-                        self.image_url = None
-                        self.birth_place = None
-                        self.website = None
+                        self.birth_year: Optional[int] = None
+                        self.death_year: Optional[int] = None
+                        self.bio: str = ""
+                        self.openlibrary_id: Optional[str] = None
+                        self.image_url: Optional[str] = None
+                        self.birth_place: Optional[str] = None
+                        self.website: Optional[str] = None
                         self.created_at = datetime.utcnow()
-                return PersonData(name)
+                
+                person_data = PersonData(name)
+                
+                # Enhance with API data if requested and name is available
+                if enhance_with_api and name and name.strip():
+                    try:
+                        from app.utils.book_utils import search_author_by_name, fetch_author_data
+                        
+                        print(f"🔍 [PERSON_API] Searching for author metadata: {name}")
+                        
+                        # Search for author on OpenLibrary
+                        author_search_result = search_author_by_name(name)
+                        if author_search_result and author_search_result.get('openlibrary_id'):
+                            author_id = author_search_result['openlibrary_id']
+                            print(f"✅ [PERSON_API] Found OpenLibrary ID for {name}: {author_id}")
+                            
+                            # Fetch detailed author data
+                            author_data = fetch_author_data(author_id)
+                            if author_data:
+                                print(f"✅ [PERSON_API] Retrieved detailed metadata for {name}")
+                                
+                                # Update person data with API metadata
+                                person_data.bio = author_data.get('bio', '') or ''
+                                person_data.openlibrary_id = author_data.get('openlibrary_id', '') or ''
+                                person_data.image_url = author_data.get('photo_url', '') or ''
+                                person_data.website = author_data.get('wikipedia_url', '') or ''
+                                
+                                # Parse birth/death dates if available
+                                birth_date = author_data.get('birth_date', '')
+                                if birth_date:
+                                    try:
+                                        # Extract year from various date formats
+                                        import re
+                                        year_match = re.search(r'\b(1[0-9]{3}|20[0-9]{2})\b', str(birth_date))
+                                        if year_match:
+                                            person_data.birth_year = int(year_match.group(1))
+                                            print(f"📅 [PERSON_API] Set birth year for {name}: {person_data.birth_year}")
+                                    except (ValueError, TypeError):
+                                        pass
+                                
+                                death_date = author_data.get('death_date', '')
+                                if death_date:
+                                    try:
+                                        # Extract year from various date formats
+                                        import re
+                                        year_match = re.search(r'\b(1[0-9]{3}|20[0-9]{2})\b', str(death_date))
+                                        if year_match:
+                                            person_data.death_year = int(year_match.group(1))
+                                            print(f"📅 [PERSON_API] Set death year for {name}: {person_data.death_year}")
+                                    except (ValueError, TypeError):
+                                        pass
+                                
+                                print(f"🎉 [PERSON_API] Enhanced {name} with: bio={bool(person_data.bio)}, image={bool(person_data.image_url)}, birth_year={person_data.birth_year}")
+                            else:
+                                print(f"❌ [PERSON_API] No detailed data found for OpenLibrary ID: {author_id}")
+                        else:
+                            print(f"❌ [PERSON_API] No OpenLibrary ID found for author: {name}")
+                    
+                    except Exception as e:
+                        print(f"⚠️ [PERSON_API] Error fetching metadata for {name}: {e}")
+                        # Continue with basic person data if API fetch fails
+                
+                return person_data
             
             # 2. Create author relationship using clean repository (with auto-fetch)
             if book_data.author:

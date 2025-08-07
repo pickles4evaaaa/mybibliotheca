@@ -666,6 +666,222 @@ def normalize_goodreads_value(value, field_type='text'):
     
     return value.strip() if value else ''
 
+def search_multiple_books_by_title_author(title, author=None, limit=10):
+    """Search for multiple books from both OpenLibrary and Google Books APIs by title and optionally author."""
+    if not title:
+        print(f"[MULTI_API] No title provided for book search")
+        return []
+    
+    all_results = []
+    
+    # Search OpenLibrary first
+    print(f"[MULTI_API] Searching OpenLibrary for: '{title}' by '{author}'")
+    try:
+        ol_results = _search_openlibrary_multiple(title, author, limit//2)
+        if ol_results:
+            all_results.extend(ol_results)
+            print(f"[MULTI_API] OpenLibrary returned {len(ol_results)} results")
+    except Exception as e:
+        print(f"[MULTI_API] OpenLibrary search failed: {e}")
+    
+    # Search Google Books
+    print(f"[MULTI_API] Searching Google Books for: '{title}' by '{author}'")
+    try:
+        gb_results = search_google_books_by_title_author(title, author, limit//2)
+        if gb_results:
+            all_results.extend(gb_results)
+            print(f"[MULTI_API] Google Books returned {len(gb_results)} results")
+    except Exception as e:
+        print(f"[MULTI_API] Google Books search failed: {e}")
+    
+    # Deduplicate results by title similarity
+    unique_results = []
+    seen_titles = set()
+    
+    for result in all_results:
+        result_title = result.get('title', '').lower().strip()
+        
+        # Skip if we've seen a very similar title
+        is_duplicate = False
+        for seen_title in seen_titles:
+            # Consider titles duplicates if they're very similar
+            if (result_title in seen_title or seen_title in result_title) and len(result_title) > 3:
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            unique_results.append(result)
+            seen_titles.add(result_title)
+    
+    # Sort results by relevance (prefer exact matches, then partial matches)
+    def calculate_relevance_score(result):
+        score = 0
+        result_title = result.get('title', '').lower().strip()
+        result_authors = result.get('authors_list', [])
+        
+        # Exact title match
+        if result_title == title.lower().strip():
+            score += 100
+        # Partial title match
+        elif title.lower() in result_title or result_title in title.lower():
+            score += 50
+        
+        # Author match
+        if author and result_authors:
+            for result_author in result_authors:
+                if author.lower() in result_author.lower():
+                    score += 30
+        
+        # Prefer results with ISBNs
+        if result.get('isbn13') or result.get('isbn10'):
+            score += 10
+        
+        # Slight preference for Google Books (usually more complete metadata)
+        if result.get('source') == 'Google Books':
+            score += 5
+        
+        return score
+    
+    unique_results.sort(key=calculate_relevance_score, reverse=True)
+    
+    # Limit to requested number of results
+    final_results = unique_results[:limit]
+    
+    print(f"[MULTI_API] Returning {len(final_results)} unique results from {len(all_results)} total results")
+    return final_results
+
+
+def _search_openlibrary_multiple(title, author=None, limit=10):
+    """Internal function to search OpenLibrary (extracted from original function)."""
+    if not title:
+        print(f"[OPENLIBRARY] No title provided for book search")
+        return []
+    
+    # Build search query
+    query_parts = [title]
+    if author:
+        query_parts.append(author)
+    
+    query = ' '.join(query_parts)
+    url = f"https://openlibrary.org/search.json?q={query}&limit={limit}"
+    
+    print(f"[OPENLIBRARY] Searching for multiple books: title='{title}', author='{author}' at {url}")
+    
+    try:
+        response = requests.get(url, timeout=15)
+        print(f"[OPENLIBRARY] Multiple book search response status: {response.status_code}")
+        
+        # Handle different response codes more gracefully
+        if response.status_code == 404:
+            print(f"[OPENLIBRARY] OpenLibrary API returned 404 for query: {query}")
+            return []
+        elif response.status_code != 200:
+            print(f"[OPENLIBRARY] OpenLibrary API returned {response.status_code}")
+            return []
+            
+        data = response.json()
+        
+        docs = data.get('docs', [])
+        if not docs:
+            print(f"[OPENLIBRARY] No search results found for '{title}' by '{author}'")
+            return []
+            
+        print(f"[OPENLIBRARY] Found {len(docs)} book search results")
+        
+        # Score matches based on title similarity and author match
+        scored_matches = []
+        
+        for i, doc in enumerate(docs):
+            doc_title = doc.get('title', '')
+            doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
+            doc_isbn = doc.get('isbn', [])
+            
+            # Get best ISBN (prefer 13-digit)
+            best_isbn = None
+            if doc_isbn:
+                for isbn in doc_isbn:
+                    if len(isbn) == 13:
+                        best_isbn = isbn
+                        break
+                if not best_isbn and doc_isbn:
+                    best_isbn = doc_isbn[0]
+            
+            print(f"[OPENLIBRARY] Result {i}: title='{doc_title}', authors={doc_authors}, isbn={best_isbn}")
+            
+            # Calculate match score
+            score = 0
+            
+            # Title similarity (basic)
+            if title.lower() in doc_title.lower() or doc_title.lower() in title.lower():
+                score += 50
+            if title.lower().strip() == doc_title.lower().strip():
+                score += 50  # Exact title match bonus
+            
+            # Author similarity
+            if author:
+                for doc_author in doc_authors:
+                    if doc_author and author.lower() in doc_author.lower():
+                        score += 30
+                    if doc_author and author.lower().strip() == doc_author.lower().strip():
+                        score += 20  # Exact author match bonus
+            
+            # Prefer results with ISBN
+            if best_isbn:
+                score += 10
+            
+            # Prefer more recent publications (if available)
+            if doc.get('first_publish_year'):
+                try:
+                    year = int(doc.get('first_publish_year'))
+                    if year > 1950:  # Reasonable cutoff
+                        score += min((year - 1950) // 10, 5)  # Up to 5 bonus points for newer books
+                except:
+                    pass
+            
+            # Build book data from search result
+            result = {
+                'title': doc_title,
+                'author': ', '.join(doc_authors) if doc_authors else '',
+                'authors_list': doc_authors,
+                'isbn': best_isbn,
+                'isbn13': best_isbn if best_isbn and len(best_isbn) == 13 else '',
+                'isbn10': best_isbn if best_isbn and len(best_isbn) == 10 else '',
+                'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                'page_count': doc.get('number_of_pages_median'),
+                'cover': None,
+                'cover_url': None,
+                'description': '',  # Search results don't include descriptions
+                'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
+                'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None,
+                'categories': [],
+                'score': score
+            }
+            
+            # Try to get cover image if we have an OpenLibrary work ID
+            if result.get('openlibrary_id'):
+                cover_url = f"https://covers.openlibrary.org/w/id/{result['openlibrary_id']}-L.jpg"
+                try:
+                    cover_response = requests.head(cover_url, timeout=5)
+                    if cover_response.status_code == 200:
+                        result['cover'] = cover_url
+                        result['cover_url'] = cover_url
+                except:
+                    pass
+            
+            scored_matches.append(result)
+        
+        # Sort by score (highest first)
+        scored_matches.sort(key=lambda x: x['score'], reverse=True)
+        
+        print(f"[OPENLIBRARY] Returning {len(scored_matches)} book results")
+        return scored_matches
+        
+    except Exception as e:
+        print(f"[OPENLIBRARY] Failed to search for multiple books '{title}' by '{author}': {e}")
+        return []
+
+
 def search_book_by_title_author(title, author=None):
     """Search for books on OpenLibrary by title and optionally author, return the best match."""
     if not title:
@@ -685,7 +901,15 @@ def search_book_by_title_author(title, author=None):
     try:
         response = requests.get(url, timeout=15)
         print(f"[OPENLIBRARY] Book search response status: {response.status_code}")
-        response.raise_for_status()
+        
+        # Handle different response codes more gracefully
+        if response.status_code == 404:
+            print(f"[OPENLIBRARY] OpenLibrary API returned 404 for query: {query}")
+            return None
+        elif response.status_code != 200:
+            print(f"[OPENLIBRARY] OpenLibrary API returned {response.status_code}")
+            return None
+            
         data = response.json()
         
         docs = data.get('docs', [])
@@ -802,3 +1026,105 @@ def search_book_by_title_author(title, author=None):
         return None
     
     return None
+
+
+def search_google_books_by_title_author(title, author=None, limit=10):
+    """Search Google Books API by title and optionally author."""
+    if not title:
+        print(f"[GOOGLE_BOOKS] No title provided for book search")
+        return []
+    
+    # Build search query for Google Books
+    query_parts = [f'intitle:"{title}"']
+    if author:
+        query_parts.append(f'inauthor:"{author}"')
+    
+    query = '+'.join(query_parts)
+    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={min(limit, 40)}"
+    
+    print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{title}', author='{author}' at {url}")
+    
+    try:
+        response = requests.get(url, timeout=15)
+        print(f"[GOOGLE_BOOKS] Multiple book search response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[GOOGLE_BOOKS] Google Books API returned {response.status_code}")
+            return []
+            
+        data = response.json()
+        
+        items = data.get('items', [])
+        if not items:
+            print(f"[GOOGLE_BOOKS] No search results found for '{title}' by '{author}'")
+            return []
+            
+        print(f"[GOOGLE_BOOKS] Found {len(items)} book search results")
+        
+        results = []
+        for i, item in enumerate(items):
+            try:
+                volume_info = item.get('volumeInfo', {})
+                
+                book_title = volume_info.get('title', '')
+                book_authors = volume_info.get('authors', [])
+                book_description = volume_info.get('description', '')
+                book_publisher = volume_info.get('publisher', '')
+                book_published_date = volume_info.get('publishedDate', '')
+                book_page_count = volume_info.get('pageCount', 0)
+                book_language = volume_info.get('language', 'en')
+                book_categories = volume_info.get('categories', [])
+                
+                # Get ISBNs
+                isbn13 = None
+                isbn10 = None
+                industry_identifiers = volume_info.get('industryIdentifiers', [])
+                for identifier in industry_identifiers:
+                    if identifier.get('type') == 'ISBN_13':
+                        isbn13 = identifier.get('identifier')
+                    elif identifier.get('type') == 'ISBN_10':
+                        isbn10 = identifier.get('identifier')
+                
+                # Get cover image
+                image_links = volume_info.get('imageLinks', {})
+                cover_url = image_links.get('large') or image_links.get('medium') or image_links.get('small') or image_links.get('thumbnail')
+                
+                result = {
+                    'title': book_title,
+                    'author': ', '.join(book_authors) if book_authors else '',
+                    'authors_list': book_authors,
+                    'description': book_description,
+                    'publisher': book_publisher,
+                    'published_date': book_published_date,
+                    'page_count': book_page_count,
+                    'isbn13': isbn13,
+                    'isbn10': isbn10,
+                    'isbn': isbn13 or isbn10,  # Prefer ISBN13
+                    'cover_url': cover_url,
+                    'cover': cover_url,
+                    'language': book_language,
+                    'categories': book_categories,
+                    'google_books_id': item.get('id'),
+                    'source': 'Google Books'
+                }
+                
+                print(f"[GOOGLE_BOOKS] Result {i}: title='{book_title}', authors={book_authors}, isbn={isbn13 or isbn10}")
+                
+                # Only add if we have at least a title
+                if result['title']:
+                    results.append(result)
+                
+                # Limit results
+                if len(results) >= limit:
+                    break
+                    
+            except Exception as item_error:
+                print(f"[GOOGLE_BOOKS] Error processing item {i}: {item_error}")
+                continue
+        
+        print(f"[GOOGLE_BOOKS] Returning {len(results)} valid results")
+        return results
+        
+    except Exception as e:
+        print(f"[GOOGLE_BOOKS] Failed to search for book '{title}' by '{author}': {e}")
+        return []

@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Map Reading History Fields - MyBibliotheca{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-8">
+            <h2><i class="fas fa-map"></i> Map Reading History Fields</h2>
+            <p class="text-muted">Map your CSV columns to reading log fields.</p>
+            
+            <form method="POST" action="{{ url_for('import.import_reading_history_execute') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <input type="hidden" name="csv_file_path" value="{{ csv_file_path }}"/>
+                
+                <!-- CSV Preview -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">📊 CSV Preview (first 3 rows)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        {% for header in csv_headers %}
+                                        <th class="text-nowrap">{{ header }}</th>
+                                        {% endfor %}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in csv_preview %}
+                                    <tr>
+                                        {% for cell in row %}
+                                        <td class="small text-truncate" style="max-width: 150px;" title="{{ cell }}">{{ cell }}</td>
+                                        {% endfor %}
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Field Mappings -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">🎯 Field Mappings</h5>
+                    </div>
+                    <div class="card-body">
+                        {% for header in csv_headers %}
+                        <div class="row mb-3 align-items-center">
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">{{ header }}</label>
+                                <div class="text-muted small">CSV Column</div>
+                            </div>
+                            <div class="col-md-1 text-center">
+                                <i class="fas fa-arrow-right text-muted"></i>
+                            </div>
+                            <div class="col-md-7">
+                                <select class="form-select" name="field_{{ header }}">
+                                    <option value="">-- Skip This Column --</option>
+                                    <option value="Date" {% if suggested_mappings.get(header) == 'Date' %}selected{% endif %} class="text-danger">Date (Required)</option>
+                                    <option value="Book Name" {% if suggested_mappings.get(header) == 'Book Name' %}selected{% endif %}>Book Name</option>
+                                    <option value="Start Page" {% if suggested_mappings.get(header) == 'Start Page' %}selected{% endif %}>Start Page</option>
+                                    <option value="End Page" {% if suggested_mappings.get(header) == 'End Page' %}selected{% endif %}>End Page</option>
+                                    <option value="Pages Read" {% if suggested_mappings.get(header) == 'Pages Read' %}selected{% endif %}>Pages Read</option>
+                                    <option value="Minutes Read" {% if suggested_mappings.get(header) == 'Minutes Read' %}selected{% endif %}>Minutes Read</option>
+                                </select>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Validation Messages -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">⚠️ Import Requirements</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-warning">
+                            <h6>Required Mappings:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Date</strong> field is mandatory</li>
+                            </ul>
+                        </div>
+                        <div class="alert alert-info">
+                            <h6>Data Requirements:</h6>
+                            <ul class="mb-0">
+                                <li>Date must be in YYYY-MM-DD format</li>
+                                <li>Each row must have either Pages Read OR Minutes Read (or both Start/End Page)</li>
+                                <li>Book Name will default to "Unspecified Book" if empty</li>
+                                <li>Books not found in your library will be skipped</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between">
+                    <a href="{{ url_for('import.import_reading_history') }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left"></i> Back to Upload
+                    </a>
+                    <button type="submit" class="btn btn-success" id="importBtn">
+                        <i class="fas fa-play"></i> Start Import ({{ total_rows }} entries)
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title">📈 Import Summary</h6>
+                    <ul class="list-unstyled">
+                        <li><strong>Total Rows:</strong> {{ total_rows }}</li>
+                        <li><strong>CSV Columns:</strong> {{ csv_headers|length }}</li>
+                        <li><strong>Detected Fields:</strong> {{ suggested_mappings|length }}</li>
+                    </ul>
+                    
+                    <hr>
+                    
+                    <h6>🎯 Auto-Detected Mappings</h6>
+                    {% if suggested_mappings %}
+                    <ul class="list-unstyled small">
+                        {% for csv_field, reading_field in suggested_mappings.items() %}
+                        <li><span class="badge bg-secondary">{{ csv_field }}</span> → {{ reading_field }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted small">No automatic mappings detected. Please map fields manually.</p>
+                    {% endif %}
+                    
+                    <hr>
+                    
+                    <h6>📋 Field Descriptions</h6>
+                    <ul class="list-unstyled small">
+                        <li><strong>Date:</strong> Session date (YYYY-MM-DD)</li>
+                        <li><strong>Book Name:</strong> Title of the book</li>
+                        <li><strong>Start/End Page:</strong> Page range read</li>
+                        <li><strong>Pages Read:</strong> Number of pages</li>
+                        <li><strong>Minutes Read:</strong> Reading time</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Form validation
+document.querySelector('form').addEventListener('submit', function(e) {
+    // Check if Date field is mapped
+    const dateFieldMapped = Array.from(document.querySelectorAll('select[name^="field_"]'))
+        .some(select => select.value === 'Date');
+    
+    if (!dateFieldMapped) {
+        e.preventDefault();
+        alert('Please map the Date field. It is required for reading history import.');
+        return;
+    }
+    
+    // Show loading state
+    const submitBtn = document.getElementById('importBtn');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting Import...';
+});
+
+// Highlight required fields
+document.addEventListener('DOMContentLoaded', function() {
+    const selects = document.querySelectorAll('select[name^="field_"]');
+    selects.forEach(select => {
+        select.addEventListener('change', function() {
+            if (this.value === 'Date') {
+                this.classList.add('border-danger');
+            } else {
+                this.classList.remove('border-danger');
+            }
+        });
+        
+        // Initial check
+        if (select.value === 'Date') {
+            select.classList.add('border-danger');
+        }
+    });
+});
+</script>
+{% endblock %}

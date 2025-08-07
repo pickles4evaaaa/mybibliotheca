@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Import Reading History - MyBibliotheca{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <h2><i class="fas fa-history"></i> Import Reading History</h2>
+            <p class="text-muted">Import your reading progress and session data from a CSV file.</p>
+            
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- CSV Format Information -->
+            <div class="accordion mb-4" id="csvFormatAccordion">
+                <div class="accordion-item">
+                    <h2 class="accordion-header" id="csvFormatHeading">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+                                data-bs-target="#csvFormatCollapse" aria-expanded="false" 
+                                aria-controls="csvFormatCollapse">
+                            <i class="fas fa-info-circle me-2"></i>CSV Format Requirements
+                        </button>
+                    </h2>
+                    <div id="csvFormatCollapse" class="accordion-collapse collapse" 
+                         aria-labelledby="csvFormatHeading" data-bs-parent="#csvFormatAccordion">
+                        <div class="accordion-body">
+                            <h6>Required Columns:</h6>
+                            <ul>
+                                <li><strong>Date</strong> - Reading session date (YYYY-MM-DD format)</li>
+                            </ul>
+                            
+                            <h6 class="mt-3">Optional Columns:</h6>
+                            <ul>
+                                <li><strong>Book Name</strong> - Title of the book (defaults to "Unspecified Book" if empty)</li>
+                                <li><strong>Start Page</strong> - Starting page number</li>
+                                <li><strong>End Page</strong> - Ending page number</li>
+                                <li><strong>Pages Read</strong> - Number of pages read</li>
+                                <li><strong>Minutes Read</strong> - Time spent reading in minutes</li>
+                            </ul>
+                            
+                            <div class="alert alert-info mt-3">
+                                <strong>Note:</strong> You must provide either:
+                                <ul class="mb-0">
+                                    <li>Pages Read value, OR</li>
+                                    <li>Both Start Page and End Page values, OR</li>
+                                    <li>Minutes Read value</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <a href="{{ url_for('import.download_reading_history_template') }}" class="btn btn-outline-primary">
+                                    <i class="fas fa-download"></i> Download Template CSV
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload Form -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-upload"></i> Upload Reading History CSV</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        
+                        <div class="mb-3">
+                            <label for="csv_file" class="form-label">Select CSV File</label>
+                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
+                            <div class="form-text">Maximum file size: 10MB</div>
+                        </div>
+                        
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="fas fa-upload"></i> Upload and Map Fields
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Import Process Overview -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-cogs"></i> Import Process</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <div class="text-center">
+                                <div class="mb-2">
+                                    <i class="fas fa-upload fa-2x text-primary"></i>
+                                </div>
+                                <h6>1. Upload CSV</h6>
+                                <small class="text-muted">Upload your reading history CSV file</small>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="text-center">
+                                <div class="mb-2">
+                                    <i class="fas fa-map fa-2x text-info"></i>
+                                </div>
+                                <h6>2. Map Fields</h6>
+                                <small class="text-muted">Match CSV columns to reading log fields</small>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="text-center">
+                                <div class="mb-2">
+                                    <i class="fas fa-book fa-2x text-warning"></i>
+                                </div>
+                                <h6>3. Match Books</h6>
+                                <small class="text-muted">Associate entries with books in your library</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Back to Main Import -->
+            <div class="mt-4 text-center">
+                <a href="{{ url_for('import.import_books') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to Main Import
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    const fileInput = document.getElementById('csv_file');
+    const file = fileInput.files[0];
+    
+    if (file) {
+        if (file.size > 10 * 1024 * 1024) { // 10MB
+            e.preventDefault();
+            alert('File size must be less than 10MB');
+            return;
+        }
+        
+        // Show loading state
+        const submitBtn = this.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+    }
+});
+</script>
+{% endblock %}

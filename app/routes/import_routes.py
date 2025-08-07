@@ -17,6 +17,7 @@ import asyncio
 import tempfile
 import secrets
 import logging
+import requests  # Add requests import
 
 # Set up import-specific logger
 logger = logging.getLogger(__name__)
@@ -1002,8 +1003,17 @@ def import_books_progress(task_id):
         flash('Import job not found.', 'error')
         return redirect(url_for('import.import_books'))
     
+    # Check if this is a reading history import that needs special handling
+    if job.get('import_type') == 'reading_history' and job.get('status') == 'needs_book_matching':
+        # Redirect to book matching page for reading history imports
+        return redirect(url_for('import.reading_history_book_matching', task_id=task_id))
+    
     # Get total books count from job data or default to 0
     total_books = job.get('total_books', 0)
+    
+    # For reading history imports, use total_entries if available
+    if job.get('import_type') == 'reading_history':
+        total_books = job.get('total_entries', total_books)
     
     # Parse start time or use current time
     start_time = job.get('created_at', datetime.now().isoformat())
@@ -2650,3 +2660,1434 @@ def import_waiting(task_id):
                          task_id=task_id,
                          import_type=import_type,
                          filename=filename)
+
+
+# Reading History Import Routes
+@import_bp.route('/reading-history', methods=['GET', 'POST'])
+@login_required
+def import_reading_history():
+    """Import reading history from CSV."""
+    if request.method == 'GET':
+        return render_template('import_reading_history.html')
+    
+    # Handle POST request - file upload
+    csv_file = request.files.get('csv_file')
+    if not csv_file or not csv_file.filename or csv_file.filename == '':
+        flash('No CSV file selected.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+    
+    if not csv_file.filename.endswith('.csv'):
+        flash('Please upload a CSV file.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+    
+    try:
+        # Save uploaded file temporarily
+        filename = secure_filename(csv_file.filename)
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'reading_history_{current_user.id}_')
+        csv_file.save(temp_file.name)
+        temp_path = temp_file.name
+        
+        # Read CSV headers and first few rows for preview
+        with open(temp_path, 'r', encoding='utf-8') as csvfile:
+            # Try to detect delimiter
+            sample = csvfile.read(1024)
+            csvfile.seek(0)
+            
+            delimiter = ','
+            try:
+                sniffer = csv.Sniffer()
+                delimiter = sniffer.sniff(sample).delimiter
+            except Exception:
+                for test_delimiter in [',', ';', '\t', '|']:
+                    if test_delimiter in sample:
+                        delimiter = test_delimiter
+                        break
+            
+            reader = csv.DictReader(csvfile, delimiter=delimiter)
+            headers = reader.fieldnames or []
+            
+            # Get first few rows for preview
+            preview_rows = []
+            total_rows = 0
+            for i, row in enumerate(reader):
+                if i < 3:
+                    preview_rows.append([row.get(header, '') for header in headers])
+                total_rows += 1
+        
+        # Validate required columns
+        required_columns = ['Date']
+        missing_columns = [col for col in required_columns if col not in headers]
+        
+        if missing_columns:
+            flash(f'Missing required columns: {", ".join(missing_columns)}. Please ensure your CSV has a "Date" column.', 'error')
+            os.unlink(temp_path)
+            return redirect(url_for('import.import_reading_history'))
+        
+        # Auto-detect field mappings
+        suggested_mappings = _auto_detect_reading_history_fields(headers)
+        
+        return render_template('import_reading_history_mapping.html',
+                             csv_file_path=temp_path,
+                             csv_headers=headers,
+                             csv_preview=preview_rows,
+                             total_rows=total_rows,
+                             suggested_mappings=suggested_mappings)
+                             
+    except Exception as e:
+        current_app.logger.error(f"Error processing reading history CSV file: {e}")
+        flash('Error processing CSV file. Please check the format and try again.', 'danger')
+        return redirect(url_for('import.import_reading_history'))
+
+
+@import_bp.route('/reading-history/execute', methods=['POST'])
+@login_required
+def import_reading_history_execute():
+    """Execute the reading history import with user-defined field mappings."""
+    csv_file_path = request.form.get('csv_file_path')
+    
+    if not csv_file_path or not os.path.exists(csv_file_path):
+        flash('CSV file not found. Please upload the file again.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+    
+    try:
+        # Get field mappings from form
+        mappings = {}
+        for key in request.form:
+            if key.startswith('field_'):
+                csv_field = key[6:]  # Remove 'field_' prefix
+                book_field = request.form[key]
+                if book_field:  # Only include non-empty mappings
+                    mappings[csv_field] = book_field
+        
+        if not mappings.get('Date'):
+            flash('Date field mapping is required.', 'error')
+            os.unlink(csv_file_path)
+            return redirect(url_for('import.import_reading_history'))
+        
+        # Create import job
+        task_id = str(uuid.uuid4())
+        job_data = {
+            'task_id': task_id,
+            'user_id': current_user.id,
+            'csv_file_path': csv_file_path,
+            'field_mappings': mappings,
+            'import_type': 'reading_history',
+            'status': 'pending',
+            'processed': 0,
+            'success': 0,
+            'errors': 0,
+            'skipped': 0,
+            'total': 0,
+            'start_time': datetime.utcnow().isoformat(),
+            'current_book': None,
+            'error_messages': [],
+            'recent_activity': []
+        }
+        
+        # Count total rows
+        try:
+            with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                job_data['total'] = sum(1 for _ in reader)
+        except:
+            job_data['total'] = 0
+        
+        # Store job data with user isolation
+        safe_create_import_job(current_user.id, task_id, job_data)
+        
+        # Start the import in background thread
+        import_config = {
+            'task_id': task_id,
+            'csv_file_path': csv_file_path,
+            'field_mappings': mappings,
+            'user_id': current_user.id,
+            'import_type': 'reading_history'
+        }
+        
+        def run_import():
+            try:
+                asyncio.run(process_reading_history_import(import_config))
+            except Exception as e:
+                error_updates = {
+                    'status': 'failed',
+                    'error_messages': [str(e)]
+                }
+                safe_update_import_job(import_config['user_id'], task_id, error_updates)
+                current_app.logger.error(f"Reading history import job {task_id} failed: {e}")
+        
+        thread = threading.Thread(target=run_import)
+        thread.daemon = True
+        thread.start()
+        
+        return redirect(url_for('import.import_books_progress', task_id=task_id))
+        
+    except Exception as e:
+        current_app.logger.error(f"Error starting reading history import: {e}")
+        flash('Error starting import. Please try again.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+
+
+@import_bp.route('/reading-history/template')
+@login_required
+def download_reading_history_template():
+    """Download the reading history template CSV file."""
+    try:
+        # Debug static folder configuration
+        current_app.logger.info(f"Static folder: {current_app.static_folder}")
+        current_app.logger.info(f"Instance path: {current_app.instance_path}")
+        
+        # Use more robust path resolution
+        if current_app.static_folder and os.path.exists(current_app.static_folder):
+            template_path = os.path.join(current_app.static_folder, 'templates', 'reading_history_template.csv')
+            current_app.logger.info(f"Trying static folder path: {template_path}")
+        else:
+            # Fallback to app root path
+            app_root = os.path.dirname(os.path.dirname(__file__))  # Go up from routes directory
+            template_path = os.path.join(app_root, 'static', 'templates', 'reading_history_template.csv')
+            current_app.logger.info(f"Using fallback path: {template_path}")
+        
+        if not os.path.exists(template_path):
+            # Try additional fallback paths
+            fallback_paths = [
+                os.path.join(os.path.dirname(current_app.instance_path), 'app', 'static', 'templates', 'reading_history_template.csv'),
+                os.path.join(os.getcwd(), 'app', 'static', 'templates', 'reading_history_template.csv'),
+                os.path.join(os.getcwd(), 'static', 'templates', 'reading_history_template.csv')
+            ]
+            
+            for fallback_path in fallback_paths:
+                current_app.logger.info(f"Trying fallback path: {fallback_path}")
+                if os.path.exists(fallback_path):
+                    template_path = fallback_path
+                    break
+            else:
+                current_app.logger.error(f"Template file not found at any expected location")
+                current_app.logger.error(f"Tried paths: {[template_path] + fallback_paths}")
+                flash('Template file not found. Please contact administrator.', 'error')
+                return redirect(url_for('import.import_reading_history'))
+        
+        current_app.logger.info(f"Using template path: {template_path}")
+        
+        with open(template_path, 'r', encoding='utf-8') as f:
+            template_content = f.read()
+        
+        return make_response(
+            template_content,
+            200,
+            {
+                'Content-Disposition': 'attachment; filename=reading_history_template.csv',
+                'Content-Type': 'text/csv; charset=utf-8'
+            }
+        )
+    except Exception as e:
+        current_app.logger.error(f"Error downloading template: {e}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
+        flash('Error downloading template file.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+
+
+@import_bp.route('/reading-history/book-matching/<task_id>')
+@login_required
+def reading_history_book_matching(task_id):
+    """Handle book matching for reading history import."""
+    try:
+        # Get the import job data
+        job_data = safe_get_import_job(current_user.id, task_id)
+        
+        if not job_data:
+            flash('Import job not found.', 'error')
+            return redirect(url_for('import.import_reading_history'))
+        
+        if job_data.get('status') != 'needs_book_matching':
+            flash('This import does not need book matching.', 'info')
+            return redirect(url_for('import.import_books_progress', task_id=task_id))
+        
+        books_for_matching = job_data.get('books_for_matching', [])
+        validation_errors = job_data.get('validation_errors', [])
+        
+        # Type safety checks to prevent template errors
+        if not isinstance(books_for_matching, list):
+            current_app.logger.error(f"books_for_matching is not a list: {type(books_for_matching)} = {books_for_matching}")
+            books_for_matching = []
+            
+        if not isinstance(validation_errors, list):
+            current_app.logger.error(f"validation_errors is not a list: {type(validation_errors)} = {validation_errors}")
+            validation_errors = []
+        
+        if not books_for_matching:
+            flash('No books found for matching.', 'info')
+            return redirect(url_for('import.import_books_progress', task_id=task_id))
+        
+        # Get user's library for dropdown options
+        from app.services import book_service
+        user_books = book_service.get_user_books_sync(current_user.id)  # Remove limit parameter
+        
+        # Ensure user_books is a list
+        if not isinstance(user_books, list):
+            current_app.logger.error(f"user_books is not a list: {type(user_books)} = {user_books}")
+            user_books = []
+        
+        # Ensure import_job has safe default values for template
+        safe_import_job = dict(job_data) if isinstance(job_data, dict) else {}
+        safe_import_job.setdefault('auto_matched_count', 0)
+        safe_import_job.setdefault('total_entries', 0)
+        
+        return render_template('import_reading_history_book_matching.html',
+                             task_id=task_id,
+                             books_for_matching=books_for_matching,
+                             validation_errors=validation_errors,
+                             user_books=user_books,
+                             import_job=safe_import_job)
+                             
+    except Exception as e:
+        current_app.logger.error(f"Error loading book matching: {e}")
+        flash('Error loading book matching interface.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+
+
+@import_bp.route('/api/books/search-details', methods=['POST'])
+@login_required
+def api_search_book_details():
+    """Search for books by title and/or author - similar to the working book details search."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No search criteria provided'}), 400
+        
+        query = data.get('query', '').strip()
+        
+        if not query:
+            return jsonify({'success': False, 'message': 'Query is required'}), 400
+        
+        if len(query) < 2:
+            return jsonify({'success': False, 'message': 'Query must be at least 2 characters'}), 400
+        
+        current_app.logger.info(f"[IMPORT_SEARCH] Book search request: query='{query}'")
+        
+        # Parse query to extract title and author
+        title = query
+        author = None
+        
+        # If query looks like it might have author info, try splitting
+        if ' by ' in query.lower():
+            parts = query.lower().split(' by ')
+            if len(parts) == 2:
+                title = parts[0].strip()
+                author = parts[1].strip()
+        
+        results = []
+        
+        # Search OpenLibrary first
+        try:
+            current_app.logger.info("[IMPORT_SEARCH] Searching OpenLibrary...")
+            
+            query_parts = [title]
+            if author:
+                query_parts.append(author)
+            
+            search_query = ' '.join(query_parts)
+            url = f"https://openlibrary.org/search.json?q={search_query}&limit=5"
+            
+            current_app.logger.info(f"[IMPORT_SEARCH] OpenLibrary URL: {url}")
+            
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            search_data = response.json()
+            
+            docs = search_data.get('docs', [])
+            current_app.logger.info(f"[IMPORT_SEARCH] Found {len(docs)} OpenLibrary results")
+            
+            for i, doc in enumerate(docs[:5]):  # Limit to 5 results from OpenLibrary
+                doc_title = doc.get('title', '')
+                doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
+                doc_isbn = doc.get('isbn', [])
+                
+                # Get best ISBN (prefer 13-digit)
+                best_isbn = None
+                isbn13 = None
+                isbn10 = None
+                if doc_isbn:
+                    for isbn in doc_isbn:
+                        if len(isbn) == 13:
+                            isbn13 = isbn
+                            if not best_isbn:
+                                best_isbn = isbn
+                        elif len(isbn) == 10:
+                            isbn10 = isbn
+                            if not best_isbn:
+                                best_isbn = isbn
+                
+                # Get cover image
+                cover_url = None
+                if doc.get('cover_i'):
+                    cover_id = doc['cover_i']
+                    cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
+                elif best_isbn:
+                    cover_url = f"https://covers.openlibrary.org/b/isbn/{best_isbn}-L.jpg"
+                
+                result = {
+                    'title': doc_title,
+                    'author': ', '.join(doc_authors) if doc_authors else '',
+                    'authors_list': doc_authors,
+                    'description': '',  # OpenLibrary search doesn't include descriptions
+                    'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                    'page_count': doc.get('number_of_pages_median') or 0,
+                    'isbn13': isbn13 or '',
+                    'isbn10': isbn10 or '',
+                    'cover_url': cover_url or '',
+                    'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                    'language': doc.get('language', ['en'])[0] if doc.get('language') else 'en',
+                    'categories': [],
+                    'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else '',
+                    'source': 'OpenLibrary'
+                }
+                
+                results.append(result)
+                current_app.logger.info(f"[IMPORT_SEARCH] Added OpenLibrary result: '{doc_title}' by {doc_authors}")
+        
+        except Exception as e:
+            current_app.logger.error(f"[IMPORT_SEARCH] OpenLibrary search failed: {e}")
+        
+        # Search Google Books for additional results
+        try:
+            current_app.logger.info("[IMPORT_SEARCH] Searching Google Books...")
+            
+            query_parts = []
+            if title:
+                query_parts.append(f'intitle:"{title}"')
+            if author:
+                query_parts.append(f'inauthor:"{author}"')
+            
+            google_query = '+'.join(query_parts) if query_parts else title
+            google_url = f"https://www.googleapis.com/books/v1/volumes?q={google_query}&maxResults=5"
+            
+            current_app.logger.info(f"[IMPORT_SEARCH] Google Books URL: {google_url}")
+            
+            response = requests.get(google_url, timeout=10)
+            response.raise_for_status()
+            google_data = response.json()
+            
+            items = google_data.get('items', [])
+            current_app.logger.info(f"[IMPORT_SEARCH] Found {len(items)} Google Books results")
+            
+            for i, item in enumerate(items[:5]):  # Limit to 5 results from Google Books
+                volume_info = item.get('volumeInfo', {})
+                
+                book_title = volume_info.get('title', '')
+                book_authors = volume_info.get('authors', [])
+                book_description = volume_info.get('description', '')
+                book_publisher = volume_info.get('publisher', '')
+                book_published_date = volume_info.get('publishedDate', '')
+                book_page_count = volume_info.get('pageCount', 0)
+                book_language = volume_info.get('language', 'en')
+                book_categories = volume_info.get('categories', [])
+                
+                # Get ISBNs
+                isbn13 = None
+                isbn10 = None
+                industry_identifiers = volume_info.get('industryIdentifiers', [])
+                for identifier in industry_identifiers:
+                    if identifier.get('type') == 'ISBN_13':
+                        isbn13 = identifier.get('identifier')
+                    elif identifier.get('type') == 'ISBN_10':
+                        isbn10 = identifier.get('identifier')
+                
+                # Get cover image
+                image_links = volume_info.get('imageLinks', {})
+                cover_url = image_links.get('large') or image_links.get('medium') or image_links.get('small') or image_links.get('thumbnail')
+                
+                result = {
+                    'title': book_title,
+                    'author': ', '.join(book_authors) if book_authors else '',
+                    'authors_list': book_authors,
+                    'description': book_description,
+                    'publisher': book_publisher,
+                    'published_date': book_published_date,
+                    'page_count': book_page_count,
+                    'isbn13': isbn13 or '',
+                    'isbn10': isbn10 or '',
+                    'cover_url': cover_url or '',
+                    'language': book_language,
+                    'categories': book_categories,
+                    'google_books_id': item.get('id'),
+                    'source': 'Google Books'
+                }
+                
+                results.append(result)
+                current_app.logger.info(f"[IMPORT_SEARCH] Added Google Books result: '{book_title}' by {book_authors}")
+        
+        except Exception as e:
+            current_app.logger.error(f"[IMPORT_SEARCH] Google Books search failed: {e}")
+        
+        # Deduplicate results by title similarity
+        unique_results = []
+        seen_titles = set()
+        
+        for result in results:
+            result_title = result.get('title', '').lower().strip()
+            
+            # Skip if we've seen a very similar title
+            is_duplicate = False
+            for seen_title in seen_titles:
+                if (result_title in seen_title or seen_title in result_title) and len(result_title) > 3:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate and result['title']:
+                unique_results.append(result)
+                seen_titles.add(result_title)
+        
+        current_app.logger.info(f"[IMPORT_SEARCH] Returning {len(unique_results)} unique results")
+        
+        return jsonify({
+            'success': True,
+            'query': query,
+            'results': unique_results,
+            'count': len(unique_results)
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"[IMPORT_SEARCH] Error in book search: {e}")
+        return jsonify({'success': False, 'message': 'Internal server error'}), 500
+
+
+@import_bp.route('/api/books/external-search', methods=['POST'])
+@login_required
+def api_external_book_search():
+    """
+    Search external APIs for book metadata - SIMPLIFIED FOR READING LOG IMPORT.
+    This is ONLY for use during reading log import and prioritizes ISBN-based results.
+    """
+    try:
+        data = request.get_json()
+        query = data.get('query', '').strip()
+        
+        if not query:
+            return jsonify({'error': 'Query is required'}), 400
+        
+        if len(query) < 2:
+            return jsonify({'error': 'Query must be at least 2 characters'}), 400
+        
+        # Import the API utilities
+        from app.utils import search_book_by_title_author, get_google_books_cover, search_multiple_books_by_title_author
+        
+        print(f"🔍 [READING_LOG_SEARCH] Searching for ISBN-based results for: '{query}'")
+        
+        all_results = []
+        isbn_results = []  # Results WITH ISBNs (priority)
+        non_isbn_results = []  # Results WITHOUT ISBNs (fallback)
+        search_error = None
+        
+        # Try different search approaches
+        search_queries = [
+            {'title': query, 'author': None},  # Original query as title
+        ]
+        
+        # If query looks like it might have author info, try splitting
+        if ' by ' in query.lower():
+            parts = query.lower().split(' by ')
+            if len(parts) == 2:
+                title_part = parts[0].strip()
+                author_part = parts[1].strip()
+                search_queries.insert(0, {'title': title_part, 'author': author_part})
+        
+        for search_params in search_queries:
+            try:
+                # Search both APIs with higher limit to find more ISBN results
+                api_results = search_multiple_books_by_title_author(search_params['title'], search_params['author'], limit=20)
+                
+                if api_results:
+                    for api_data in api_results:
+                        # Convert to our standard format
+                        result = {
+                            'title': api_data.get('title', ''),
+                            'author': api_data.get('author', ''),
+                            'description': api_data.get('description', ''),
+                            'published_date': api_data.get('published_date', ''),
+                            'page_count': api_data.get('page_count', 0),
+                            'isbn13': api_data.get('isbn13', '') or api_data.get('isbn', ''),
+                            'isbn10': api_data.get('isbn10', ''),
+                            'cover_url': api_data.get('cover_url', '') or api_data.get('cover', ''),
+                            'publisher': api_data.get('publisher', ''),
+                            'language': api_data.get('language', ''),
+                            'categories': api_data.get('categories', []),
+                            'openlibrary_id': api_data.get('openlibrary_id', ''),
+                            'google_books_id': api_data.get('google_books_id', ''),
+                            'source': api_data.get('source', 'unknown')
+                        }
+                        
+                        # Only include results with at least a title
+                        if result['title']:
+                            # *** CRITICAL: Prioritize results with ISBNs ***
+                            if result['isbn13'] or result['isbn10']:
+                                isbn_results.append(result)
+                                print(f"✅ [READING_LOG_SEARCH] Found ISBN result: '{result['title']}' by {result['author']} (ISBN: {result['isbn13'] or result['isbn10']})")
+                            else:
+                                non_isbn_results.append(result)
+                                print(f"📖 [READING_LOG_SEARCH] Found non-ISBN result: '{result['title']}' by {result['author']}")
+                    
+                    # If we found ISBN results, we can stop searching
+                    if isbn_results:
+                        break
+                
+            except Exception as api_error:
+                error_message = str(api_error)
+                print(f"⚠️ [READING_LOG_SEARCH] Error searching for '{search_params['title']}': {error_message}")
+                
+                # Store the error for user feedback if no results are found
+                if not isbn_results and not non_isbn_results:
+                    search_error = error_message
+                continue
+        
+        # ONLY return results WITH ISBNs - no non-ISBN results allowed
+        final_results = isbn_results[:10]  # Top 10 ISBN results ONLY
+        
+        print(f"🎯 [READING_LOG_SEARCH] Returning {len(final_results)} ISBN-only results for '{query}' (filtered out {len(non_isbn_results)} non-ISBN results)")
+        
+        response_data = {
+            'query': query,
+            'results': final_results,
+            'count': len(final_results),
+            'isbn_count': len(final_results),  # All results have ISBNs now
+            'has_isbn_priority': True,  # Always true since we only return ISBN results
+            'filtered_out_count': len(non_isbn_results)  # Show how many we filtered out
+        }
+        
+        # Include error information if no results were found but there was an error
+        if len(final_results) == 0 and search_error:
+            response_data['error'] = f"Search failed: {search_error}"
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        current_app.logger.error(f"Error in external book search: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@import_bp.route('/reading-history/resolve-books/<task_id>', methods=['POST'])
+@login_required
+def resolve_reading_history_books(task_id):
+    """Resolve book matches and create reading log entries."""
+    try:
+        # Get the import job data
+        job_data = safe_get_import_job(current_user.id, task_id)
+        
+        if not job_data:
+            flash('Import job not found.', 'error')
+            return redirect(url_for('import.import_reading_history'))
+        
+        # Process book resolutions from form
+        from app.services import book_service, reading_log_service
+        from app.domain.models import ReadingLog, Book
+        
+        books_for_matching = job_data.get('books_for_matching', [])
+        book_resolutions = {}  # csv_name -> {'action': 'match/create/skip/bookless', 'book_id': id, ...}
+        
+        # Extract resolutions from form data
+        for i, book_data in enumerate(books_for_matching):
+            csv_name = book_data['csv_name']
+            action = request.form.get(f'action_{i}')
+            
+            if action == 'match':
+                book_id = request.form.get(f'book_id_{i}')
+                if book_id:
+                    book_resolutions[csv_name] = {
+                        'action': 'match',
+                        'book_id': book_id
+                    }
+            elif action == 'create':
+                # Extract book creation data
+                title = request.form.get(f'new_title_{i}', csv_name)
+                author = request.form.get(f'new_author_{i}', '')
+                
+                # Check if there's API metadata stored (from JavaScript API search)
+                api_metadata_json = request.form.get(f'api_metadata_{i}', '')
+                api_metadata = {}
+                if api_metadata_json:
+                    try:
+                        import json
+                        api_metadata = json.loads(api_metadata_json)
+                    except:
+                        pass  # Ignore invalid JSON
+                
+                book_resolutions[csv_name] = {
+                    'action': 'create',
+                    'title': title,
+                    'author': author,
+                    'api_metadata': api_metadata  # Include API metadata for enhanced book creation
+                }
+            elif action == 'bookless':
+                # Create reading logs without a specific book
+                book_resolutions[csv_name] = {
+                    'action': 'bookless',
+                    'book_title': csv_name  # Use the CSV name as the book title in the log
+                }
+            # Books marked as 'skip' will not be in resolutions dict
+        
+        # Update job status to processing with proper progress reset
+        total_entries = job_data.get('total_entries', job_data.get('total', 0))
+        safe_update_import_job(current_user.id, task_id, {
+            'status': 'processing_reading_logs',
+            'processed': 0,  # Reset progress for reading log creation phase
+            'auto_matched': 0,  # Will be updated as reading logs are created
+            'need_review': 0,   # No more review needed at this point
+            'validation_errors': len(job_data.get('validation_errors', [])),
+            'total_entries': total_entries,
+            'total': total_entries,  # Preserve the total entries count from analysis phase
+            'recent_activity': ['Processing book matches and creating reading logs...']
+        })
+        
+        # Start background processing
+        def process_reading_logs():
+            try:
+                asyncio.run(_process_final_reading_history_import(task_id, job_data, book_resolutions))
+            except Exception as e:
+                current_app.logger.error(f"Error in final processing: {e}")
+                safe_update_import_job(job_data['user_id'], task_id, {
+                    'status': 'failed',
+                    'error_messages': [str(e)]
+                })
+        
+        thread = threading.Thread(target=process_reading_logs)
+        thread.daemon = True
+        thread.start()
+        
+        flash('Processing book matches. Please check progress page for updates.', 'info')
+        return redirect(url_for('import.import_books_progress', task_id=task_id))
+        
+    except Exception as e:
+        current_app.logger.error(f"Error resolving books: {e}")
+        flash('Error resolving book matches.', 'error')
+        return redirect(url_for('import.import_reading_history'))
+
+
+async def _process_final_reading_history_import(task_id, job_data, book_resolutions):
+    """Process the final step of reading history import after book matching."""
+    from app.services import book_service, reading_log_service
+    from app.domain.models import ReadingLog
+    
+    user_id = job_data['user_id']
+    csv_file_path = job_data.get('csv_file_path')
+    
+    if not csv_file_path or not os.path.exists(csv_file_path):
+        raise Exception("CSV file no longer available")
+    
+    books_for_matching = job_data.get('books_for_matching', [])
+    success_count = 0
+    error_count = 0
+    skipped_count = 0
+    created_books = 0
+    unassigned_book_id = None  # Cache for "Unassigned Reading Logs" book ID
+    
+    try:
+        # Calculate total CSV entries for proper progress tracking
+        total_entries_in_csv = sum(len(book_data['entries']) for book_data in books_for_matching)
+        
+        # Initialize progress tracking with reading log metrics
+        safe_update_import_job(user_id, task_id, {
+            'status': 'processing',
+            'processed': 0,
+            'total': total_entries_in_csv,
+            'reading_logs_created': 0,  # Successful reading logs
+            'reading_log_errors': 0,    # Failed reading logs  
+            'reading_logs_skipped': 0,  # Skipped reading logs
+            'books_created': 0,         # New books created
+            'recent_activity': [f"Starting import of {total_entries_in_csv} reading log entries..."]
+        })
+        
+        # First, create any new books that need to be created
+        books_processed = 0
+        total_books_to_process = len(book_resolutions)
+        
+        for csv_name, resolution in book_resolutions.items():
+            if resolution['action'] == 'create':
+                try:
+                    # SIMPLIFIED READING LOG IMPORT BOOK CREATION
+                    api_metadata = resolution.get('api_metadata', {})
+                    
+                    # Check if this should use ISBN lookup or manual creation
+                    use_isbn_lookup = api_metadata.get('_use_isbn_lookup', False)
+                    selected_isbn = api_metadata.get('_selected_isbn')
+                    manual_creation = api_metadata.get('_manual_creation', False)
+                    
+                    print(f"📚 [CREATE_BOOK] Processing: {resolution['title']}")
+                    print(f"    Use ISBN lookup: {use_isbn_lookup}")
+                    print(f"    Selected ISBN: {selected_isbn}")
+                    print(f"    Manual creation: {manual_creation}")
+                    
+                    if use_isbn_lookup and selected_isbn:
+                        # OPTION 2A: Create book using existing ISBN lookup process
+                        print(f"🔍 [CREATE_BOOK] Creating book via ISBN lookup: {selected_isbn}")
+                        
+                        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+                        simplified_service = SimplifiedBookService()
+                        
+                        # Create a basic book with the ISBN, then let the service enhance it
+                        basic_book_data = {
+                            'title': resolution['title'],
+                            'author': resolution['author'] or 'Unknown Author',
+                            'isbn13': selected_isbn if len(selected_isbn) == 13 else None,
+                            'isbn10': selected_isbn if len(selected_isbn) == 10 else None,
+                        }
+                        
+                        # Use the service to create and enrich the book via ISBN
+                        try:
+                            success = await simplified_service.add_book_to_user_library(
+                                book_data=SimplifiedBook(
+                                    title=basic_book_data['title'],
+                                    author=basic_book_data['author'],
+                                    isbn13=basic_book_data.get('isbn13'),
+                                    isbn10=basic_book_data.get('isbn10')
+                                ),
+                                user_id=user_id,
+                                reading_status='plan_to_read'
+                            )
+                            
+                            if success:
+                                # Get the book ID by searching for it
+                                from app.services import book_service
+                                created_books_list = book_service.get_user_books_sync(user_id, limit=1)
+                                if created_books_list:
+                                    book_id = created_books_list[0].id
+                                    resolution['book_id'] = book_id
+                                    created_books += 1
+                                    print(f"✅ [CREATE_BOOK] Created enriched book via ISBN: {book_id}")
+                                else:
+                                    raise Exception("Book created but could not retrieve ID")
+                            else:
+                                raise Exception("Failed to create book via ISBN lookup")
+                                
+                        except Exception as isbn_error:
+                            print(f"⚠️ [CREATE_BOOK] ISBN lookup failed, falling back to manual creation: {isbn_error}")
+                            # Fall back to manual creation below
+                            use_isbn_lookup = False
+                            manual_creation = True
+                    
+                    if not use_isbn_lookup or manual_creation:
+                        # OPTION 2B: Create basic book with just title and author
+                        print(f"� [CREATE_BOOK] Creating basic book manually: {resolution['title']}")
+                        
+                        # Validate required fields
+                        title = resolution['title'].strip() if resolution['title'] else None
+                        if not title:
+                            raise Exception("Title is required for manual book creation")
+                        
+                        author_name = resolution.get('author', '').strip()
+                        
+                        # Use the simplified book service to create a basic book
+                        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+                        simplified_service = SimplifiedBookService()
+                        
+                        # Create basic SimplifiedBook object
+                        new_book = SimplifiedBook(
+                            title=title,
+                            author=author_name if author_name else 'Unknown Author'
+                        )
+                        
+                        # Apply any additional metadata from API results (non-ISBN)
+                        if api_metadata and not api_metadata.get('_manual_creation'):
+                            print(f"🔧 [CREATE_BOOK] Applying additional metadata from API search")
+                            
+                            # Apply basic metadata that doesn't require ISBN
+                            if api_metadata.get('description'):
+                                new_book.description = api_metadata['description']
+                            if api_metadata.get('cover_url'):
+                                new_book.cover_url = api_metadata['cover_url']
+                            if api_metadata.get('published_date'):
+                                new_book.published_date = api_metadata['published_date']
+                            if api_metadata.get('page_count'):
+                                new_book.page_count = int(api_metadata['page_count']) if api_metadata['page_count'] else None
+                            if api_metadata.get('publisher'):
+                                new_book.publisher = api_metadata['publisher']
+                            if api_metadata.get('language'):
+                                new_book.language = api_metadata['language']
+                            if api_metadata.get('categories'):
+                                new_book.categories = api_metadata['categories']
+                        
+                        # Create the book using the service
+                        try:
+                            success = await simplified_service.add_book_to_user_library(
+                                book_data=new_book,
+                                user_id=user_id,
+                                reading_status='plan_to_read'
+                            )
+                            
+                            if success:
+                                # Get the book ID by searching for it
+                                from app.services import book_service
+                                created_books_list = book_service.get_user_books_sync(user_id, limit=1)
+                                if created_books_list:
+                                    book_id = created_books_list[0].id
+                                    resolution['book_id'] = book_id
+                                    created_books += 1
+                                    print(f"✅ [CREATE_BOOK] Created basic book: {book_id}")
+                                else:
+                                    raise Exception("Book created but could not retrieve ID")
+                            else:
+                                raise Exception("Failed to create basic book")
+                                
+                        except Exception as create_error:
+                            print(f"❌ [CREATE_BOOK] Failed to create book: {create_error}")
+                            raise create_error
+                    
+                    # Update progress
+                    books_processed += 1
+                    safe_update_import_job(user_id, task_id, {
+                        'books_created': created_books,
+                        'recent_activity': [f"Created book: {resolution['title']} ({books_processed}/{total_books_to_process})"]
+                    })
+                    
+                except Exception as e:
+                    print(f"❌ [CREATE_BOOK] Error creating book '{csv_name}': {e}")
+                    traceback.print_exc()
+                    error_count += 1
+                    
+                    # Continue processing other books even if one fails
+                    continue
+            
+            books_processed += 1
+            
+            # Update progress during book creation/matching phase
+            if books_processed % 2 == 0 or books_processed == total_books_to_process:
+                safe_update_import_job(user_id, task_id, {
+                    'processed': books_processed,
+                    'total': total_books_to_process,
+                    'recent_activity': [f"Processing books: {books_processed}/{total_books_to_process} completed"]
+                })
+        
+        # Now process all reading log entries
+        total_entries_processed = 0
+        
+        for book_data in books_for_matching:
+            csv_name = book_data['csv_name']
+            entries = book_data['entries']
+            
+            # Get the resolution for this CSV name or handle bookless entries
+            if csv_name == "[BOOKLESS_ENTRY]":
+                # Auto-resolve bookless entries
+                resolution = {'action': 'bookless'}
+            elif csv_name not in book_resolutions:
+                # Book was skipped by user
+                skipped_count += len(entries)
+                total_entries_processed += len(entries)
+                # Update progress after skipping entries
+                safe_update_import_job(user_id, task_id, {
+                    'processed': total_entries_processed,
+                    'total': total_entries_in_csv,
+                    'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
+                })
+                continue
+            else:
+                resolution = book_resolutions[csv_name]
+            
+            if resolution['action'] == 'error':
+                # Skip this book due to creation error
+                error_count += len(entries)
+                total_entries_processed += len(entries)
+                # Update progress after error entries
+                safe_update_import_job(user_id, task_id, {
+                    'processed': total_entries_processed,
+                    'total': total_entries_in_csv,
+                    'reading_logs_created': success_count,
+                    'reading_log_errors': error_count,
+                    'reading_logs_skipped': skipped_count,
+                    'books_created': created_books,
+                    'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
+                })
+                continue
+            elif resolution['action'] in ['match', 'create']:
+                # Book-specific reading logs
+                book_id = resolution.get('book_id')
+                if not book_id:
+                    error_count += len(entries)
+                    total_entries_processed += len(entries)
+                    # Update progress after no book ID entries
+                    safe_update_import_job(user_id, task_id, {
+                        'processed': total_entries_processed,
+                        'total': total_entries_in_csv,
+                        'reading_logs_created': success_count,
+                        'reading_log_errors': error_count,
+                        'reading_logs_skipped': skipped_count,
+                        'books_created': created_books,
+                        'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
+                    })
+                    continue
+                    
+                # Create reading log entries for this book
+                for entry in entries:
+                    try:
+                        log_date = datetime.strptime(entry['date'], '%Y-%m-%d').date()
+                        
+                        reading_log = ReadingLog(
+                            user_id=str(user_id),
+                            book_id=book_id,
+                            date=log_date,
+                            pages_read=entry.get('pages_read', 0),
+                            minutes_read=entry.get('minutes_read', 0),
+                            notes=None,
+                            created_at=datetime.utcnow(),
+                            updated_at=datetime.utcnow()
+                        )
+                        
+                        created_log = reading_log_service.create_reading_log_sync(reading_log)
+                        
+                        if created_log:
+                            success_count += 1
+                            print(f"✅ [READING_HISTORY] Created reading log: {csv_name} - {entry['date']}")
+                        else:
+                            error_count += 1
+                            print(f"❌ [READING_HISTORY] Failed to create reading log: {csv_name} - {entry['date']}")
+                        
+                        total_entries_processed += 1
+                        
+                        # Update progress periodically
+                        if total_entries_processed % 5 == 0 or total_entries_processed == total_entries_in_csv:
+                            safe_update_import_job(user_id, task_id, {
+                                'processed': total_entries_processed,
+                                'total': total_entries_in_csv,
+                                'reading_logs_created': success_count,
+                                'reading_log_errors': error_count,
+                                'reading_logs_skipped': skipped_count,
+                                'books_created': created_books,
+                                'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
+                            })
+                            
+                    except Exception as e:
+                        error_count += 1
+                        total_entries_processed += 1
+                        print(f"❌ [READING_HISTORY] Error creating reading log for {csv_name}: {e}")
+                        
+            elif resolution['action'] == 'bookless':
+                # Create "Unassigned Reading Logs" book if it doesn't exist
+                if unassigned_book_id is None:
+                    try:
+                        # Check if "Unassigned Reading Logs" book already exists for this user
+                        search_results = book_service.search_books_sync("Unassigned Reading Logs", user_id, limit=1)
+                        
+                        if search_results:
+                            unassigned_book_id = search_results[0].id if hasattr(search_results[0], 'id') else search_results[0].get('id')
+                            print(f"✅ [READING_HISTORY] Found existing 'Unassigned Reading Logs' book: {unassigned_book_id}")
+                        else:
+                            # Create the default "Unassigned Reading Logs" book
+                            from app.simplified_book_service import SimplifiedBook, SimplifiedBookService
+                            
+                            # Create a SimplifiedBook object
+                            unassigned_book_data = SimplifiedBook(
+                                title='Unassigned Reading Logs',
+                                author='System Generated',
+                                description='Default book for reading log entries that could not be matched to specific books.',
+                                published_date='',
+                                publisher='',
+                                page_count=0,
+                                isbn13='',
+                                isbn10='',
+                                language='',
+                                categories=['Reading Logs'],
+                            )
+                            
+                            # Use SimplifiedBookService to create the book
+                            simplified_service = SimplifiedBookService()
+                            unassigned_book_id = await simplified_service.create_standalone_book(unassigned_book_data)
+                            
+                            if unassigned_book_id:
+                                print(f"✅ [READING_HISTORY] Created 'Unassigned Reading Logs' book: {unassigned_book_id}")
+                            else:
+                                raise Exception("Failed to create 'Unassigned Reading Logs' book")
+                        
+                    except Exception as e:
+                        print(f"❌ [READING_HISTORY] Error creating 'Unassigned Reading Logs' book: {e}")
+                        error_count += len(entries)
+                        total_entries_processed += len(entries)
+                        continue
+                
+                for entry in entries:
+                    try:
+                        log_date = datetime.strptime(entry['date'], '%Y-%m-%d').date()
+                        
+                        reading_log = ReadingLog(
+                            user_id=str(user_id),
+                            book_id=unassigned_book_id,  # Use the unassigned book
+                            date=log_date,
+                            pages_read=entry.get('pages_read', 0),
+                            minutes_read=entry.get('minutes_read', 0),
+                            notes=f"Original book name: {csv_name}",  # Store original book name in notes
+                            created_at=datetime.utcnow(),
+                            updated_at=datetime.utcnow()
+                        )
+                        
+                        created_log = reading_log_service.create_reading_log_sync(reading_log)
+                        
+                        if created_log:
+                            success_count += 1
+                            print(f"✅ [READING_HISTORY] Created reading log for 'Unassigned': {csv_name} - {entry['date']}")
+                        else:
+                            error_count += 1
+                            print(f"❌ [READING_HISTORY] Failed to create reading log for 'Unassigned': {csv_name} - {entry['date']}")
+                        
+                        total_entries_processed += 1
+                        
+                        # Update progress periodically
+                        if total_entries_processed % 5 == 0 or total_entries_processed == total_entries_in_csv:
+                            safe_update_import_job(user_id, task_id, {
+                                'processed': total_entries_processed,
+                                'total': total_entries_in_csv,
+                                'reading_logs_created': success_count,
+                                'reading_log_errors': error_count,
+                                'reading_logs_skipped': skipped_count,
+                                'books_created': created_books,
+                                'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
+                            })
+                            
+                    except Exception as e:
+                        error_count += 1
+                        total_entries_processed += 1
+                        print(f"❌ [READING_HISTORY] Error creating reading log for {csv_name}: {e}")
+        
+        # Final status update - use simple entry-based counts
+        final_status = 'completed' if error_count == 0 else 'completed_with_errors'
+        
+        safe_update_import_job(user_id, task_id, {
+            'status': final_status,
+            'import_type': 'reading_history',
+            'processed': total_entries_processed,  # Total entries processed
+            'success': success_count,  # Successful reading log entries
+            'errors': error_count,  # Reading log entries that failed
+            'skipped': skipped_count,  # Reading log entries that were skipped
+            'unmatched': 0,  # No more unmatched books at this point
+            'total': total_entries_in_csv,  # Total entries in the CSV file
+            'books_for_matching': [],  # Clear the matching data
+            'reading_logs_created': success_count,  # Store actual reading log count
+            'reading_log_errors': error_count,  # Store reading log error count
+            'books_created': created_books,  # Number of new books created
+            'recent_activity': [
+                f"Import completed: {success_count} reading logs created, {error_count} errors, {skipped_count} skipped",
+                f"Total entries processed: {total_entries_processed}/{total_entries_in_csv}",
+                f"New books created: {created_books}"
+            ]
+        })
+        
+        print(f"🎉 [READING_HISTORY] Final import complete:")
+        print(f"   Reading logs created: {success_count}")
+        print(f"   Errors: {error_count}")
+        print(f"   Skipped: {skipped_count}")
+        print(f"   Books created: {created_books}")
+        
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(csv_file_path)
+            print(f"🗑️ [READING_HISTORY] Cleaned up temp file: {csv_file_path}")
+        except Exception:
+            pass
+
+
+def _auto_detect_reading_history_fields(headers):
+    """Auto-detect field mappings for reading history CSV headers."""
+    mappings = {}
+    
+    for header in headers:
+        header_lower = header.lower().strip()
+        
+        if 'date' in header_lower:
+            mappings[header] = 'Date'
+        elif 'book' in header_lower and 'name' in header_lower:
+            mappings[header] = 'Book Name'
+        elif 'start' in header_lower and 'page' in header_lower:
+            mappings[header] = 'Start Page'
+        elif 'end' in header_lower and 'page' in header_lower:
+            mappings[header] = 'End Page'
+        elif 'pages' in header_lower and 'read' in header_lower:
+            mappings[header] = 'Pages Read'
+        elif 'minutes' in header_lower and 'read' in header_lower:
+            mappings[header] = 'Minutes Read'
+        elif 'time' in header_lower and 'read' in header_lower:
+            mappings[header] = 'Minutes Read'
+    
+    return mappings
+
+
+async def process_reading_history_import(import_config):
+    """Process a reading history import job by first collecting distinct books for user matching."""
+    task_id = import_config['task_id']
+    csv_file_path = import_config['csv_file_path']
+    mappings = import_config['field_mappings']
+    user_id = import_config['user_id']
+    
+    # Import required services
+    from app.services import book_service
+    
+    try:
+        # Update status to analyzing with proper progress tracking
+        safe_update_import_job(user_id, task_id, {
+            'status': 'analyzing',
+            'processed': 0,
+            'total': 0,  # Will be updated as we count rows
+            'auto_matched': 0,  # Books automatically matched
+            'need_review': 0,   # Books needing user review
+            'validation_errors': 0,  # CSV parsing/validation errors
+            'total_entries': 0,  # Total CSV entries
+            'recent_activity': ['Starting analysis of CSV file...']
+        })
+        
+        # Step 1: Parse CSV and collect all distinct books with their reading entries
+        distinct_books = {}  # book_name -> list of reading entries
+        validation_errors = []
+        total_entries = 0
+        processed_entries = 0
+        
+        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            
+            for row_num, row in enumerate(reader, 1):
+                total_entries += 1
+                processed_entries += 1
+                
+                # Update progress every 10 rows during analysis
+                if processed_entries % 10 == 0:
+                    safe_update_import_job(user_id, task_id, {
+                        'processed': processed_entries,
+                        'total': processed_entries,  # Update total as we go during analysis
+                        'auto_matched': 0,  # No matching done yet
+                        'need_review': 0,   # No books identified yet
+                        'validation_errors': len(validation_errors),
+                        'total_entries': processed_entries,
+                        'recent_activity': [f'Analyzing entry {processed_entries}...']
+                    })
+                
+                try:
+                    # Extract and validate data from row
+                    date_str = row.get(mappings.get('Date', ''), '').strip()
+                    book_name = row.get(mappings.get('Book Name', ''), '').strip()
+                    start_page_str = row.get(mappings.get('Start Page', ''), '').strip()
+                    end_page_str = row.get(mappings.get('End Page', ''), '').strip()
+                    pages_read_str = row.get(mappings.get('Pages Read', ''), '').strip()
+                    minutes_read_str = row.get(mappings.get('Minutes Read', ''), '').strip()
+                    
+                    # Validate date (required)
+                    if not date_str:
+                        validation_errors.append(f"Row {row_num}: Date is required")
+                        continue
+                    
+                    # Parse date
+                    try:
+                        log_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    except ValueError:
+                        validation_errors.append(f"Row {row_num}: Invalid date format. Use YYYY-MM-DD")
+                        continue
+                    
+                    # Handle book name (empty book names will be handled as bookless logs)
+                    if not book_name or book_name.strip() == "":
+                        book_name = "[BOOKLESS_ENTRY]"  # Mark for bookless processing
+                        print(f"ℹ️ [READING_HISTORY] Row {row_num}: Empty book name, will create bookless reading log")
+                    
+                    # Parse numeric fields
+                    start_page = 0
+                    end_page = 0
+                    pages_read = 0
+                    minutes_read = 0
+                    
+                    try:
+                        if start_page_str:
+                            start_page = int(start_page_str)
+                        if end_page_str:
+                            end_page = int(end_page_str)
+                        if pages_read_str:
+                            pages_read = int(pages_read_str)
+                        if minutes_read_str:
+                            minutes_read = int(minutes_read_str)
+                    except ValueError:
+                        pass  # Invalid numbers will remain 0
+                    
+                    # Calculate pages read if not provided but start/end pages are
+                    if not pages_read and start_page and end_page and end_page >= start_page:
+                        pages_read = end_page - start_page + 1
+                    
+                    # Validate that we have either pages or minutes read
+                    if pages_read <= 0 and minutes_read <= 0:
+                        validation_errors.append(f"Row {row_num}: Must have either pages read or minutes read")
+                        continue
+                    
+                    # Store the reading entry under the book name
+                    if book_name not in distinct_books:
+                        distinct_books[book_name] = []
+                    
+                    distinct_books[book_name].append({
+                        'row_num': row_num,
+                        'date': log_date.isoformat(),
+                        'pages_read': pages_read,
+                        'minutes_read': minutes_read,
+                        'start_page': start_page,
+                        'end_page': end_page
+                    })
+                    
+                except Exception as row_error:
+                    validation_errors.append(f"Row {row_num}: Error processing row - {str(row_error)}")
+                    continue
+        
+        print(f"📚 [READING_HISTORY] Found {len(distinct_books)} distinct books in {total_entries} entries")
+        print(f"❌ [READING_HISTORY] {len(validation_errors)} validation errors")
+        
+        # Update progress to show analysis complete with proper counts
+        safe_update_import_job(user_id, task_id, {
+            'processed': total_entries,
+            'total': total_entries,
+            'auto_matched': 0,  # Will be updated during book matching
+            'need_review': len(distinct_books),  # All books initially need review
+            'validation_errors': len(validation_errors),
+            'total_entries': total_entries,
+            'recent_activity': [f'Analysis complete: {len(distinct_books)} distinct books found from {total_entries} entries']
+        })
+        
+        # Step 2: Try to automatically match books in user's library
+        books_for_matching = []
+        books_processed = 0
+        
+        for book_name, entries in distinct_books.items():
+            books_processed += 1
+            print(f"🔍 [READING_HISTORY] Searching for book: '{book_name}' ({books_processed}/{len(distinct_books)})")
+            
+            # Update progress during book matching (keep total as CSV entries)
+            if books_processed % 5 == 0 or books_processed == len(distinct_books):
+                auto_matched_so_far = len([b for b in books_for_matching if b.get('matched_book')])
+                bookless_so_far = len([b for b in books_for_matching if b.get('is_bookless', False)])
+                need_review_count = len(distinct_books) - auto_matched_so_far - bookless_so_far
+                
+                safe_update_import_job(user_id, task_id, {
+                    'processed': total_entries,  # Keep CSV entries as processed
+                    'total': total_entries,      # Keep CSV entries as total
+                    'auto_matched': auto_matched_so_far,  # Books automatically matched
+                    'need_review': need_review_count,     # Books still needing review
+                    'validation_errors': len(validation_errors),
+                    'total_entries': total_entries,
+                    'recent_activity': [f'Matching books: {books_processed}/{len(distinct_books)} books processed']
+                })
+            
+            # Skip search for bookless entries
+            if book_name == "[BOOKLESS_ENTRY]":
+                print(f"🔍 [READING_HISTORY] Skipping search for bookless entry")
+                
+                books_for_matching.append({
+                    'csv_name': book_name,
+                    'entry_count': len(entries),
+                    'entries': entries,
+                    'matched_book': None,
+                    'search_results': [],
+                    'is_bookless': True  # Mark as bookless
+                })
+                continue
+            
+            # Search for potential matches
+            search_results = book_service.search_books_sync(book_name, user_id, limit=5)
+            print(f"🔍 [READING_HISTORY] Found {len(search_results)} search results for '{book_name}'")
+            
+            # Find exact matches (case insensitive)
+            matched_book = None
+            if search_results:
+                book_name_lower = book_name.lower().strip()
+                for result in search_results:
+                    result_title = result.title.lower().strip() if hasattr(result, 'title') else result.get('title', '').lower().strip()
+                    if result_title == book_name_lower:
+                        matched_book = {
+                            'id': result.id if hasattr(result, 'id') else result.get('id'),
+                            'title': result.title if hasattr(result, 'title') else result.get('title'),
+                            'author': result.author if hasattr(result, 'author') else result.get('author')
+                        }
+                        print(f"✅ [READING_HISTORY] Auto-matched: '{book_name}' -> '{matched_book['title']}'")
+                        break
+                        
+                if not matched_book:
+                    print(f"⚠️ [READING_HISTORY] No exact match found for '{book_name}', will need user selection")
+            else:
+                print(f"⚠️ [READING_HISTORY] No search results found for '{book_name}'")
+            
+            # Convert search results to dict format for template
+            search_results_dict = []
+            if search_results:
+                for result in search_results:
+                    search_results_dict.append({
+                        'id': result.id if hasattr(result, 'id') else result.get('id'),
+                        'title': result.title if hasattr(result, 'title') else result.get('title'),
+                        'author': result.author if hasattr(result, 'author') else result.get('author')
+                    })
+            
+            books_for_matching.append({
+                'csv_name': book_name,
+                'entry_count': len(entries),
+                'entries': entries,
+                'matched_book': matched_book,
+                'search_results': search_results_dict
+            })
+        
+        # Step 3: Check if we need user book matching or can proceed directly
+        auto_matched_count = len([b for b in books_for_matching if b['matched_book']])
+        bookless_count = len([b for b in books_for_matching if b.get('is_bookless', False)])
+        needs_user_matching = auto_matched_count + bookless_count < len(books_for_matching)
+        
+        if needs_user_matching:
+            # Update job status to need book matching with correct progress metrics
+            safe_update_import_job(user_id, task_id, {
+                'status': 'needs_book_matching',
+                'import_type': 'reading_history',
+                'books_for_matching': books_for_matching,
+                'validation_errors': validation_errors,  # Keep as list for template
+                'total_entries': total_entries,
+                'total': total_entries,  # Total CSV entries
+                'processed': total_entries,  # All CSV entries have been analyzed
+                'auto_matched': auto_matched_count,  # Books automatically matched
+                'need_review': len(distinct_books) - auto_matched_count - bookless_count,  # Books needing manual review
+                'validation_errors_count': len(validation_errors),  # Use different key for count
+                'distinct_books_count': len(distinct_books),
+                'auto_matched_count': auto_matched_count,
+                'recent_activity': [
+                    f"Analysis complete: {len(distinct_books)} distinct books found",
+                    f"{auto_matched_count} automatically matched",
+                    f"{len(validation_errors)} validation errors",
+                    f"{len(distinct_books) - auto_matched_count} books need manual matching"
+                ]
+            })
+            
+            print(f"🎯 [READING_HISTORY] Analysis complete. Ready for user book matching.")
+        else:
+            # All books are auto-matched, proceed directly to final processing
+            print(f"🎉 [READING_HISTORY] All books auto-matched! Proceeding to final processing...")
+            
+            # Create book resolutions for all auto-matched books
+            book_resolutions = {}
+            for book_data in books_for_matching:
+                if book_data['matched_book']:
+                    book_resolutions[book_data['csv_name']] = {
+                        'action': 'match',
+                        'book_id': book_data['matched_book']['id']
+                    }
+                elif book_data.get('is_bookless', False):
+                    # Handle bookless entries in automatic processing
+                    book_resolutions[book_data['csv_name']] = {
+                        'action': 'bookless'
+                    }
+            
+            # Update status to processing
+            safe_update_import_job(user_id, task_id, {
+                'status': 'running',
+                'import_type': 'reading_history',
+                'recent_activity': ['All books auto-matched, creating reading logs...']
+            })
+            
+            # Process the final import directly
+            job_data = {
+                'user_id': user_id,
+                'csv_file_path': csv_file_path,
+                'books_for_matching': books_for_matching,
+                'import_type': 'reading_history'
+            }
+            asyncio.run(_process_final_reading_history_import(task_id, job_data, book_resolutions))
+        
+    except Exception as e:
+        safe_update_import_job(user_id, task_id, {
+            'status': 'failed',
+            'error_messages': [str(e)]
+        })
+        raise
+    
+    finally:
+        # Note: Don't clean up temp file yet - we need it for final processing
+        pass

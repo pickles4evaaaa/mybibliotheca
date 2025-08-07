@@ -255,8 +255,17 @@ def inject_reading_streak():
         return {'current_reading_streak': 0}
 
 
+def inject_datetime():
+    """Make datetime and date available in templates."""
+    return {
+        'datetime': datetime,
+        'date': date
+    }
+
+
 def register_context_processors(app):
     """Register all context processors with the Flask app."""
     app.context_processor(inject_debug_manager)
     app.context_processor(inject_site_config)
     app.context_processor(inject_reading_streak)
+    app.context_processor(inject_datetime)

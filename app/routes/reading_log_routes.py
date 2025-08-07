@@ -128,6 +128,10 @@ def my_reading_logs():
 def api_user_books():
     """API endpoint to get user's books for the reading log modal, prioritizing recent reads."""
     try:
+        # Get limit from query parameter, default to 20 for recent reads, max 100
+        limit = request.args.get('limit', default=20, type=int)
+        limit = min(limit, 100)  # Cap at 100 books
+        
         # First, try to get recently read books (last 5 books with reading logs)
         recently_read = reading_log_service.get_recently_read_books_sync(current_user.id, limit=5)
         
@@ -157,17 +161,40 @@ def api_user_books():
                     book_data.append({
                         'id': book.id,
                         'title': book.title,
-                        'authors': authors_str
+                        'author': authors_str  # Changed 'authors' to 'author' to match frontend expectation
                     })
                     book_ids_added.add(book.id)
         
-        # If we don't have enough books (less than 5), fill with user's regular books
-        if len(book_data) < 5:
-            all_books = book_service.get_books_for_user(current_user.id, limit=50)
+        # Fill with user's regular books up to the limit
+        if len(book_data) < limit:
+            # Get more books to fill up to the limit
+            books_needed = limit - len(book_data)
+            all_books = book_service.get_books_for_user(current_user.id, limit=books_needed + 50)  # Get extra to account for duplicates
             
             for book in all_books:
-                if len(book_data) >= 5:
+                if len(book_data) >= limit:
                     break
+                    
+                if book.id not in book_ids_added:
+                    # Get authors string
+                    authors_str = ''
+                    if hasattr(book, 'contributors') and book.contributors:
+                        author_names = [contrib.person.name for contrib in book.contributors 
+                                      if contrib.contribution_type.value in ['authored', 'co_authored']]
+                        authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
+                        if len(author_names) > 3:
+                            authors_str += ' et al.'
+                    elif hasattr(book, 'authors') and book.authors:
+                        authors_str = ', '.join([author.name for author in book.authors[:3]])
+                        if len(book.authors) > 3:
+                            authors_str += ' et al.'
+                    
+                    book_data.append({
+                        'id': book.id,
+                        'title': book.title,
+                        'author': authors_str  # Changed 'authors' to 'author' to match frontend expectation
+                    })
+                    book_ids_added.add(book.id)
                     
                 if book.id not in book_ids_added:
                     # Get authors string
@@ -190,62 +217,7 @@ def api_user_books():
                     })
                     book_ids_added.add(book.id)
         
-        # If still not enough books, fall back to any user books
-        if len(book_data) < 5:
-            all_books = book_service.get_books_for_user(current_user.id, limit=50)
-            
-            for book in all_books:
-                if len(book_data) >= 5:
-                    break
-                    
-                if book.id not in book_ids_added:
-                    # Get authors string
-                    authors_str = ''
-                    if hasattr(book, 'contributors') and book.contributors:
-                        author_names = [contrib.person.name for contrib in book.contributors 
-                                      if contrib.contribution_type.value in ['authored', 'co_authored']]
-                        authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
-                        if len(author_names) > 3:
-                            authors_str += ' et al.'
-                    elif hasattr(book, 'authors') and book.authors:
-                        authors_str = ', '.join([author.name for author in book.authors[:3]])
-                        if len(book.authors) > 3:
-                            authors_str += ' et al.'
-                    
-                    book_data.append({
-                        'id': book.id,
-                        'title': book.title,
-                        'authors': authors_str
-                    })
-                    book_ids_added.add(book.id)
-        
-        # Get all remaining books for search functionality
-        all_remaining_books = book_service.get_books_for_user(current_user.id, limit=1000)
-        for book in all_remaining_books:
-            if book.id not in book_ids_added:
-                # Get authors string
-                authors_str = ''
-                if hasattr(book, 'contributors') and book.contributors:
-                    author_names = [contrib.person.name for contrib in book.contributors 
-                                  if contrib.contribution_type.value in ['authored', 'co_authored']]
-                    authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
-                    if len(author_names) > 3:
-                        authors_str += ' et al.'
-                elif hasattr(book, 'authors') and book.authors:
-                    authors_str = ', '.join([author.name for author in book.authors[:3]])
-                    if len(book.authors) > 3:
-                        authors_str += ' et al.'
-                
-                book_data.append({
-                    'id': book.id,
-                    'title': book.title,
-                    'authors': authors_str
-                })
-        
-        return jsonify({
-            'status': 'success',
-            'books': book_data
-        })
+        return jsonify(book_data)  # Return books directly as array
         
     except Exception as e:
         logger.error(f"Error getting user books for API: {e}")
@@ -291,3 +263,168 @@ def delete_reading_log(log_id):
         logger.error(f"Error deleting reading log {log_id}: {e}")
         flash('Error deleting reading log entry', 'error')
         return redirect(url_for('reading_logs.my_reading_logs'))
+
+
+@reading_logs.route('/edit/<log_id>', methods=['GET', 'POST'])
+@login_required
+def edit_reading_log(log_id):
+    """Edit an existing reading log entry."""
+    try:
+        # Get the existing reading log
+        existing_log = reading_log_service.get_reading_log_by_id_sync(log_id, current_user.id)
+        
+        if not existing_log:
+            flash('Reading log not found', 'error')
+            return redirect(url_for('reading_logs.my_reading_logs'))
+        
+        if request.method == 'GET':
+            # Show edit form
+            return render_template('reading_logs/edit_log.html', 
+                                 log=existing_log)
+        
+        # Handle POST - update the log
+        pages_read = request.form.get('pages_read', 0)
+        minutes_read = request.form.get('minutes_read', 0)
+        notes = request.form.get('notes', '').strip()
+        log_date_str = request.form.get('date')
+        
+        # Handle book association changes
+        new_book_id = request.form.get('new_book_id', '').strip()
+        new_book_title = request.form.get('new_book_title', '').strip()
+        current_book_id = request.form.get('book_id', '').strip()
+        current_book_title = request.form.get('book_title', '').strip()
+        
+        # Determine final book association
+        final_book_id = None
+        final_book_title = None
+        
+        if new_book_id:
+            # User selected a new book
+            final_book_id = new_book_id
+            final_book_title = None  # Clear book_title when linked to a book
+        elif new_book_title:
+            # User entered a custom book title (bookless mode)
+            final_book_id = None
+            final_book_title = new_book_title
+        else:
+            # No changes made, keep current values
+            final_book_id = current_book_id if current_book_id else None
+            final_book_title = current_book_title if current_book_title else None
+        
+        # Parse date
+        try:
+            log_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            flash('Invalid date format. Please use YYYY-MM-DD', 'error')
+            return render_template('reading_logs/edit_log.html', log=existing_log)
+        
+        # Convert numeric fields
+        try:
+            pages_read = int(pages_read) if pages_read else 0
+            minutes_read = int(minutes_read) if minutes_read else 0
+        except ValueError:
+            flash('Pages and minutes must be valid numbers', 'error')
+            return render_template('reading_logs/edit_log.html', log=existing_log)
+        
+        # Validate that we have either pages or minutes
+        if pages_read <= 0 and minutes_read <= 0:
+            flash('Must specify either pages read or minutes read', 'error')
+            return render_template('reading_logs/edit_log.html', log=existing_log)
+        
+        # Create updated reading log object
+        updated_log = ReadingLog(
+            user_id=current_user.id,
+            book_id=final_book_id,
+            date=log_date,
+            pages_read=pages_read,
+            minutes_read=minutes_read,
+            notes=notes or None,
+            book_title=final_book_title,
+            created_at=datetime.fromisoformat(existing_log['created_at']) if existing_log.get('created_at') else datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        
+        # Update the log
+        result = reading_log_service.update_reading_log_sync(log_id, updated_log)
+        
+        if result:
+            flash('Reading log updated successfully', 'success')
+            return redirect(url_for('reading_logs.my_reading_logs'))
+        else:
+            flash('Failed to update reading log', 'error')
+            return render_template('reading_logs/edit_log.html', log=existing_log)
+        
+    except Exception as e:
+        logger.error(f"Error editing reading log {log_id}: {e}")
+        flash('Error updating reading log', 'error')
+        return redirect(url_for('reading_logs.my_reading_logs'))
+
+
+@reading_logs.route('/quick-add', methods=['POST'])
+@login_required
+def quick_add_bookless_log():
+    """Quick add a reading log without a specific book."""
+    try:
+        pages_read = request.form.get('pages_read', 0)
+        minutes_read = request.form.get('minutes_read', 0)
+        notes = request.form.get('notes', '').strip()
+        book_title = request.form.get('book_title', '').strip()
+        log_date_str = request.form.get('date', date.today().isoformat())
+        
+        # Parse date
+        try:
+            log_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid date format. Please use YYYY-MM-DD'
+            }), 400
+        
+        # Convert numeric fields
+        try:
+            pages_read = int(pages_read) if pages_read else 0
+            minutes_read = int(minutes_read) if minutes_read else 0
+        except ValueError:
+            return jsonify({
+                'status': 'error',
+                'message': 'Pages and minutes must be valid numbers'
+            }), 400
+        
+        # Validate that we have either pages or minutes
+        if pages_read <= 0 and minutes_read <= 0:
+            return jsonify({
+                'status': 'error',
+                'message': 'Must specify either pages read or minutes read'
+            }), 400
+        
+        # Create reading log
+        reading_log = ReadingLog(
+            user_id=current_user.id,
+            book_id=None,  # Bookless log
+            date=log_date,
+            pages_read=pages_read,
+            minutes_read=minutes_read,
+            notes=notes or None,
+            book_title=book_title or None
+        )
+        
+        result = reading_log_service.create_reading_log_sync(reading_log)
+        
+        if result:
+            return jsonify({
+                'status': 'success',
+                'message': 'Reading log added successfully',
+                'log': result
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to create reading log'
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Error creating quick reading log: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Error creating reading log'
+        }), 500

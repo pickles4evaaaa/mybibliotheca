@@ -614,6 +614,7 @@ class SafeKuzuManager:
                     minutes_read INT64,
                     notes STRING,
                     created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
                     PRIMARY KEY(id)
                 )
                 """,

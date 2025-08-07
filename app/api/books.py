@@ -436,3 +436,66 @@ def search_books():
             'message': 'Search failed',
             'error': str(e)
         }), 500
+
+
+@books_api.route('/user-search', methods=['GET'])
+@api_auth_optional
+def search_user_books():
+    """Search user's personal book collection."""
+    try:
+        if not current_user.is_authenticated:
+            return jsonify({
+                'status': 'error',
+                'message': 'Authentication required'
+            }), 401
+        
+        # Get query parameters
+        query = request.args.get('q', '').strip()
+        limit = min(int(request.args.get('limit', 10)), 50)  # Max 50 results
+        
+        if not query or len(query) < 2:
+            return jsonify({
+                'status': 'success',
+                'books': [],
+                'count': 0
+            })
+        
+        # Search user's books using the book service
+        results = book_service.search_user_books_sync(current_user.id, query, limit=limit)
+        
+        if not results:
+            return jsonify({
+                'status': 'success',
+                'books': [],
+                'count': 0
+            })
+        
+        # Format results for frontend
+        books = []
+        for book in results:
+            books.append({
+                'id': book.get('id'),
+                'uid': book.get('uid'),
+                'title': book.get('title', ''),
+                'authors_text': book.get('authors_text', 'Unknown Author'),
+                'cover_url': book.get('cover_url'),
+                'page_count': book.get('page_count'),
+                'published_date': book.get('published_date'),
+                'reading_status': book.get('reading_status')
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'books': books,
+            'count': len(books),
+            'query': query
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error searching user books: {e}")
+        current_app.logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': 'Search failed',
+            'error': str(e)
+        }), 500

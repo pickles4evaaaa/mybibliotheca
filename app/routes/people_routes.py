@@ -557,7 +557,7 @@ def delete_person(person_id):
             # Get ALL relationships from this book to our person
             book_relationships_query = """
             MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
-            RETURN type(r) as relationship_type
+            RETURN r
             """
             
             rel_result = safe_manager.execute_query(book_relationships_query, {
@@ -567,18 +567,17 @@ def delete_person(person_id):
             all_relationships = _convert_query_result_to_list(rel_result)
             
             # Check for relationships pointing to our person/author
-            for rel in all_relationships:
+            for rel_data in all_relationships:
                 orphaned_relationships_found += 1
                 
                 # If the book doesn't exist in user's library, it's orphaned
                 if not book_exists_in_user_library:
                     delete_rel_query = """
-                    MATCH (b:Book {id: $book_id})-[r:$relationship_type]->(p:Person {id: $person_id})
+                    MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
                     DELETE r
                     """
                     safe_manager.execute_query(delete_rel_query, {
                         'book_id': book_id,
-                        'relationship_type': rel.get('relationship_type', 'AUTHORED'),
                         'person_id': person_id
                     })
                     orphaned_relationships_cleaned += 1
@@ -597,7 +596,7 @@ def delete_person(person_id):
             # Check ALL relationships from this book to our person
             book_relationships_query = """
             MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
-            RETURN type(r) as relationship_type
+            RETURN r
             """
             
             rel_result = safe_manager.execute_query(book_relationships_query, {
@@ -607,10 +606,10 @@ def delete_person(person_id):
             all_relationships = _convert_query_result_to_list(rel_result)
             
             # Check if any of these relationships point to our person/author
-            for rel in all_relationships:
+            for rel_data in all_relationships:
                 total_associated_books += 1
                 book_title = getattr(book, 'title', 'Unknown Book')
-                associated_book_details.append(f"{book_title} ({rel.get('relationship_type', 'unknown')})")
+                associated_book_details.append(f"{book_title} (relationship)")
                 break  # Only count each book once
         
         if total_associated_books > 0:
@@ -636,7 +635,7 @@ def delete_person(person_id):
             # Get ALL relationships from this book to our person
             book_relationships_query = """
             MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
-            RETURN type(r) as relationship_type
+            RETURN r
             """
             
             rel_result = safe_manager.execute_query(book_relationships_query, {
@@ -646,14 +645,13 @@ def delete_person(person_id):
             all_relationships = _convert_query_result_to_list(rel_result)
             
             # Remove any relationships pointing to our person
-            for rel in all_relationships:
+            for rel_data in all_relationships:
                 delete_rel_query = """
-                MATCH (b:Book {id: $book_id})-[r:$relationship_type]->(p:Person {id: $person_id})
+                MATCH (b:Book {id: $book_id})-[r]->(p:Person {id: $person_id})
                 DELETE r
                 """
                 safe_manager.execute_query(delete_rel_query, {
                     'book_id': book_id,
-                    'relationship_type': rel.get('relationship_type', 'AUTHORED'),
                     'person_id': person_id
                 })
                 final_cleanup_count += 1

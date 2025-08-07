@@ -2322,7 +2322,7 @@ def replace_cover(uid):
         # Download and cache the new cover image (same process as manual addition)
         try:
             # Use persistent covers directory in data folder
-            covers_dir = Path('/data/covers')
+            covers_dir = Path('/app/data/covers')
             
             # Fallback to local development path if Docker path doesn't exist
             if not covers_dir.exists():
@@ -2428,7 +2428,7 @@ def upload_cover(uid):
         old_cover_url = user_book.cover_url
         
         # Set up covers directory in data folder
-        covers_dir = Path('/data/covers')
+        covers_dir = Path('/app/data/covers')
         
         # Fallback to local development path if Docker path doesn't exist
         if not covers_dir.exists():
@@ -3340,7 +3340,7 @@ def add_book_manual():
                                 
                                 # Use persistent covers directory in data folder
                                 import os
-                                covers_dir = Path('/data/covers')
+                                covers_dir = Path('/app/data/covers')
                                 
                                 # Fallback to local development path if Docker path doesn't exist
                                 if not covers_dir.exists():
@@ -3866,7 +3866,7 @@ def add_book_manual():
                     
                     # Use persistent covers directory in data folder
                     import os
-                    covers_dir = Path('/data/covers')
+                    covers_dir = Path('/app/data/covers')
                     
                     # Fallback to local development path if Docker path doesn't exist
                     if not covers_dir.exists():

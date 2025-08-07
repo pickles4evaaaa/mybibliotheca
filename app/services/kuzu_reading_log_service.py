@@ -136,9 +136,11 @@ class KuzuReadingLogService:
         try:
             cutoff_date = date.today() - timedelta(days=days_back)  # Keep as date object
             
+            # Query to get both book-specific and bookless reading logs
             query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
             WHERE rl.date >= $cutoff_date
+            OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
             RETURN rl, b
             ORDER BY rl.date DESC, rl.created_at DESC
             LIMIT $limit
@@ -153,12 +155,15 @@ class KuzuReadingLogService:
             
             logs = []
             for result in results:
-                if 'col_0' in result and 'col_1' in result:
+                if 'col_0' in result:
                     log_data = result['col_0']
-                    book_data = result['col_1']
+                    book_data = result.get('col_1')  # May be None for bookless logs
                     
                     log_dict = dict(log_data)
-                    log_dict['book'] = dict(book_data)
+                    if book_data:
+                        log_dict['book'] = dict(book_data)
+                    else:
+                        log_dict['book'] = None  # Explicitly set to None for bookless logs
                     logs.append(log_dict)
             
             return logs
@@ -181,23 +186,42 @@ class KuzuReadingLogService:
             # Generate ID if not provided
             log_id = reading_log.id or str(uuid.uuid4())
             
-            # Check if log already exists for this user, book, and date
-            existing_query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book {id: $book_id})
-            WHERE rl.date = $log_date
-            RETURN rl
-            """
-            
-            existing_results = safe_execute_kuzu_query(existing_query, {
-                'user_id': reading_log.user_id,
-                'book_id': reading_log.book_id,
-                'log_date': reading_log.date.isoformat() if reading_log.date else None
-            })
-            existing_list = _convert_query_result_to_list(existing_results)
-            
-            if existing_list:
-                # Update existing reading log
-                return self._update_existing_log(existing_list[0]['col_0'], reading_log)
+            # Check if book_id is provided for book-specific logs
+            if reading_log.book_id:
+                # Check if log already exists for this user, book, and date
+                existing_query = """
+                MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book {id: $book_id})
+                WHERE rl.date = $log_date
+                RETURN rl
+                """
+                
+                existing_results = safe_execute_kuzu_query(existing_query, {
+                    'user_id': reading_log.user_id,
+                    'book_id': reading_log.book_id,
+                    'log_date': reading_log.date.isoformat() if reading_log.date else None
+                })
+                existing_list = _convert_query_result_to_list(existing_results)
+                
+                if existing_list:
+                    # Update existing reading log
+                    return self._update_existing_log(existing_list[0]['col_0'], reading_log)
+            else:
+                # For bookless logs, check if a general log exists for this user and date
+                existing_query = """
+                MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+                WHERE rl.date = $log_date AND NOT (rl)-[:FOR_BOOK]->()
+                RETURN rl
+                """
+                
+                existing_results = safe_execute_kuzu_query(existing_query, {
+                    'user_id': reading_log.user_id,
+                    'log_date': reading_log.date.isoformat() if reading_log.date else None
+                })
+                existing_list = _convert_query_result_to_list(existing_results)
+                
+                if existing_list:
+                    # Update existing bookless reading log
+                    return self._update_existing_log(existing_list[0]['col_0'], reading_log)
             
             # Create new reading log node
             create_log_query = """
@@ -207,7 +231,8 @@ class KuzuReadingLogService:
                 pages_read: $pages_read,
                 minutes_read: $minutes_read,
                 notes: $notes,
-                created_at: $created_at
+                created_at: $created_at,
+                updated_at: $updated_at
             })
             RETURN rl
             """
@@ -218,7 +243,8 @@ class KuzuReadingLogService:
                 "pages_read": reading_log.pages_read,
                 "minutes_read": reading_log.minutes_read,
                 "notes": reading_log.notes,
-                "created_at": reading_log.created_at  # Pass datetime object directly
+                "created_at": reading_log.created_at,  # Pass datetime object directly
+                "updated_at": reading_log.updated_at or reading_log.created_at
             })
             
             if not log_result:
@@ -233,15 +259,10 @@ class KuzuReadingLogService:
                 logger.debug(f"log_list[0]: {log_list[0]}")
                 logger.debug(f"log_list[0] keys: {log_list[0].keys() if hasattr(log_list[0], 'keys') else 'No keys method'}")
             
-            # Create relationships
+            # Create user relationship (always needed)
             user_rel_query = """
             MATCH (u:User {id: $user_id}), (rl:ReadingLog {id: $log_id})
             CREATE (u)-[:LOGGED]->(rl)
-            """
-            
-            book_rel_query = """
-            MATCH (rl:ReadingLog {id: $log_id}), (b:Book {id: $book_id})
-            CREATE (rl)-[:FOR_BOOK]->(b)
             """
             
             safe_execute_kuzu_query(user_rel_query, {
@@ -249,10 +270,17 @@ class KuzuReadingLogService:
                 "log_id": log_id
             })
             
-            safe_execute_kuzu_query(book_rel_query, {
-                "log_id": log_id,
-                "book_id": reading_log.book_id
-            })
+            # Create book relationship only if book_id is provided
+            if reading_log.book_id:
+                book_rel_query = """
+                MATCH (rl:ReadingLog {id: $log_id}), (b:Book {id: $book_id})
+                CREATE (rl)-[:FOR_BOOK]->(b)
+                """
+                
+                safe_execute_kuzu_query(book_rel_query, {
+                    "log_id": log_id,
+                    "book_id": reading_log.book_id
+                })
             
             # Return a simple success response instead of trying to access col_0
             created_log = {
@@ -263,7 +291,8 @@ class KuzuReadingLogService:
                 'pages_read': reading_log.pages_read,
                 'minutes_read': reading_log.minutes_read,
                 'notes': reading_log.notes,
-                'created_at': reading_log.created_at.isoformat() if reading_log.created_at else None
+                'created_at': reading_log.created_at.isoformat() if reading_log.created_at else None,
+                'updated_at': (reading_log.updated_at or reading_log.created_at).isoformat() if reading_log.updated_at or reading_log.created_at else None
             }
             
             logger.info(f"Successfully created reading log {log_id} for user {reading_log.user_id}")
@@ -628,9 +657,10 @@ class KuzuReadingLogService:
             # Calculate offset
             offset = (page - 1) * per_page
             
-            # Get paginated logs with book details
+            # Get paginated logs with optional book details
             logs_query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+            OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
             RETURN rl, b
             ORDER BY rl.date DESC, rl.created_at DESC
             SKIP $offset
@@ -646,11 +676,14 @@ class KuzuReadingLogService:
             logs_list = _convert_query_result_to_list(logs_result)
             logs = []
             for result in logs_list:
-                if 'col_0' in result and 'col_1' in result:
+                if 'col_0' in result:
                     log_data = dict(result['col_0'])
-                    book_data = dict(result['col_1'])
+                    book_data = result.get('col_1')
                     
-                    log_data['book'] = book_data
+                    if book_data:
+                        log_data['book'] = dict(book_data)
+                    else:
+                        log_data['book'] = None  # Bookless log
                     logs.append(log_data)
             
             # Calculate pagination info
@@ -683,3 +716,114 @@ class KuzuReadingLogService:
                     'has_next': False
                 }
             }
+
+    def update_reading_log_sync(self, log_id: str, reading_log: ReadingLog) -> Optional[Dict[str, Any]]:
+        """
+        Update an existing reading log entry.
+        
+        Args:
+            log_id: The ID of the reading log to update
+            reading_log: The updated ReadingLog domain object
+            
+        Returns:
+            The updated reading log dictionary or None if update failed
+        """
+        try:
+            # First verify the log exists and belongs to the user
+            verify_query = """
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog {id: $log_id})
+            RETURN rl
+            """
+            
+            verify_result = safe_execute_kuzu_query(verify_query, {
+                'user_id': reading_log.user_id,
+                'log_id': log_id
+            })
+            
+            if not verify_result:
+                logger.error(f"Reading log {log_id} not found for user {reading_log.user_id}")
+                return None
+            
+            # Update the reading log
+            update_query = """
+            MATCH (rl:ReadingLog {id: $log_id})
+            SET rl.date = $log_date,
+                rl.pages_read = $pages_read,
+                rl.minutes_read = $minutes_read,
+                rl.notes = $notes,
+                rl.updated_at = $updated_at
+            RETURN rl
+            """
+            
+            result = safe_execute_kuzu_query(update_query, {
+                "log_id": log_id,
+                "log_date": reading_log.date,
+                "pages_read": reading_log.pages_read,
+                "minutes_read": reading_log.minutes_read,
+                "notes": reading_log.notes,
+                "updated_at": reading_log.updated_at or datetime.utcnow()
+            })
+            
+            if result:
+                logger.info(f"Updated reading log {log_id}")
+                
+                # Return updated log data
+                updated_log = {
+                    'id': log_id,
+                    'user_id': reading_log.user_id,
+                    'book_id': reading_log.book_id,
+                    'date': reading_log.date.isoformat() if reading_log.date else None,
+                    'pages_read': reading_log.pages_read,
+                    'minutes_read': reading_log.minutes_read,
+                    'notes': reading_log.notes,
+                    'created_at': reading_log.created_at.isoformat() if reading_log.created_at else None,
+                    'updated_at': (reading_log.updated_at or datetime.utcnow()).isoformat()
+                }
+                
+                return updated_log
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error updating reading log {log_id}: {e}")
+            return None
+
+    def get_reading_log_by_id_sync(self, log_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific reading log by ID.
+        
+        Args:
+            log_id: The ID of the reading log
+            user_id: The user ID to verify ownership
+            
+        Returns:
+            The reading log dictionary or None if not found
+        """
+        try:
+            query = """
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog {id: $log_id})
+            OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
+            RETURN rl, b
+            """
+            
+            result = safe_execute_kuzu_query(query, {
+                'user_id': user_id,
+                'log_id': log_id
+            })
+            
+            if result:
+                result_list = _convert_query_result_to_list(result)
+                if result_list:
+                    log_data = dict(result_list[0]['col_0'])
+                    book_data = dict(result_list[0]['col_1']) if result_list[0]['col_1'] else None
+                    
+                    if book_data:
+                        log_data['book'] = book_data
+                    
+                    return log_data
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting reading log {log_id}: {e}")
+            return None

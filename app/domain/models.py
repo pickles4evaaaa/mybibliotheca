@@ -774,13 +774,14 @@ class UserBookRelationship:
 class ReadingLog:
     """Daily reading log entry."""
     user_id: str
-    book_id: str
     date: date
     id: Optional[str] = None
+    book_id: Optional[str] = None  # Now optional to allow general reading logs
     pages_read: int = 0
     minutes_read: int = 0
     notes: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
 
 
 @dataclass
