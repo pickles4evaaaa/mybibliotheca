@@ -499,3 +499,66 @@ def search_user_books():
             'message': 'Search failed',
             'error': str(e)
         }), 500
+
+
+@books_api.route('/external-search', methods=['GET'])
+@api_token_required
+def search_external_books():
+    """
+    Search for books across Google Books and OpenLibrary APIs by title.
+    
+    This endpoint searches external APIs (not the user's collection) and ranks results
+    by title similarity. Returns comprehensive book data for potential addition to library.
+    
+    Query Parameters:
+        - title: Book title to search for (required)
+        - limit: Maximum number of results (default: 10, max: 20)
+        - isbn_required: Only return books with ISBN (default: false)
+    
+    Returns:
+        JSON with search results containing:
+        - Display fields: title, author, publication_year, page_count
+        - Full book data for each result (stored in full_data field)
+        - Search metadata and similarity scoring
+    """
+    try:
+        # Get query parameters
+        title = request.args.get('title', '').strip()
+        limit = min(int(request.args.get('limit', 10)), 20)  # Max 20 results
+        isbn_required = request.args.get('isbn_required', 'false').lower() == 'true'
+        
+        if not title or len(title) < 2:
+            return jsonify({
+                'status': 'error',
+                'message': 'Title parameter is required (minimum 2 characters)'
+            }), 400
+        
+        # Import the search function
+        from app.utils.book_search import search_books_with_display_fields
+        
+        # Perform the search
+        search_results = search_books_with_display_fields(title, limit, isbn_required=isbn_required)
+        
+        return jsonify({
+            'status': 'success',
+            'data': search_results['results'],
+            'metadata': search_results['metadata'],
+            'count': len(search_results['results'])
+        }), 200
+        
+    except ImportError as e:
+        current_app.logger.error(f"Error importing book search module: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Book search functionality not available',
+            'error': str(e)
+        }), 500
+        
+    except Exception as e:
+        current_app.logger.error(f"Error searching external books: {e}")
+        current_app.logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': 'External search failed',
+            'error': str(e)
+        }), 500

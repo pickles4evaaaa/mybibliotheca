@@ -284,9 +284,9 @@ class KuzuServiceFacade:
         """Get all books for a user with relationship data."""
         return self.relationship_service.get_books_for_user_sync(user_id, limit, offset)
     
-    def get_user_books_sync(self, user_id: str) -> List[Book]:
+    def get_user_books_sync(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Book]:
         """Get all books for a user."""
-        return self.relationship_service.get_books_for_user_sync(user_id)
+        return self.relationship_service.get_books_for_user_sync(user_id, limit, offset)
     
     def get_recently_read_books_for_user(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Get recently read books for a user based on reading logs."""

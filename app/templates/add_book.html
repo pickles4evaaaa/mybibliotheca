@@ -124,8 +124,20 @@
                                                 Title *
                                                 <i class="bi bi-info-circle text-muted ms-1" title="The main title of the book" data-bs-toggle="tooltip"></i>
                                             </label>
-                                            <input type="text" class="form-control" id="title" name="title" 
-                                                   value="{{ book_data.title if book_data else request.form.title or '' }}" required>
+                                            <div class="input-group">
+                                                <input type="text" class="form-control" id="title" name="title" 
+                                                       value="{{ book_data.title if book_data else request.form.title or '' }}" 
+                                                       required placeholder="Enter book title..." 
+                                                       onkeydown="if(event.key==='Enter'){event.preventDefault();searchByTitle();}">
+                                                <button type="button" class="btn btn-outline-primary" id="title-search-btn" 
+                                                        onclick="searchByTitle()">
+                                                    <i class="bi bi-search" id="title-search-icon"></i>
+                                                </button>
+                                            </div>
+                                            <small class="text-muted">
+                                                <i class="bi bi-lightbulb me-1"></i>
+                                                Click the search icon or press Enter to find books by title
+                                            </small>
                                         </div>
                                         
                                         <div class="mb-3">
@@ -604,6 +616,64 @@
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
 }
+
+/* Title search styling */
+#title-search-btn.btn-outline-secondary {
+    cursor: not-allowed;
+}
+
+#title-search-btn.btn-outline-primary {
+    cursor: pointer;
+}
+
+.search-result-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.search-result-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.search-result-card .card-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.search-result-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    border: 1px solid #e0e0e0;
+}
+
+.search-result-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    border-color: #007bff;
+}
+
+.search-result-card .card-title {
+    color: #2c3e50;
+}
+
+.search-result-card .badge {
+    font-size: 0.75rem;
+}
+
+#titleSearchModal .modal-body {
+    padding: 1.5rem;
+}
+
+#titleSearchModal .modal-dialog {
+    margin: 1rem;
+}
+
+@media (min-width: 992px) {
+    #titleSearchModal .modal-dialog {
+        max-width: 90%;
+        margin: 1.75rem auto;
+    }
+}
 </style>
 
 <script>
@@ -637,8 +707,8 @@ function fetchBookData() {
                 document.getElementById('language').value = data.language || '';
                 document.getElementById('page_count').value = data.page_count || '';
                 document.getElementById('cover_url').value = data.cover || '';
-                document.getElementById('isbn13').value = data.isbn13 || '';
-                document.getElementById('isbn10').value = data.isbn10 || '';
+                document.getElementById('isbn13').value = data.isbn_13 || '';
+                document.getElementById('isbn10').value = data.isbn_10 || '';
                 document.getElementById('google_books_id').value = data.google_books_id || '';
                 
                 // Handle published date
@@ -672,6 +742,388 @@ function fetchBookData() {
             button.innerHTML = originalText;
             button.disabled = false;
         });
+}
+
+// Title search functionality
+function handleTitleKeyDown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault(); // Prevent form submission
+        searchByTitle();
+    }
+}
+
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+function searchByTitle() {
+    console.log('🔍 searchByTitle function called!');
+    try {
+        const title = document.getElementById('title').value.trim();
+        
+        if (title.length < 3) {
+            showMessage('Please enter at least 3 characters to search for books.', 'warning');
+            return;
+        }
+        
+        // Show modal and loading state
+        const modalElement = document.getElementById('titleSearchModal');
+        if (!modalElement) {
+            console.error('❌ Modal element not found!');
+            return;
+        }
+        
+        const modal = new bootstrap.Modal(modalElement);
+        modal.show();
+        
+        const loadingDiv = document.getElementById('title-search-loading');
+        const resultsDiv = document.getElementById('title-search-results');
+        const emptyDiv = document.getElementById('title-search-empty');
+        
+        loadingDiv.style.display = 'block';
+        resultsDiv.style.display = 'none';
+        emptyDiv.style.display = 'none';
+        
+        // Update modal title with search term
+        document.getElementById('titleSearchModalLabel').innerHTML = `
+            <i class="bi bi-search me-2"></i>Search Results for "${title}"
+        `;
+        
+        // Call the external search API
+        fetch(`/api/v1/books/external-search?title=${encodeURIComponent(title)}&limit=10&isbn_required=true`, {
+            credentials: 'include'
+        })
+            .then(response => response.json())
+            .then(data => {
+                loadingDiv.style.display = 'none';
+                
+                if (data.status === 'success' && data.data && data.data.length > 0) {
+                    displayTitleSearchResults(data.data);
+                    resultsDiv.style.display = 'block';
+                } else {
+                    emptyDiv.style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Error searching for books:', error);
+                loadingDiv.style.display = 'none';
+                emptyDiv.style.display = 'block';
+                showMessage('Error searching for books. Please try again.', 'error');
+            });
+    } catch (error) {
+        console.error('❌ Error in searchByTitle():', error);
+        alert('Error: ' + error.message);
+    }
+}
+
+function displayTitleSearchResults(results) {
+    // Store results globally for later use
+    window.searchResults = results;
+    
+    const resultsDiv = document.getElementById('title-search-results');
+    resultsDiv.innerHTML = '';
+    
+    results.forEach((book, index) => {
+        const fullData = book.full_data || book; // Fallback to book if full_data is missing
+        const coverUrl = fullData.cover_url || '/static/images/no-cover.png';
+        const isbn = fullData.isbn_13 || fullData.isbn_10 || 'N/A';
+        
+        const resultCard = document.createElement('div');
+        resultCard.className = 'col-12 col-lg-6';
+        resultCard.innerHTML = `
+            <div class="card mb-3 search-result-card h-100">
+                <div class="row g-0">
+                    <div class="col-3 col-md-2">
+                        <img src="${coverUrl}" class="img-fluid rounded-start" alt="Book Cover" 
+                             style="height: 160px; width: 100%; object-fit: cover;"
+                             onerror="this.src='/static/images/no-cover.png'">
+                    </div>
+                    <div class="col-9 col-md-10">
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <h6 class="card-title mb-1 fw-bold" style="font-size: 1.1rem; line-height: 1.3;">
+                                    ${escapeHtml(fullData.title || 'Unknown Title')}
+                                </h6>
+                                <span class="badge bg-success ms-2">
+                                    ${(book.similarity_score * 100).toFixed(0)}% match
+                                </span>
+                            </div>
+                            
+                            ${fullData.subtitle ? `<p class="text-muted mb-2 fst-italic" style="font-size: 0.9rem;">${escapeHtml(fullData.subtitle)}</p>` : ''}
+                            
+                            <div class="row g-2 mb-2">
+                                <div class="col-12 col-md-6">
+                                    <small class="text-muted d-block">
+                                        <strong>Author:</strong> ${escapeHtml(book.author || 'Unknown')}
+                                    </small>
+                                    <small class="text-muted d-block">
+                                        <strong>Published:</strong> ${escapeHtml(fullData.published_date || book.publication_year || 'Unknown')}
+                                    </small>
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <small class="text-muted d-block">
+                                        <strong>Pages:</strong> ${book.page_count || 'Unknown'}
+                                    </small>
+                                    <small class="text-muted d-block">
+                                        <strong>ISBN:</strong> ${isbn}
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            ${fullData.description ? `<p class="card-text text-muted mb-3" style="font-size: 0.85rem; line-height: 1.4;">
+                                <strong>Description:</strong> ${(() => {
+                                    const desc = escapeHtml(fullData.description);
+                                    return desc.length > 120 ? desc.substring(0, 120) + '...' : desc;
+                                })()}
+                            </p>` : ''}
+                            
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-primary">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Source: ${fullData.source || 'Unknown'}
+                                </small>
+                                ${isbn !== 'N/A' ? 
+                                    `<button type="button" class="btn btn-primary btn-sm" 
+                                            onclick="selectBookFromSearch(${index})">
+                                        <i class="bi bi-check-lg me-1"></i>Use This Book
+                                    </button>` :
+                                    `<small class="text-warning">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>No ISBN Available
+                                    </small>`
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        resultsDiv.appendChild(resultCard);
+    });
+}
+
+function selectBookFromSearch(bookIndex) {
+    // Get the selected book data from our stored results
+    if (!window.searchResults || !window.searchResults[bookIndex]) {
+        showMessage('Error: Book data not found. Please try searching again.', 'error');
+        return;
+    }
+    
+    const selectedBook = window.searchResults[bookIndex];
+    const fullData = selectedBook.full_data || selectedBook;
+    
+    console.log('📖 Using merged book data:', fullData);
+    
+    // Close the modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('titleSearchModal'));
+    modal.hide();
+    
+    // The fullData already contains the BEST merged information from both APIs
+    // This includes smart date selection, combined metadata, etc.
+    
+    // If this book has an ISBN, fetch additional data and merge it intelligently
+    const isbn = fullData.isbn_13 || fullData.isbn_10;
+    
+    if (isbn) {
+        // Show loading message
+        showMessage('Loading complete book details...', 'info');
+        
+        // Use the same endpoint as the ISBN quick lookup for consistency
+        fetch(`{{ url_for("book.fetch_book", isbn="") }}${isbn}`)
+            .then(response => response.json())
+            .then(isbnData => {
+                console.log('📚 Retrieved additional ISBN data:', isbnData);
+                
+                // Merge the search result data with ISBN lookup data intelligently
+                const mergedData = mergeBookData(fullData, isbnData);
+                console.log('🔀 Final merged data:', mergedData);
+                
+                // Populate form with the intelligently merged data
+                populateFormWithBookData(mergedData);
+                
+                showMessage(`Selected "${mergedData.title}" - Form populated with enhanced book details!`, 'success');
+            })
+            .catch(error => {
+                console.warn('⚠️ ISBN lookup failed, using search data only:', error);
+                // Fall back to using just the search result data
+                populateFormWithBookData(fullData);
+                showMessage(`Selected "${fullData.title}" - Form populated with available details!`, 'success');
+            });
+    } else {
+        // No ISBN available, use the search data directly
+        populateFormWithBookData(fullData);
+        showMessage(`Selected "${fullData.title}" - Form populated with available details!`, 'success');
+    }
+}
+
+function mergeBookData(searchData, isbnData) {
+    // Start with search data (which is already merged from Google Books + OpenLibrary)
+    const merged = { ...searchData };
+    
+    // Intelligently merge fields, preferring more complete/detailed data
+    
+    // Title: prefer longer/more complete title
+    if (isbnData.title && isbnData.title.length > (merged.title || '').length) {
+        merged.title = isbnData.title;
+    }
+    
+    // Subtitle: use if missing or if ISBN data has a longer one
+    if (!merged.subtitle && isbnData.subtitle) {
+        merged.subtitle = isbnData.subtitle;
+    } else if (isbnData.subtitle && isbnData.subtitle.length > (merged.subtitle || '').length) {
+        merged.subtitle = isbnData.subtitle;
+    }
+    
+    // Description: prefer longer, more detailed description
+    if (!merged.description && isbnData.description) {
+        merged.description = isbnData.description;
+    } else if (isbnData.description && isbnData.description.length > (merged.description || '').length) {
+        merged.description = isbnData.description;
+    }
+    
+    // Publisher: use if missing
+    if (!merged.publisher && isbnData.publisher) {
+        merged.publisher = isbnData.publisher;
+    }
+    
+    // Page count: prefer actual number over null/undefined
+    if (!merged.page_count && isbnData.page_count) {
+        merged.page_count = isbnData.page_count;
+    } else if (isbnData.page_count && (!merged.page_count || isbnData.page_count > merged.page_count)) {
+        merged.page_count = isbnData.page_count;
+    }
+    
+    // Language: use if missing
+    if (!merged.language && isbnData.language) {
+        merged.language = isbnData.language;
+    }
+    
+    // Authors: merge arrays, removing duplicates
+    if (isbnData.authors && Array.isArray(isbnData.authors)) {
+        const existingAuthors = merged.authors || [];
+        const allAuthors = [...existingAuthors, ...isbnData.authors];
+        merged.authors = [...new Set(allAuthors)]; // Remove duplicates
+        merged.author = merged.authors.join(', ');
+    }
+    
+    // Categories: merge arrays, removing duplicates, limit to 5
+    if (isbnData.categories && Array.isArray(isbnData.categories)) {
+        const existingCategories = merged.categories || [];
+        const allCategories = [...existingCategories, ...isbnData.categories];
+        merged.categories = [...new Set(allCategories)].slice(0, 5);
+    }
+    
+    // Cover URL: prefer higher quality or use as fallback
+    if (!merged.cover_url && isbnData.cover_url) {
+        merged.cover_url = isbnData.cover_url;
+    }
+    
+    // Publication date: use the smart date selection we already implemented
+    if (isbnData.published_date || isbnData.publication_year) {
+        // Re-run our smart date selection with the new data
+        const currentDate = merged.published_date || '';
+        const currentYear = merged.publication_year;
+        const newDate = isbnData.published_date || '';
+        const newYear = isbnData.publication_year;
+        
+        // Use the same logic as in book_search.py
+        if (currentDate && newDate) {
+            // Check which is more detailed
+            const currentIsFull = /\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{1,2}-\d{1,2}|[A-Za-z]{3,}/.test(currentDate);
+            const newIsFull = /\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{1,2}-\d{1,2}|[A-Za-z]{3,}/.test(newDate);
+            
+            if (newIsFull && !currentIsFull) {
+                merged.published_date = newDate;
+                merged.publication_year = newYear || currentYear;
+            } else if (!currentDate && newDate) {
+                merged.published_date = newDate;
+                merged.publication_year = newYear || currentYear;
+            }
+        } else if (!merged.published_date && isbnData.published_date) {
+            merged.published_date = isbnData.published_date;
+            merged.publication_year = isbnData.publication_year || merged.publication_year;
+        }
+    }
+    
+    return merged;
+}
+
+function populateFormWithBookData(bookData) {
+    console.log('📝 Populating form with book data:', bookData);
+    
+    // Basic information
+    document.getElementById('title').value = bookData.title || '';
+    document.getElementById('subtitle').value = bookData.subtitle || '';
+    document.getElementById('isbn').value = bookData.isbn_13 || bookData.isbn_10 || '';
+    document.getElementById('description').value = bookData.description || '';
+    document.getElementById('cover_url').value = bookData.cover_url || bookData.cover || '';
+    document.getElementById('publisher').value = bookData.publisher || '';
+    document.getElementById('language').value = bookData.language || 'en';
+    
+    // Additional Details fields
+    document.getElementById('isbn13').value = bookData.isbn_13 || bookData.isbn13 || '';
+    document.getElementById('isbn10').value = bookData.isbn_10 || bookData.isbn10 || '';
+    document.getElementById('google_books_id').value = bookData.google_books_id || '';
+    
+    // Publication date handling
+    if (bookData.published_date) {
+        let dateValue = bookData.published_date;
+        
+        // Convert various date formats to MM/DD/YYYY
+        if (/^\d{4}$/.test(dateValue)) {
+            dateValue = `01/01/${dateValue}`;
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+            const parts = dateValue.split('-');
+            dateValue = `${parts[1]}/${parts[2]}/${parts[0]}`;
+        } else if (dateValue.includes('-') || dateValue.includes('/')) {
+            const yearMatch = dateValue.match(/(\d{4})/);
+            if (yearMatch) {
+                const monthMatch = dateValue.match(/(\d{1,2})/);
+                const dayMatch = dateValue.match(/\d{4}.*?(\d{1,2})/);
+                if (monthMatch && dayMatch) {
+                    dateValue = `${monthMatch[1].padStart(2, '0')}/${dayMatch[1].padStart(2, '0')}/${yearMatch[1]}`;
+                } else {
+                    dateValue = `01/01/${yearMatch[1]}`;
+                }
+            }
+        }
+        
+        document.getElementById('published_date').value = dateValue;
+    } else if (bookData.publication_year) {
+        document.getElementById('published_date').value = `01/01/${bookData.publication_year}`;
+    }
+    
+    // Page count
+    if (bookData.page_count) {
+        document.getElementById('page_count').value = bookData.page_count;
+    }
+    
+    // Clear existing authors and add new ones
+    const authorFields = document.querySelectorAll('[data-type="authored"] .contributor-tag');
+    authorFields.forEach(tag => tag.remove());
+    
+    if (bookData.authors && bookData.authors.length > 0) {
+        bookData.authors.forEach(author => {
+            addContributor('authored', author, null);
+        });
+    }
+    
+    // Clear existing categories and add new ones
+    const categoryFields = document.querySelectorAll('.category-tag');
+    categoryFields.forEach(tag => tag.remove());
+    
+    if (bookData.categories && bookData.categories.length > 0) {
+        bookData.categories.slice(0, 3).forEach(category => {
+            addCategory(category, null, null, null);
+        });
+    }
 }
 
 // Advanced file upload handler with OCR and AI processing
@@ -1422,7 +1874,7 @@ function loadLocations() {
     const locationSelect = document.getElementById('location_id');
     if (!locationSelect) return;
     
-    fetch('/locations/api/list')
+    fetch('/locations/api/user_locations')
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -1430,7 +1882,7 @@ function loadLocations() {
             return response.json();
         })
         .then(locations => {
-            // Clear existing options except the first one
+            // Clear existing options except the first one (which should be "Select location...")
             while (locationSelect.children.length > 1) {
                 locationSelect.removeChild(locationSelect.lastChild);
             }
@@ -1445,20 +1897,8 @@ function loadLocations() {
         })
         .catch(error => {
             console.error('Error loading locations:', error);
-            // Fallback to some default locations if API fails
-            const defaultLocations = [
-                {id: 'living_room', name: 'Living Room'},
-                {id: 'bedroom', name: 'Bedroom'},
-                {id: 'study', name: 'Study'},
-                {id: 'office', name: 'Office'}
-            ];
-            
-            defaultLocations.forEach(location => {
-                const option = document.createElement('option');
-                option.value = location.id;
-                option.textContent = location.name;
-                locationSelect.appendChild(option);
-            });
+            // Show a message to the user instead of falling back to fake data
+            showMessage('Could not load locations. Please refresh the page and try again.', 'warning');
         });
 }
 
@@ -1502,4 +1942,39 @@ function collectContributorsAndCategories() {
     }
 }
 </script>
+
+<!-- Title Search Results Modal -->
+<div class="modal fade" id="titleSearchModal" tabindex="-1" aria-labelledby="titleSearchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-fullscreen-lg-down modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="titleSearchModalLabel">
+                    <i class="bi bi-search me-2"></i>Book Search Results
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <div id="title-search-loading" class="text-center p-4" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Searching...</span>
+                    </div>
+                    <p class="mt-2 mb-0">Searching for books...</p>
+                </div>
+                
+                <div id="title-search-results" class="row g-3">
+                    <!-- Results will be populated here -->
+                </div>
+                
+                <div id="title-search-empty" class="text-center p-4" style="display: none;">
+                    <i class="bi bi-search fs-1 text-muted"></i>
+                    <p class="mt-2 mb-0 text-muted">No books found with ISBNs for this title.</p>
+                    <small class="text-muted">Try a different search term or add the book manually.</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

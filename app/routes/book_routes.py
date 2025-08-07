@@ -3564,7 +3564,7 @@ def add_book_manual():
                 
                 try:
                     # Find the created book to update it with personal information
-                    books = book_service.get_user_books(current_user.id)
+                    books = book_service.get_user_books_sync(current_user.id)
                     created_book = None
                     for book in books:
                         if book.title == title and (not author or book.primary_author == author):
