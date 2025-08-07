@@ -203,7 +203,7 @@ def add_book():
             current_app.logger.error(f"Error loading AI config: {e}")
             ai_config = {}
         
-        return render_template('add_book_new.html', 
+        return render_template('add_book.html', 
                              personal_fields=personal_fields,
                              global_fields=global_fields,
                              ai_config=ai_config)
@@ -3140,6 +3140,7 @@ def add_book_manual():
     # 🔥 SIMPLIFIED ARCHITECTURE INTERCEPT
     # Use simplified service to avoid complex transaction issues
     try:
+        import json
         
         # Get form data
         title = request.form['title'].strip()
@@ -3147,8 +3148,53 @@ def add_book_manual():
             flash('Error: Title is required to add a book.', 'danger')
             return redirect(url_for('main.library'))
         
-        author = request.form.get('author', '').strip()
-        additional_authors_form = request.form.get('additional_authors', '').strip()
+        # Handle new form structure with contributor JSON data
+        contributors_data = {}
+        try:
+            # Extract contributor data from JSON fields
+            for contrib_type in ['authored', 'narrated', 'edited', 'translated', 'illustrated']:
+                json_field = f'contributors_{contrib_type}'
+                if json_field in request.form:
+                    contributors_data[contrib_type] = json.loads(request.form[json_field])
+                else:
+                    contributors_data[contrib_type] = []
+        except json.JSONDecodeError as e:
+            current_app.logger.error(f"Error parsing contributor JSON: {e}")
+            contributors_data = {}
+        
+        # Handle categories from JSON
+        categories = []
+        try:
+            if 'categories' in request.form:
+                category_data = json.loads(request.form['categories'])
+                categories = [cat['name'] for cat in category_data if 'name' in cat]
+        except json.JSONDecodeError as e:
+            current_app.logger.error(f"Error parsing categories JSON: {e}")
+            # Fallback to manual categories field
+            manual_cats = request.form.get('manual_categories')
+            if manual_cats:
+                categories = [cat.strip() for cat in manual_cats.split(',') if cat.strip()]
+        
+        # Extract primary author from contributors or fallback to form field
+        author = ''
+        if contributors_data.get('authored'):
+            author = contributors_data['authored'][0]['name']
+        else:
+            author = request.form.get('author', '').strip()
+        
+        # Handle additional authors
+        additional_authors_list = []
+        if contributors_data.get('authored') and len(contributors_data['authored']) > 1:
+            additional_authors_list = [contrib['name'] for contrib in contributors_data['authored'][1:]]
+        additional_authors_form = ', '.join(additional_authors_list) if additional_authors_list else ''
+        
+        # Extract other contributor types
+        narrator_list = [contrib['name'] for contrib in contributors_data.get('narrated', [])]
+        editor_list = [contrib['name'] for contrib in contributors_data.get('edited', [])]
+        translator_list = [contrib['name'] for contrib in contributors_data.get('translated', [])]
+        illustrator_list = [contrib['name'] for contrib in contributors_data.get('illustrated', [])]
+        
+        # Basic form fields
         isbn = request.form.get('isbn', '').strip()
         subtitle = request.form.get('subtitle', '').strip()
         publisher_name = request.form.get('publisher', '').strip()
@@ -3168,12 +3214,6 @@ def add_book_manual():
             except ValueError:
                 pass
         
-        # Parse categories from manual_categories field
-        categories = []
-        manual_cats = request.form.get('manual_categories')
-        if manual_cats:
-            categories = [cat.strip() for cat in manual_cats.split(',') if cat.strip()]
-        
         # Get location
         location_id = request.form.get('location_id')
         
@@ -3181,6 +3221,18 @@ def add_book_manual():
         reading_status = request.form.get('reading_status', 'plan_to_read')
         ownership_status = request.form.get('ownership_status', 'owned')
         media_type = request.form.get('media_type', 'physical')
+        
+        # Get personal information
+        personal_notes = request.form.get('personal_notes', '').strip()
+        review = request.form.get('review', '').strip()
+        user_rating = request.form.get('user_rating', '')
+        start_date = request.form.get('start_date', '').strip()
+        finish_date = request.form.get('finish_date', '').strip()
+        
+        # Additional ISBN fields
+        isbn13_form = request.form.get('isbn13', '').strip()
+        isbn10_form = request.form.get('isbn10', '').strip()
+        google_books_id_form = request.form.get('google_books_id', '').strip()
         
         # Enhanced ISBN processing with comprehensive field mapping
         isbn13 = None
@@ -3382,93 +3434,72 @@ def add_book_manual():
                 except Exception as e:
                     pass
         
-        # Process API contributors and map them to SimplifiedBook fields
+        # Process API contributors and merge with form contributors
         additional_authors = None
         editor = None
         translator = None
         narrator = None
         illustrator = None
-        google_books_id = None
+        google_books_id = google_books_id_form  # Use form value if provided
         openlibrary_id = None
         
-        # Extract Google Books ID from API data
-        if api_data and api_data.get('google_books_id'):
+        # Extract Google Books ID from API data if not provided in form
+        if not google_books_id and api_data and api_data.get('google_books_id'):
             google_books_id = api_data['google_books_id']
-            print(f"🎯 [MANUAL] Set Google Books ID: {google_books_id}")
+            print(f"🎯 [MANUAL] Set Google Books ID from API: {google_books_id}")
         
         # Extract OpenLibrary ID from API data  
         if api_data and api_data.get('openlibrary_id'):
             openlibrary_id = api_data['openlibrary_id']
             print(f"🎯 [MANUAL] Set OpenLibrary ID: {openlibrary_id}")
         
+        # Merge API contributors with form contributors
         if api_data and api_data.get('contributors'):
-            contributors = api_data['contributors']
-            print(f"🎯 [MANUAL] Processing {len(contributors)} contributors from API")
+            api_contributors = api_data['contributors']
+            print(f"🎯 [MANUAL] Processing {len(api_contributors)} contributors from API")
             
-            # Debug: Print all contributors
-            for i, contrib in enumerate(contributors):
-                print(f"🎯 [MANUAL] Contributor {i+1}: name='{contrib.get('name')}', role='{contrib.get('role')}'")
+            # Extract different types of contributors from API
+            api_authors = [c['name'] for c in api_contributors if c.get('role') == 'author']
+            api_editors = [c['name'] for c in api_contributors if c.get('role') == 'editor']
+            api_translators = [c['name'] for c in api_contributors if c.get('role') == 'translator']
+            api_narrators = [c['name'] for c in api_contributors if c.get('role') == 'narrator']
+            api_illustrators = [c['name'] for c in api_contributors if c.get('role') == 'illustrator']
             
-            # Extract different types of contributors
-            api_authors = [c['name'] for c in contributors if c.get('role') == 'author']
-            api_editors = [c['name'] for c in contributors if c.get('role') == 'editor']
-            api_translators = [c['name'] for c in contributors if c.get('role') == 'translator']
-            api_narrators = [c['name'] for c in contributors if c.get('role') == 'narrator']
-            api_illustrators = [c['name'] for c in contributors if c.get('role') == 'illustrator']
-            
-            print(f"🎯 [MANUAL] Extracted authors: {api_authors}")
-            print(f"🎯 [MANUAL] Current form author: '{author}'")
-            
-            # Set primary author from API only if user didn't provide a meaningful author name
-            # Check for empty, placeholder, or very generic values
-            is_form_author_empty = (
-                not author or 
-                author.strip() == "" or
-                author.lower() in ["primary author name", "author", "unknown author", "unknown", "author name"]
-            )
-            
-            if is_form_author_empty and api_authors:
+            # Merge form contributors with API contributors (form takes precedence)
+            # Only use API data if form is empty for that contributor type
+            if not author and api_authors:
                 author = api_authors[0]
                 print(f"🎯 [MANUAL] Set primary author from API: {author}")
-            elif api_authors:
-                print(f"🎯 [MANUAL] Form author provided by user, keeping: '{author}' (API has: {api_authors[0]})")
-            else:
-                print(f"🎯 [MANUAL] No API authors found, keeping form author: '{author}'")
             
-            # Handle additional authors intelligently
-            # Start with form data if provided, otherwise use API data
-            final_additional_authors = None
-            
-            if additional_authors_form:
-                # User provided additional authors in the form - use those
-                final_additional_authors = additional_authors_form
-                print(f"🎯 [MANUAL] Using form additional_authors: {final_additional_authors}")
-            elif api_authors and len(api_authors) > 1:
-                # No form additional authors, but API has multiple - use API excluding primary
+            if not additional_authors_form and api_authors and len(api_authors) > 1:
                 primary_author = author or "Unknown Author"
                 additional_author_names = [a for a in api_authors if a.lower() != primary_author.lower()]
                 if additional_author_names:
-                    final_additional_authors = ', '.join(additional_author_names)
-                    print(f"🎯 [MANUAL] Set additional_authors from API: {final_additional_authors}")
+                    additional_authors_form = ', '.join(additional_author_names)
+                    print(f"🎯 [MANUAL] Set additional_authors from API: {additional_authors_form}")
             
-            additional_authors = final_additional_authors
+            if not editor_list and api_editors:
+                editor_list = api_editors
+                print(f"🎯 [MANUAL] Set editors from API: {editor_list}")
             
-            # Set other contributor types
-            if api_editors:
-                editor = ', '.join(api_editors)
-                print(f"🎯 [MANUAL] Set editor: {editor}")
+            if not translator_list and api_translators:
+                translator_list = api_translators
+                print(f"🎯 [MANUAL] Set translators from API: {translator_list}")
             
-            if api_translators:
-                translator = ', '.join(api_translators)
-                print(f"🎯 [MANUAL] Set translator: {translator}")
+            if not narrator_list and api_narrators:
+                narrator_list = api_narrators
+                print(f"🎯 [MANUAL] Set narrators from API: {narrator_list}")
             
-            if api_narrators:
-                narrator = ', '.join(api_narrators)
-                print(f"🎯 [MANUAL] Set narrator: {narrator}")
-            
-            if api_illustrators:
-                illustrator = ', '.join(api_illustrators)
-                print(f"🎯 [MANUAL] Set illustrator: {illustrator}")
+            if not illustrator_list and api_illustrators:
+                illustrator_list = api_illustrators
+                print(f"🎯 [MANUAL] Set illustrators from API: {illustrator_list}")
+        
+        # Convert contributor lists to strings
+        additional_authors = additional_authors_form
+        editor = ', '.join(editor_list) if editor_list else None
+        translator = ', '.join(translator_list) if translator_list else None
+        narrator = ', '.join(narrator_list) if narrator_list else None
+        illustrator = ', '.join(illustrator_list) if illustrator_list else None
         
         # Create simplified book data with enhanced API fields including contributors
         book_data = SimplifiedBook(
@@ -3528,6 +3559,51 @@ def add_book_manual():
             )
             
             if success:
+                # After successful book creation, update with personal information
+                from app.services import book_service
+                
+                try:
+                    # Find the created book to update it with personal information
+                    books = book_service.get_user_books(current_user.id)
+                    created_book = None
+                    for book in books:
+                        if book.title == title and (not author or book.primary_author == author):
+                            created_book = book
+                            break
+                    
+                    if created_book:
+                        # Update personal information
+                        update_data = {}
+                        if personal_notes:
+                            update_data['personal_notes'] = personal_notes
+                        if review:
+                            update_data['review'] = review
+                        if user_rating:
+                            try:
+                                update_data['user_rating'] = int(user_rating)
+                            except ValueError:
+                                pass
+                        
+                        # Handle reading dates
+                        if start_date:
+                            update_data['start_date'] = start_date
+                        if finish_date:
+                            update_data['finish_date'] = finish_date
+                        
+                        # Handle additional ISBN fields if provided
+                        if isbn13_form and isbn13_form != (isbn13 or ''):
+                            update_data['isbn13'] = isbn13_form
+                        if isbn10_form and isbn10_form != (isbn10 or ''):
+                            update_data['isbn10'] = isbn10_form
+                        
+                        if update_data:
+                            book_service.update_book(created_book.uid, update_data, current_user.id)
+                            print(f"🎯 [MANUAL] Updated book with personal information: {list(update_data.keys())}")
+                    
+                except Exception as update_e:
+                    print(f"Warning: Could not update personal information: {update_e}")
+                    # Don't fail the whole operation if personal info update fails
+                
                 flash(f'Successfully added "{title}" to your library!', 'success')
                 return redirect(url_for('main.library'))
             else:

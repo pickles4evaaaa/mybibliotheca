@@ -14,245 +14,1001 @@
         </div>
     </div>
 
-<div class="card">
-    <div class="card-body">
-        <form method="post">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-          
-          <div class="mb-3">
-            <button type="button" class="btn btn-secondary" onclick="startScanner()">
-              <i class="bi bi-upc-scan me-1"></i>Scan Barcode
-            </button>
-            <button type="button" class="btn btn-info ms-2" onclick="triggerImageUpload()">
-              <i class="bi bi-camera me-1"></i>Upload Image
-            </button>
-          </div>
+    <!-- Help Text -->
+    <div class="alert alert-info" role="alert">
+        <i class="bi bi-lightbulb me-2"></i>
+        <strong>Quick Start:</strong> Enter an ISBN and click "Fetch Book" to automatically populate book details, or manually fill in the information in the sections below. All fields except the title are optional.
+    </div>
 
-          <!-- ISBN input -->
-          <div class="mb-3">
-            <label for="isbn" class="form-label">ISBN</label>
-            <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
-                   type="text" pattern="[\d-]+" title="Enter a valid ISBN (digits and hyphens only)">
-          </div>
-
-          <!-- Constrained scanner box -->
-          <div id="scanner" style="
-            width: 300px;
-            height: 200px;
-            display: none;
-            border: 2px solid #ccc;
-            margin: 1rem 0;
-            overflow: hidden;
-            position: relative;
-            background-color: #000;
-          "></div>
-
-          <!-- Image upload section -->
-          <div class="mb-3">
-            <input type="file" id="imageUpload" accept="image/*" style="display: none;" onchange="processImageUpload(this)">
-            <div id="imagePreview" style="display: none; margin: 1rem 0;">
-              <img id="uploadedImage" src="" alt="Uploaded Image" style="max-width: 300px; max-height: 200px; border: 1px solid #ccc; border-radius: 4px;">
-              <div class="mt-2">
-                <small class="text-muted">Processing image for ISBN extraction...</small>
-                <div id="ocrProgress" class="progress mt-1" style="height: 4px; display: none;">
-                  <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+    <!-- Quick Add Options Accordion -->
+    <div class="accordion mb-4" id="quickAddAccordion">
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseQuickAdd" aria-expanded="true" aria-controls="collapseQuickAdd">
+                    <i class="bi bi-lightning me-2"></i>Quick Add Options
+                </button>
+            </h2>
+            <div id="collapseQuickAdd" class="accordion-collapse collapse show" data-bs-parent="#quickAddAccordion">
+                <div class="accordion-body">
+                    <div class="row">
+                        <!-- ISBN Lookup -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-title">
+                                        <i class="bi bi-upc-scan me-1"></i>ISBN Lookup
+                                        <i class="bi bi-info-circle text-muted ms-1" title="Look up book details using ISBN-10 or ISBN-13"></i>
+                                    </h6>
+                                    <div class="input-group mb-3">
+                                        <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
+                                               type="text" pattern="[\d-]+" title="Enter a valid ISBN (digits and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13">
+                                        <button name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
+                                            <i class="bi bi-search me-1"></i>Fetch Book
+                                        </button>
+                                    </div>
+                                    <div class="text-center">
+                                        <small class="text-muted">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Enter an ISBN above and click "Fetch Book" to automatically populate book details
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- File Upload -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-title">
+                                        <i class="bi bi-cloud-upload me-1"></i>File Upload
+                                        <i class="bi bi-info-circle text-muted ms-1" title="Upload cover images or CSV files for bulk import"></i>
+                                    </h6>
+                                    <div class="upload-area border border-2 border-dashed rounded p-4 text-center" 
+                                         style="min-height: 120px; cursor: pointer;" 
+                                         id="upload-area" 
+                                         onclick="document.getElementById('file-input').click()">
+                                        <i class="bi bi-cloud-arrow-up fs-1 text-muted"></i>
+                                        <p class="mt-2 mb-0">Drop files here or click to browse</p>
+                                        <small class="text-muted">Supports images (JPG, PNG) and CSV files</small>
+                                    </div>
+                                    <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.csv" style="display: none;" onchange="handleFileUpload(this)">
+                                    <div id="file-preview" class="mt-2"></div>
+                                    
+                                    <div class="mt-2" id="csv-import-link" style="display: none;">
+                                        <a href="{{ url_for('import.simple_csv_import') }}" class="btn btn-outline-primary btn-sm">
+                                            <i class="bi bi-file-spreadsheet me-1"></i>CSV Import
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-              </div>
             </div>
-          </div>
+        </div>
+    </div>
 
-          <!-- Fetch and book data inputs -->
-          <div class="mb-3">
-            <button name="fetch" value="1" type="submit" class="btn btn-secondary">
-              <i class="bi bi-search me-1"></i>Fetch Book Data
-            </button>
-          </div>
-          
-          <div class="mb-3">
-            <label for="title" class="form-label">Title</label>
-            <input id="title" name="title" class="form-control" 
-                   value="{{ book_data.title if book_data else request.form.title or '' }}">
-          </div>
-          
-          <div class="mb-3">
-            <label for="author" class="form-label">Author</label>
-            <input name="author" class="form-control" 
-                   value="{{ book_data.author if book_data else request.form.author or '' }}">
-          </div>
-          
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label for="start_date" class="form-label">Start Date</label>
-              <input name="start_date" type="date" class="form-control">
+    <!-- Book Details Form -->
+    <div class="accordion" id="bookDetailsAccordion">
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseBookDetails" aria-expanded="true" aria-controls="collapseBookDetails">
+                    <i class="bi bi-book me-2"></i>Book Details
+                </button>
+            </h2>
+            <div id="collapseBookDetails" class="accordion-collapse collapse show" data-bs-parent="#bookDetailsAccordion">
+                <div class="accordion-body">
+                    <form method="post" id="addBookForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        
+                        <!-- Cover Preview -->
+                        {% if book_data and book_data.cover %}
+                        <div class="mb-4 text-center">
+                            <img src="{{ book_data.cover }}" alt="Book Cover" class="img-fluid rounded book-cover" style="max-height: 300px;">
+                        </div>
+                        {% endif %}
+                        
+                        <!-- Basic Information -->
+                        <div class="accordion mb-4" id="basicInfoAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseBasicInfo" aria-expanded="true" aria-controls="collapseBasicInfo">
+                                        <i class="bi bi-info-circle me-2"></i>Basic Information
+                                    </button>
+                                </h2>
+                                <div id="collapseBasicInfo" class="accordion-collapse collapse show" data-bs-parent="#basicInfoAccordion">
+                                    <div class="accordion-body">
+                                        <div class="mb-3">
+                                            <label for="title" class="form-label fw-medium">
+                                                Title *
+                                                <i class="bi bi-info-circle text-muted ms-1" title="The main title of the book" data-bs-toggle="tooltip"></i>
+                                            </label>
+                                            <input type="text" class="form-control" id="title" name="title" 
+                                                   value="{{ book_data.title if book_data else request.form.title or '' }}" required>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="subtitle" class="form-label fw-medium">Subtitle</label>
+                                            <input type="text" class="form-control" id="subtitle" name="subtitle" 
+                                                   value="{{ book_data.subtitle if book_data else request.form.subtitle or '' }}">
+                                        </div>
+                                        
+                                        <!-- Series Information -->
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="series" class="form-label fw-medium">Series</label>
+                                                    <input type="text" class="form-control" id="series" name="series" 
+                                                           value="{{ request.form.series or '' }}">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="mb-3">
+                                                    <label for="series_volume" class="form-label fw-medium">Volume</label>
+                                                    <input type="text" class="form-control" id="series_volume" name="series_volume" 
+                                                           value="{{ request.form.series_volume or '' }}">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="mb-3">
+                                                    <label for="series_order" class="form-label fw-medium">Order</label>
+                                                    <input type="number" class="form-control" id="series_order" name="series_order" 
+                                                           value="{{ request.form.series_order or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Cover URL -->
+                                        <div class="mb-3">
+                                            <label for="cover_url" class="form-label fw-medium">Cover URL</label>
+                                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
+                                                   value="{{ book_data.cover if book_data else request.form.cover_url or '' }}" 
+                                                   placeholder="https://...">
+                                        </div>
+                                        
+                                        <!-- Published Date -->
+                                        <div class="mb-3">
+                                            <label for="published_date" class="form-label fw-medium">Published Date</label>
+                                            <input type="date" class="form-control" id="published_date" name="published_date" 
+                                                   value="{{ request.form.published_date or '' }}">
+                                        </div>
+                                        
+                                        <!-- Description -->
+                                        <div class="mb-3">
+                                            <label for="description" class="form-label fw-medium">Description/Summary</label>
+                                            <textarea class="form-control" id="description" name="description" rows="4" 
+                                                      placeholder="Book description or summary...">{{ book_data.description if book_data else request.form.description or '' }}</textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Contributors -->
+                        <div class="accordion mb-4" id="contributorsAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContributors" aria-expanded="false" aria-controls="collapseContributors">
+                                        <i class="bi bi-people me-2"></i>Contributors
+                                    </button>
+                                </h2>
+                                <div id="collapseContributors" class="accordion-collapse collapse" data-bs-parent="#contributorsAccordion">
+                                    <div class="accordion-body">
+                                        <div class="row">
+                                            <div class="col-lg-6">
+                                                <!-- Authors -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-person-fill me-1"></i> Authors
+                                                    </label>
+                                                    <div class="contributor-section" data-type="authored">
+                                                        <div class="contributors-display mb-2" id="authors-display">
+                                                            <!-- Pre-populated from book_data if available -->
+                                                            {% if book_data and book_data.author %}
+                                                            <div class="contributor-tag" data-name="{{ book_data.author }}">
+                                                                {{ book_data.author }}
+                                                                <span class="remove" onclick="removeContributor(this)">×</span>
+                                                            </div>
+                                                            {% endif %}
+                                                        </div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing author name..." data-type="authored">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Narrators -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-headphones me-1"></i> Narrators
+                                                    </label>
+                                                    <div class="contributor-section" data-type="narrated">
+                                                        <div class="contributors-display mb-2" id="narrators-display"></div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing narrator name..." data-type="narrated">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="col-lg-6">
+                                                <!-- Editors -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-pencil me-1"></i> Editors
+                                                    </label>
+                                                    <div class="contributor-section" data-type="edited">
+                                                        <div class="contributors-display mb-2" id="editors-display"></div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing editor name..." data-type="edited">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Translators -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-translate me-1"></i> Translators
+                                                    </label>
+                                                    <div class="contributor-section" data-type="translated">
+                                                        <div class="contributors-display mb-2" id="translators-display"></div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing translator name..." data-type="translated">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Illustrators -->
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-medium">
+                                                        <i class="bi bi-palette me-1"></i> Illustrators
+                                                    </label>
+                                                    <div class="contributor-section" data-type="illustrated">
+                                                        <div class="contributors-display mb-2" id="illustrators-display"></div>
+                                                        <div class="contributor-autocomplete">
+                                                            <input type="text" class="form-control contributor-input" 
+                                                                   placeholder="Start typing illustrator name..." data-type="illustrated">
+                                                            <div class="autocomplete-dropdown"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Genres/Categories -->
+                        <div class="accordion mb-4" id="genresAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseGenres" aria-expanded="false" aria-controls="collapseGenres">
+                                        <i class="bi bi-tag-fill me-2"></i>Genres
+                                    </button>
+                                </h2>
+                                <div id="collapseGenres" class="accordion-collapse collapse" data-bs-parent="#genresAccordion">
+                                    <div class="accordion-body">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-medium">
+                                                <i class="bi bi-tag-fill me-1"></i> Genres
+                                            </label>
+                                            <div class="category-section" data-type="category">
+                                                <div class="categories-display mb-2" id="categories-display"></div>
+                                                <div class="category-autocomplete">
+                                                    <input type="text" class="form-control category-input" 
+                                                           placeholder="Start typing genre name..." data-type="category">
+                                                    <div class="autocomplete-dropdown"></div>
+                                                </div>
+                                                <div class="form-text">
+                                                    <small class="text-muted">
+                                                        <i class="bi bi-info-circle me-1"></i>
+                                                        Type to search existing genres or add new ones. Popular genres: Fiction, Non-fiction, Mystery, Romance, Science Fiction, Fantasy, Biography, History, etc.
+                                                    </small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Book Properties -->
+                        <div class="accordion mb-4" id="propertiesAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseProperties" aria-expanded="false" aria-controls="collapseProperties">
+                                        <i class="bi bi-gear me-2"></i>Book Properties
+                                    </button>
+                                </h2>
+                                <div id="collapseProperties" class="accordion-collapse collapse" data-bs-parent="#propertiesAccordion">
+                                    <div class="accordion-body">
+                                        <!-- Location -->
+                                        <div class="mb-3">
+                                            <label for="location_id" class="form-label fw-medium">Location</label>
+                                            <select class="form-select" id="location_id" name="location_id">
+                                                <option value="">Select location...</option>
+                                                <!-- Locations will be populated by JavaScript -->
+                                            </select>
+                                        </div>
+                                        
+                                        <!-- Reading Status -->
+                                        <div class="mb-3">
+                                            <label for="reading_status" class="form-label fw-medium">Reading Status</label>
+                                            <select class="form-select" id="reading_status" name="reading_status">
+                                                <option value="plan_to_read" {% if request.form.reading_status == 'plan_to_read' or not request.form.reading_status %}selected{% endif %}>📚 Plan to Read</option>
+                                                <option value="reading" {% if request.form.reading_status == 'reading' %}selected{% endif %}>📖 Currently Reading</option>
+                                                <option value="read" {% if request.form.reading_status == 'read' %}selected{% endif %}>✅ Read</option>
+                                                <option value="on_hold" {% if request.form.reading_status == 'on_hold' %}selected{% endif %}>⏸️ On Hold</option>
+                                                <option value="did_not_finish" {% if request.form.reading_status == 'did_not_finish' %}selected{% endif %}>❌ Did Not Finish</option>
+                                                <option value="library_only" {% if request.form.reading_status == 'library_only' %}selected{% endif %}>📚 Library Only</option>
+                                            </select>
+                                        </div>
+                                        
+                                        <!-- Your Rating -->
+                                        <div class="mb-3">
+                                            <label for="user_rating" class="form-label fw-medium">Your Rating</label>
+                                            <select class="form-select" id="user_rating" name="user_rating">
+                                                <option value="">No rating</option>
+                                                <option value="1" {% if request.form.user_rating == '1' %}selected{% endif %}>⭐ Poor (1 star)</option>
+                                                <option value="2" {% if request.form.user_rating == '2' %}selected{% endif %}>⭐⭐ Fair (2 stars)</option>
+                                                <option value="3" {% if request.form.user_rating == '3' %}selected{% endif %}>⭐⭐⭐ Good (3 stars)</option>
+                                                <option value="4" {% if request.form.user_rating == '4' %}selected{% endif %}>⭐⭐⭐⭐ Very Good (4 stars)</option>
+                                                <option value="5" {% if request.form.user_rating == '5' %}selected{% endif %}>⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
+                                            </select>
+                                        </div>
+                                        
+                                        <!-- Ownership and Media Type -->
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="ownership_status" class="form-label fw-medium">Ownership</label>
+                                                    <select class="form-select" id="ownership_status" name="ownership_status">
+                                                        <option value="owned" {% if request.form.ownership_status == 'owned' or not request.form.ownership_status %}selected{% endif %}>🏠 Owned</option>
+                                                        <option value="borrowed" {% if request.form.ownership_status == 'borrowed' %}selected{% endif %}>📚 Borrowed</option>
+                                                        <option value="loaned" {% if request.form.ownership_status == 'loaned' %}selected{% endif %}>📤 Loaned Out</option>
+                                                        <option value="wishlist" {% if request.form.ownership_status == 'wishlist' %}selected{% endif %}>⭐ Wishlist</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="media_type" class="form-label fw-medium">Format</label>
+                                                    <select class="form-select" id="media_type" name="media_type">
+                                                        <option value="physical" {% if request.form.media_type == 'physical' or not request.form.media_type %}selected{% endif %}>📖 Physical Book</option>
+                                                        <option value="ebook" {% if request.form.media_type == 'ebook' %}selected{% endif %}>💻 E-book</option>
+                                                        <option value="audiobook" {% if request.form.media_type == 'audiobook' %}selected{% endif %}>🎧 Audiobook</option>
+                                                        <option value="kindle" {% if request.form.media_type == 'kindle' %}selected{% endif %}>📱 Kindle</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Personal Information -->
+                        <div class="accordion mb-4" id="personalAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapsePersonal" aria-expanded="false" aria-controls="collapsePersonal">
+                                        <i class="bi bi-person-heart me-2"></i>Personal Information
+                                    </button>
+                                </h2>
+                                <div id="collapsePersonal" class="accordion-collapse collapse" data-bs-parent="#personalAccordion">
+                                    <div class="accordion-body">
+                                        <!-- Personal Notes & Review -->
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="personal_notes" class="form-label fw-medium">Personal Notes</label>
+                                                    <textarea class="form-control" id="personal_notes" name="personal_notes" rows="3" 
+                                                              placeholder="Your personal thoughts and notes about this book...">{{ request.form.personal_notes or '' }}</textarea>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="review" class="form-label fw-medium">Personal Review</label>
+                                                    <textarea class="form-control" id="review" name="review" rows="3" 
+                                                              placeholder="Your detailed review of this book...">{{ request.form.review or '' }}</textarea>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Reading Dates -->
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="start_date" class="form-label fw-medium">Start Date</label>
+                                                    <input type="date" class="form-control" id="start_date" name="start_date" 
+                                                           value="{{ request.form.start_date or '' }}">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="finish_date" class="form-label fw-medium">Finish Date</label>
+                                                    <input type="date" class="form-control" id="finish_date" name="finish_date" 
+                                                           value="{{ request.form.finish_date or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Additional Details -->
+                        <div class="accordion mb-4" id="additionalAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAdditional" aria-expanded="false" aria-controls="collapseAdditional">
+                                        <i class="bi bi-info-circle me-2"></i>Additional Details
+                                    </button>
+                                </h2>
+                                <div id="collapseAdditional" class="accordion-collapse collapse" data-bs-parent="#additionalAccordion">
+                                    <div class="accordion-body">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <!-- ISBN Fields -->
+                                                <div class="mb-3">
+                                                    <label for="isbn13" class="form-label fw-medium">ISBN-13</label>
+                                                    <input type="text" class="form-control" id="isbn13" name="isbn13" 
+                                                           value="{{ book_data.isbn13 if book_data else request.form.isbn13 or '' }}"
+                                                           placeholder="978-...">
+                                                </div>
+                                                
+                                                <div class="mb-3">
+                                                    <label for="isbn10" class="form-label fw-medium">ISBN-10</label>
+                                                    <input type="text" class="form-control" id="isbn10" name="isbn10" 
+                                                           value="{{ book_data.isbn10 if book_data else request.form.isbn10 or '' }}"
+                                                           placeholder="...">
+                                                </div>
+                                                
+                                                <!-- Page Count -->
+                                                <div class="mb-3">
+                                                    <label for="page_count" class="form-label fw-medium">Page Count</label>
+                                                    <input type="number" class="form-control" id="page_count" name="page_count" 
+                                                           value="{{ book_data.page_count if book_data else request.form.page_count or '' }}"
+                                                           placeholder="0">
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="col-md-6">
+                                                <!-- Publisher -->
+                                                <div class="mb-3">
+                                                    <label for="publisher" class="form-label fw-medium">Publisher</label>
+                                                    <input type="text" class="form-control" id="publisher" name="publisher" 
+                                                           value="{{ book_data.publisher if book_data else request.form.publisher or '' }}"
+                                                           placeholder="Publisher name">
+                                                </div>
+                                                
+                                                <!-- Language -->
+                                                <div class="mb-3">
+                                                    <label for="language" class="form-label fw-medium">Language</label>
+                                                    <input type="text" class="form-control" id="language" name="language" 
+                                                           value="{{ book_data.language if book_data else request.form.language or '' }}"
+                                                           placeholder="English, Spanish, etc.">
+                                                </div>
+                                                
+                                                <!-- Source/API IDs -->
+                                                <div class="mb-3">
+                                                    <label for="google_books_id" class="form-label fw-medium">Google Books ID</label>
+                                                    <input type="text" class="form-control" id="google_books_id" name="google_books_id" 
+                                                           value="{{ book_data.google_books_id if book_data else request.form.google_books_id or '' }}"
+                                                           placeholder="Google Books identifier">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Submit Button -->
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <button type="submit" name="add" value="Add Book" class="btn btn-primary btn-lg" id="addBookBtn">
+                                <i class="bi bi-plus-circle me-1"></i>Add Book
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
-            <div class="col-md-6">
-              <label for="finish_date" class="form-label">Finish Date</label>
-              <input name="finish_date" type="date" class="form-control">
-            </div>
-          </div>
-
-          {% if book_data and book_data.cover %}
-          <div class="mb-3 text-center">
-            <img src="{{ book_data.cover }}" alt="Book Cover" class="img-fluid rounded book-cover" style="max-height: 300px;">
-          </div>
-          {% endif %}
-
-          <div class="mb-3">
-            <label for="reading_status" class="form-label">Reading Status</label>
-            <select class="form-select" name="reading_status">
-              <option value="plan_to_read" {{ 'selected' if request.form.want_to_read else '' }}>Plan to Read</option>
-              <option value="reading">Currently Reading</option>
-              <option value="read">Read</option>
-              <option value="library_only" {{ 'selected' if request.form.library_only else '' }}>Library Only (No Reading Intent)</option>
-            </select>
-          </div>
-
-          <div class="d-grid gap-2 d-md-flex justify-content-md-end">
-            <button type="submit" name="add" value="Add Book" class="btn btn-primary">
-              <i class="bi bi-plus-circle me-1"></i>Add Book
-            </button>
-          </div>
-        </form>
+        </div>
     </div>
 </div>
-</div>
 
-<!-- QuaggaJS -->
-<script src="{{ url_for('serve_static', filename='quagga.min.js') }}"></script>
+<!-- CSS for Contributors and Categories -->
+<style>
+.upload-area {
+    transition: all 0.3s ease;
+}
+
+.upload-area:hover {
+    border-color: #adb5bd;
+    background-color: #e9ecef;
+}
+
+.upload-area.dragover {
+    border-color: #0d6efd;
+    background-color: #e7f3ff;
+    transform: scale(1.02);
+}
+
+.contributor-tag, .category-tag {
+    display: inline-block;
+    background-color: #e3f2fd;
+    border: 1px solid #2196f3;
+    color: #1976d2;
+    padding: 4px 8px;
+    margin: 2px;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    position: relative;
+}
+
+.contributor-tag .remove, .category-tag .remove {
+    margin-left: 6px;
+    cursor: pointer;
+    font-weight: bold;
+    color: #1976d2;
+}
+
+.contributor-tag .remove:hover, .category-tag .remove:hover {
+    color: #d32f2f;
+}
+
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-top: none;
+    border-radius: 0 0 0.375rem 0.375rem;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+}
+
+.autocomplete-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #f8f9fa;
+}
+
+.autocomplete-item:hover, .autocomplete-item.selected {
+    background-color: #e3f2fd;
+}
+
+.contributor-autocomplete, .category-autocomplete {
+    position: relative;
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+</style>
+
 <script>
-let quaggaStarted = false;
+// AI Configuration from server
+const aiConfig = {{ ai_config | tojson }};
 
-function startScanner() {
-  const scannerDiv = document.getElementById('scanner');
-  scannerDiv.style.display = 'block';
-
-  if (quaggaStarted) {
-    Quagga.stop();
-    quaggaStarted = false;
-  }
-
-  Quagga.init({
-    inputStream: {
-      name: "Live",
-      type: "LiveStream",
-      target: scannerDiv,
-      constraints: {
-        facingMode: "environment"
-      }
-    },
-    decoder: {
-      readers: ["ean_reader", "ean_8_reader", "upc_reader", "upc_e_reader", "code_39_reader"]
+// Fetch book data from ISBN
+function fetchBookData() {
+    const isbn = document.getElementById('isbn').value.trim();
+    if (!isbn) {
+        showMessage('Please enter an ISBN to fetch book data.', 'error');
+        return;
     }
-  }, function(err) {
-    if (err) {
-      alert("Error starting scanner: " + err);
-      scannerDiv.style.display = 'none';
-      return;
-    }
-    Quagga.start();
-    quaggaStarted = true;
-  });
-
-  Quagga.offDetected();
-  Quagga.onDetected(function(result) {
-    if (result && result.codeResult && result.codeResult.code) {
-      const code = result.codeResult.code;
-      if (code.length === 13 && code.startsWith("978")) {
-        document.getElementById('isbn').value = code;
-        Quagga.stop();
-        quaggaStarted = false;
-        scannerDiv.style.display = 'none';
-        Quagga.offDetected();
-      }
-    }
-  });
+    
+    // Show loading state
+    const button = document.querySelector('button[onclick="fetchBookData()"]');
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Fetching...';
+    button.disabled = true;
+    
+    // Fetch book data from the API
+    fetch(`{{ url_for("book.fetch_book", isbn="") }}${isbn}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data && data.title) {
+                // Populate form fields with fetched data
+                document.getElementById('title').value = data.title || '';
+                document.getElementById('subtitle').value = data.subtitle || '';
+                document.getElementById('description').value = data.description || '';
+                document.getElementById('publisher').value = data.publisher || '';
+                document.getElementById('language').value = data.language || '';
+                document.getElementById('page_count').value = data.page_count || '';
+                document.getElementById('cover_url').value = data.cover || '';
+                document.getElementById('isbn13').value = data.isbn13 || '';
+                document.getElementById('isbn10').value = data.isbn10 || '';
+                document.getElementById('google_books_id').value = data.google_books_id || '';
+                
+                // Handle published date
+                if (data.published_date) {
+                    document.getElementById('published_date').value = data.published_date;
+                }
+                
+                // Add authors if available
+                if (data.author) {
+                    addContributor('authored', data.author, null);
+                }
+                
+                // Add categories if available
+                if (data.categories && Array.isArray(data.categories)) {
+                    data.categories.forEach(category => {
+                        addCategory(category, null, null, null);
+                    });
+                }
+                
+                showMessage('Book data fetched successfully!', 'success');
+            } else {
+                showMessage('No book data found for this ISBN. You can enter details manually.', 'warning');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching book data:', error);
+            showMessage('Error fetching book data. Please try again or enter details manually.', 'error');
+        })
+        .finally(() => {
+            // Restore button state
+            button.innerHTML = originalText;
+            button.disabled = false;
+        });
 }
 
-// Image upload functions
-function triggerImageUpload() {
-  document.getElementById('imageUpload').click();
-}
-
-function processImageUpload(input) {
-  if (input.files && input.files[0]) {
+// Advanced file upload handler with OCR and AI processing
+function handleFileUpload(input) {
     const file = input.files[0];
+    if (!file) return;
     
-    // Validate file type
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/tiff', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      alert('Please select a valid image file (PNG, JPEG, GIF, BMP, TIFF, WebP)');
-      return;
+    const fileName = file.name;
+    const fileSize = (file.size / 1024 / 1024).toFixed(2); // MB
+    const fileType = file.type;
+    const filePreview = document.getElementById('file-preview');
+    const csvImportLink = document.getElementById('csv-import-link');
+    
+    // Hide CSV import link by default
+    csvImportLink.style.display = 'none';
+    
+    // Detect file type and show appropriate preview
+    let fileTypeDisplay = '';
+    let processingMessage = '';
+    
+    if (fileType.startsWith('image/')) {
+        fileTypeDisplay = '📷 Image';
+        processingMessage = 'Choose processing method below';
+    } else if (fileName.toLowerCase().endsWith('.csv')) {
+        fileTypeDisplay = '📁 CSV';
+        processingMessage = 'Will import multiple books from CSV';
+        // Show CSV import link for CSV files
+        csvImportLink.style.display = 'block';
+    } else if (fileName.toLowerCase().endsWith('.db')) {
+        fileTypeDisplay = '🗄️ Database';
+        processingMessage = 'Will migrate books from SQLite database';
+    } else {
+        fileTypeDisplay = '📄 Unknown';
+        processingMessage = 'File type not supported';
     }
     
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      alert('File too large. Please select an image smaller than 10MB.');
-      return;
+    // Show file preview with processing options for images
+    if (fileType.startsWith('image/')) {
+        filePreview.innerHTML = `
+            <div class="alert alert-info">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <strong>${fileTypeDisplay}</strong>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div><strong>${fileName}</strong></div>
+                        <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
+                        <div class="mt-2">
+                            <select class="form-select form-select-sm" id="processing-method" style="width: auto; display: inline-block;">
+                                <option value="ocr">Extract ISBN (OCR)</option>
+                                ${aiConfig && aiConfig.AI_BOOK_EXTRACTION_ENABLED === 'true' ? '<option value="ai">Process with AI</option>' : ''}
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="processFile()">
+                            <i class="bi bi-play-circle me-1"></i>Process
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearFile()">
+                            <i class="bi bi-x-circle me-1"></i>Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        // Show file preview for non-image files
+        filePreview.innerHTML = `
+            <div class="alert alert-info">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <strong>${fileTypeDisplay}</strong>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div><strong>${fileName}</strong></div>
+                        <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="processFile()">
+                            <i class="bi bi-play-circle me-1"></i>Process
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearFile()">
+                            <i class="bi bi-x-circle me-1"></i>Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
     }
-    
-    // Show preview
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const img = document.getElementById('uploadedImage');
-      img.src = e.target.result;
-      document.getElementById('imagePreview').style.display = 'block';
-      document.getElementById('ocrProgress').style.display = 'block';
-    };
-    reader.readAsDataURL(file);
-    
-    // Upload and process image
-    uploadImageForOCR(file);
-  }
 }
 
-function uploadImageForOCR(file) {
-  const formData = new FormData();
-  formData.append('image', file);
-  
-  // Add CSRF token
-  const csrfToken = document.querySelector('input[name="csrf_token"]').value;
-  formData.append('csrf_token', csrfToken);
-  
-  fetch('{{ url_for("books.add_book_from_image") }}', {
-    method: 'POST',
-    body: formData
-  })
-  .then(response => response.json())
-  .then(data => {
-    document.getElementById('ocrProgress').style.display = 'none';
+// Process uploaded file
+function processFile() {
+    const file = document.getElementById('file-input').files[0];
+    if (!file) return;
     
-    if (data.success) {
-      // Populate ISBN field
-      document.getElementById('isbn').value = data.isbn;
-      
-      // If book data was fetched, populate other fields
-      if (data.book_data) {
-        if (data.book_data.title) {
-          document.getElementById('title').value = data.book_data.title;
-        }
-        if (data.book_data.author) {
-          document.querySelector('input[name="author"]').value = data.book_data.author;
-        }
-      }
-      
-      // Show success message
-      showMessage(data.message, 'success');
-      
-      // Hide image preview after successful processing
-      setTimeout(() => {
-        document.getElementById('imagePreview').style.display = 'none';
-      }, 3000);
-      
+    const fileName = file.name;
+    const fileType = file.type;
+    const filePreview = document.getElementById('file-preview');
+    
+    // Create form data
+    const formData = new FormData();
+    
+    // Use the correct field name based on file type
+    if (fileName.toLowerCase().endsWith('.csv')) {
+        formData.append('csv_file', file);
+    } else if (fileName.toLowerCase().endsWith('.db')) {
+        formData.append('db_file', file);
     } else {
-      showMessage(data.error + (data.suggestion ? ' ' + data.suggestion : ''), 'error');
+        formData.append('image', file);
     }
-  })
-  .catch(error => {
-    document.getElementById('ocrProgress').style.display = 'none';
-    console.error('Error:', error);
-    showMessage('Error processing image. Please try again.', 'error');
-  });
+    
+    formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+    
+    // Determine processing endpoint based on file type and method
+    let endpoint = '';
+    let processingMessage = 'Processing';
+    
+    if (fileType.startsWith('image/')) {
+        // Check processing method for images
+        const processingMethodElement = document.getElementById('processing-method');
+        const processingMethod = processingMethodElement ? processingMethodElement.value : 'ocr';
+        
+        if (processingMethod === 'ai') {
+            endpoint = '{{ url_for("book.add_book_from_image_ai") }}';
+            processingMessage = 'Processing with AI';
+        } else {
+            endpoint = '{{ url_for("book.add_book_from_image") }}';
+            processingMessage = 'Extracting ISBN';
+        }
+    } else if (fileName.toLowerCase().endsWith('.csv')) {
+        endpoint = '{{ url_for("import.simple_upload") }}';
+        processingMessage = 'Importing CSV';
+    } else if (fileName.toLowerCase().endsWith('.db')) {
+        endpoint = '{{ url_for("main.migrate_sqlite") }}';
+        processingMessage = 'Migrating database';
+    } else {
+        showMessage('Unsupported file type. Please select an image, CSV, or SQLite database file.', 'error');
+        return;
+    }
+    
+    // Show processing message
+    filePreview.innerHTML = `
+        <div class="alert alert-info">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+                <strong>${processingMessage} ${fileName}...</strong>
+            </div>
+        </div>
+    `;
+    
+    // Submit file for processing
+    fetch(endpoint, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (response.ok) {
+            // Handle successful response
+            if (fileName.toLowerCase().endsWith('.csv')) {
+                // For CSV files, handle JSON response from simple-upload
+                return response.json();
+            } else if (fileName.toLowerCase().endsWith('.db')) {
+                // For DB files, redirect to the response URL (mapping page)
+                window.location.href = response.url;
+                return;
+            } else {
+                // For images, handle the ISBN extraction result
+                return response.json();
+            }
+        } else {
+            throw new Error('Processing failed');
+        }
+    })
+    .then(data => {
+        if (data && data.isbn) {
+            // Traditional OCR processing - just ISBN
+            document.getElementById('isbn').value = data.isbn;
+            fetchBookData(); // Use the existing fetch function
+        } else if (data && (data.title || data.authors)) {
+            // AI processing - full book data
+            populateFormWithAIData(data);
+            showMessage('AI processed book details successfully! Please review and add any additional information.', 'success');
+        } else if (data && data.task_id) {
+            // For CSV imports, redirect to progress page
+            window.location.href = `/import/import-books/progress/${data.task_id}`;
+        } else if (data && data.message) {
+            // Show message from server
+            showMessage(data.message, 'info');
+        }
+        
+        // Clear the file preview after successful processing
+        setTimeout(() => {
+            clearFile();
+        }, 3000);
+    })
+    .catch(error => {
+        console.error('Error processing file:', error);
+        filePreview.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                <strong>Error processing file:</strong> ${error.message}
+            </div>
+        `;
+    });
 }
+
+// Clear uploaded file
+function clearFile() {
+    const fileInput = document.getElementById('file-input');
+    const filePreview = document.getElementById('file-preview');
+    if (fileInput) fileInput.value = '';
+    if (filePreview) filePreview.innerHTML = '';
+}
+
+// Populate form with AI-extracted data
+function populateFormWithAIData(data) {
+    // Helper function to safely set element value
+    function safeSetValue(elementId, value) {
+        const element = document.getElementById(elementId);
+        if (element && value !== null && value !== undefined) {
+            element.value = value;
+            return true;
+        }
+        return false;
+    }
+    
+    // Basic information
+    if (data.title) safeSetValue('title', data.title);
+    if (data.subtitle) safeSetValue('subtitle', data.subtitle);
+    if (data.isbn) safeSetValue('isbn', data.isbn);
+    
+    // Handle authors
+    if (data.authors) {
+        if (typeof data.authors === 'string') {
+            // Split author string by semicolon or comma
+            const authorList = data.authors.split(/[;,]/).map(a => a.trim()).filter(a => a);
+            if (authorList.length > 0) {
+                authorList.forEach(author => {
+                    addContributor('authored', author, null);
+                });
+            }
+        } else if (Array.isArray(data.authors)) {
+            data.authors.forEach(author => {
+                addContributor('authored', author, null);
+            });
+        }
+    }
+    
+    // Publication details
+    if (data.publisher) safeSetValue('publisher', data.publisher);
+    if (data.publication_year) {
+        // Convert year to full date format for the date input
+        safeSetValue('published_date', `${data.publication_year}-01-01`);
+    }
+    if (data.page_count) safeSetValue('page_count', data.page_count);
+    if (data.language) safeSetValue('language', data.language);
+    
+    // Additional information
+    if (data.genre) {
+        addCategory(data.genre, null, null, null);
+    }
+    if (data.series) safeSetValue('series', data.series);
+    
+    // Handle contributors
+    if (data.contributors && Array.isArray(data.contributors)) {
+        data.contributors.forEach(contributor => {
+            if (contributor.name && contributor.role) {
+                // Map role to our contributor types
+                const roleMap = {
+                    'author': 'authored',
+                    'editor': 'edited',
+                    'translator': 'translated',
+                    'illustrator': 'illustrated',
+                    'narrator': 'narrated'
+                };
+                const contributorType = roleMap[contributor.role.toLowerCase()] || 'authored';
+                addContributor(contributorType, contributor.name, null);
+            }
+        });
+    }
+    
+    // Cover and description
+    if (data.cover_url) safeSetValue('cover_url', data.cover_url);
+    if (data.description) safeSetValue('description', data.description);
+}
+
+// Add drag and drop functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadArea = document.getElementById('upload-area');
+    const fileInput = document.getElementById('file-input');
+    
+    if (uploadArea && fileInput) {
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+        
+        // Highlight drop area when item is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, highlight, false);
+        });
+        
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, unhighlight, false);
+        });
+        
+        // Handle dropped files
+        uploadArea.addEventListener('drop', handleDrop, false);
+        
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        
+        function highlight() {
+            uploadArea.classList.add('dragover');
+        }
+        
+        function unhighlight() {
+            uploadArea.classList.remove('dragover');
+        }
+        
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            
+            if (files.length > 0) {
+                fileInput.files = files;
+                handleFileUpload(fileInput);
+            }
+        }
+    }
+});
 
 function showMessage(message, type) {
   // Create alert element
@@ -263,9 +1019,9 @@ function showMessage(message, type) {
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
   `;
   
-  // Insert after the card header
-  const cardBody = document.querySelector('.card-body');
-  cardBody.insertBefore(alertDiv, cardBody.firstChild);
+  // Insert at the top of the container
+  const container = document.querySelector('.container');
+  container.insertBefore(alertDiv, container.firstChild);
   
   // Auto-dismiss after 5 seconds
   setTimeout(() => {
@@ -273,6 +1029,477 @@ function showMessage(message, type) {
       alertDiv.remove();
     }
   }, 5000);
+}
+
+// Contributor management functions
+function removeContributor(element) {
+    element.parentElement.remove();
+}
+
+function removeCategory(element) {
+    element.parentElement.remove();
+}
+
+function addContributor(type, name, id) {
+    const displayDiv = document.querySelector(`[data-type="${type}"] .contributors-display`);
+    
+    // Check if contributor already exists
+    const existing = displayDiv.querySelector(`[data-name="${name}"]`);
+    if (existing) {
+        return;
+    }
+    
+    const tag = document.createElement('div');
+    tag.className = 'contributor-tag';
+    tag.setAttribute('data-name', name);
+    if (id) {
+        tag.setAttribute('data-id', id);
+    }
+    tag.innerHTML = `${name} <span class="remove" onclick="removeContributor(this)">×</span>`;
+    
+    displayDiv.appendChild(tag);
+    
+    // Clear the input
+    const input = document.querySelector(`[data-type="${type}"] .contributor-input`);
+    if (input) {
+        input.value = '';
+    }
+}
+
+function addCategory(name, id, color, icon) {
+    const displayDiv = document.querySelector('.categories-display');
+    
+    // Check if category already exists
+    const existing = displayDiv.querySelector(`[data-name="${name}"]`);
+    if (existing) {
+        return;
+    }
+    
+    const tag = document.createElement('div');
+    tag.className = 'category-tag';
+    tag.setAttribute('data-name', name);
+    if (id) {
+        tag.setAttribute('data-id', id);
+    }
+    
+    let tagContent = '';
+    if (icon) {
+        tagContent += `<span class="me-1">${icon}</span>`;
+    }
+    tagContent += `${name} <span class="remove" onclick="removeCategory(this)">×</span>`;
+    tag.innerHTML = tagContent;
+    
+    if (color) {
+        tag.style.backgroundColor = color + '20';
+        tag.style.borderColor = color;
+        tag.style.color = color;
+    }
+    
+    displayDiv.appendChild(tag);
+    
+    // Clear the input
+    const input = document.querySelector('.category-input');
+    if (input) {
+        input.value = '';
+    }
+}
+
+// Initialize autocomplete functionality when page loads
+let searchTimeout;
+let activeDropdown = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize contributor autocomplete for all contributor inputs
+    document.querySelectorAll('.contributor-input').forEach(input => {
+        initializeContributorAutocomplete(input);
+    });
+    
+    // Initialize category autocomplete
+    const categoryInput = document.querySelector('.category-input');
+    if (categoryInput) {
+        initializeCategoryAutocomplete(categoryInput);
+    }
+    
+    // Load locations
+    loadLocations();
+    
+    // Handle form submission to collect contributors and categories
+    const form = document.getElementById('addBookForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            // Show loading state on submit button
+            const submitBtn = document.getElementById('addBookBtn');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Adding Book...';
+            submitBtn.disabled = true;
+            
+            // Collect contributors and categories
+            collectContributorsAndCategories();
+            
+            // Allow form to submit normally
+            // The loading state will be cleared when the page reloads
+        });
+    }
+});
+
+function initializeContributorAutocomplete(input) {
+    input.addEventListener('input', handleInput);
+    input.addEventListener('keydown', handleKeydown);
+    input.addEventListener('blur', handleBlur);
+}
+
+function handleInput(e) {
+    const input = e.target;
+    const query = input.value.trim();
+    const dropdown = input.nextElementSibling;
+    
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    if (query.length < 2) {
+        hideDropdown(dropdown);
+        return;
+    }
+    
+    // Reduced timeout for more responsive search
+    searchTimeout = setTimeout(() => {
+        searchPersons(query, dropdown, input);
+    }, 150);
+}
+
+function handleKeydown(e) {
+    const dropdown = e.target.nextElementSibling;
+    const items = dropdown.querySelectorAll('.autocomplete-item');
+    const selected = dropdown.querySelector('.autocomplete-item.selected');
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = selected?.nextElementSibling || items[0];
+        if (next) {
+            selected?.classList.remove('selected');
+            next.classList.add('selected');
+        }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prev = selected?.previousElementSibling || items[items.length - 1];
+        if (prev) {
+            selected?.classList.remove('selected');
+            prev.classList.add('selected');
+        }
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (selected) {
+            selected.click();
+        } else if (e.target.value.trim()) {
+            // Create new contributor if none selected
+            const contributorType = e.target.getAttribute('data-type');
+            addContributor(contributorType, e.target.value.trim(), null);
+            e.target.value = '';
+            hideDropdown(dropdown);
+        }
+    } else if (e.key === 'Escape') {
+        hideDropdown(dropdown);
+    }
+}
+
+function handleBlur(e) {
+    const dropdown = e.target.nextElementSibling;
+    // Delay hiding to allow for clicks
+    setTimeout(() => {
+        if (!dropdown.matches(':hover')) {
+            hideDropdown(dropdown);
+        }
+    }, 150);
+}
+
+function searchPersons(query, dropdown, input) {
+    fetch(`/people/api/person/search?q=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+            showDropdown(dropdown, data, input);
+        })
+        .catch(error => {
+            console.error('Error searching persons:', error);
+            hideDropdown(dropdown);
+        });
+}
+
+function showDropdown(dropdown, data, input) {
+    dropdown.innerHTML = '';
+    
+    if (data.length === 0) {
+        dropdown.innerHTML = `
+            <div class="autocomplete-item create-new" onclick="createNewPerson('${input.value.trim()}', '${input.getAttribute('data-type')}', this)">
+                <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new contributor
+            </div>
+        `;
+    } else {
+        data.forEach(person => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.innerHTML = `
+                <div class="name">${person.name}</div>
+                ${person.bio ? `<div class="bio">${person.bio}</div>` : ''}
+            `;
+            item.onclick = () => selectPerson(person, input);
+            dropdown.appendChild(item);
+        });
+        
+        // Add create new option
+        const createItem = document.createElement('div');
+        createItem.className = 'autocomplete-item create-new';
+        createItem.innerHTML = `
+            <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new contributor
+        `;
+        createItem.onclick = () => createNewPerson(input.value.trim(), input.getAttribute('data-type'), createItem);
+        dropdown.appendChild(createItem);
+    }
+    
+    dropdown.style.display = 'block';
+    activeDropdown = dropdown;
+}
+
+function hideDropdown(dropdown) {
+    dropdown.style.display = 'none';
+    if (activeDropdown === dropdown) {
+        activeDropdown = null;
+    }
+}
+
+function selectPerson(person, input) {
+    const contributorType = input.getAttribute('data-type');
+    addContributor(contributorType, person.name, person.id);
+    input.value = '';
+    hideDropdown(input.nextElementSibling);
+}
+
+function createNewPerson(name, contributorType, element) {
+    // Add the contributor immediately
+    addContributor(contributorType, name, null);
+    
+    // Clear input and hide dropdown
+    const input = element.closest('.contributor-autocomplete').querySelector('.contributor-input');
+    input.value = '';
+    hideDropdown(element.parentElement);
+}
+
+function initializeCategoryAutocomplete(input) {
+    input.addEventListener('input', handleCategoryInput);
+    input.addEventListener('keydown', handleCategoryKeydown);
+    input.addEventListener('blur', handleCategoryBlur);
+}
+
+function handleCategoryInput(e) {
+    const input = e.target;
+    const query = input.value.trim();
+    const dropdown = input.nextElementSibling;
+    
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    if (query.length < 2) {
+        hideDropdown(dropdown);
+        return;
+    }
+    
+    searchTimeout = setTimeout(() => {
+        searchCategories(query, dropdown, input);
+    }, 150);
+}
+
+function handleCategoryKeydown(e) {
+    const dropdown = e.target.nextElementSibling;
+    const items = dropdown.querySelectorAll('.autocomplete-item');
+    const selected = dropdown.querySelector('.autocomplete-item.selected');
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = selected?.nextElementSibling || items[0];
+        if (next) {
+            selected?.classList.remove('selected');
+            next.classList.add('selected');
+        }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prev = selected?.previousElementSibling || items[items.length - 1];
+        if (prev) {
+            selected?.classList.remove('selected');
+            prev.classList.add('selected');
+        }
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (selected) {
+            selected.click();
+        } else if (e.target.value.trim()) {
+            // Create new category if none selected
+            addCategory(e.target.value.trim(), null, null, null);
+            e.target.value = '';
+            hideDropdown(dropdown);
+        }
+    } else if (e.key === 'Escape') {
+        hideDropdown(dropdown);
+    }
+}
+
+function handleCategoryBlur(e) {
+    const dropdown = e.target.nextElementSibling;
+    setTimeout(() => {
+        if (!dropdown.matches(':hover')) {
+            hideDropdown(dropdown);
+        }
+    }, 150);
+}
+
+function searchCategories(query, dropdown, input) {
+    fetch(`/categories/api/search?q=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+            showCategoryDropdown(dropdown, data, input);
+        })
+        .catch(error => {
+            console.error('Error searching categories:', error);
+            // Show create new option even if search fails
+            showCategoryDropdown(dropdown, [], input);
+        });
+}
+
+function showCategoryDropdown(dropdown, data, input) {
+    dropdown.innerHTML = '';
+    
+    if (data.length === 0) {
+        dropdown.innerHTML = `
+            <div class="autocomplete-item create-new" onclick="createNewCategory('${input.value.trim()}', this)">
+                <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new genre
+            </div>
+        `;
+    } else {
+        data.forEach(category => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.innerHTML = `
+                <div class="name">
+                    ${category.icon ? `<span class="me-1">${category.icon}</span>` : ''}
+                    ${category.name}
+                </div>
+            `;
+            item.onclick = () => selectCategory(category, input);
+            dropdown.appendChild(item);
+        });
+        
+        // Add create new option
+        const createItem = document.createElement('div');
+        createItem.className = 'autocomplete-item create-new';
+        createItem.innerHTML = `
+            <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new genre
+        `;
+        createItem.onclick = () => createNewCategory(input.value.trim(), createItem);
+        dropdown.appendChild(createItem);
+    }
+    
+    dropdown.style.display = 'block';
+    activeDropdown = dropdown;
+}
+
+function selectCategory(category, input) {
+    addCategory(category.name, category.id, category.color, category.icon);
+    input.value = '';
+    hideDropdown(input.nextElementSibling);
+}
+
+function createNewCategory(name, element) {
+    // Add the category immediately
+    addCategory(name, null, null, null);
+    
+    // Clear input and hide dropdown
+    const input = element.closest('.category-autocomplete').querySelector('.category-input');
+    input.value = '';
+    hideDropdown(element.parentElement);
+}
+
+function loadLocations() {
+    const locationSelect = document.getElementById('location_id');
+    if (!locationSelect) return;
+    
+    fetch('/locations/api/list')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(locations => {
+            // Clear existing options except the first one
+            while (locationSelect.children.length > 1) {
+                locationSelect.removeChild(locationSelect.lastChild);
+            }
+            
+            // Add location options
+            locations.forEach(location => {
+                const option = document.createElement('option');
+                option.value = location.id;
+                option.textContent = location.name;
+                locationSelect.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading locations:', error);
+            // Fallback to some default locations if API fails
+            const defaultLocations = [
+                {id: 'living_room', name: 'Living Room'},
+                {id: 'bedroom', name: 'Bedroom'},
+                {id: 'study', name: 'Study'},
+                {id: 'office', name: 'Office'}
+            ];
+            
+            defaultLocations.forEach(location => {
+                const option = document.createElement('option');
+                option.value = location.id;
+                option.textContent = location.name;
+                locationSelect.appendChild(option);
+            });
+        });
+}
+
+function collectContributorsAndCategories() {
+    // Collect all contributors
+    const contributorTypes = ['authored', 'narrated', 'edited', 'translated', 'illustrated'];
+    contributorTypes.forEach(type => {
+        const contributors = [];
+        const tags = document.querySelectorAll(`[data-type="${type}"] .contributor-tag`);
+        tags.forEach(tag => {
+            const name = tag.getAttribute('data-name');
+            const id = tag.getAttribute('data-id');
+            contributors.push({name: name, id: id});
+        });
+        
+        // Add hidden inputs for contributors
+        if (contributors.length > 0) {
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = `contributors_${type}`;
+            hiddenInput.value = JSON.stringify(contributors);
+            document.getElementById('addBookForm').appendChild(hiddenInput);
+        }
+    });
+    
+    // Collect all categories
+    const categories = [];
+    const categoryTags = document.querySelectorAll('.category-tag');
+    categoryTags.forEach(tag => {
+        const name = tag.getAttribute('data-name');
+        const id = tag.getAttribute('data-id');
+        categories.push({name: name, id: id});
+    });
+    
+    if (categories.length > 0) {
+        const hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.name = 'categories';
+        hiddenInput.value = JSON.stringify(categories);
+        document.getElementById('addBookForm').appendChild(hiddenInput);
+    }
 }
 </script>
 {% endblock %}
