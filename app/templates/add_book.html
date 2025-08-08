@@ -686,6 +686,28 @@
 // AI Configuration from server
 const aiConfig = {{ ai_config | tojson }};
 
+// Convert an HTML description to readable plain text for the textarea
+function htmlDescriptionToText(html) {
+    if (!html) return '';
+    try {
+        let s = String(html);
+        // Normalize common line-breaking tags to newlines and bullets
+        s = s.replace(/<\s*br\s*\/?>/gi, '\n');
+        s = s.replace(/<\s*\/p\s*>/gi, '\n');
+        s = s.replace(/<\s*li\s*>/gi, '• ');
+        s = s.replace(/<\s*\/li\s*>/gi, '\n');
+        // Strip remaining tags and decode HTML entities via the DOM
+        const el = document.createElement('div');
+        el.innerHTML = s;
+        let text = el.textContent || el.innerText || '';
+        // Collapse excessive blank lines
+        text = text.replace(/\n{3,}/g, '\n\n');
+        return text.trim();
+    } catch (_) {
+        return String(html);
+    }
+}
+
 // Fetch book data from ISBN
 function fetchBookData() {
     const isbn = document.getElementById('isbn').value.trim();
@@ -733,6 +755,16 @@ function fetchBookData() {
                     authors: Array.isArray(data.authors) ? data.authors : [],
                     categories: Array.isArray(data.categories) ? data.categories : []
                 };
+
+                // Fallback: if API didn't return ISBNs, use the ISBN we just queried with
+                try {
+                    const raw = (isbn || '').replace(/[^0-9Xx]/g, '');
+                    if (!mapped.isbn_13 && raw.length === 13) {
+                        mapped.isbn_13 = raw;
+                    } else if (!mapped.isbn_10 && raw.length === 10) {
+                        mapped.isbn_10 = raw;
+                    }
+                } catch (_) { /* noop */ }
                 populateFormWithBookData(mapped);
                 showMessage('Book data fetched successfully!', 'success');
             } else {
@@ -841,7 +873,7 @@ function displayTitleSearchResults(results) {
     results.forEach((book, index) => {
         const fullData = book.full_data || book; // Fallback to book if full_data is missing
         const coverUrl = fullData.cover_url || '/static/images/no-cover.png';
-        const isbn = fullData.isbn_13 || fullData.isbn_10 || 'N/A';
+    const isbn = fullData.isbn_13 || fullData.isbn13 || fullData.isbn_10 || fullData.isbn10 || 'N/A';
         
         const resultCard = document.createElement('div');
         resultCard.className = 'col-12 col-lg-6';
@@ -937,7 +969,7 @@ function selectBookFromSearch(bookIndex) {
     // This includes smart date selection, combined metadata, etc.
     
     // If this book has an ISBN, fetch additional data and merge it intelligently
-    const isbn = fullData.isbn_13 || fullData.isbn_10;
+    const isbn = fullData.isbn_13 || fullData.isbn13 || fullData.isbn_10 || fullData.isbn10;
     
     if (isbn) {
         // Show loading message
@@ -957,6 +989,12 @@ function selectBookFromSearch(bookIndex) {
                 // Merge the search result data with ISBN lookup data intelligently
                 const mergedData = mergeBookData(fullData, isbnData);
                 console.log('🔀 Final merged data:', mergedData);
+                // Guarantee ISBN presence from selection
+                try {
+                    const raw = String(isbn).replace(/[^0-9Xx]/g, '');
+                    if (!mergedData.isbn_13 && raw.length === 13) mergedData.isbn_13 = raw;
+                    if (!mergedData.isbn_10 && raw.length === 10) mergedData.isbn_10 = raw;
+                } catch(_) { /* noop */ }
                 
                 // Populate form with the intelligently merged data
                 populateFormWithBookData(mergedData);
@@ -1074,15 +1112,24 @@ function populateFormWithBookData(bookData) {
     // Basic information
     document.getElementById('title').value = bookData.title || '';
     document.getElementById('subtitle').value = bookData.subtitle || '';
-    document.getElementById('isbn').value = bookData.isbn_13 || bookData.isbn_10 || '';
-    document.getElementById('description').value = bookData.description || '';
+    // Prefer returned ISBNs; otherwise keep whatever user typed
+    const typedIsbnRaw = (document.getElementById('isbn').value || '').replace(/[^0-9Xx]/g, '');
+    const returnedIsbn = bookData.isbn_13 || bookData.isbn_10 || '';
+    document.getElementById('isbn').value = returnedIsbn || typedIsbnRaw || '';
+    document.getElementById('description').value = htmlDescriptionToText(bookData.description || '');
     document.getElementById('cover_url').value = bookData.cover_url || bookData.cover || '';
     document.getElementById('publisher').value = bookData.publisher || '';
     document.getElementById('language').value = bookData.language || 'en';
     
     // Additional Details fields
-    document.getElementById('isbn13').value = bookData.isbn_13 || bookData.isbn13 || '';
-    document.getElementById('isbn10').value = bookData.isbn_10 || bookData.isbn10 || '';
+    let isbn13Val = bookData.isbn_13 || bookData.isbn13 || '';
+    let isbn10Val = bookData.isbn_10 || bookData.isbn10 || '';
+    if (!isbn13Val && !isbn10Val && typedIsbnRaw) {
+        if (typedIsbnRaw.length === 13) isbn13Val = typedIsbnRaw;
+        else if (typedIsbnRaw.length === 10) isbn10Val = typedIsbnRaw;
+    }
+    document.getElementById('isbn13').value = isbn13Val;
+    document.getElementById('isbn10').value = isbn10Val;
     document.getElementById('google_books_id').value = bookData.google_books_id || '';
     const olInput2 = document.getElementById('openlibrary_id');
     if (olInput2) olInput2.value = bookData.openlibrary_id || '';
@@ -1442,7 +1489,7 @@ function populateFormWithAIData(data) {
     
     // Cover and description
     if (data.cover_url) safeSetValue('cover_url', data.cover_url);
-    if (data.description) safeSetValue('description', data.description);
+    if (data.description) safeSetValue('description', htmlDescriptionToText(data.description));
 }
 
 // Add drag and drop functionality
@@ -1497,7 +1544,8 @@ document.addEventListener('DOMContentLoaded', function() {
 function showMessage(message, type) {
   // Create alert element
   const alertDiv = document.createElement('div');
-  alertDiv.className = `alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+    const bsType = type === 'success' ? 'success' : (type === 'warning' ? 'warning' : (type === 'info' ? 'info' : 'danger'));
+    alertDiv.className = `alert alert-${bsType} alert-dismissible fade show`;
   alertDiv.innerHTML = `
     ${message}
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>

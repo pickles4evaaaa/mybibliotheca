@@ -13,7 +13,7 @@ import re
 import requests
 
 
-def _normalize_date(date_str: Optional[str]) -> Optional[str]:
+def _normalize_date(val: Optional[str]) -> Optional[str]:
 	"""Normalize a date string to ISO (YYYY-MM-DD) suitable for HTML date inputs.
 
 	Handles common formats:
@@ -24,10 +24,10 @@ def _normalize_date(date_str: Optional[str]) -> Optional[str]:
 	- Month D, YYYY (e.g., October 6, 2015)
 	Returns None if input is falsy or unparseable.
 	"""
-	if not date_str:
+	if not val:
 		return None
 
-	s = str(date_str).strip()
+	s = str(val).strip()
 	if not s:
 		return None
 
@@ -71,8 +71,56 @@ def _normalize_date(date_str: Optional[str]) -> Optional[str]:
 	return None
 
 
+def _date_specificity(date_str: Optional[str]) -> int:
+	"""Return a rough specificity score for a date string before normalization.
+
+	Scores:
+	- 3: full date (YYYY-MM-DD, MM/DD/YYYY, Month D, YYYY, etc.)
+	- 2: year-month (YYYY-MM or similar)
+	- 1: year only (YYYY)
+	- 0: unknown/empty
+
+	Heuristic-based; safe for precedence decisions only.
+	"""
+	if not date_str:
+		return 0
+
+	s = str(date_str).strip()
+	if not s:
+		return 0
+
+	# Full date patterns
+	if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+		return 3
+	if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", s):
+		return 3
+	if re.fullmatch(r"[A-Za-z]+\s+\d{1,2},\s*\d{4}", s):
+		return 3
+
+	# Year-month
+	if re.fullmatch(r"\d{4}-\d{1,2}", s) or re.fullmatch(r"\d{4}/\d{1,2}", s):
+		return 2
+
+	# Year-only
+	if re.fullmatch(r"\d{4}", s):
+		return 1
+
+	# Fallback: try to infer
+	m = re.fullmatch(r"(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?", s)
+	if m:
+		return 1 + (1 if m.group(2) else 0) + (1 if m.group(3) else 0)
+
+	return 0
+
+
 def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
-	"""Fetch Google Books metadata for an ISBN."""
+	"""Fetch Google Books metadata for an ISBN.
+
+	Picks the best item by:
+	1) Exact ISBN match (10 or 13) in industryIdentifiers
+	2) Highest date specificity of volumeInfo.publishedDate
+	Fallback to the first item if list is empty.
+	"""
 	url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
 	try:
 		resp = requests.get(url, timeout=15)
@@ -82,7 +130,33 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		if not items:
 			return {}
 
-		item = items[0]
+		# Normalize target ISBN (strip non-digits/X)
+		import re as _re
+		target = _re.sub(r"[^0-9Xx]", "", str(isbn))
+		def _extract_isbns(it):
+			vi = it.get('volumeInfo', {})
+			ids = vi.get('industryIdentifiers', []) or []
+			i10 = None
+			i13 = None
+			for ident in ids:
+				t = ident.get('type')
+				val = _re.sub(r"[^0-9Xx]", "", str(ident.get('identifier') or ''))
+				if t == 'ISBN_10' and val:
+					i10 = val
+				elif t == 'ISBN_13' and val:
+					i13 = val
+			return i10, i13
+
+		def _score(it):
+			vi = it.get('volumeInfo', {})
+			i10, i13 = _extract_isbns(it)
+			raw_date = vi.get('publishedDate')
+			spec = _date_specificity(raw_date)
+			match = 1 if (target and (target == (i13 or '') or target == (i10 or ''))) else 0
+			return (match, spec)
+
+		# Choose item with best (match, specificity)
+		item = max(items, key=_score)
 		vi = item.get('volumeInfo', {})
 		ids = vi.get('industryIdentifiers', [])
 		isbn10 = None
@@ -102,7 +176,44 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 				cover_url = image_links[size].replace('http://', 'https://')
 				break
 
-		published_date = _normalize_date(vi.get('publishedDate'))
+		raw_date = vi.get('publishedDate')
+		published_date = _normalize_date(raw_date)
+		specificity = _date_specificity(raw_date)
+
+		# Prepare to enhance with full volume fetch
+		description = vi.get('description')
+		printed_page = vi.get('printedPageCount')
+		page_count_val = vi.get('pageCount')
+		# Secondary fetch: prefer longer description, printed page count, and real ISBNs
+		try:
+			vol_id = item.get('id')
+			if vol_id:
+				full_resp = requests.get(f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full", timeout=15)
+				full_resp.raise_for_status()
+				full_data = full_resp.json() or {}
+				fvi = (full_data.get('volumeInfo') or {})
+				# Prefer longer description if available
+				full_desc = fvi.get('description')
+				if full_desc and (not description or len(str(full_desc)) > len(str(description))):
+					description = full_desc
+				# Pull printed/page counts from full
+				if fvi.get('printedPageCount'):
+					printed_page = fvi.get('printedPageCount')
+				if fvi.get('pageCount'):
+					page_count_val = fvi.get('pageCount')
+				# Pull ISBNs if missing
+				if not (isbn10 and isbn13):
+					fids = fvi.get('industryIdentifiers', []) or []
+					for ident in fids:
+						if ident.get('type') == 'ISBN_10' and not isbn10:
+							isbn10 = ident.get('identifier')
+						elif ident.get('type') == 'ISBN_13' and not isbn13:
+							isbn13 = ident.get('identifier')
+		except Exception:
+			pass
+		# Fallback to text snippet if still none
+		if not description:
+			description = (item.get('searchInfo') or {}).get('textSnippet')
 
 		return {
 			'title': vi.get('title') or '',
@@ -110,9 +221,12 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 			'authors': vi.get('authors') or [],
 			'publisher': vi.get('publisher') or None,
 			'published_date': published_date,
-			'page_count': vi.get('pageCount'),
+			'published_date_raw': raw_date,
+			'published_date_specificity': specificity,
+			# Prefer printedPageCount if present (from full or initial response)
+			'page_count': printed_page or page_count_val,
 			'language': vi.get('language') or 'en',
-			'description': vi.get('description') or None,
+			'description': description,
 			'categories': vi.get('categories') or [],
 			'average_rating': vi.get('averageRating'),
 			'rating_count': vi.get('ratingsCount'),
@@ -148,17 +262,35 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 				publishers = ed.get('publishers') or []
 				publish_date = ed.get('publish_date')
 				number_of_pages = ed.get('number_of_pages')
+				# Extract ISBNs if present on edition
+				isbn10 = None
+				isbn13 = None
+				try:
+					if isinstance(ed.get('isbn_10'), list) and ed['isbn_10']:
+						isbn10 = str(ed['isbn_10'][0])
+					if isinstance(ed.get('isbn_13'), list) and ed['isbn_13']:
+						isbn13 = str(ed['isbn_13'][0])
+				except Exception:
+					pass
+				# Description may be a string or object with 'value'
+				desc = ed.get('description')
+				if isinstance(desc, dict):
+					desc = desc.get('value')
 				return {
 					'title': title,
 					'authors': [],  # would require extra calls for names
 					'publisher': publishers[0] if publishers else None,
 					'published_date': _normalize_date(publish_date),
+					'published_date_raw': publish_date,
+					'published_date_specificity': _date_specificity(publish_date),
 					'page_count': number_of_pages,
 					'language': None,
-					'description': None,
+					'description': desc,
 					'categories': [],
 					'cover_url': None,
 					'openlibrary_id': work_path or ed.get('key'),  # prefer works path
+					'isbn10': isbn10,
+					'isbn13': isbn13,
 				}
 			except Exception:
 				return {}
@@ -166,11 +298,33 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 		# jscmd=data shape
 		authors = [a.get('name') for a in (ol.get('authors') or []) if isinstance(a, dict)]
 		publishers = [p.get('name') if isinstance(p, dict) else str(p) for p in (ol.get('publishers') or [])]
-		published_date = _normalize_date(ol.get('publish_date'))
+		raw_date = ol.get('publish_date')
+		published_date = _normalize_date(raw_date)
 		number_of_pages = ol.get('number_of_pages')
 		cover = ol.get('cover') or {}
 		cover_url = cover.get('large') or cover.get('medium') or cover.get('small')
 		identifiers = ol.get('identifiers') or {}
+		# Description normalization (string or dict)
+		desc = ol.get('description')
+		if isinstance(desc, dict):
+			desc = desc.get('value')
+		if not desc:
+			# Sometimes only 'notes' exists
+			notes = ol.get('notes')
+			if isinstance(notes, dict):
+				desc = notes.get('value')
+			elif isinstance(notes, str):
+				desc = notes
+		# Extract ISBNs from identifiers if available
+		isbn10 = None
+		isbn13 = None
+		try:
+			if isinstance(identifiers.get('isbn_10'), list) and identifiers['isbn_10']:
+				isbn10 = str(identifiers['isbn_10'][0])
+			if isinstance(identifiers.get('isbn_13'), list) and identifiers['isbn_13']:
+				isbn13 = str(identifiers['isbn_13'][0])
+		except Exception:
+			pass
 		# Try to get a usable OpenLibrary link path
 		ol_key = ol.get('key')  # often '/books/OL...M'
 		if not ol_key:
@@ -179,18 +333,31 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 				# edition id like 'OL12345M' -> build books path
 				ol_key = f"/books/{openlibrary[0]}"
 
+		# Normalize categories (subjects) to names
+		def _norm_subjects(subjs):
+			out = []
+			for s in (subjs or []):
+				name = s.get('name') if isinstance(s, dict) else (str(s) if s is not None else None)
+				if name and name not in out:
+					out.append(name)
+			return out
+
 		return {
 			'title': ol.get('title'),
 			'subtitle': ol.get('subtitle'),
 			'authors': authors,
 			'publisher': publishers[0] if publishers else None,
 			'published_date': published_date,
+			'published_date_raw': raw_date,
+			'published_date_specificity': _date_specificity(raw_date),
 			'page_count': number_of_pages,
 			'language': None,
-			'description': None,
-			'categories': ol.get('subjects') or [],
+			'description': desc,
+			'categories': _norm_subjects(ol.get('subjects')),
 			'cover_url': cover_url,
 			'openlibrary_id': ol_key,
+			'isbn10': isbn10,
+			'isbn13': isbn13,
 		}
 	except Exception:
 		return {}
@@ -206,16 +373,32 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	"""Merge two metadata dicts with sensible precedence rules."""
 	merged: Dict[str, Any] = {}
 
-	# Simple fields: prefer Google, fallback to OpenLibrary
-	for key in ['title', 'subtitle', 'publisher', 'language', 'average_rating', 'rating_count']:
+	# Simple text fields: choose the more complete (longer) text when both present; prefer Google on exact ties
+	for key in ['title', 'subtitle', 'publisher']:
+		g_val = google.get(key)
+		o_val = openlib.get(key)
+		if g_val and o_val:
+			merged[key] = _choose_longer_text(g_val, o_val)
+		else:
+			merged[key] = g_val if g_val is not None else o_val
+
+	# Language and ratings: prefer Google, fallback to OpenLibrary
+	for key in ['language', 'average_rating', 'rating_count']:
 		merged[key] = google.get(key) if google.get(key) is not None else openlib.get(key)
 
-	# Dates: prefer a full ISO date if available, otherwise fallback
+	# Dates: prefer higher specificity, and prefer Google on ties
 	g_date = google.get('published_date')
 	o_date = openlib.get('published_date')
-	# If both present, choose the one with more specificity (length)
+	g_spec = google.get('published_date_specificity', 0)
+	o_spec = openlib.get('published_date_specificity', 0)
 	if g_date and o_date:
-		merged['published_date'] = g_date if len(g_date) >= len(o_date) else o_date
+		if g_spec > o_spec:
+			merged['published_date'] = g_date
+		elif o_spec > g_spec:
+			merged['published_date'] = o_date
+		else:
+			# Tie: prefer Google
+			merged['published_date'] = g_date
 	else:
 		merged['published_date'] = g_date or o_date
 
@@ -232,17 +415,25 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 
 	# Authors & categories: union preserving order (Google first)
 	authors: List[str] = []
+	seen_authors = set()
 	for src in [google.get('authors') or [], openlib.get('authors') or []]:
 		for name in src:
-			if isinstance(name, str) and name.strip() and name not in authors:
-				authors.append(name)
+			if isinstance(name, str):
+				key = name.strip().casefold()
+				if key and key not in seen_authors:
+					authors.append(name.strip())
+					seen_authors.add(key)
 	merged['authors'] = authors
 
 	categories: List[str] = []
+	seen_cats = set()
 	for src in [google.get('categories') or [], openlib.get('categories') or []]:
 		for c in src:
-			if isinstance(c, str) and c.strip() and c not in categories:
-				categories.append(c)
+			if isinstance(c, str):
+				key = c.strip().casefold()
+				if key and key not in seen_cats:
+					categories.append(c.strip())
+					seen_cats.add(key)
 	merged['categories'] = categories
 
 	# Cover: prefer Google, fallback to OpenLibrary
@@ -251,8 +442,14 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	# IDs & ISBNs
 	merged['google_books_id'] = google.get('google_books_id')
 	merged['openlibrary_id'] = openlib.get('openlibrary_id')
-	merged['isbn10'] = google.get('isbn10') or None
-	merged['isbn13'] = google.get('isbn13') or None
+	# Prefer Google ISBNs, fallback to OpenLibrary when missing
+	def _norm_isbn(v: Optional[str]) -> Optional[str]:
+		if not v:
+			return None
+		import re as _re
+		return _re.sub(r"[^0-9Xx]", "", str(v)) or None
+	merged['isbn10'] = _norm_isbn(google.get('isbn10')) or _norm_isbn(openlib.get('isbn10'))
+	merged['isbn13'] = _norm_isbn(google.get('isbn13')) or _norm_isbn(openlib.get('isbn13'))
 
 	return merged
 
@@ -269,13 +466,27 @@ def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
 	if not google and not openlib:
 		return {}
 
-	# Ensure dates are normalized
+	# Ensure dates are normalized (already normalized in fetchers, but keep for safety)
 	if google.get('published_date'):
 		google['published_date'] = _normalize_date(google['published_date'])
 	if openlib.get('published_date'):
 		openlib['published_date'] = _normalize_date(openlib['published_date'])
 
-	return _merge_dicts(google, openlib)
+	merged = _merge_dicts(google, openlib)
+
+	# Ensure we propagate the queried ISBN when providers omit identifiers
+	try:
+		import re as _re
+		raw = _re.sub(r"[^0-9Xx]", "", isbn)
+		if raw:
+			if not merged.get('isbn13') and len(raw) == 13:
+				merged['isbn13'] = raw
+			if not merged.get('isbn10') and len(raw) == 10:
+				merged['isbn10'] = raw
+	except Exception:
+		pass
+
+	return merged
 
 
 def fetch_unified_by_title(title: str, max_results: int = 10) -> List[Dict[str, Any]]:

@@ -393,7 +393,8 @@ class KuzuRelationshipService:
             storage_updates['updated_at'] = datetime.utcnow()
             # Prepare SET clauses
             set_parts = []
-            params = {'user_id': user_id, 'book_id': book_id}
+            # Provide a creation timestamp param for ON CREATE to avoid unsupported DB functions
+            params = {'user_id': user_id, 'book_id': book_id, 'date_added': datetime.utcnow()}
             for key, value in storage_updates.items():
                 set_parts.append(f"owns.{key} = ${key}")
                 params[key] = value
@@ -401,7 +402,7 @@ class KuzuRelationshipService:
             query = f"""
             MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
             MERGE (u)-[owns:OWNS]->(b)
-            ON CREATE SET owns.date_added = datetime()
+            ON CREATE SET owns.date_added = $date_added
             SET {set_clause}
             RETURN owns
             """

@@ -716,24 +716,24 @@ def create_app():
     @app.route('/static/<path:filename>')
     def serve_static(filename):
         """Serve static files in production mode."""
-    import os
-    import mimetypes
-    from flask import send_from_directory
+        import os
+        import mimetypes
+        from flask import send_from_directory
         # Use the explicit static folder path since we disabled Flask's static handling
-        
+
         # Check if we're in Docker (production) or local development
         docker_static_dir = '/app/static'
         local_static_dir = os.path.join(os.path.dirname(__file__), 'static')
-        
+
         if os.path.exists(docker_static_dir):
             static_dir = docker_static_dir
         else:
             static_dir = local_static_dir
-        
-    # Ensure proper MIME types for fonts (bootstrap-icons)
-    mimetypes.add_type('font/woff2', '.woff2')
-    mimetypes.add_type('font/woff', '.woff')
-        
+
+        # Ensure proper MIME types for fonts (bootstrap-icons)
+        mimetypes.add_type('font/woff2', '.woff2')
+        mimetypes.add_type('font/woff', '.woff')
+
         return send_from_directory(static_dir, filename)
 
     # Add routes to serve user data files from data directory

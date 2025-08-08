@@ -3396,101 +3396,15 @@ def add_book_manual():
                         check_digit = '0'
                     isbn10 = isbn10_base + str(check_digit)
             
-            # Enhanced API lookup with both Google Books and OpenLibrary
+            # Enhanced API lookup now uses unified metadata aggregator (Google + OpenLibrary)
             normalized_isbn = isbn13 or isbn10
             if normalized_isbn:
-                
                 try:
-                    # Use the enhanced Google Books function to get comprehensive data including contributors
-                    from app.utils.book_utils import get_google_books_cover
-                    google_data = get_google_books_cover(normalized_isbn, fetch_title_author=True)
-                    
-                    print(f"🎯 [MANUAL] Google Books API returned: {google_data is not None}")
-                    if google_data:
-                        print(f"🎯 [MANUAL] Google Books data keys: {list(google_data.keys())}")
-                        print(f"🎯 [MANUAL] Contributors: {len(google_data.get('contributors', []))} items")
-                            
-                    
-                    # OpenLibrary lookup
-                    openlibrary_data = None
-                    url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{normalized_isbn}&format=json&jscmd=data"
-                    response = requests.get(url, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        book_key = f"ISBN:{normalized_isbn}"
-                        if book_key in data:
-                            book = data[book_key]
-                            
-                            # Extract OpenLibrary ID from the key field
-                            ol_id = None
-                            if 'key' in book:
-                                key = book['key']
-                                # Key format is typically "/books/OL12345M" - extract the ID part
-                                if key.startswith('/books/'):
-                                    ol_id = key.replace('/books/', '')
-                            
-                            # Extract categories/subjects
-                            subjects = book.get('subjects', [])
-                            ol_categories = []
-                            for subject in subjects[:10]:  # Limit to 10
-                                if isinstance(subject, dict):
-                                    ol_categories.append(subject.get('name', ''))
-                                else:
-                                    ol_categories.append(str(subject))
-                            ol_categories = [cat for cat in ol_categories if cat]
-                            
-                            openlibrary_data = {
-                                'categories': ol_categories,
-                                'description': book.get('notes', {}).get('value', '') if isinstance(book.get('notes'), dict) else str(book.get('notes', '')),
-                                'cover_url': book.get('cover', {}).get('large') or book.get('cover', {}).get('medium') or book.get('cover', {}).get('small'),
-                                'published_date': book.get('publish_date', ''),  # Add publication date from OpenLibrary
-                                'openlibrary_id': ol_id
-                            }
-                    
-                    # Merge API data
-                    if google_data or openlibrary_data:
-                        api_data = google_data or {}
-                        if openlibrary_data:
-                            # Merge categories
-                            google_cats = set(api_data.get('categories', []))
-                            ol_cats = set(openlibrary_data.get('categories', []))
-                            api_data['categories'] = list(google_cats.union(ol_cats))
-                            
-                            # Use OpenLibrary description if Google doesn't have one
-                            if not api_data.get('description') and openlibrary_data.get('description'):
-                                api_data['description'] = openlibrary_data['description']
-                            
-                            # Set OpenLibrary ID if not already set by Google Books data
-                            if not api_data.get('openlibrary_id') and openlibrary_data.get('openlibrary_id'):
-                                api_data['openlibrary_id'] = openlibrary_data['openlibrary_id']
-                            
-                            # Smart publication date handling: prioritize Google Books full dates over OpenLibrary years
-                            google_date = google_data.get('published_date', '') if google_data else ''
-                            ol_date = openlibrary_data.get('published_date', '') if openlibrary_data else ''
-                            
-                            if google_date and ol_date:
-                                # Both have dates - use Google Books if it's a full date, otherwise use OpenLibrary
-                                if len(google_date) > 4 and '-' in google_date:  # Full date format like "2025-03-26"
-                                    api_data['published_date'] = google_date
-                                    print(f"🎯 [MANUAL] Using Google Books full date: '{google_date}' over OpenLibrary: '{ol_date}'")
-                                elif len(ol_date) > 4 and '-' in ol_date:  # OpenLibrary has full date
-                                    api_data['published_date'] = ol_date
-                                    print(f"🎯 [MANUAL] Using OpenLibrary full date: '{ol_date}' over Google Books year: '{google_date}'")
-                                else:
-                                    # Both are year-only, prefer Google Books
-                                    api_data['published_date'] = google_date
-                                    print(f"🎯 [MANUAL] Both year-only, using Google Books: '{google_date}'")
-                            elif google_date:
-                                api_data['published_date'] = google_date
-                                print(f"🎯 [MANUAL] Using Google Books date: '{google_date}'")
-                            elif ol_date:
-                                api_data['published_date'] = ol_date
-                                print(f"🎯 [MANUAL] Using OpenLibrary date: '{ol_date}'")
-                            # If neither has a date, api_data['published_date'] will be whatever Google Books had (possibly empty)
-                        
-                        print(f"🎯 [MANUAL] Merged API data: {len(api_data.get('categories', []))} categories, cover: {bool(api_data.get('cover_url'))}")
-                        print(f"🎯 [MANUAL] Contributors in API data: {len(api_data.get('contributors', []))} items")
-                        
+                    from app.utils.metadata_aggregator import fetch_unified_by_isbn as unified_fetch
+                    api_data = unified_fetch(normalized_isbn) or {}
+
+                    print(f"🎯 [MANUAL] Unified API returned: {bool(api_data)} for ISBN {normalized_isbn}")
+                    if api_data:
                         # Use API data to fill in missing form fields
                         if not cover_url and api_data.get('cover_url'):
                             cover_url = api_data['cover_url']
@@ -3502,19 +3416,19 @@ def add_book_manual():
                             page_count = api_data['page_count']
                         if not published_date_str and api_data.get('published_date'):
                             published_date_str = api_data['published_date']
-                            print(f"🎯 [MANUAL] Using API published_date: '{published_date_str}' (type: {type(published_date_str)})")
+                            print(f"🎯 [MANUAL] Using unified published_date: '{published_date_str}' (type: {type(published_date_str)})")
                         if not categories and api_data.get('categories'):
                             categories = api_data['categories']
-                        
-                        # Download and cache cover image
+
+                        # Download and cache cover image (unchanged)
                         if cover_url:
                             try:
                                 book_temp_id = str(uuid.uuid4())
-                                
+
                                 # Use persistent covers directory in data folder
                                 import os
                                 covers_dir = Path('/app/data/covers')
-                                
+
                                 # Fallback to local development path if Docker path doesn't exist
                                 if not covers_dir.exists():
                                     # Check config for data directory path
@@ -3525,35 +3439,34 @@ def add_book_manual():
                                         # Last resort - use relative path from app root
                                         base_dir = Path(current_app.root_path).parent
                                         covers_dir = base_dir / 'data' / 'covers'
-                                
+
                                 covers_dir.mkdir(parents=True, exist_ok=True)
-                                
+
                                 # Generate filename
                                 file_extension = '.jpg'
                                 if cover_url.lower().endswith('.png'):
                                     file_extension = '.png'
-                                
+
                                 filename = f"{book_temp_id}{file_extension}"
                                 filepath = covers_dir / filename
-                                
+
                                 # Download the image
                                 response = requests.get(cover_url, timeout=10, stream=True)
                                 response.raise_for_status()
-                                
+
                                 with open(filepath, 'wb') as f:
                                     for chunk in response.iter_content(chunk_size=8192):
                                         f.write(chunk)
-                                
+
                                 cached_cover_url = f"/covers/{filename}"
                                 cover_url = cached_cover_url
-                                
+
                             except Exception as e:
                                 # If caching fails, use the original URL
                                 print(f"Cover caching failed: {e}")
                                 # cover_url already contains the original URL
-                
                 except Exception as e:
-                    pass
+                    print(f"❌ [MANUAL] Unified metadata fetch failed: {e}")
         
         # Process API contributors and merge with form contributors
         additional_authors = None
