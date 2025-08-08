@@ -19,6 +19,12 @@ from .user_utils import (
     get_reading_streak
 )
 
+# Unified metadata aggregation
+from .unified_metadata import (
+    fetch_unified_by_isbn,
+    fetch_unified_by_title,
+)
+
 __all__ = [
     'fetch_book_data', 
     'get_google_books_cover', 
@@ -30,5 +36,7 @@ __all__ = [
     'search_multiple_books_by_title_author',
     'search_google_books_by_title_author',
     'calculate_reading_streak',
-    'get_reading_streak'
+    'get_reading_streak',
+    'fetch_unified_by_isbn',
+    'fetch_unified_by_title',
 ]

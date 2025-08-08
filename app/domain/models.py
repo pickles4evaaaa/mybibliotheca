@@ -5,11 +5,18 @@ These models represent the core business entities independent of persistence con
 They define the structure and relationships according to the planning document.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, date
+from dataclasses import dataclass, field, InitVar
+from dataclasses import fields as dataclass_fields
+from dataclasses import MISSING
+from datetime import datetime, date, timezone
 from typing import Optional, List, Dict, Any
 from enum import Enum
 import json
+
+
+def now_utc() -> datetime:
+    """Timezone-aware UTC now for default timestamps (avoid datetime.utcnow deprecation)."""
+    return datetime.now(timezone.utc)
 
 
 class ReadingStatus(Enum):
@@ -90,8 +97,8 @@ class CustomFieldDefinition:
     usage_count: int = 0  # How many users are using this definition
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
 
 
 @dataclass
@@ -122,8 +129,8 @@ class ImportMappingTemplate:
     last_used: Optional[datetime] = None
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
 
     def to_dict(self):
         """Convert template to a dictionary for database storage."""
@@ -171,7 +178,7 @@ class Author:
     birth_year: Optional[int] = None
     death_year: Optional[int] = None
     bio: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
     
     def __post_init__(self):
         if not self.normalized_name and self.name:
@@ -191,7 +198,7 @@ class Publisher:
     normalized_name: str = ""
     founded_year: Optional[int] = None
     country: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
     
     def __post_init__(self):
         if not self.normalized_name and self.name:
@@ -213,8 +220,8 @@ class Location:
     location_type: str = "home"  # "home", "office", "vacation", "storage", "other"
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
 
 
 @dataclass
@@ -225,7 +232,7 @@ class Series:
     normalized_name: str = ""
     description: Optional[str] = None
     total_books: Optional[int] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
     
     def __post_init__(self):
         if not self.normalized_name and self.name:
@@ -253,8 +260,8 @@ class Category:
     book_count: int = 0
     user_book_count: int = 0  # For specific user
     
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
     
     def __post_init__(self):
         if not self.normalized_name and self.name:
@@ -403,13 +410,16 @@ class BookContribution:
     person: Optional[Person] = None
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
 
 
-@dataclass
+@dataclass(init=False)
 class Book:
     """Core book domain model - represents global book data shared across users."""
     id: Optional[str] = None
+    # Note: We intentionally do NOT declare an InitVar named 'author' here because
+    # a property with the same name exists below. We'll handle 'author' and 'name'
+    # in a custom __init__ to keep a clean API for tests while preserving the property.
     title: str = ""
     normalized_title: str = ""
     subtitle: Optional[str] = None
@@ -432,8 +442,8 @@ class Book:
     custom_metadata: Dict[str, Any] = field(default_factory=dict)
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
     
     # Relationships (will be resolved via repository)
     contributors: List[BookContribution] = field(default_factory=list)
@@ -445,25 +455,46 @@ class Book:
     
     # Raw category data from API/CSV (temporary field for processing)
     raw_categories: Optional[Any] = None
-    
-    def __post_init__(self):
+
+    def __init__(self, author: Optional[str] = None, name: Optional[str] = None, **kwargs):
+        """Custom initializer to accept legacy-friendly aliases.
+        Accepts:
+        - author: primary author name (creates a contributor if none provided)
+        - name: alias for title
+        - all other dataclass fields as keyword args
+        """
+        # First, set dataclass fields from kwargs or their defaults
+        for f in dataclass_fields(self.__class__):
+            if f.name in kwargs:
+                setattr(self, f.name, kwargs.pop(f.name))
+            else:
+                if f.default is not MISSING:
+                    setattr(self, f.name, f.default)
+                elif f.default_factory is not MISSING:  # type: ignore[attr-defined]
+                    setattr(self, f.name, f.default_factory())  # type: ignore[misc]
+                else:
+                    # No default; initialize with None for Optional fields, else sensible baseline
+                    setattr(self, f.name, None)
+
+        # Map provided 'name' to title if title wasn't explicitly set
+        if name and not getattr(self, 'title', None):
+            self.title = name
+
+        # Normalize title
         if not self.normalized_title and self.title:
             self.normalized_title = self._normalize_title(self.title)
-        
-        # Ensure published_date is a date object, not datetime or string
+
+        # Normalize/parse published_date
         if self.published_date:
             if isinstance(self.published_date, str):
-                date_string = self.published_date  # Store original string
+                date_string = self.published_date
                 try:
-                    # Try parsing as ISO date string
                     self.published_date = datetime.fromisoformat(date_string).date()
                 except ValueError:
                     try:
-                        # Try parsing as date-only string (YYYY-MM-DD)
                         self.published_date = datetime.strptime(date_string, '%Y-%m-%d').date()
                     except ValueError:
                         try:
-                            # Try parsing year-only (common in Google Books API)
                             if len(date_string) == 4 and date_string.isdigit():
                                 self.published_date = datetime.strptime(f"{date_string}-01-01", '%Y-%m-%d').date()
                             else:
@@ -475,8 +506,17 @@ class Book:
             elif isinstance(self.published_date, datetime):
                 self.published_date = self.published_date.date()
             elif isinstance(self.published_date, date):
-                # Already a date object, no conversion needed
                 pass
+
+        # Create a contributor from 'author' if provided and no contributors present
+        if author and not self.contributors:
+            person = Person(name=author)
+            contribution = BookContribution(
+                person=person,
+                contribution_type=ContributionType.AUTHORED,
+                order=0
+            )
+            self.contributors = [contribution]
     
     @staticmethod
     def _normalize_title(title: str) -> str:
@@ -603,8 +643,8 @@ class User:
     website: Optional[str] = None
     
     # System fields
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
     
     # Flask-Login compatibility methods
     def is_authenticated(self) -> bool:
@@ -623,7 +663,7 @@ class User:
         """Set password hash using werkzeug."""
         from werkzeug.security import generate_password_hash
         self.password_hash = generate_password_hash(password)
-        self.password_changed_at = datetime.utcnow()
+        self.password_changed_at = now_utc()
         self.password_must_change = False
     
     def check_password(self, password: str) -> bool:
@@ -686,7 +726,13 @@ class User:
         """Check if the user account is currently locked."""
         if self.locked_until is None:
             return False
-        return datetime.utcnow() < self.locked_until
+        # Use timezone-aware comparison; coerce naive locked_until to UTC if needed
+        now = now_utc()
+        if self.locked_until is not None and self.locked_until.tzinfo is None:
+            locked_until = self.locked_until.replace(tzinfo=timezone.utc)
+        else:
+            locked_until = self.locked_until
+        return now < locked_until if locked_until is not None else False
     
     def reset_failed_login(self) -> None:
         """Reset failed login attempts and unlock the account."""
@@ -699,7 +745,7 @@ class User:
         if self.failed_login_attempts >= lock_threshold:
             # Lock account for 30 minutes
             from datetime import timedelta
-            self.locked_until = datetime.utcnow() + timedelta(minutes=30)
+            self.locked_until = now_utc() + timedelta(minutes=30)
     
     def get_reading_streak(self) -> int:
         """Get the user's current reading streak with their personal offset."""
@@ -719,7 +765,7 @@ class UserBookRelationship:
     
     # Reading status
     reading_status: ReadingStatus = ReadingStatus.PLAN_TO_READ
-    date_added: datetime = field(default_factory=datetime.utcnow)
+    date_added: datetime = field(default_factory=now_utc)
     start_date: Optional[datetime] = None
     finish_date: Optional[datetime] = None
     
@@ -780,8 +826,8 @@ class ReadingLog:
     pages_read: int = 0
     minutes_read: int = 0
     notes: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
 
 
 @dataclass
@@ -804,6 +850,6 @@ class ImportTask:
     error_message: Optional[str] = None
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

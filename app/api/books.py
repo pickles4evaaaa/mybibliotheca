@@ -15,6 +15,7 @@ from ..api_auth import api_token_required, api_auth_optional
 from ..services import book_service
 from ..services.kuzu_service_facade import KuzuServiceFacade as KuzuBookService
 from ..domain.models import Book as DomainBook, Author, Publisher, BookContribution, ContributionType
+from ..utils.unified_metadata import fetch_unified_by_isbn, fetch_unified_by_title
 
 # Create API blueprint
 books_api = Blueprint('books_api', __name__, url_prefix='/api/v1/books')
@@ -560,5 +561,56 @@ def search_external_books():
         return jsonify({
             'status': 'error',
             'message': 'External search failed',
+            'error': str(e)
+        }), 500
+
+
+@books_api.route('/unified-metadata', methods=['GET'])
+@api_token_required
+def unified_metadata_lookup():
+    """
+    Unified metadata lookup by ISBN or title.
+
+    Query parameters:
+      - isbn: Lookup a single book by ISBN, merging Google Books and OpenLibrary
+      - title: Search by title across Google Books and OpenLibrary
+
+    If both are provided, ISBN takes precedence.
+    """
+    try:
+        isbn = (request.args.get('isbn') or '').strip()
+        title = (request.args.get('title') or '').strip()
+
+        if not isbn and not title:
+            return jsonify({
+                'status': 'error',
+                'message': 'Provide either isbn or title'
+            }), 400
+
+        if isbn:
+            data = fetch_unified_by_isbn(isbn)
+            return jsonify({
+                'status': 'success',
+                'mode': 'isbn',
+                'isbn': isbn,
+                'data': data
+            }), 200
+
+        # title search
+        results = fetch_unified_by_title(title, max_results=min(int(request.args.get('limit', 10)), 20))
+        return jsonify({
+            'status': 'success',
+            'mode': 'title',
+            'title': title,
+            'count': len(results),
+            'results': results
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"Error in unified metadata lookup: {e}")
+        current_app.logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': 'Unified metadata lookup failed',
             'error': str(e)
         }), 500

@@ -2043,99 +2043,46 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
     return task_id
 
 def batch_fetch_book_metadata(isbns):
-    """Batch fetch metadata from Google Books and OpenLibrary APIs with improved error handling."""
-    print(f"🌐 [API] ===== STARTING BATCH FETCH =====")
-    print(f"🌐 [API] Fetching metadata for {len(isbns)} ISBNs: {isbns}")
-    
-    from app.utils import fetch_book_data, get_google_books_cover
+    """Batch fetch metadata using the unified aggregator for a list of ISBNs."""
+    print(f"🌐 [UNIFIED_API] ===== STARTING BATCH FETCH =====")
+    print(f"🌐 [UNIFIED_API] Fetching metadata for {len(isbns)} ISBNs: {isbns}")
+
+    from app.utils.unified_metadata import fetch_unified_by_isbn
     import time
     import random
-    
+
     metadata = {}
     failed_isbns = []
-    
+
     for i, isbn in enumerate(isbns):
         if not isbn:
             continue
-            
-        print(f"🌐 [API] Processing {i+1}/{len(isbns)}: {isbn}")
-        
+
+        print(f"🌐 [UNIFIED_API] Processing {i+1}/{len(isbns)}: {isbn}")
         try:
-            # Add small random delay to avoid hitting rate limits too hard
-            if i > 0:  # Don't delay the first request
-                delay = random.uniform(0.3, 0.7)  # Random delay between 300-700ms
-                time.sleep(delay)
-            
-            # Try Google Books first (usually faster and more complete)
-            google_data = None
-            try:
-                google_data = get_google_books_cover(isbn, fetch_title_author=True)
-                if google_data:
-                    print(f"🌐 [API] Google Books data found for {isbn}")
-            except Exception as e:
-                print(f"⚠️ [API] Google Books failed for {isbn}: {e}")
-            
-            # Try OpenLibrary as backup/additional source
-            openlibrary_data = None
-            try:
-                openlibrary_data = fetch_book_data(isbn)
-                if openlibrary_data:
-                    print(f"🌐 [API] OpenLibrary data found for {isbn}")
-            except Exception as e:
-                print(f"⚠️ [API] OpenLibrary failed for {isbn}: {e}")
-            
-            # Merge the data, preferring Google Books for most fields
-            combined_data = {}
-            
-            if google_data:
-                combined_data.update(google_data)
-                combined_data['source'] = 'google_books'
-            
-            if openlibrary_data:
-                # Add OpenLibrary data for missing fields
-                for key, value in openlibrary_data.items():
-                    if value and (key not in combined_data or not combined_data[key]):
-                        combined_data[key] = value
-                
-                # Merge categories intelligently
-                if google_data and google_data.get('categories') and openlibrary_data.get('categories'):
-                    # Combine categories from both sources
-                    google_cats = set(google_data.get('categories', []))
-                    ol_cats = set(openlibrary_data.get('categories', []))
-                    all_cats = list(google_cats.union(ol_cats))
-                    combined_data['categories'] = all_cats[:12]  # Limit to 12 total categories
-                
-                # Add OpenLibrary specific fields
-                if openlibrary_data.get('openlibrary_id'):
-                    combined_data['openlibrary_id'] = openlibrary_data['openlibrary_id']
-                
-                if google_data:
-                    combined_data['source'] = 'google_books,openlibrary'
-                else:
-                    combined_data['source'] = 'openlibrary'
-            
-            if combined_data:
+            # Gentle delay to avoid API rate limits
+            if i > 0:
+                time.sleep(random.uniform(0.25, 0.6))
+
+            data = fetch_unified_by_isbn(isbn)
+            if data:
                 metadata[isbn] = {
-                    'data': combined_data,
-                    'source': combined_data.get('source', 'unknown')
+                    'data': data,
+                    'source': 'unified'
                 }
-                
-                # Log category info specifically
-                if combined_data.get('categories'):
-                    print(f"🏷️ [API] Found {len(combined_data['categories'])} categories for {isbn}")
+                if data.get('categories'):
+                    print(f"🏷️ [UNIFIED_API] {isbn} categories: {len(data['categories'])}")
             else:
                 failed_isbns.append(isbn)
-                
         except Exception as e:
+            print(f"⚠️ [UNIFIED_API] Failed for {isbn}: {e}")
             failed_isbns.append(isbn)
             continue
-    
+
     success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
-    print(f"🎉 [API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs ({success_rate:.1f}% success rate)")
-    
+    print(f"🎉 [UNIFIED_API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs ({success_rate:.1f}% success rate)")
     if failed_isbns:
-        print(f"⚠️ [API] Failed to fetch metadata for {len(failed_isbns)} ISBNs")
-    
+        print(f"⚠️ [UNIFIED_API] Failed to fetch: {failed_isbns}")
     return metadata
 
 def store_job_in_kuzu(task_id, job_data):
@@ -2948,203 +2895,48 @@ def reading_history_book_matching(task_id):
 @import_bp.route('/api/books/search-details', methods=['POST'])
 @login_required
 def api_search_book_details():
-    """Search for books by title and/or author - similar to the working book details search."""
+    """Search for books by title using the unified search pipeline (Google+OpenLibrary)."""
     try:
         data = request.get_json()
         if not data:
             return jsonify({'success': False, 'message': 'No search criteria provided'}), 400
-        
-        query = data.get('query', '').strip()
-        
+
+        query = (data.get('query') or '').strip()
         if not query:
             return jsonify({'success': False, 'message': 'Query is required'}), 400
-        
         if len(query) < 2:
             return jsonify({'success': False, 'message': 'Query must be at least 2 characters'}), 400
-        
-        current_app.logger.info(f"[IMPORT_SEARCH] Book search request: query='{query}'")
-        
-        # Parse query to extract title and author
-        title = query
-        author = None
-        
-        # If query looks like it might have author info, try splitting
-        if ' by ' in query.lower():
-            parts = query.lower().split(' by ')
-            if len(parts) == 2:
-                title = parts[0].strip()
-                author = parts[1].strip()
-        
+
+        current_app.logger.info(f"[IMPORT_SEARCH] Unified search request: query='{query}'")
+
+        from app.utils.metadata_aggregator import fetch_unified_by_title
+        unified_results = fetch_unified_by_title(query, max_results=10) or []
+
         results = []
-        
-        # Search OpenLibrary first
-        try:
-            current_app.logger.info("[IMPORT_SEARCH] Searching OpenLibrary...")
-            
-            query_parts = [title]
-            if author:
-                query_parts.append(author)
-            
-            search_query = ' '.join(query_parts)
-            url = f"https://openlibrary.org/search.json?q={search_query}&limit=5"
-            
-            current_app.logger.info(f"[IMPORT_SEARCH] OpenLibrary URL: {url}")
-            
-            response = requests.get(url, timeout=15)
-            response.raise_for_status()
-            search_data = response.json()
-            
-            docs = search_data.get('docs', [])
-            current_app.logger.info(f"[IMPORT_SEARCH] Found {len(docs)} OpenLibrary results")
-            
-            for i, doc in enumerate(docs[:5]):  # Limit to 5 results from OpenLibrary
-                doc_title = doc.get('title', '')
-                doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
-                doc_isbn = doc.get('isbn', [])
-                
-                # Get best ISBN (prefer 13-digit)
-                best_isbn = None
-                isbn13 = None
-                isbn10 = None
-                if doc_isbn:
-                    for isbn in doc_isbn:
-                        if len(isbn) == 13:
-                            isbn13 = isbn
-                            if not best_isbn:
-                                best_isbn = isbn
-                        elif len(isbn) == 10:
-                            isbn10 = isbn
-                            if not best_isbn:
-                                best_isbn = isbn
-                
-                # Get cover image
-                cover_url = None
-                if doc.get('cover_i'):
-                    cover_id = doc['cover_i']
-                    cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
-                elif best_isbn:
-                    cover_url = f"https://covers.openlibrary.org/b/isbn/{best_isbn}-L.jpg"
-                
-                result = {
-                    'title': doc_title,
-                    'author': ', '.join(doc_authors) if doc_authors else '',
-                    'authors_list': doc_authors,
-                    'description': '',  # OpenLibrary search doesn't include descriptions
-                    'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
-                    'page_count': doc.get('number_of_pages_median') or 0,
-                    'isbn13': isbn13 or '',
-                    'isbn10': isbn10 or '',
-                    'cover_url': cover_url or '',
-                    'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
-                    'language': doc.get('language', ['en'])[0] if doc.get('language') else 'en',
-                    'categories': [],
-                    'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else '',
-                    'source': 'OpenLibrary'
-                }
-                
-                results.append(result)
-                current_app.logger.info(f"[IMPORT_SEARCH] Added OpenLibrary result: '{doc_title}' by {doc_authors}")
-        
-        except Exception as e:
-            current_app.logger.error(f"[IMPORT_SEARCH] OpenLibrary search failed: {e}")
-        
-        # Search Google Books for additional results
-        try:
-            current_app.logger.info("[IMPORT_SEARCH] Searching Google Books...")
-            
-            query_parts = []
-            if title:
-                query_parts.append(f'intitle:"{title}"')
-            if author:
-                query_parts.append(f'inauthor:"{author}"')
-            
-            google_query = '+'.join(query_parts) if query_parts else title
-            google_url = f"https://www.googleapis.com/books/v1/volumes?q={google_query}&maxResults=5"
-            
-            current_app.logger.info(f"[IMPORT_SEARCH] Google Books URL: {google_url}")
-            
-            response = requests.get(google_url, timeout=10)
-            response.raise_for_status()
-            google_data = response.json()
-            
-            items = google_data.get('items', [])
-            current_app.logger.info(f"[IMPORT_SEARCH] Found {len(items)} Google Books results")
-            
-            for i, item in enumerate(items[:5]):  # Limit to 5 results from Google Books
-                volume_info = item.get('volumeInfo', {})
-                
-                book_title = volume_info.get('title', '')
-                book_authors = volume_info.get('authors', [])
-                book_description = volume_info.get('description', '')
-                book_publisher = volume_info.get('publisher', '')
-                book_published_date = volume_info.get('publishedDate', '')
-                book_page_count = volume_info.get('pageCount', 0)
-                book_language = volume_info.get('language', 'en')
-                book_categories = volume_info.get('categories', [])
-                
-                # Get ISBNs
-                isbn13 = None
-                isbn10 = None
-                industry_identifiers = volume_info.get('industryIdentifiers', [])
-                for identifier in industry_identifiers:
-                    if identifier.get('type') == 'ISBN_13':
-                        isbn13 = identifier.get('identifier')
-                    elif identifier.get('type') == 'ISBN_10':
-                        isbn10 = identifier.get('identifier')
-                
-                # Get cover image
-                image_links = volume_info.get('imageLinks', {})
-                cover_url = image_links.get('large') or image_links.get('medium') or image_links.get('small') or image_links.get('thumbnail')
-                
-                result = {
-                    'title': book_title,
-                    'author': ', '.join(book_authors) if book_authors else '',
-                    'authors_list': book_authors,
-                    'description': book_description,
-                    'publisher': book_publisher,
-                    'published_date': book_published_date,
-                    'page_count': book_page_count,
-                    'isbn13': isbn13 or '',
-                    'isbn10': isbn10 or '',
-                    'cover_url': cover_url or '',
-                    'language': book_language,
-                    'categories': book_categories,
-                    'google_books_id': item.get('id'),
-                    'source': 'Google Books'
-                }
-                
-                results.append(result)
-                current_app.logger.info(f"[IMPORT_SEARCH] Added Google Books result: '{book_title}' by {book_authors}")
-        
-        except Exception as e:
-            current_app.logger.error(f"[IMPORT_SEARCH] Google Books search failed: {e}")
-        
-        # Deduplicate results by title similarity
-        unique_results = []
-        seen_titles = set()
-        
-        for result in results:
-            result_title = result.get('title', '').lower().strip()
-            
-            # Skip if we've seen a very similar title
-            is_duplicate = False
-            for seen_title in seen_titles:
-                if (result_title in seen_title or seen_title in result_title) and len(result_title) > 3:
-                    is_duplicate = True
-                    break
-            
-            if not is_duplicate and result['title']:
-                unique_results.append(result)
-                seen_titles.add(result_title)
-        
-        current_app.logger.info(f"[IMPORT_SEARCH] Returning {len(unique_results)} unique results")
-        
-        return jsonify({
-            'success': True,
-            'query': query,
-            'results': unique_results,
-            'count': len(unique_results)
-        })
+        for item in unified_results:
+            authors = item.get('authors') or []
+            isbn13 = item.get('isbn_13') or item.get('isbn13') or ''
+            isbn10 = item.get('isbn_10') or item.get('isbn10') or ''
+            results.append({
+                'title': item.get('title', ''),
+                'author': ', '.join(authors) if authors else '',
+                'authors_list': authors,
+                'description': item.get('description', ''),
+                'publisher': item.get('publisher', ''),
+                'published_date': item.get('published_date', ''),
+                'page_count': item.get('page_count', 0),
+                'isbn13': isbn13,
+                'isbn10': isbn10,
+                'cover_url': item.get('cover_url') or item.get('cover') or '',
+                'language': item.get('language', 'en'),
+                'categories': item.get('categories', []),
+                'google_books_id': item.get('google_books_id', ''),
+                'openlibrary_id': item.get('openlibrary_id', ''),
+                'source': item.get('source', 'Unified')
+            })
+
+        current_app.logger.info(f"[IMPORT_SEARCH] Returning {len(results)} unified results")
+        return jsonify({'success': True, 'query': query, 'results': results, 'count': len(results)})
         
     except Exception as e:
         current_app.logger.error(f"[IMPORT_SEARCH] Error in book search: {e}")
@@ -3154,110 +2946,56 @@ def api_search_book_details():
 @import_bp.route('/api/books/external-search', methods=['POST'])
 @login_required
 def api_external_book_search():
-    """
-    Search external APIs for book metadata - SIMPLIFIED FOR READING LOG IMPORT.
-    This is ONLY for use during reading log import and prioritizes ISBN-based results.
-    """
+    """Reading log import search powered by unified title search, prioritizing ISBN results."""
     try:
         data = request.get_json()
-        query = data.get('query', '').strip()
-        
+        query = (data.get('query') or '').strip()
+
         if not query:
             return jsonify({'error': 'Query is required'}), 400
-        
         if len(query) < 2:
             return jsonify({'error': 'Query must be at least 2 characters'}), 400
-        
-        # Import the API utilities
-        from app.utils import search_book_by_title_author, get_google_books_cover, search_multiple_books_by_title_author
-        
-        print(f"🔍 [READING_LOG_SEARCH] Searching for ISBN-based results for: '{query}'")
-        
-        all_results = []
-        isbn_results = []  # Results WITH ISBNs (priority)
-        non_isbn_results = []  # Results WITHOUT ISBNs (fallback)
-        search_error = None
-        
-        # Try different search approaches
-        search_queries = [
-            {'title': query, 'author': None},  # Original query as title
-        ]
-        
-        # If query looks like it might have author info, try splitting
-        if ' by ' in query.lower():
-            parts = query.lower().split(' by ')
-            if len(parts) == 2:
-                title_part = parts[0].strip()
-                author_part = parts[1].strip()
-                search_queries.insert(0, {'title': title_part, 'author': author_part})
-        
-        for search_params in search_queries:
-            try:
-                # Search both APIs with higher limit to find more ISBN results
-                api_results = search_multiple_books_by_title_author(search_params['title'], search_params['author'], limit=20)
-                
-                if api_results:
-                    for api_data in api_results:
-                        # Convert to our standard format
-                        result = {
-                            'title': api_data.get('title', ''),
-                            'author': api_data.get('author', ''),
-                            'description': api_data.get('description', ''),
-                            'published_date': api_data.get('published_date', ''),
-                            'page_count': api_data.get('page_count', 0),
-                            'isbn13': api_data.get('isbn13', '') or api_data.get('isbn', ''),
-                            'isbn10': api_data.get('isbn10', ''),
-                            'cover_url': api_data.get('cover_url', '') or api_data.get('cover', ''),
-                            'publisher': api_data.get('publisher', ''),
-                            'language': api_data.get('language', ''),
-                            'categories': api_data.get('categories', []),
-                            'openlibrary_id': api_data.get('openlibrary_id', ''),
-                            'google_books_id': api_data.get('google_books_id', ''),
-                            'source': api_data.get('source', 'unknown')
-                        }
-                        
-                        # Only include results with at least a title
-                        if result['title']:
-                            # *** CRITICAL: Prioritize results with ISBNs ***
-                            if result['isbn13'] or result['isbn10']:
-                                isbn_results.append(result)
-                                print(f"✅ [READING_LOG_SEARCH] Found ISBN result: '{result['title']}' by {result['author']} (ISBN: {result['isbn13'] or result['isbn10']})")
-                            else:
-                                non_isbn_results.append(result)
-                                print(f"📖 [READING_LOG_SEARCH] Found non-ISBN result: '{result['title']}' by {result['author']}")
-                    
-                    # If we found ISBN results, we can stop searching
-                    if isbn_results:
-                        break
-                
-            except Exception as api_error:
-                error_message = str(api_error)
-                print(f"⚠️ [READING_LOG_SEARCH] Error searching for '{search_params['title']}': {error_message}")
-                
-                # Store the error for user feedback if no results are found
-                if not isbn_results and not non_isbn_results:
-                    search_error = error_message
-                continue
-        
-        # ONLY return results WITH ISBNs - no non-ISBN results allowed
-        final_results = isbn_results[:10]  # Top 10 ISBN results ONLY
-        
-        print(f"🎯 [READING_LOG_SEARCH] Returning {len(final_results)} ISBN-only results for '{query}' (filtered out {len(non_isbn_results)} non-ISBN results)")
-        
-        response_data = {
+
+        print(f"🔍 [READING_LOG_SEARCH] Unified search for: '{query}'")
+
+        from app.utils.metadata_aggregator import fetch_unified_by_title
+        unified_results = fetch_unified_by_title(query, max_results=25) or []
+
+        isbn_results = []
+        for item in unified_results:
+            authors = item.get('authors') or []
+            isbn13 = item.get('isbn_13') or item.get('isbn13') or ''
+            isbn10 = item.get('isbn_10') or item.get('isbn10') or ''
+            if not (isbn13 or isbn10):
+                continue  # only ISBN results allowed
+            res = {
+                'title': item.get('title', ''),
+                'author': ', '.join(authors) if authors else '',
+                'description': item.get('description', ''),
+                'published_date': item.get('published_date', ''),
+                'page_count': item.get('page_count', 0),
+                'isbn13': isbn13,
+                'isbn10': isbn10,
+                'cover_url': item.get('cover_url') or item.get('cover', ''),
+                'publisher': item.get('publisher', ''),
+                'language': item.get('language', ''),
+                'categories': item.get('categories', []),
+                'openlibrary_id': item.get('openlibrary_id', ''),
+                'google_books_id': item.get('google_books_id', ''),
+                'source': item.get('source', 'Unified'),
+            }
+            if res['title']:
+                isbn_results.append(res)
+
+        final_results = isbn_results[:10]
+        return jsonify({
             'query': query,
             'results': final_results,
             'count': len(final_results),
-            'isbn_count': len(final_results),  # All results have ISBNs now
-            'has_isbn_priority': True,  # Always true since we only return ISBN results
-            'filtered_out_count': len(non_isbn_results)  # Show how many we filtered out
-        }
-        
-        # Include error information if no results were found but there was an error
-        if len(final_results) == 0 and search_error:
-            response_data['error'] = f"Search failed: {search_error}"
-        
-        return jsonify(response_data)
+            'isbn_count': len(final_results),
+            'has_isbn_priority': True,
+            'filtered_out_count': 0
+        })
         
     except Exception as e:
         current_app.logger.error(f"Error in external book search: {e}")

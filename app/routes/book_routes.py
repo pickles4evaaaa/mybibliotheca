@@ -114,66 +114,66 @@ def _format_published_date_for_input(published_date_str):
 
 @book_bp.route('/fetch_book/<isbn>', methods=['GET'])
 def fetch_book(isbn):
-    book_data = fetch_book_data(isbn) or {}
-    
-    # Normalize OpenLibrary cover_url to cover for consistent frontend usage
-    if book_data.get('cover_url') and not book_data.get('cover'):
-        book_data['cover'] = book_data['cover_url']
-    
-    # Get comprehensive data from Google Books including description
-    google_data = get_google_books_cover(isbn, fetch_title_author=True)
-    if google_data:
-        # Merge Google Books data, prioritizing existing data
-        for key, value in google_data.items():
-            if key not in book_data or not book_data[key]:
-                book_data[key] = value
-        # Ensure cover field is set correctly - Google Books returns 'cover_url'
-        if google_data.get('cover_url'):
-            book_data['cover'] = google_data['cover_url']
-        elif google_data.get('cover'):
-            book_data['cover'] = google_data['cover']
-    
-    # Ensure ISBN field is consistently available for frontend
-    if not book_data.get('isbn'):
-        # Try to get ISBN from Google Books data
-        if google_data and google_data.get('isbn_13'):
-            book_data['isbn'] = google_data['isbn_13']
-        elif google_data and google_data.get('isbn_10'):
-            book_data['isbn'] = google_data['isbn_10']
-        else:
-            # Fall back to the original ISBN that was requested
-            book_data['isbn'] = isbn
-    
-    # Ensure author field is available for backward compatibility
-    # Frontend expects 'author' but APIs return 'authors'
-    if not book_data.get('author') and book_data.get('authors'):
-        book_data['author'] = book_data['authors']
-    
-    # Format published_date for HTML5 date input (expects YYYY-MM-DD format)
-    if book_data.get('published_date'):
-        original_date = book_data['published_date']
-        formatted_date = _format_published_date_for_input(original_date)
-        if formatted_date:
-            book_data['published_date'] = formatted_date
-            print(f"📅 [FETCH_BOOK] Formatted published_date: '{original_date}' -> '{formatted_date}'")
-        else:
-            print(f"⚠️ [FETCH_BOOK] Could not format published_date: '{original_date}'")
-    
-    # Debug logging to see what we're returning
-    print(f"🔍 [FETCH_BOOK] Final data for ISBN {isbn}:")
-    print(f"    title: '{book_data.get('title', 'NOT_FOUND')}'")
-    print(f"    author: '{book_data.get('author', 'NOT_FOUND')}'")
-    print(f"    authors: '{book_data.get('authors', 'NOT_FOUND')}'")
-    print(f"    published_date: '{book_data.get('published_date', 'NOT_FOUND')}'")
-    print(f"    isbn: '{book_data.get('isbn', 'NOT_FOUND')}'")
-    print(f"    google_books_id: '{book_data.get('google_books_id', 'NOT_FOUND')}'")
-    print(f"    openlibrary_id: '{book_data.get('openlibrary_id', 'NOT_FOUND')}'")
-    print(f"    all_keys: {list(book_data.keys())}")
-    
-    # If neither source provides a cover, set a default
-    if not book_data.get('cover'):
-        book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
-    return jsonify(book_data), 200 if book_data else 404
+    """Legacy endpoint: now powered by unified ISBN metadata with graceful fallback."""
+    try:
+        from app.utils.metadata_aggregator import fetch_unified_by_isbn
+        unified = fetch_unified_by_isbn(isbn) or {}
+        book_data = dict(unified)
+
+        # Maintain compatibility fields
+        if book_data and not book_data.get('isbn'):
+            # Provide a generic 'isbn' field for legacy consumers
+            book_data['isbn'] = book_data.get('isbn13') or book_data.get('isbn10') or isbn
+
+        # Provide 'author' (comma-joined) for older UIs
+        if not book_data.get('author') and book_data.get('authors'):
+            if isinstance(book_data['authors'], list):
+                book_data['author'] = ', '.join([a for a in book_data['authors'] if isinstance(a, str)])
+            else:
+                book_data['author'] = book_data['authors']
+
+        # If neither source provides a cover, set a default
+        if not book_data.get('cover') and not book_data.get('cover_url'):
+            book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
+
+        # Date is already normalized by unified aggregator; still ensure input format
+        if book_data.get('published_date'):
+            original_date = book_data['published_date']
+            formatted_date = _format_published_date_for_input(original_date)
+            if formatted_date:
+                book_data['published_date'] = formatted_date
+                print(f"📅 [FETCH_BOOK] Formatted published_date: '{original_date}' -> '{formatted_date}'")
+
+        # Debug logging
+        print(f"🔍 [FETCH_BOOK] Unified data keys for ISBN {isbn}: {list(book_data.keys())}")
+        return jsonify(book_data), 200 if book_data else 404
+    except Exception as e:
+        # Fallback to legacy behavior if unified fails
+        current_app.logger.warning(f"Unified fetch failed for {isbn}: {e}. Falling back to legacy.")
+        book_data = fetch_book_data(isbn) or {}
+        google_data = get_google_books_cover(isbn, fetch_title_author=True)
+        if google_data:
+            for key, value in google_data.items():
+                if key not in book_data or not book_data[key]:
+                    book_data[key] = value
+            if google_data.get('cover_url') and not book_data.get('cover'):
+                book_data['cover'] = google_data['cover_url']
+        if not book_data.get('isbn'):
+            if google_data and google_data.get('isbn_13'):
+                book_data['isbn'] = google_data['isbn_13']
+            elif google_data and google_data.get('isbn_10'):
+                book_data['isbn'] = google_data['isbn_10']
+            else:
+                book_data['isbn'] = isbn
+        if not book_data.get('author') and book_data.get('authors'):
+            book_data['author'] = book_data['authors']
+        if book_data.get('published_date'):
+            fmt = _format_published_date_for_input(book_data['published_date'])
+            if fmt:
+                book_data['published_date'] = fmt
+        if not book_data.get('cover'):
+            book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
+        return jsonify(book_data), 200 if book_data else 404
 
 @book_bp.route('/')
 @login_required
@@ -250,11 +250,59 @@ def add_book_from_image():
                     'suggestion': 'Make sure the barcode or ISBN text is clearly visible and well-lit'
                 }), 404
             
-            # Try to fetch book data using the extracted ISBN
-            from app.utils import fetch_book_data
-            book_data = fetch_book_data(isbn)
+            # Optionally fetch unified book data using the extracted ISBN (not required by UI)
+            # UI will call unified-metadata separately after we return ISBN, but we include
+            # data here when available for completeness/debugging.
+            try:
+                from app.utils import fetch_unified_by_isbn
+                book_data = fetch_unified_by_isbn(isbn)
+            except Exception:
+                book_data = None
             
             if book_data and 'title' in book_data:
+                # Normalize fields for client consumption
+                try:
+                    import re as _re
+                    try:
+                        from app.utils.unified_metadata import _normalize_date as _nm
+                    except Exception:
+                        def _nm(val):
+                            s = str(val).strip() if val else ''
+                            if not s:
+                                return None
+                            if _re.fullmatch(r"\d{4}", s):
+                                return f"{s}-01-01"
+                            if _re.fullmatch(r"\d{4}-\d{2}", s):
+                                return f"{s}-01"
+                            m = _re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)
+                            if m:
+                                mm, dd, yyyy = m.groups()
+                                return f"{int(yyyy):04d}-{int(mm):02d}-{int(dd):02d}"
+                            m2 = _re.search(r"(\d{4})", s)
+                            return f"{int(m2.group(1)):04d}-01-01" if m2 else None
+
+                    if book_data.get('published_date'):
+                        nd = _nm(book_data.get('published_date'))
+                        if nd:
+                            book_data['published_date'] = nd
+                    elif book_data.get('publication_year') and not book_data.get('published_date'):
+                        year = str(book_data.get('publication_year')).strip()
+                        if _re.fullmatch(r"\d{4}", year):
+                            book_data['published_date'] = f"{year}-01-01"
+
+                    raw_isbn = (book_data.get('isbn') or book_data.get('isbn13') or book_data.get('isbn_13')
+                                or book_data.get('isbn10') or book_data.get('isbn_10'))
+                    if raw_isbn:
+                        digits = _re.sub(r"[^0-9Xx]", "", str(raw_isbn))
+                        if len(digits) == 13:
+                            book_data.setdefault('isbn13', digits)
+                            book_data.setdefault('isbn_13', digits)
+                        elif len(digits) == 10:
+                            book_data.setdefault('isbn10', digits)
+                            book_data.setdefault('isbn_10', digits)
+                except Exception as _e:
+                    current_app.logger.debug(f"OCR unified data post-process skipped: {_e}")
+
                 return jsonify({
                     'success': True,
                     'isbn': isbn,
@@ -356,16 +404,18 @@ def add_book_from_image_ai():
                 
                 # Try to enhance data with API lookup
                 try:
-                    from app.utils import fetch_book_data, search_book_by_title_author
+                    # Use unified metadata helpers everywhere
+                    from app.utils import fetch_unified_by_isbn
+                    from app.utils.unified_metadata import fetch_unified_by_title
                     
                     api_data = None
                     
                     # First try ISBN lookup if available
                     if book_data.get('isbn'):
-                        current_app.logger.info(f"Trying ISBN lookup: {book_data.get('isbn')}")
-                        api_data = fetch_book_data(book_data['isbn'])
+                        current_app.logger.info(f"Trying ISBN lookup (unified): {book_data.get('isbn')}")
+                        api_data = fetch_unified_by_isbn(book_data['isbn'])
                         if api_data:
-                            current_app.logger.info("Successfully fetched data using ISBN")
+                            current_app.logger.info("Successfully fetched unified data using ISBN")
                     
                     # If no ISBN or ISBN lookup failed, try title+author search
                     if not api_data and book_data.get('title'):
@@ -402,10 +452,36 @@ def add_book_from_image_ai():
                                     current_app.logger.warning(f"Failed to parse contributors string: {e}")
                         
                         if author:
-                            current_app.logger.info(f"Trying title+author search: '{book_data.get('title')}' by '{author}'")
-                            api_data = search_book_by_title_author(book_data.get('title'), author)
+                            current_app.logger.info(f"Trying unified title search: '{book_data.get('title')}' by '{author}'")
+                            # Use enhanced title search and take the top result if present
+                            try:
+                                title_query = str(book_data.get('title') or '').strip()
+                                results = fetch_unified_by_title(title_query, max_results=5) if title_query else []
+                            except Exception:
+                                results = []
+                            api_data = None
+                            if results:
+                                # Prefer a result that contains an ISBN
+                                best = next((r for r in results if r.get('isbn_13') or r.get('isbn_10')), results[0])
+                                # Map keys from search result to API shape used below
+                                api_data = {
+                                    'title': best.get('title'),
+                                    'subtitle': best.get('subtitle'),
+                                    'authors': best.get('authors') or (best.get('author', '') and [a.strip() for a in best.get('author', '').split(',') if a.strip()]) or [],
+                                    'publisher': best.get('publisher'),
+                                    'published_date': best.get('published_date') or (str(best.get('publication_year')) if best.get('publication_year') else None),
+                                    'page_count': best.get('page_count'),
+                                    'language': best.get('language') or 'en',
+                                    'description': best.get('description'),
+                                    'categories': best.get('categories') or [],
+                                    'cover_url': best.get('cover_url') or best.get('cover'),
+                                    'isbn13': best.get('isbn_13') or best.get('isbn13'),
+                                    'isbn10': best.get('isbn_10') or best.get('isbn10'),
+                                    'google_books_id': best.get('google_books_id'),
+                                    'openlibrary_id': best.get('openlibrary_id'),
+                                }
                             if api_data:
-                                current_app.logger.info("Successfully fetched data using title+author search")
+                                current_app.logger.info("Successfully fetched unified data using title search")
                             else:
                                 current_app.logger.info("Title+author search returned no results")
                         else:
@@ -422,6 +498,51 @@ def add_book_from_image_ai():
                 except Exception as e:
                     current_app.logger.warning(f"Failed to enhance AI data with API lookup: {e}")
             
+            # Normalize published_date for HTML date input and expose ISBN variants
+            try:
+                import re as _re
+                try:
+                    from app.utils.unified_metadata import _normalize_date as _nm
+                except Exception:
+                    def _nm(val):
+                        s = str(val).strip() if val else ''
+                        if not s:
+                            return None
+                        if _re.fullmatch(r"\d{4}", s):
+                            return f"{s}-01-01"
+                        if _re.fullmatch(r"\d{4}-\d{2}", s):
+                            return f"{s}-01"
+                        m = _re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)
+                        if m:
+                            mm, dd, yyyy = m.groups()
+                            return f"{int(yyyy):04d}-{int(mm):02d}-{int(dd):02d}"
+                        m2 = _re.search(r"(\d{4})", s)
+                        return f"{int(m2.group(1)):04d}-01-01" if m2 else None
+
+                # Date normalization
+                if book_data.get('published_date'):
+                    norm = _nm(book_data.get('published_date'))
+                    if norm:
+                        book_data['published_date'] = norm
+                elif book_data.get('publication_year') and not book_data.get('published_date'):
+                    year = str(book_data.get('publication_year')).strip()
+                    if _re.fullmatch(r"\d{4}", year):
+                        book_data['published_date'] = f"{year}-01-01"
+
+                # ISBN variants mapping
+                raw_isbn = (book_data.get('isbn') or book_data.get('isbn13') or book_data.get('isbn_13') 
+                            or book_data.get('isbn10') or book_data.get('isbn_10'))
+                if raw_isbn:
+                    digits = _re.sub(r"[^0-9Xx]", "", str(raw_isbn))
+                    if len(digits) == 13:
+                        book_data.setdefault('isbn13', digits)
+                        book_data.setdefault('isbn_13', digits)
+                    elif len(digits) == 10:
+                        book_data.setdefault('isbn10', digits)
+                        book_data.setdefault('isbn_10', digits)
+            except Exception as _e:
+                current_app.logger.debug(f"AI data post-process skipped: {_e}")
+
             return jsonify({
                 'success': True,
                 'message': 'AI extraction successful',
@@ -3567,7 +3688,21 @@ def add_book_manual():
                     books = book_service.get_user_books_sync(current_user.id)
                     created_book = None
                     for book in books:
-                        if book.title == title and (not author or book.primary_author == author):
+                        # Determine a primary author name fallback
+                        book_author_name = None
+                        if hasattr(book, 'primary_author') and getattr(book, 'primary_author'):
+                            book_author_name = getattr(book, 'primary_author')
+                        elif hasattr(book, 'contributors') and book.contributors:
+                            try:
+                                first_contrib = book.contributors[0]
+                                # contributor may have person attribute
+                                if hasattr(first_contrib, 'person') and first_contrib.person and hasattr(first_contrib.person, 'name'):
+                                    book_author_name = first_contrib.person.name
+                                elif hasattr(first_contrib, 'name'):
+                                    book_author_name = first_contrib.name
+                            except Exception:
+                                book_author_name = None
+                        if book.title == title and (not author or not book_author_name or book_author_name == author):
                             created_book = book
                             break
                     
@@ -3597,7 +3732,8 @@ def add_book_manual():
                             update_data['isbn10'] = isbn10_form
                         
                         if update_data:
-                            book_service.update_book(created_book.uid, update_data, current_user.id)
+                            # Use sync facade method (previous async call wasn't awaited so data was lost)
+                            book_service.update_book_sync(created_book.uid, str(current_user.id), **update_data)
                             print(f"🎯 [MANUAL] Updated book with personal information: {list(update_data.keys())}")
                     
                 except Exception as update_e:

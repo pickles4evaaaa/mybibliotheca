@@ -146,8 +146,13 @@ class KuzuRelationshipService:
             # Initialize empty list on error
             book.contributors = []
 
-    def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any], locations_data: Optional[List[Dict[str, Any]]] = None) -> Book:
-        """Create an enriched Book object with user-specific attributes."""
+    def _create_enriched_book(self, book_data: Dict[str, Any], relationship_data: Dict[str, Any], locations_data: Optional[List[Dict[str, Any]]] = None, personal_meta: Optional[Dict[str, Any]] = None) -> Book:
+        """Create an enriched Book object with user-specific attributes.
+
+        Supports data coming from either legacy OWNS relationship or fallback
+        HAS_PERSONAL_METADATA relationship when OWNS is absent (universal library mode)
+        so that personal_notes / review continue to persist.
+        """
         # Convert book data to Book object using the book service
         book = self.book_service._dict_to_book(book_data)
         
@@ -155,14 +160,34 @@ class KuzuRelationshipService:
         self._load_contributors_for_book(book)
         
         # Add user-specific attributes dynamically using setattr
-        setattr(book, 'reading_status', relationship_data.get('reading_status', 'plan_to_read'))
-        setattr(book, 'ownership_status', relationship_data.get('ownership_status', 'owned'))
-        setattr(book, 'start_date', relationship_data.get('start_date'))
-        setattr(book, 'finish_date', relationship_data.get('finish_date'))
-        setattr(book, 'user_rating', relationship_data.get('user_rating'))
-        setattr(book, 'personal_notes', relationship_data.get('personal_notes'))
-        setattr(book, 'review', relationship_data.get('user_review'))  # Map user_review back to review
-        setattr(book, 'date_added', relationship_data.get('date_added'))
+        combined = {}
+        combined.update(relationship_data or {})
+        # Personal metadata (HAS_PERSONAL_METADATA) stores json blob in personal_custom_fields; flatten known fields
+        if personal_meta:
+            # Accept direct fields if present
+            for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status']:
+                if key in personal_meta and personal_meta[key] not in (None, ''):
+                    combined[key] = personal_meta[key]
+            # Extract from personal_custom_fields JSON if exists
+            custom_blob = personal_meta.get('personal_custom_fields') if isinstance(personal_meta, dict) else None
+            if custom_blob and isinstance(custom_blob, (str, dict)):
+                try:
+                    import json
+                    if isinstance(custom_blob, str):
+                        custom_blob = json.loads(custom_blob)
+                    for k, v in custom_blob.items():
+                        if k in ['personal_notes', 'user_review'] and v:
+                            combined[k] = v
+                except Exception:
+                    pass
+        setattr(book, 'reading_status', combined.get('reading_status', 'plan_to_read'))
+        setattr(book, 'ownership_status', combined.get('ownership_status', 'owned'))
+        setattr(book, 'start_date', combined.get('start_date'))
+        setattr(book, 'finish_date', combined.get('finish_date'))
+        setattr(book, 'user_rating', combined.get('user_rating'))
+        setattr(book, 'personal_notes', combined.get('personal_notes'))
+        setattr(book, 'review', combined.get('user_review') or combined.get('review'))  # Map user_review back to review
+        setattr(book, 'date_added', combined.get('date_added'))
         setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
         
@@ -347,16 +372,44 @@ class KuzuRelationshipService:
         return True  # Always return success to avoid breaking existing code
     
     async def update_user_book_relationship(self, user_id: str, book_id: str, updates: Dict[str, Any]) -> bool:
-        """Update the relationship between a user and book.
-        
-        NOTE: In universal library mode, this method is deprecated.
-        Books are shared and don't belong to individual users.
-        Use location assignment instead via LocationService.
+        """Persist personal (user-specific) fields.
+
+        Even in "universal library" mode we still allow a single user overlay
+        using the OWNS relationship so that personal notes & reviews persist.
+        If OWNS does not yet exist it will be created.
         """
-        # Universal library mode - books don't belong to users
-        # This method is deprecated but kept for backward compatibility
-        logger.warning(f"[UNIVERSAL_LIBRARY] update_user_book_relationship called but deprecated in universal library mode")
-        return True  # Always return success to avoid breaking existing code
+        try:
+            print(f"🔍 [DEBUG] update_user_book_relationship called: user_id={user_id}, book_id={book_id}, updates={updates}")
+            if not updates:
+                return True
+            # Map review key to user_review for storage
+            storage_updates = {}
+            for k, v in updates.items():
+                if k == 'review':
+                    storage_updates['user_review'] = v
+                else:
+                    storage_updates[k] = v
+            # Always bump updated_at
+            storage_updates['updated_at'] = datetime.utcnow()
+            # Prepare SET clauses
+            set_parts = []
+            params = {'user_id': user_id, 'book_id': book_id}
+            for key, value in storage_updates.items():
+                set_parts.append(f"owns.{key} = ${key}")
+                params[key] = value
+            set_clause = ", ".join(set_parts)
+            query = f"""
+            MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
+            MERGE (u)-[owns:OWNS]->(b)
+            ON CREATE SET owns.date_added = datetime()
+            SET {set_clause}
+            RETURN owns
+            """
+            safe_execute_kuzu_query(query, params)
+            return True
+        except Exception as e:
+            traceback.print_exc()
+            return False
     
     async def remove_book_from_user_library(self, user_id: str, book_id: str) -> bool:
         """Remove a book from user's library (delete OWNS relationship)."""
@@ -443,44 +496,37 @@ class KuzuRelationshipService:
             return []
     
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
-        """Get a book by UID with user overlay data - sync wrapper for universal library."""
-        # Universal library query - prioritize STORED_AT relationships for locations
+        """Get a book by UID with user overlay data.
+
+        Attempts to pull personal data from OWNS relationship if present; falls
+        back to HAS_PERSONAL_METADATA if available. Works in both legacy and
+        universal modes.
+        """
         query = """
         MATCH (b:Book {id: $book_id})
         OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-        RETURN b, COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations
+        OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
+        OPTIONAL MATCH (u)-[pm:HAS_PERSONAL_METADATA]->(b)
+        RETURN b,
+               COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations,
+               owns, pm
         """
-        
-        result = safe_execute_kuzu_query(query, {
-            "book_id": uid
-        })
-        results = _convert_query_result_to_list(result)
-        
+
+        raw = safe_execute_kuzu_query(query, {"book_id": uid, "user_id": user_id})
+        results = _convert_query_result_to_list(raw)
         if not results:
             return None
-            
-        result = results[0]
-        if 'col_0' not in result:
+        row = results[0]
+        if 'col_0' not in row:
             return None
-            
-        book_data = result['col_0']
-        locations_data = result.get('col_1', []) or []
-        
-        # For universal library, locations come from STORED_AT relationships
-        # Filter out any remaining null/empty locations as a safety measure
+        book_data = row['col_0']
+        locations_data = row.get('col_1', []) or []
+        relationship_data = row.get('col_2') or {}
+        personal_meta = row.get('col_3') or {}
         valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
-        
         debug_log(f"Book {uid} locations from STORED_AT: {valid_locations}", "RELATIONSHIP")
-        
-        # No relationship data in universal library - books don't belong to users
-        relationship_data = {}
-        
-        # Create enriched book with user-specific attributes
-        book = self._create_enriched_book(book_data, relationship_data, valid_locations)
-        
-        # No custom metadata in universal library (books don't belong to users)
+        book = self._create_enriched_book(book_data, relationship_data, valid_locations, personal_meta)
         setattr(book, 'custom_metadata', {})
-        
         return book
     
     def get_user_book_sync(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:

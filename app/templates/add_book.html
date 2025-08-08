@@ -519,6 +519,12 @@
                                                            value="{{ book_data.google_books_id if book_data else request.form.google_books_id or '' }}"
                                                            placeholder="Google Books identifier">
                                                 </div>
+                                                <div class="mb-3">
+                                                    <label for="openlibrary_id" class="form-label fw-medium">OpenLibrary ID</label>
+                                                    <input type="text" class="form-control" id="openlibrary_id" name="openlibrary_id" 
+                                                           value="{{ book_data.openlibrary_id if book_data else request.form.openlibrary_id or '' }}"
+                                                           placeholder="OpenLibrary work/edition ID">
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -694,40 +700,40 @@ function fetchBookData() {
     button.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Fetching...';
     button.disabled = true;
     
-    // Fetch book data from the API
-    fetch(`{{ url_for("book.fetch_book", isbn="") }}${isbn}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data && data.title) {
-                // Populate form fields with fetched data
-                document.getElementById('title').value = data.title || '';
-                document.getElementById('subtitle').value = data.subtitle || '';
-                document.getElementById('description').value = data.description || '';
-                document.getElementById('publisher').value = data.publisher || '';
-                document.getElementById('language').value = data.language || '';
-                document.getElementById('page_count').value = data.page_count || '';
-                document.getElementById('cover_url').value = data.cover || '';
-                document.getElementById('isbn13').value = data.isbn_13 || '';
-                document.getElementById('isbn10').value = data.isbn_10 || '';
-                document.getElementById('google_books_id').value = data.google_books_id || '';
-                
-                // Handle published date
-                if (data.published_date) {
-                    document.getElementById('published_date').value = data.published_date;
-                }
-                
-                // Add authors if available
-                if (data.author) {
-                    addContributor('authored', data.author, null);
-                }
-                
-                // Add categories if available
-                if (data.categories && Array.isArray(data.categories)) {
-                    data.categories.forEach(category => {
-                        addCategory(category, null, null, null);
-                    });
-                }
-                
+    // Fetch unified book data by ISBN from the API
+    fetch(`/api/v1/books/unified-metadata?isbn=${encodeURIComponent(isbn)}`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+        })
+        .then(async response => {
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`HTTP ${response.status}: ${text?.slice(0,200)}`);
+            }
+            return response.json();
+        })
+        .then(resp => {
+            const data = resp && resp.data ? resp.data : null;
+            if (data && (data.title || data.isbn13 || data.isbn10)) {
+                // Normalize keys expected by populateFormWithBookData
+                const mapped = {
+                    title: data.title || '',
+                    subtitle: data.subtitle || '',
+                    description: data.description || '',
+                    publisher: data.publisher || '',
+                    language: data.language || 'en',
+                    page_count: data.page_count || null,
+                    cover_url: data.cover_url || '',
+                    isbn_13: data.isbn13 || data.isbn_13 || '',
+                    isbn_10: data.isbn10 || data.isbn_10 || '',
+                    google_books_id: data.google_books_id || '',
+                    openlibrary_id: data.openlibrary_id || '',
+                    published_date: data.published_date || '',
+                    authors: Array.isArray(data.authors) ? data.authors : [],
+                    categories: Array.isArray(data.categories) ? data.categories : []
+                };
+                populateFormWithBookData(mapped);
                 showMessage('Book data fetched successfully!', 'success');
             } else {
                 showMessage('No book data found for this ISBN. You can enter details manually.', 'warning');
@@ -798,7 +804,9 @@ function searchByTitle() {
         
         // Call the external search API
         fetch(`/api/v1/books/external-search?title=${encodeURIComponent(title)}&limit=10&isbn_required=true`, {
-            credentials: 'include'
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
         })
             .then(response => response.json())
             .then(data => {
@@ -935,11 +943,16 @@ function selectBookFromSearch(bookIndex) {
         // Show loading message
         showMessage('Loading complete book details...', 'info');
         
-        // Use the same endpoint as the ISBN quick lookup for consistency
-        fetch(`{{ url_for("book.fetch_book", isbn="") }}${isbn}`)
+        // Use unified metadata ISBN lookup for consistency
+        fetch(`/api/v1/books/unified-metadata?isbn=${encodeURIComponent(isbn)}`, {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' }
+            })
             .then(response => response.json())
-            .then(isbnData => {
-                console.log('📚 Retrieved additional ISBN data:', isbnData);
+            .then(apiResp => {
+                const isbnData = apiResp && apiResp.data ? apiResp.data : {};
+                console.log('📚 Retrieved additional ISBN data (unified):', isbnData);
                 
                 // Merge the search result data with ISBN lookup data intelligently
                 const mergedData = mergeBookData(fullData, isbnData);
@@ -1071,33 +1084,25 @@ function populateFormWithBookData(bookData) {
     document.getElementById('isbn13').value = bookData.isbn_13 || bookData.isbn13 || '';
     document.getElementById('isbn10').value = bookData.isbn_10 || bookData.isbn10 || '';
     document.getElementById('google_books_id').value = bookData.google_books_id || '';
+    const olInput2 = document.getElementById('openlibrary_id');
+    if (olInput2) olInput2.value = bookData.openlibrary_id || '';
     
     // Publication date handling
     if (bookData.published_date) {
-        let dateValue = bookData.published_date;
-        
-        // Convert various date formats to MM/DD/YYYY
+        let dateValue = bookData.published_date.trim();
+        // Normalize common partial forms to full ISO (YYYY-MM-DD) for date input
         if (/^\d{4}$/.test(dateValue)) {
-            dateValue = `01/01/${dateValue}`;
-        } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
-            const parts = dateValue.split('-');
-            dateValue = `${parts[1]}/${parts[2]}/${parts[0]}`;
-        } else if (dateValue.includes('-') || dateValue.includes('/')) {
-            const yearMatch = dateValue.match(/(\d{4})/);
-            if (yearMatch) {
-                const monthMatch = dateValue.match(/(\d{1,2})/);
-                const dayMatch = dateValue.match(/\d{4}.*?(\d{1,2})/);
-                if (monthMatch && dayMatch) {
-                    dateValue = `${monthMatch[1].padStart(2, '0')}/${dayMatch[1].padStart(2, '0')}/${yearMatch[1]}`;
-                } else {
-                    dateValue = `01/01/${yearMatch[1]}`;
-                }
-            }
+            dateValue = `${dateValue}-01-01`;
+        } else if (/^\d{4}-\d{2}$/.test(dateValue)) {
+            dateValue = `${dateValue}-01`;
+        } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateValue)) {
+            // Convert MM/DD/YYYY -> YYYY-MM-DD
+            const [mm, dd, yyyy] = dateValue.split('/');
+            dateValue = `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
         }
-        
         document.getElementById('published_date').value = dateValue;
     } else if (bookData.publication_year) {
-        document.getElementById('published_date').value = `01/01/${bookData.publication_year}`;
+        document.getElementById('published_date').value = `${bookData.publication_year}-01-01`;
     }
     
     // Page count
@@ -1352,11 +1357,34 @@ function populateFormWithAIData(data) {
         }
         return false;
     }
+    // Helper to normalize date values to YYYY-MM-DD for date inputs
+    function normalizeDateToInput(val) {
+        if (!val) return '';
+        let s = String(val).trim();
+        if (/^\d{4}$/.test(s)) return `${s}-01-01`;
+        if (/^\d{4}-\d{2}$/.test(s)) return `${s}-01`;
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+            const [mm, dd, yyyy] = s.split('/');
+            return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+        }
+        return s;
+    }
     
     // Basic information
     if (data.title) safeSetValue('title', data.title);
     if (data.subtitle) safeSetValue('subtitle', data.subtitle);
     if (data.isbn) safeSetValue('isbn', data.isbn);
+    // Also set isbn13/isbn10 if determinable
+    if (data.isbn_13 || data.isbn13) {
+        safeSetValue('isbn13', data.isbn_13 || data.isbn13);
+    } else if (data.isbn && String(data.isbn).replace(/[^\dXx]/g,'').length === 13) {
+        safeSetValue('isbn13', data.isbn);
+    }
+    if (data.isbn_10 || data.isbn10) {
+        safeSetValue('isbn10', data.isbn_10 || data.isbn10);
+    } else if (data.isbn && String(data.isbn).replace(/[^\dXx]/g,'').length === 10) {
+        safeSetValue('isbn10', data.isbn);
+    }
     
     // Handle authors
     if (data.authors) {
@@ -1380,6 +1408,10 @@ function populateFormWithAIData(data) {
     if (data.publication_year) {
         // Convert year to full date format for the date input
         safeSetValue('published_date', `${data.publication_year}-01-01`);
+    }
+    // If AI provided a published_date string, normalize common forms
+    if (!document.getElementById('published_date').value && data.published_date) {
+        safeSetValue('published_date', normalizeDateToInput(data.published_date));
     }
     if (data.page_count) safeSetValue('page_count', data.page_count);
     if (data.language) safeSetValue('language', data.language);
@@ -1892,8 +1924,19 @@ function loadLocations() {
                 const option = document.createElement('option');
                 option.value = location.id;
                 option.textContent = location.name;
+                if (location.is_default) option.dataset.default = 'true';
                 locationSelect.appendChild(option);
             });
+            // Auto-select default (or single) location
+            if (!locationSelect.value) {
+                const def = locations.find(l => l.is_default) || (locations.length === 1 ? locations[0] : null);
+                if (def) {
+                    locationSelect.value = def.id;
+                    const placeholder = locationSelect.querySelector('option[value=""]');
+                    if (placeholder) placeholder.textContent = 'Using default location';
+                    locationSelect.dispatchEvent(new Event('change'));
+                }
+            }
         })
         .catch(error => {
             console.error('Error loading locations:', error);

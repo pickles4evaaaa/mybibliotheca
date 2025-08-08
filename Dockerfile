@@ -95,4 +95,5 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 # CRITICAL: Use single worker for KuzuDB compatibility (KuzuDB doesn't support concurrent access)
 ENV WORKERS=1
 # Set timeout to 300 seconds (5 minutes) to handle bulk imports with rate limiting
-CMD ["sh", "-c", "gunicorn -w $WORKERS -b 0.0.0.0:5054 --timeout 300 run:app"]
+# Disable sendfile to prevent occasional deadlocks on Docker for macOS/overlay FS
+CMD ["sh", "-c", "gunicorn --no-sendfile -w $WORKERS -b 0.0.0.0:5054 --timeout 300 run:app"]

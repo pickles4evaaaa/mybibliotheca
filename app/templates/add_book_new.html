@@ -847,11 +847,34 @@ function populateFormWithAIData(data) {
         }
         return false;
     }
+    // Normalize various date formats to YYYY-MM-DD for date input
+    function normalizeDateToInput(val) {
+        if (!val) return '';
+        const s = String(val).trim();
+        if (/^\d{4}$/.test(s)) return `${s}-01-01`;
+        if (/^\d{4}-\d{2}$/.test(s)) return `${s}-01`;
+        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (m) {
+            const [_, mm, dd, yyyy] = m;
+            return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+        }
+        return s;
+    }
     
     // Basic information
     if (data.title) safeSetValue('title', data.title);
     if (data.subtitle) safeSetValue('subtitle', data.subtitle);
     if (data.isbn) safeSetValue('isbn', data.isbn);
+    // Also populate explicit isbn10/13 fields when possible
+    const rawIsbn = data.isbn || data.isbn13 || data.isbn_13 || data.isbn10 || data.isbn_10;
+    if (data.isbn13 || data.isbn_13) safeSetValue('isbn13', data.isbn13 || data.isbn_13);
+    if (data.isbn10 || data.isbn_10) safeSetValue('isbn10', data.isbn10 || data.isbn_10);
+    if (!data.isbn13 && !data.isbn_13 && rawIsbn && String(rawIsbn).replace(/[^0-9Xx]/g,'').length === 13) {
+        safeSetValue('isbn13', rawIsbn);
+    }
+    if (!data.isbn10 && !data.isbn_10 && rawIsbn && String(rawIsbn).replace(/[^0-9Xx]/g,'').length === 10) {
+        safeSetValue('isbn10', rawIsbn);
+    }
     
     // Handle authors
     if (data.authors) {
@@ -872,6 +895,9 @@ function populateFormWithAIData(data) {
     if (data.publication_year) {
         // Convert year to full date format for the date input
         safeSetValue('published_date', `${data.publication_year}-01-01`);
+    }
+    if (data.published_date) {
+        safeSetValue('published_date', normalizeDateToInput(data.published_date));
     }
     if (data.page_count) safeSetValue('page_count', data.page_count);
     if (data.language) safeSetValue('language', data.language);
@@ -983,7 +1009,17 @@ function fetchBookFromISBN() {
                 if (data.page_count) safeSetValue('page_count', data.page_count);
                 if (data.language) safeSetValue('language', data.language);
                 if (data.cover_url || data.cover) safeSetValue('cover_url', data.cover_url || data.cover);
-                if (data.published_date) safeSetValue('published_date', data.published_date);
+                if (data.published_date) {
+                    const s = String(data.published_date).trim();
+                    let norm = s;
+                    if (/^\d{4}$/.test(s)) norm = `${s}-01-01`;
+                    else if (/^\d{4}-\d{2}$/.test(s)) norm = `${s}-01`;
+                    else {
+                        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                        if (m) norm = `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+                    }
+                    safeSetValue('published_date', norm);
+                }
                 if (data.description) safeSetValue('description', data.description);
                 
                 // Auto-expand accordions to show the filled data

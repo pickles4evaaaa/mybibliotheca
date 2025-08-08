@@ -152,6 +152,7 @@ class KuzuServiceFacade:
         
         # Update OWNS relationship for personal standard fields
         if owns_updates:
+            print(f"🔍 [DEBUG] Processing OWNS updates: {owns_updates}")
             # Map 'review' to 'user_review' for database compatibility
             owns_db_updates = {}
             for k, v in owns_updates.items():

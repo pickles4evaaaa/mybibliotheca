@@ -665,18 +665,24 @@ class KuzuBookRepository:
                 'normalized_title': getattr(book, 'normalized_title', None) or getattr(book, 'title', '').lower(),
                 'isbn13': getattr(book, 'isbn13', ''),
                 'isbn10': getattr(book, 'isbn10', ''),
+                # Newly ensured fields that were previously not persisted
+                'subtitle': getattr(book, 'subtitle', None),
+                'asin': getattr(book, 'asin', None),
                 'description': getattr(book, 'description', ''),
                 'published_date': getattr(book, 'published_date', None),
                 'page_count': getattr(book, 'page_count', 0),
                 'language': getattr(book, 'language', 'en'),
                 'cover_url': getattr(book, 'cover_url', ''),
+                'google_books_id': getattr(book, 'google_books_id', None),
+                'openlibrary_id': getattr(book, 'openlibrary_id', None),
                 'average_rating': getattr(book, 'average_rating', 0.0),
                 'rating_count': getattr(book, 'rating_count', 0),
                 'series': series_value,
                 'series_volume': getattr(book, 'series_volume', None),
                 'series_order': getattr(book, 'series_order', None),
                 'custom_metadata': getattr(book, 'custom_metadata', None),
-                'created_at': getattr(book, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at': getattr(book, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
+                'updated_at': getattr(book, 'updated_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'updated_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             # Create the book node first

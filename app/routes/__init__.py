@@ -17,6 +17,7 @@ from .stats_routes import stats_bp
 from .misc_routes import misc_bp
 from .genre_routes import genres_bp
 from .reading_log_routes import reading_logs
+from .genre_taxonomy_routes import genre_taxonomy_bp
 from .api_routes import api_bp
 
 # Create a main blueprint that can be registered with the app
@@ -349,6 +350,8 @@ def register_blueprints(app):
     app.register_blueprint(genres_bp, url_prefix='/genres')
     app.register_blueprint(genres_bp, url_prefix='/categories', name='categories')
     app.register_blueprint(reading_logs, url_prefix='/reading-logs')
+    # Register admin genre taxonomy routes
+    app.register_blueprint(genre_taxonomy_bp, url_prefix='/admin/genre-taxonomy')
     
     # Only log route registration in debug mode
     debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'

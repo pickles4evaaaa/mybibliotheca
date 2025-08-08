@@ -1438,84 +1438,170 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                     logger.error(f"❌ Failed to create custom metadata fields: {e}")
                     # Continue with import even if custom fields fail
             
-            # Execute actual CSV file import synchronously (like migration)
+            # Execute actual CSV file import synchronously using unified SimplifiedBookService
             logger.info(f"📋 Import configuration saved: {import_config}")
             logger.info(f"🔧 Custom fields configured: {len(custom_fields)}")
-            
+
             if not admin_user.id:
                 logger.error("❌ Admin user has no ID")
                 return False
-                
-            # Import synchronously using the same pattern as migration system
+
             try:
                 import csv
-                
-                logger.info(f"🚀 Starting CSV import for common library model")
-                
+                from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+                from app.utils.metadata_aggregator import fetch_unified_by_isbn
+
+                logger.info("🚀 Starting CSV import via SimplifiedBookService (unified pipeline)")
+
                 csv_file_path = import_config.get('csv_file_path')
                 field_mappings = import_config.get('field_mappings', {})
-                
+
                 if not csv_file_path or not Path(csv_file_path).exists():
                     logger.error(f"❌ CSV file not found: {csv_file_path}")
                     return False
-                
-                # Use the migration system's approach: direct book service, no user relationships
-                migration_system = AdvancedMigrationSystem()
+
+                service = SimplifiedBookService()
                 books_imported = 0
                 errors = 0
-                
+
                 with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
                     reader = csv.DictReader(csvfile)
-                    
+
                     for row in reader:
                         try:
-                            # Extract basic book data using field mappings
-                            book_data = {}
-                            for csv_field, domain_field in field_mappings.items():
-                                if csv_field in row and row[csv_field]:
-                                    value = row[csv_field].strip()
-                                    if value:
-                                        book_data[domain_field] = value
-                            
-                            # Skip rows without title
-                            if not book_data.get('title'):
+                            # Build a dict of mapped fields from CSV
+                            mapped: dict[str, str] = {}
+                            for csv_field, target_field in field_mappings.items():
+                                raw_val = row.get(csv_field)
+                                if raw_val is None:
+                                    continue
+                                val = raw_val.strip()
+                                if not val:
+                                    continue
+                                mapped[target_field] = val
+
+                            # Skip empty rows
+                            if not mapped.get('title') and not mapped.get('isbn'):
                                 continue
-                            
-                            # Create Book domain object (minimal for common library)
-                            from .domain.models import Book
-                            book = Book(
-                                title=book_data.get('title', ''),
-                                isbn13=book_data.get('isbn', ''),
-                                isbn10=None,
-                                subtitle=book_data.get('subtitle', ''),
-                                description=book_data.get('description', ''),
-                                publisher=book_data.get('publisher', ''),
-                                published_date=book_data.get('published_date', ''),
-                                page_count=int(book_data.get('page_count', 0)) if book_data.get('page_count', '').isdigit() else None,
-                                language=book_data.get('language', 'en'),
+
+                            # Prepare initial SimplifiedBook fields
+                            title = mapped.get('title') or mapped.get('isbn') or 'Untitled'
+                            author = mapped.get('author', '').strip()
+                            subtitle = mapped.get('subtitle')
+                            description = mapped.get('description')
+                            publisher = mapped.get('publisher')
+                            published_date = mapped.get('published_date')
+                            language = mapped.get('language') or 'en'
+                            cover_url = mapped.get('cover_url')
+                            page_count = None
+                            try:
+                                if mapped.get('page_count') and str(mapped['page_count']).isdigit():
+                                    page_count = int(mapped['page_count'])
+                            except Exception:
+                                page_count = None
+
+                            # ISBN handling (digits only)
+                            isbn_raw = mapped.get('isbn', '')
+                            cleaned_isbn = ''.join(filter(str.isdigit, isbn_raw)) if isbn_raw else ''
+                            isbn13 = cleaned_isbn if len(cleaned_isbn) == 13 else None
+                            isbn10 = cleaned_isbn if len(cleaned_isbn) == 10 else None
+
+                            # Categories from CSV (split on commas)
+                            categories = []
+                            if 'categories' in mapped and mapped['categories']:
+                                categories = [c.strip() for c in mapped['categories'].split(',') if c.strip()]
+
+                            # Enrich with unified metadata when ISBN is available
+                            google_books_id = None
+                            openlibrary_id = None
+                            additional_authors = None
+                            if cleaned_isbn:
+                                try:
+                                    unified = fetch_unified_by_isbn(cleaned_isbn) or {}
+                                    if unified:
+                                        # Prefer richer unified fields when present
+                                        title = title or unified.get('title') or title
+                                        subtitle = subtitle or unified.get('subtitle')
+                                        description = description or unified.get('description')
+                                        publisher = publisher or unified.get('publisher')
+                                        published_date = published_date or unified.get('published_date')
+                                        language = language or unified.get('language') or 'en'
+                                        cover_url = cover_url or unified.get('cover_url')
+                                        if not page_count and unified.get('page_count') is not None:
+                                            try:
+                                                upc = unified.get('page_count')
+                                                if isinstance(upc, int):
+                                                    page_count = upc
+                                                elif isinstance(upc, str) and upc.isdigit():
+                                                    page_count = int(upc)
+                                            except Exception:
+                                                pass
+                                        # Provider IDs
+                                        google_books_id = unified.get('google_books_id') or google_books_id
+                                        openlibrary_id = unified.get('openlibrary_id') or openlibrary_id
+                                        # ISBNs from unified (override if present)
+                                        if unified.get('isbn13'):
+                                            isbn13 = unified.get('isbn13')
+                                        if unified.get('isbn10'):
+                                            isbn10 = unified.get('isbn10')
+                                        # Authors
+                                        auth_list = unified.get('authors') or []
+                                        if auth_list and not author:
+                                            author = auth_list[0]
+                                            if len(auth_list) > 1:
+                                                additional_authors = ', '.join(a for a in auth_list[1:] if isinstance(a, str) and a.strip()) or None
+                                        # Merge categories (preserve CSV first)
+                                        uni_cats = [c for c in (unified.get('categories') or []) if isinstance(c, str) and c.strip()]
+                                        for c in uni_cats:
+                                            if c not in categories:
+                                                categories.append(c)
+                                except Exception as uerr:
+                                    logger.warning(f"⚠️ Unified metadata fetch failed for ISBN {cleaned_isbn}: {uerr}")
+
+                            # Fallback author if still missing
+                            author = author or ''
+
+                            # Create SimplifiedBook
+                            new_book = SimplifiedBook(
+                                title=title,
+                                author=author,
+                                isbn13=isbn13,
+                                isbn10=isbn10,
+                                subtitle=subtitle,
+                                description=description,
+                                publisher=publisher,
+                                published_date=published_date,
+                                page_count=page_count,
+                                language=language or 'en',
+                                cover_url=cover_url,
+                                categories=categories,
+                                google_books_id=google_books_id,
+                                openlibrary_id=openlibrary_id,
+                                additional_authors=additional_authors
                             )
-                            
-                            # Create book using the same pattern as migration system
-                            created_book = migration_system.book_service.create_book_sync(
-                                domain_book=book
+
+                            # Persist via unified pipeline; let service assign default location
+                            success = service.add_book_to_user_library_sync(
+                                book_data=new_book,
+                                user_id=admin_user.id
                             )
-                            
-                            if created_book:
+
+                            if success:
                                 books_imported += 1
-                                logger.info(f"✅ Imported book: {book.title}")
+                                logger.info(f"✅ Imported book: {title}")
                             else:
                                 errors += 1
-                                logger.warning(f"❌ Failed to import book: {book.title}")
-                                
+                                logger.warning(f"❌ Failed to import book: {title}")
+
                         except Exception as book_error:
                             errors += 1
                             logger.error(f"❌ Error importing book from row: {book_error}")
                             continue
-                
-                logger.info(f"✅ CSV import completed: {books_imported} books imported, {errors} errors")
-                
+
+                logger.info(f"✅ CSV import completed via SimplifiedBookService: {books_imported} books imported, {errors} errors")
+
             except Exception as e:
-                logger.error(f"❌ Failed to execute CSV import: {e}")
+                logger.error(f"❌ Failed to execute CSV import (SimplifiedBookService): {e}")
                 return False
         
         return True
@@ -2244,281 +2330,118 @@ def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_map
         return False
 
 def process_single_book_import(book_data: Dict, user_id: str, default_locations: List, personal_custom_metadata: Dict) -> bool:
-    """Process a single book import with full API metadata enrichment."""
+    """Process a single book import using the unified SimplifiedBookService pipeline."""
     try:
-        # Import required models and utilities
-        from .domain.models import (
-            Book as DomainBook, 
-            Person, 
-            BookContribution, 
-            ContributionType, 
-            Publisher, 
-            ReadingStatus, 
-            OwnershipStatus
-        )
-        from .services import book_service
-        from .utils import fetch_book_data, get_google_books_cover
-        
-        # Extract essential book information
-        title = book_data.get('title', '').strip()
-        if not title:
-            logger.error("❌ Book title is required")
-            return False
-        
-        csv_author = book_data.get('author', '').strip()
-        isbn = book_data.get('isbn', '').strip()
-        
-        logger.info(f"📚 Processing book: {title} by {csv_author}")
-        
-        # API Enrichment Phase
-        google_data = None
-        ol_data = None
-        api_categories = None
-        published_date = book_data.get('published_date')
-        
-        # Try API enrichment if ISBN is available
-        if isbn:
-            api_isbn = ''.join(filter(str.isdigit, isbn))
-            logger.info(f"🔍 Attempting API enrichment for ISBN: {api_isbn}")
-            
+        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+        from app.utils.metadata_aggregator import fetch_unified_by_isbn
+
+        title = (book_data.get('title') or '').strip()
+        csv_author = (book_data.get('author') or '').strip()
+        isbn = (book_data.get('isbn') or '').strip()
+        logger.info(f"📚 Processing book: {title or isbn} by {csv_author}")
+
+        # Normalize ISBN
+        cleaned_isbn = ''.join(filter(str.isdigit, isbn)) if isbn else ''
+
+        # Try unified enrichment
+        unified = {}
+        if cleaned_isbn:
             try:
-                # Google Books API call
-                google_data = get_google_books_cover(api_isbn, fetch_title_author=True)
-                if google_data:
-                    logger.info(f"✅ Got Google Books data: {list(google_data.keys())}")
-                    if google_data.get('categories'):
-                        api_categories = google_data['categories']
-                        logger.info(f"📚 Got categories from Google Books: {api_categories}")
-                    if google_data.get('published_date'):
-                        published_date = published_date or google_data.get('published_date')
-            except Exception as google_error:
-                logger.warning(f"⚠️ Google Books API error for ISBN {api_isbn}: {google_error}")
-            
-            try:
-                # OpenLibrary API call
-                ol_data = fetch_book_data(api_isbn)
-                if ol_data:
-                    logger.info(f"✅ Got OpenLibrary data: {list(ol_data.keys())}")
-                    if ol_data.get('categories'):
-                        if not api_categories:  # Only use OL categories if Google didn't provide any
-                            api_categories = ol_data['categories']
-                            logger.info(f"📚 Got categories from OpenLibrary: {api_categories}")
-                    if ol_data.get('published_date'):
-                        published_date = published_date or ol_data.get('published_date')
-                        if not api_categories:
-                            api_categories = ol_data.get('categories')
-                            if api_categories:
-                                logger.info(f"📚 Got categories from OpenLibrary: {api_categories}")
-            except Exception as api_error:
-                logger.warning(f"⚠️ Error fetching metadata for ISBN {api_isbn}: {api_error}")
-        
-        # Determine final categories (API categories if available)
-        final_categories = book_data.get('categories') or api_categories
-        if final_categories:
-            logger.info(f"📚 Final categories to process: {final_categories}")
-        
-        # Helper function to find or create person with deduplication
-        def find_or_create_person(person_name: str) -> Person:
-            """Find existing person by name or create new one."""
-            try:
-                # Normalize name for search
-                normalized_name = person_name.strip().lower()
-                
-                # Get all existing persons and check for matches
-                all_persons = book_service.list_all_persons_sync()
-                if all_persons:
-                    for person_data in all_persons:
-                        existing_name = person_data.get('name', '').strip().lower()
-                        existing_normalized = person_data.get('normalized_name', '').strip().lower()
-                        
-                        # Check for exact match or normalized match
-                        if (existing_name == normalized_name or 
-                            existing_normalized == normalized_name or
-                            existing_name == person_name.strip().lower()):
-                            
-                            logger.info(f"📝 Found existing person: {person_name} (ID: {person_data.get('id')})")
-                            return Person(
-                                id=person_data.get('id'),
-                                name=person_data.get('name', person_name),
-                                normalized_name=person_data.get('normalized_name', ''),
-                                birth_year=person_data.get('birth_year'),
-                                death_year=person_data.get('death_year'),
-                                birth_place=person_data.get('birth_place'),
-                                bio=person_data.get('bio'),
-                                website=person_data.get('website'),
-                                openlibrary_id=person_data.get('openlibrary_id'),
-                                image_url=person_data.get('image_url'),
-                                created_at=person_data.get('created_at', datetime.utcnow()),
-                                updated_at=person_data.get('updated_at', datetime.utcnow())
-                            )
-                
-                # If no match found, create new person
-                logger.info(f"📝 Creating new person: {person_name}")
-                return Person(name=person_name)
-                    
+                unified = fetch_unified_by_isbn(cleaned_isbn) or {}
             except Exception as e:
-                logger.warning(f"⚠️ Error during person lookup/creation for {person_name}: {e}")
-                # Fallback to creating new person
-                return Person(name=person_name)
-        
-        # Create contributors with deduplication
-        contributors = []
-        added_author_names = set()
-        
-        # Prioritize API authors if available
-        if google_data and google_data.get('authors_list'):
-            for i, author_name in enumerate(google_data['authors_list']):
-                author_name = author_name.strip()
-                if author_name and author_name.lower() not in added_author_names:
-                    person = find_or_create_person(author_name)
-                    contribution = BookContribution(
-                        person=person,
-                        contribution_type=ContributionType.AUTHORED,
-                        order=i
-                    )
-                    contributors.append(contribution)
-                    added_author_names.add(author_name.lower())
-                    logger.info(f"📝 Added author from Google Books: {author_name}")
-        elif ol_data and ol_data.get('authors_list'):
-            for i, author_name in enumerate(ol_data['authors_list']):
-                author_name = author_name.strip()
-                if author_name and author_name.lower() not in added_author_names:
-                    person = find_or_create_person(author_name)
-                    contribution = BookContribution(
-                        person=person,
-                        contribution_type=ContributionType.AUTHORED,
-                        order=i
-                    )
-                    contributors.append(contribution)
-                    added_author_names.add(author_name.lower())
-                    logger.info(f"📝 Added author from OpenLibrary: {author_name}")
-        else:
-            # Fallback to CSV author
-            if csv_author and csv_author.lower() not in added_author_names:
-                person = find_or_create_person(csv_author)
-                contribution = BookContribution(
-                    person=person,
-                    contribution_type=ContributionType.AUTHORED,
-                    order=0
-                )
-                contributors.append(contribution)
-                added_author_names.add(csv_author.lower())
-                logger.info(f"📝 Added author from CSV: {csv_author}")
-        
-        # Handle additional authors from CSV
-        if book_data.get('additional_authors'):
-            additional_names = book_data['additional_authors'].split(',')
-            for name in additional_names:
-                name = name.strip()
-                if name and name.lower() not in added_author_names:
-                    person = find_or_create_person(name)
-                    contribution = BookContribution(
-                        person=person,
-                        contribution_type=ContributionType.AUTHORED,
-                        order=len(contributors)
-                    )
-                    contributors.append(contribution)
-                    added_author_names.add(name.lower())
-                    logger.info(f"📝 Added additional author: {name}")
-        
-        # Extract other book metadata 
-        description = book_data.get('description', '') or book_data.get('summary', '')
-        publisher_name = book_data.get('publisher', '')
-        page_count = book_data.get('page_count') or book_data.get('pages')
-        language = book_data.get('language', 'en')
-        cover_url = book_data.get('cover_url', '')
-        average_rating = book_data.get('average_rating')
-        rating_count = book_data.get('rating_count')
-        reading_status = book_data.get('reading_status', 'library_only')
-        
-        # Process ISBN data 
-        isbn13 = None
-        isbn10 = None
-        if isbn:
-            cleaned_isbn = ''.join(filter(str.isdigit, isbn))
-            if len(cleaned_isbn) == 13:
-                isbn13 = cleaned_isbn
-            elif len(cleaned_isbn) == 10:
-                isbn10 = cleaned_isbn
-        
-        # Convert date helper function
-        def _convert_published_date_to_date(date_str):
-            """Convert published date string to date object."""
-            if not date_str:
-                return None
-            try:
-                from datetime import datetime
-                if isinstance(date_str, str):
-                    # Try different date formats
-                    for fmt in ['%Y-%m-%d', '%Y-%m', '%Y', '%B %d, %Y', '%d %B %Y']:
-                        try:
-                            return datetime.strptime(date_str, fmt).date()
-                        except ValueError:
-                            continue
-                return None
-            except Exception:
-                return None
-        
-        # Create domain book object with full metadata
-        domain_book = DomainBook(
+                logger.warning(f"⚠️ Unified lookup failed for {cleaned_isbn}: {e}")
+
+        # Merge fields with preference: CSV -> Unified
+        title = title or unified.get('title') or (cleaned_isbn or 'Untitled')
+        subtitle = (book_data.get('subtitle') or '') or unified.get('subtitle')
+        description = (book_data.get('description') or book_data.get('summary') or '') or unified.get('description')
+        publisher = (book_data.get('publisher') or '') or unified.get('publisher')
+        published_date = (book_data.get('published_date') or '') or unified.get('published_date')
+        language = (book_data.get('language') or '') or unified.get('language') or 'en'
+        cover_url = (book_data.get('cover_url') or '') or unified.get('cover_url')
+        # Page count
+        page_count = None
+        csv_pc = book_data.get('page_count') or book_data.get('pages')
+        try:
+            if isinstance(csv_pc, int):
+                page_count = csv_pc
+            elif isinstance(csv_pc, str) and csv_pc.isdigit():
+                page_count = int(csv_pc)
+        except Exception:
+            page_count = None
+        if page_count is None and unified.get('page_count') is not None:
+            upc = unified.get('page_count')
+            if isinstance(upc, int):
+                page_count = upc
+            elif isinstance(upc, str) and upc.isdigit():
+                page_count = int(upc)
+
+        # Authors
+        author = csv_author
+        additional_authors = None
+        if not author:
+            auth_list = unified.get('authors') or []
+            if auth_list:
+                author = auth_list[0]
+                if len(auth_list) > 1:
+                    additional_authors = ', '.join(a for a in auth_list[1:] if isinstance(a, str) and a.strip()) or None
+
+        # Categories merge
+        categories = []
+        if book_data.get('categories'):
+            if isinstance(book_data['categories'], list):
+                categories.extend([c for c in book_data['categories'] if isinstance(c, str) and c.strip()])
+            elif isinstance(book_data['categories'], str):
+                categories.extend([c.strip() for c in book_data['categories'].split(',') if c.strip()])
+        uni_cats = [c for c in (unified.get('categories') or []) if isinstance(c, str) and c.strip()]
+        for c in uni_cats:
+            if c not in categories:
+                categories.append(c)
+
+        # ISBNs
+        isbn13 = cleaned_isbn if len(cleaned_isbn) == 13 else None
+        isbn10 = cleaned_isbn if len(cleaned_isbn) == 10 else None
+        if unified.get('isbn13'):
+            isbn13 = unified['isbn13']
+        if unified.get('isbn10'):
+            isbn10 = unified['isbn10']
+
+        # Provider IDs
+        google_books_id = unified.get('google_books_id')
+        openlibrary_id = unified.get('openlibrary_id')
+
+        # Build SimplifiedBook and persist via service
+        new_book = SimplifiedBook(
             title=title,
-            contributors=contributors,
+            author=author or '',
             isbn13=isbn13,
             isbn10=isbn10,
+            subtitle=subtitle,
             description=description,
-            publisher=Publisher(name=publisher_name) if publisher_name else None,
-            page_count=int(page_count) if page_count and str(page_count).isdigit() else None,
+            publisher=publisher,
+            published_date=published_date,
+            page_count=page_count,
             language=language,
             cover_url=cover_url,
-            average_rating=average_rating,
-            rating_count=rating_count,
-            published_date=_convert_published_date_to_date(published_date),
-            raw_categories=final_categories,  # This will trigger automatic category processing
-            created_at=datetime.now(),
-            updated_at=datetime.now()
+            categories=categories,
+            google_books_id=google_books_id,
+            openlibrary_id=openlibrary_id,
+            additional_authors=additional_authors,
+            personal_custom_metadata=personal_custom_metadata or {}
         )
-        
-        logger.info(f"📚 Creating book: {domain_book.title} with {len(domain_book.contributors)} contributors")
-        
-        # Create book using the service (will auto-process categories)
-        created_book = book_service.find_or_create_book_sync(domain_book)
-        
-        if created_book and created_book.id:
-            # Convert reading status
-            reading_status_enum = ReadingStatus.LIBRARY_ONLY  # default
-            if reading_status:
-                if reading_status == 'read':
-                    reading_status_enum = ReadingStatus.READ
-                elif reading_status == 'reading':
-                    reading_status_enum = ReadingStatus.READING
-                elif reading_status == 'plan_to_read':
-                    reading_status_enum = ReadingStatus.PLAN_TO_READ
-                elif reading_status == 'on_hold':
-                    reading_status_enum = ReadingStatus.ON_HOLD
-                elif reading_status == 'did_not_finish':
-                    reading_status_enum = ReadingStatus.DNF
-            
-            # Add to user's library with custom metadata
-            custom_metadata_to_pass = personal_custom_metadata if personal_custom_metadata else {}
-            success = book_service.add_book_to_user_library_sync(
-                user_id=str(user_id),
-                book_id=created_book.id,
-                reading_status=reading_status_enum.value if hasattr(reading_status_enum, 'value') else str(reading_status_enum),
-                ownership_status=OwnershipStatus.OWNED.value if hasattr(OwnershipStatus.OWNED, 'value') else str(OwnershipStatus.OWNED),
-                locations=default_locations,
-                custom_metadata=custom_metadata_to_pass
-            )
-            
-            if success:
-                logger.info(f"✅ Successfully added {title} to user's library")
-                return True
-            else:
-                logger.error(f"❌ Failed to add {title} to user's library")
-                return False
-        else:
-            logger.error(f"❌ Failed to create book: {title}")
-            return False
-        
+
+        service = SimplifiedBookService()
+        success = service.add_book_to_user_library_sync(
+            book_data=new_book,
+            user_id=str(user_id)
+        )
+
+        if success:
+            logger.info(f"✅ Successfully imported {title}")
+            return True
+        logger.error(f"❌ Failed to import {title}")
+        return False
+
     except Exception as e:
         logger.error(f"❌ Error processing single book: {e}")
         import traceback
