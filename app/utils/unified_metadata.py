@@ -531,15 +531,30 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	g_series, g_cats = _peel_series(google)
 	o_series, o_cats = _peel_series(openlib)
 
+	# Light normalization before dedupe: trim, collapse spaces, strip trailing errant punctuation
+	import re as _re
+	def _norm_cat(val: str) -> Optional[str]:
+		if not isinstance(val, str):
+			return None
+		s = val.strip()
+		if not s:
+			return None
+		s = _re.sub(r"\s+", " ", s)  # collapse whitespace
+		s = _re.sub(r"[\s\.,;:]+$", "", s).strip()  # strip trailing punctuation/spaces
+		return s or None
+
+	# Apply normalization to provider lists
+	g_cats = [c for c in (_norm_cat(c) for c in g_cats) if c]
+	o_cats = [c for c in (_norm_cat(c) for c in o_cats) if c]
+
 	categories: List[str] = []
 	seen_cats = set()
 	for src in [g_cats, o_cats]:
 		for c in src:
-			if isinstance(c, str):
-				key = c.strip().casefold()
-				if key and key not in seen_cats:
-					categories.append(c.strip())
-					seen_cats.add(key)
+			key = c.casefold()
+			if key and key not in seen_cats:
+				categories.append(c)
+				seen_cats.add(key)
 	merged['categories'] = categories
 
 	# Series: prefer explicit Google series, else OpenLibrary series; fallback: None
