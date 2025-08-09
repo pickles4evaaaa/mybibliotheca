@@ -6,26 +6,24 @@ services:
     volumes:
       # Mount local data directory for migration support, Kuzu database, and backups
       - ./data:/app/data
-      # Mount static directory for CSS, JS, and other static files
-      - ./app/static:/app/static
     environment:
       # Security - MUST be set via .env file or environment
       - SECRET_KEY=${SECRET_KEY}
       - SECURITY_PASSWORD_SALT=${SECURITY_PASSWORD_SALT}
-      
+
       # Database configuration - KuzuDB
       - KUZU_DB_PATH=/app/data/kuzu
       - GRAPH_DATABASE_ENABLED=true
-      
+
       # Application settings
       - SITE_NAME=${SITE_NAME:-MyBibliotheca}
       - TIMEZONE=${TIMEZONE:-UTC}
       # CRITICAL: Use single worker for KuzuDB compatibility
       - WORKERS=1
-      
+
       # Logging settings - disable verbose initialization to prevent duplicate messages
       - MYBIBLIOTHECA_VERBOSE_INIT=${MYBIBLIOTHECA_VERBOSE_INIT:-false}
-      
+
       # Migration settings (DISABLED for manual migration)
       - AUTO_MIGRATE=false
       # - MIGRATION_DEFAULT_USER=admin

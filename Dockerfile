@@ -67,7 +67,7 @@ COPY . .
 
 # Create directory for KuzuDB and application data with proper permissions
 RUN mkdir -p /app/data /app/data/kuzu /app/static/covers && \
-    chmod 755 /app/data /app/data/kuzu /app/static/covers
+    chmod 755 -R /app/data /app/static
 
 # Set environment variables for KuzuDB-based multi-user authentication
 ENV WTF_CSRF_ENABLED=True
