@@ -101,16 +101,21 @@ def select_best_publication_date(date1: str, date2: str, year1: Optional[int], y
     return date1, year1 or year2
 
 
-def search_google_books(title: str, max_results: int = 20) -> List[Dict[str, Any]]:
-    """Search Google Books API for books by title."""
-    print(f"📚 [GOOGLE_BOOKS_SEARCH] Searching for: '{title}'")
+def search_google_books(title: str, max_results: int = 20, author: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Search Google Books API for books by title (and optional author)."""
+    print(f"📚 [GOOGLE_BOOKS_SEARCH] Searching for: '{title}'" + (f" by '{author}'" if author else ""))
     
     if not title:
         return []
     
     # Prepare search query
-    query = quote_plus(title)
-    url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{query}&maxResults={max_results}"
+    q_title = quote_plus(title)
+    if author and isinstance(author, str) and author.strip():
+        q_author = quote_plus(author.strip())
+        q = f"intitle:{q_title}+inauthor:{q_author}"
+    else:
+        q = f"intitle:{q_title}"
+    url = f"https://www.googleapis.com/books/v1/volumes?q={q}&maxResults={max_results}"
     
     try:
         response = requests.get(url, timeout=15)
@@ -167,6 +172,31 @@ def search_google_books(title: str, max_results: int = 20) -> List[Dict[str, Any
                 
                 # Calculate similarity score
                 similarity_score = calculate_title_similarity(title, book_title)
+
+                # Optional author bonus
+                author_bonus = 0.0
+                if author and authors:
+                    try:
+                        def _norm_name(n: str) -> str:
+                            n = (n or '').lower()
+                            n = re.sub(r"[^a-z\s]", " ", n)
+                            n = re.sub(r"\s+", " ", n).strip()
+                            return n
+                        sa = _norm_name(author)
+                        result_names = [_norm_name(a) for a in authors]
+                        # Exact normalized match or contains
+                        if sa and any(sa == rn for rn in result_names):
+                            author_bonus = 0.2
+                        elif sa and any(sa in rn or rn in sa for rn in result_names):
+                            author_bonus = 0.12
+                        else:
+                            # Last-name overlap provides small boost
+                            last = sa.split(" ")[-1] if sa else ''
+                            if last and any(last in rn.split(" ")[-1] for rn in result_names):
+                                author_bonus = 0.08
+                    except Exception:
+                        author_bonus = 0.0
+                similarity_score = min(1.0, similarity_score + author_bonus)
                 
                 result = {
                     'title': book_title,
@@ -183,6 +213,7 @@ def search_google_books(title: str, max_results: int = 20) -> List[Dict[str, Any
                     'language': language,
                     'description': description,
                     'categories': categories,
+                    'raw_category_paths': list(categories) if categories else [],
                     'average_rating': average_rating,
                     'rating_count': rating_count,
                     'google_books_id': item.get('id'),
@@ -208,16 +239,20 @@ def search_google_books(title: str, max_results: int = 20) -> List[Dict[str, Any
         return []
 
 
-def search_openlibrary(title: str, max_results: int = 20) -> List[Dict[str, Any]]:
-    """Search OpenLibrary API for books by title."""
-    print(f"📖 [OPENLIBRARY_SEARCH] Searching for: '{title}'")
+def search_openlibrary(title: str, max_results: int = 20, author: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Search OpenLibrary API for books by title (and optional author)."""
+    print(f"📖 [OPENLIBRARY_SEARCH] Searching for: '{title}'" + (f" by '{author}'" if author else ""))
     
     if not title:
         return []
     
     # Prepare search query
-    query = quote_plus(title)
-    url = f"https://openlibrary.org/search.json?title={query}&limit={max_results}"
+    q_title = quote_plus(title)
+    if author and isinstance(author, str) and author.strip():
+        q_author = quote_plus(author.strip())
+        url = f"https://openlibrary.org/search.json?title={q_title}&author={q_author}&limit={max_results}"
+    else:
+        url = f"https://openlibrary.org/search.json?title={q_title}&limit={max_results}"
     
     try:
         response = requests.get(url, timeout=15)
@@ -280,6 +315,28 @@ def search_openlibrary(title: str, max_results: int = 20) -> List[Dict[str, Any]
                 
                 # Calculate similarity score
                 similarity_score = calculate_title_similarity(title, book_title)
+                # Optional author bonus
+                author_bonus = 0.0
+                if author and authors:
+                    try:
+                        def _norm_name(n: str) -> str:
+                            n = (n or '').lower()
+                            n = re.sub(r"[^a-z\s]", " ", n)
+                            n = re.sub(r"\s+", " ", n).strip()
+                            return n
+                        sa = _norm_name(author)
+                        result_names = [_norm_name(a) for a in authors]
+                        if sa and any(sa == rn for rn in result_names):
+                            author_bonus = 0.2
+                        elif sa and any(sa in rn or rn in sa for rn in result_names):
+                            author_bonus = 0.12
+                        else:
+                            last = sa.split(" ")[-1] if sa else ''
+                            if last and any(last in rn.split(" ")[-1] for rn in result_names):
+                                author_bonus = 0.08
+                    except Exception:
+                        author_bonus = 0.0
+                similarity_score = min(1.0, similarity_score + author_bonus)
                 
                 result = {
                     'title': book_title,
@@ -394,7 +451,7 @@ def merge_and_rank_results(search_title: str, google_results: List[Dict],
     return final_results
 
 
-def search_books_by_title(title: str, max_results: int = 10) -> List[Dict[str, Any]]:
+def search_books_by_title(title: str, max_results: int = 10, author: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Search for books by title across Google Books and OpenLibrary APIs.
     
@@ -410,7 +467,7 @@ def search_books_by_title(title: str, max_results: int = 10) -> List[Dict[str, A
         - description, categories, average_rating, rating_count
         - google_books_id, openlibrary_id, source, similarity_score
     """
-    print(f"🔍 [BOOK_SEARCH] Starting search for: '{title}'")
+    print(f"🔍 [BOOK_SEARCH] Starting search for: '{title}'" + (f" by '{author}'" if author else ""))
     
     if not title or not title.strip():
         print(f"❌ [BOOK_SEARCH] Empty title provided")
@@ -419,22 +476,22 @@ def search_books_by_title(title: str, max_results: int = 10) -> List[Dict[str, A
     title = title.strip()
     
     # Search both APIs in parallel (could be made truly async in the future)
-    google_results = search_google_books(title, max_results * 2)  # Get more to allow for better ranking
+    google_results = search_google_books(title, max_results * 2, author)  # Get more to allow for better ranking
     
     # Add small delay to be respectful to APIs
     time.sleep(0.5)
     
-    openlibrary_results = search_openlibrary(title, max_results * 2)
+    openlibrary_results = search_openlibrary(title, max_results * 2, author)
     
     # Merge, deduplicate, and rank results
     final_results = merge_and_rank_results(title, google_results, openlibrary_results, max_results)
     
-    print(f"🎯 [BOOK_SEARCH] Search complete. Returning {len(final_results)} results for '{title}'")
+    print(f"🎯 [BOOK_SEARCH] Search complete. Returning {len(final_results)} results for '{title}'" + (f" by '{author}'" if author else ""))
     
     return final_results
 
 
-def search_books_with_display_fields(title: str, max_results: int = 10, isbn_required: bool = False) -> Dict[str, Any]:
+def search_books_with_display_fields(title: str, max_results: int = 10, isbn_required: bool = False, author: Optional[str] = None) -> Dict[str, Any]:
     """
     Search for books and return results formatted for display.
     
@@ -442,11 +499,12 @@ def search_books_with_display_fields(title: str, max_results: int = 10, isbn_req
         title: The book title to search for
         max_results: Maximum number of results to return
         isbn_required: If True, only return books that have ISBN-10 or ISBN-13
+        author: Optional author name to filter results
     
     Returns:
         Dict with 'results' containing the book list and 'metadata' with search info
     """
-    results = search_books_by_title(title, max_results)
+    results = search_books_by_title(title, max_results, author)  # Pass author to search_books_by_title
     
     # Filter for ISBN if required
     if isbn_required:

@@ -40,8 +40,8 @@
                                         <i class="bi bi-info-circle text-muted ms-1" title="Look up book details using ISBN-10 or ISBN-13"></i>
                                     </h6>
                                     <div class="input-group mb-3">
-                                        <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
-                                               type="text" pattern="[\d-]+" title="Enter a valid ISBN (digits and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13">
+                         <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
+                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13"><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
                                         <button name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
                                             <i class="bi bi-search me-1"></i>Fetch Book
                                         </button>
@@ -747,6 +747,7 @@ function fetchBookData() {
                     language: data.language || 'en',
                     page_count: data.page_count || null,
                     cover_url: data.cover_url || '',
+                    series: data.series || '',
                     isbn_13: data.isbn13 || data.isbn_13 || '',
                     isbn_10: data.isbn10 || data.isbn_10 || '',
                     google_books_id: data.google_books_id || '',
@@ -755,6 +756,7 @@ function fetchBookData() {
                     authors: Array.isArray(data.authors) ? data.authors : [],
                     categories: Array.isArray(data.categories) ? data.categories : []
                 };
+                
 
                 // Fallback: if API didn't return ISBNs, use the ISBN we just queried with
                 try {
@@ -801,6 +803,64 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
+// Fallback cover image served via Flask's custom static route
+const FALLBACK_COVER_URL = "{{ url_for('serve_static', filename='bookshelf.png') }}";
+
+// Maintain the original hierarchical category paths we derived from APIs/user input
+window.rawCategoryPaths = new Set();
+
+function isHierarchicalCategory(name) {
+    return typeof name === 'string' && /[>/]/.test(name);
+}
+
+function splitCategoryPath(name) {
+    if (!name) return [];
+    return String(name)
+        .split(/[>\/]/)
+        .map(s => s.trim())
+        .filter(Boolean);
+}
+
+// Add a category visually; if hierarchical, show all path segments as chips,
+// but also store the full path for backend to build parent/child relations.
+function addCategorySmart(name, id = null, color = null, icon = null) {
+    if (!name) return;
+    const displayDiv = document.querySelector('.categories-display');
+    if (!displayDiv) return;
+
+    // Always remember the raw path (for backend)
+    window.rawCategoryPaths.add(String(name));
+
+    const parts = isHierarchicalCategory(name) ? splitCategoryPath(name) : [String(name)];
+    
+    parts.forEach(part => {
+        // Prevent duplicate segment chips by name (with CSS.escape fallback)
+        let escaped = '';
+        try {
+            escaped = (window.CSS && typeof CSS.escape === 'function') ? CSS.escape(part) : String(part).replace(/(["\\\]])/g, '\\$1');
+        } catch (_) {
+            escaped = String(part).replace(/(["\\\]])/g, '\\$1');
+        }
+        const existing = displayDiv.querySelector(`[data-name="${escaped}"]`);
+        if (existing) return;
+        addCategory(part, null, color, icon);
+    });
+}
+
+// Collect current author chips into a single comma-separated string for search disambiguation
+function getSelectedAuthorsForSearch() {
+    try {
+        const tags = document.querySelectorAll('[data-type="authored"] .contributor-tag');
+        const names = Array.from(tags)
+            .map(el => el.getAttribute('data-name') || el.textContent || '')
+            .map(s => s.replace(/[×]/g, '').trim())
+            .filter(Boolean);
+        return names.join(', ');
+    } catch (_) {
+        return '';
+    }
+}
+
 function searchByTitle() {
     console.log('🔍 searchByTitle function called!');
     try {
@@ -834,8 +894,13 @@ function searchByTitle() {
             <i class="bi bi-search me-2"></i>Search Results for "${title}"
         `;
         
-        // Call the external search API
-        fetch(`/api/v1/books/external-search?title=${encodeURIComponent(title)}&limit=10&isbn_required=true`, {
+    // Build query params with optional author to improve match quality
+    const author = getSelectedAuthorsForSearch();
+    const params = new URLSearchParams({ title, limit: '10', isbn_required: 'true' });
+    if (author) params.set('author', author);
+
+    // Call the external search API
+    fetch(`/api/v1/books/external-search?${params.toString()}` , {
             method: 'GET',
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
@@ -871,8 +936,8 @@ function displayTitleSearchResults(results) {
     resultsDiv.innerHTML = '';
     
     results.forEach((book, index) => {
-        const fullData = book.full_data || book; // Fallback to book if full_data is missing
-        const coverUrl = fullData.cover_url || '/static/images/no-cover.png';
+    const fullData = book.full_data || book; // Fallback to book if full_data is missing
+    const coverUrl = fullData.cover_url || FALLBACK_COVER_URL;
     const isbn = fullData.isbn_13 || fullData.isbn13 || fullData.isbn_10 || fullData.isbn10 || 'N/A';
         
         const resultCard = document.createElement('div');
@@ -881,9 +946,9 @@ function displayTitleSearchResults(results) {
             <div class="card mb-3 search-result-card h-100">
                 <div class="row g-0">
                     <div class="col-3 col-md-2">
-                        <img src="${coverUrl}" class="img-fluid rounded-start" alt="Book Cover" 
+                    <img src="${coverUrl}" class="img-fluid rounded-start" alt="Book Cover" 
                              style="height: 160px; width: 100%; object-fit: cover;"
-                             onerror="this.src='/static/images/no-cover.png'">
+                        onerror="this.src='${FALLBACK_COVER_URL}'">
                     </div>
                     <div class="col-9 col-md-10">
                         <div class="card-body p-3">
@@ -1064,11 +1129,11 @@ function mergeBookData(searchData, isbnData) {
         merged.author = merged.authors.join(', ');
     }
     
-    // Categories: merge arrays, removing duplicates, limit to 5
+    // Categories: merge arrays, removing duplicates (keep all for hierarchy expansion)
     if (isbnData.categories && Array.isArray(isbnData.categories)) {
         const existingCategories = merged.categories || [];
         const allCategories = [...existingCategories, ...isbnData.categories];
-        merged.categories = [...new Set(allCategories)].slice(0, 5);
+        merged.categories = [...new Set(allCategories)];
     }
     
     // Cover URL: prefer higher quality or use as fallback
@@ -1120,6 +1185,9 @@ function populateFormWithBookData(bookData) {
     document.getElementById('cover_url').value = bookData.cover_url || bookData.cover || '';
     document.getElementById('publisher').value = bookData.publisher || '';
     document.getElementById('language').value = bookData.language || 'en';
+    // Series (if provided by unified metadata)
+    const seriesEl = document.getElementById('series');
+    if (seriesEl) seriesEl.value = bookData.series || '';
     
     // Additional Details fields
     let isbn13Val = bookData.isbn_13 || bookData.isbn13 || '';
@@ -1171,9 +1239,16 @@ function populateFormWithBookData(bookData) {
     const categoryFields = document.querySelectorAll('.category-tag');
     categoryFields.forEach(tag => tag.remove());
     
+    // Prefer raw_category_paths if provided (they keep full hierarchical strings)
+    if ((!bookData.categories || bookData.categories.length <= 1) && Array.isArray(bookData.raw_category_paths) && bookData.raw_category_paths.length > 1) {
+        bookData.categories = bookData.raw_category_paths;
+        
+    }
+
     if (bookData.categories && bookData.categories.length > 0) {
-        bookData.categories.slice(0, 3).forEach(category => {
-            addCategory(category, null, null, null);
+        
+        bookData.categories.forEach(category => {
+            addCategorySmart(category, null, null, null);
         });
     }
 }
@@ -1334,23 +1409,18 @@ function processFile() {
         method: 'POST',
         body: formData
     })
-    .then(response => {
-        if (response.ok) {
-            // Handle successful response
-            if (fileName.toLowerCase().endsWith('.csv')) {
-                // For CSV files, handle JSON response from simple-upload
-                return response.json();
-            } else if (fileName.toLowerCase().endsWith('.db')) {
-                // For DB files, redirect to the response URL (mapping page)
-                window.location.href = response.url;
-                return;
-            } else {
-                // For images, handle the ISBN extraction result
-                return response.json();
-            }
-        } else {
-            throw new Error('Processing failed');
+    .then(async response => {
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (_) {
+            // Not JSON or empty
         }
+        if (!response.ok) {
+            const msg = (data && (data.error || data.message)) || `Processing failed (${response.status})`;
+            throw new Error(msg);
+        }
+        return data;
     })
     .then(data => {
         if (data && data.isbn) {
@@ -1360,7 +1430,7 @@ function processFile() {
         } else if (data && (data.title || data.authors)) {
             // AI processing - full book data
             populateFormWithAIData(data);
-            showMessage('AI processed book details successfully! Please review and add any additional information.', 'success');
+            showMessage('AI processed details. Review the fields, then click the magnifying glass to search and pick the exact edition.', 'info');
         } else if (data && data.task_id) {
             // For CSV imports, redirect to progress page
             window.location.href = `/import/import-books/progress/${data.task_id}`;
@@ -1403,6 +1473,14 @@ function populateFormWithAIData(data) {
             return true;
         }
         return false;
+    }
+    // Helper to coerce values into a list of strings
+    function toStringList(val) {
+        if (!val) return [];
+        if (Array.isArray(val)) return val.map(v => String(v).trim()).filter(Boolean);
+        const s = String(val);
+        // split on comma or semicolon
+        return s.split(/[;,]/).map(v => v.trim()).filter(Boolean);
     }
     // Helper to normalize date values to YYYY-MM-DD for date inputs
     function normalizeDateToInput(val) {
@@ -1463,28 +1541,23 @@ function populateFormWithAIData(data) {
     if (data.page_count) safeSetValue('page_count', data.page_count);
     if (data.language) safeSetValue('language', data.language);
     
-    // Additional information
-    if (data.genre) {
-        addCategory(data.genre, null, null, null);
+    // Additional information: genres/categories
+    // Accept 'genre' (string), 'genres' (array/string), or 'categories' (array/string)
+    const genreList = [
+        ...toStringList(data.genre),
+        ...toStringList(data.genres),
+        ...toStringList(data.categories)
+    ];
+    if (genreList.length) {
+        genreList.forEach(name => addCategorySmart(name, null, null, null));
     }
     if (data.series) safeSetValue('series', data.series);
     
-    // Handle contributors
+    // Handle contributors: only add authors from AI; other roles can be user-added later
     if (data.contributors && Array.isArray(data.contributors)) {
-        data.contributors.forEach(contributor => {
-            if (contributor.name && contributor.role) {
-                // Map role to our contributor types
-                const roleMap = {
-                    'author': 'authored',
-                    'editor': 'edited',
-                    'translator': 'translated',
-                    'illustrator': 'illustrated',
-                    'narrator': 'narrated'
-                };
-                const contributorType = roleMap[contributor.role.toLowerCase()] || 'authored';
-                addContributor(contributorType, contributor.name, null);
-            }
-        });
+        data.contributors
+            .filter(c => c && c.name && (c.role || '').toLowerCase() === 'author')
+            .forEach(c => addContributor('authored', c.name, null));
     }
     
     // Cover and description
@@ -1865,8 +1938,8 @@ function handleCategoryKeydown(e) {
         if (selected) {
             selected.click();
         } else if (e.target.value.trim()) {
-            // Create new category if none selected
-            addCategory(e.target.value.trim(), null, null, null);
+            // Create new category if none selected; support hierarchical input
+            addCategorySmart(e.target.value.trim(), null, null, null);
             e.target.value = '';
             hideDropdown(dropdown);
         }
@@ -1935,14 +2008,21 @@ function showCategoryDropdown(dropdown, data, input) {
 }
 
 function selectCategory(category, input) {
-    addCategory(category.name, category.id, category.color, category.icon);
+    // If the category result contains a hierarchical path representation in name, keep it.
+    // API currently returns flat names; users can type hierarchy (e.g., "Fiction / Sci-Fi").
+    if (category && category.name) {
+        // Capture full path if present
+        window.rawCategoryPaths.add(category.name);
+    }
+    addCategorySmart(category.name, category.id, category.color, category.icon);
     input.value = '';
     hideDropdown(input.nextElementSibling);
 }
 
 function createNewCategory(name, element) {
     // Add the category immediately
-    addCategory(name, null, null, null);
+    window.rawCategoryPaths.add(name);
+    addCategorySmart(name, null, null, null);
     
     // Clear input and hide dropdown
     const input = element.closest('.category-autocomplete').querySelector('.category-input');
@@ -2015,7 +2095,7 @@ function collectContributorsAndCategories() {
         }
     });
     
-    // Collect all categories
+    // Collect visual category chips (segments) for UI consistency
     const categories = [];
     const categoryTags = document.querySelectorAll('.category-tag');
     categoryTags.forEach(tag => {
@@ -2023,13 +2103,21 @@ function collectContributorsAndCategories() {
         const id = tag.getAttribute('data-id');
         categories.push({name: name, id: id});
     });
-    
     if (categories.length > 0) {
         const hiddenInput = document.createElement('input');
         hiddenInput.type = 'hidden';
         hiddenInput.name = 'categories';
         hiddenInput.value = JSON.stringify(categories);
         document.getElementById('addBookForm').appendChild(hiddenInput);
+    }
+
+    // Also submit raw hierarchical paths so backend can create parent/child relationships
+    if (window.rawCategoryPaths && window.rawCategoryPaths.size > 0) {
+        const rawInput = document.createElement('input');
+        rawInput.type = 'hidden';
+        rawInput.name = 'raw_categories';
+        rawInput.value = JSON.stringify(Array.from(window.rawCategoryPaths));
+        document.getElementById('addBookForm').appendChild(rawInput);
     }
 }
 </script>

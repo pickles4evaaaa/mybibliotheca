@@ -525,28 +525,29 @@ def search_external_books():
     try:
         # Get query parameters
         title = request.args.get('title', '').strip()
+        author = request.args.get('author', '').strip()
         limit = min(int(request.args.get('limit', 10)), 20)  # Max 20 results
         isbn_required = request.args.get('isbn_required', 'false').lower() == 'true'
-        
+
         if not title or len(title) < 2:
             return jsonify({
                 'status': 'error',
                 'message': 'Title parameter is required (minimum 2 characters)'
             }), 400
-        
+
         # Import the search function
         from app.utils.book_search import search_books_with_display_fields
-        
-        # Perform the search
-        search_results = search_books_with_display_fields(title, limit, isbn_required=isbn_required)
-        
+
+        # Perform the search with author-aware ranking
+        search_results = search_books_with_display_fields(title, limit, isbn_required=isbn_required, author=author or None)
+
         return jsonify({
             'status': 'success',
             'data': search_results['results'],
             'metadata': search_results['metadata'],
             'count': len(search_results['results'])
         }), 200
-        
+
     except ImportError as e:
         current_app.logger.error(f"Error importing book search module: {e}")
         return jsonify({
@@ -554,7 +555,7 @@ def search_external_books():
             'message': 'Book search functionality not available',
             'error': str(e)
         }), 500
-        
+
     except Exception as e:
         current_app.logger.error(f"Error searching external books: {e}")
         current_app.logger.error(traceback.format_exc())
@@ -580,6 +581,7 @@ def unified_metadata_lookup():
     try:
         isbn = (request.args.get('isbn') or '').strip()
         title = (request.args.get('title') or '').strip()
+        author = (request.args.get('author') or '').strip()
 
         if not isbn and not title:
             return jsonify({
@@ -597,11 +599,16 @@ def unified_metadata_lookup():
             }), 200
 
         # title search
-        results = fetch_unified_by_title(title, max_results=min(int(request.args.get('limit', 10)), 20))
+        results = fetch_unified_by_title(
+            title,
+            max_results=min(int(request.args.get('limit', 10)), 20),
+            author=author or None,
+        )
         return jsonify({
             'status': 'success',
             'mode': 'title',
             'title': title,
+            'author': author if author else None,
             'count': len(results),
             'results': results
         }), 200

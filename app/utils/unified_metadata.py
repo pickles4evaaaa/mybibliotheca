@@ -8,7 +8,7 @@ search passthrough to the enhanced search implementation.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import re
 import requests
 
@@ -215,6 +215,44 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		if not description:
 			description = (item.get('searchInfo') or {}).get('textSnippet')
 
+
+		# Categories handling: initial shallow categories vs. richer full volume categories.
+		# We prefer any full categories list that either:
+		# 1) Has more entries OR
+		# 2) Contains at least one hierarchical delimiter ('/' or '>') not present in the initial list.
+		# This guards against cases where the initial search only returns a top-level umbrella (e.g. ['Fiction'])
+		# while the full volume reveals hierarchical genre paths (e.g. ['Fiction / Science Fiction / Action & Adventure', ...]).
+		base_categories = vi.get('categories') or []
+		full_cats = []
+		try:
+			fvi_obj = locals().get('fvi')
+			if fvi_obj:
+				full_cats = fvi_obj.get('categories') or []
+				def _has_hierarchy(cats):
+					return any(isinstance(c, str) and ('/' in c or '>' in c) for c in cats)
+				if full_cats and (
+					len(full_cats) > len(base_categories)
+					or _has_hierarchy(full_cats) and not _has_hierarchy(base_categories)
+				):
+					base_categories = full_cats
+		except Exception:
+			pass
+
+		# Peel a 'Series:' category if present from Google categories
+		series_value = None
+		_cleaned = []
+		for c in base_categories:
+			if isinstance(c, str):
+				s = c.strip()
+				if s.lower().startswith('series:') and not series_value:
+					series_value = s.split(':', 1)[1].strip() or None
+				else:
+					_cleaned.append(s)
+		base_categories = _cleaned
+
+		# Preserve raw hierarchical category path strings; frontend can expand
+		raw_category_paths = list(base_categories)
+
 		return {
 			'title': vi.get('title') or '',
 			'subtitle': vi.get('subtitle') or None,
@@ -227,13 +265,15 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 			'page_count': printed_page or page_count_val,
 			'language': vi.get('language') or 'en',
 			'description': description,
-			'categories': vi.get('categories') or [],
+			'categories': base_categories,
+			'raw_category_paths': raw_category_paths,
 			'average_rating': vi.get('averageRating'),
 			'rating_count': vi.get('ratingsCount'),
 			'cover_url': cover_url,
 			'isbn10': isbn10,
 			'isbn13': isbn13,
 			'google_books_id': item.get('id'),
+			'series': series_value,
 		}
 	except Exception:
 		return {}
@@ -276,6 +316,30 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 				desc = ed.get('description')
 				if isinstance(desc, dict):
 					desc = desc.get('value')
+
+				# Series (edition JSON sometimes includes 'series': ["Wheel of Time"]) 
+				def _extract_series(val):
+					if not val:
+						return None
+					try:
+						if isinstance(val, list) and val:
+							candidate = str(val[0])
+						elif isinstance(val, str):
+							candidate = val
+						else:
+							return None
+						candidate = candidate.strip()
+						import re as _re
+						candidate = _re.sub(r'^\s*Series\s*:\s*', '', candidate, flags=_re.IGNORECASE)
+						candidate = _re.sub(r'\s*\([^)]*\)\s*$', '', candidate).strip()
+						return candidate or None
+					except Exception:
+						return None
+
+				series_value = _extract_series(ed.get('series'))
+
+				# Categories not available via this lightweight fallback
+				categories = []
 				return {
 					'title': title,
 					'authors': [],  # would require extra calls for names
@@ -286,9 +350,10 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 					'page_count': number_of_pages,
 					'language': None,
 					'description': desc,
-					'categories': [],
+					'categories': categories,
 					'cover_url': None,
 					'openlibrary_id': work_path or ed.get('key'),  # prefer works path
+					'series': series_value,
 					'isbn10': isbn10,
 					'isbn13': isbn13,
 				}
@@ -342,6 +407,30 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 					out.append(name)
 			return out
 
+		# Series may appear explicitly in OL 'series' field (string or list)
+		def _extract_series(val):
+			if not val:
+				return None
+			try:
+				if isinstance(val, list) and val:
+					candidate = str(val[0])
+				elif isinstance(val, str):
+					candidate = val
+				else:
+					return None
+				candidate = candidate.strip()
+				# Strip a leading 'Series:' if present and any trailing parenthetical like '(1)'
+				import re as _re
+				candidate = _re.sub(r'^\s*Series\s*:\s*', '', candidate, flags=_re.IGNORECASE)
+				candidate = _re.sub(r'\s*\([^)]*\)\s*$', '', candidate).strip()
+				return candidate or None
+			except Exception:
+				return None
+
+		series_value = _extract_series(ol.get('series'))
+
+		base_categories = _norm_subjects(ol.get('subjects'))
+
 		return {
 			'title': ol.get('title'),
 			'subtitle': ol.get('subtitle'),
@@ -353,9 +442,10 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 			'page_count': number_of_pages,
 			'language': None,
 			'description': desc,
-			'categories': _norm_subjects(ol.get('subjects')),
+			'categories': base_categories,
 			'cover_url': cover_url,
 			'openlibrary_id': ol_key,
+			'series': series_value,
 			'isbn10': isbn10,
 			'isbn13': isbn13,
 		}
@@ -425,9 +515,25 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 					seen_authors.add(key)
 	merged['authors'] = authors
 
+	# Extract 'Series:' indicators from categories before merging
+	def _peel_series(src: Dict[str, Any]) -> Tuple[Optional[str], List[str]]:
+		series_name = None
+		cats: List[str] = []
+		for c in src.get('categories') or []:
+			if isinstance(c, str):
+				s = c.strip()
+				if s.lower().startswith('series:') and not series_name:
+					series_name = s.split(':', 1)[1].strip() or None
+				else:
+					cats.append(s)
+		return series_name, cats
+
+	g_series, g_cats = _peel_series(google)
+	o_series, o_cats = _peel_series(openlib)
+
 	categories: List[str] = []
 	seen_cats = set()
-	for src in [google.get('categories') or [], openlib.get('categories') or []]:
+	for src in [g_cats, o_cats]:
 		for c in src:
 			if isinstance(c, str):
 				key = c.strip().casefold()
@@ -435,6 +541,9 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 					categories.append(c.strip())
 					seen_cats.add(key)
 	merged['categories'] = categories
+
+	# Series: prefer explicit Google series, else OpenLibrary series; fallback: None
+	merged['series'] = g_series or o_series or google.get('series') or openlib.get('series')
 
 	# Cover: prefer Google, fallback to OpenLibrary
 	merged['cover_url'] = google.get('cover_url') or openlib.get('cover_url')
@@ -474,6 +583,11 @@ def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
 
 	merged = _merge_dicts(google, openlib)
 
+	# Ensure raw_category_paths present for frontend hierarchical handling
+	if 'raw_category_paths' not in merged:
+		cats = merged.get('categories') or []
+		merged['raw_category_paths'] = list(cats)
+
 	# Ensure we propagate the queried ISBN when providers omit identifiers
 	try:
 		import re as _re
@@ -489,8 +603,8 @@ def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
 	return merged
 
 
-def fetch_unified_by_title(title: str, max_results: int = 10) -> List[Dict[str, Any]]:
-	"""Passthrough to enhanced title search across Google Books and OpenLibrary."""
+def fetch_unified_by_title(title: str, max_results: int = 10, author: Optional[str] = None) -> List[Dict[str, Any]]:
+	"""Passthrough to enhanced title search across Google Books and OpenLibrary, with optional author filter."""
 	from app.utils.book_search import search_books_by_title
-	return search_books_by_title(title, max_results)
+	return search_books_by_title(title, max_results, author)
 

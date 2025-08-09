@@ -928,10 +928,100 @@ class KuzuBookRepository:
             logger.info(f"🔗 Processing {len(category_names)} categories from raw data: {category_names}")
             
             for category_name in category_names:
-                await self._create_category_relationship_by_name(book_id, category_name)
+                # Detect hierarchical category paths like "Fiction / Science Fiction / Space Opera"
+                if ('/' in category_name) or ('>' in category_name):
+                    try:
+                        # Split on common separators and normalize whitespace
+                        import re
+                        parts = [p.strip() for p in re.split(r"[>/]", category_name) if p.strip()]
+                        if not parts:
+                            continue
+                        leaf_category_id = await self._ensure_category_path_exists(parts)
+                        if leaf_category_id:
+                            # Link the book to the most specific (leaf) category
+                            success = self.db.create_relationship(
+                                'Book', book_id, 'CATEGORIZED_AS', 'Category', leaf_category_id, {}
+                            )
+                            if success:
+                                logger.info(f"✅ Linked book {book_id} to leaf category path '{category_name}' (leaf id: {leaf_category_id})")
+                            else:
+                                logger.error(f"❌ Failed to link book {book_id} to leaf category id {leaf_category_id}")
+                        else:
+                            logger.warning(f"⚠️ Could not resolve category path for: {category_name}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed processing hierarchical category '{category_name}': {e}")
+                        # Fallback to flat handling
+                        await self._create_category_relationship_by_name(book_id, category_name)
+                else:
+                    # Flat category name
+                    await self._create_category_relationship_by_name(book_id, category_name)
                 
         except Exception as e:
             logger.error(f"❌ Failed to create category relationships from raw data: {e}")
+
+    async def _ensure_category_path_exists(self, parts: list[str]) -> Optional[str]:
+        """Ensure a hierarchical category path exists; return the leaf category id.
+
+        parts: e.g., ["Fiction", "Science Fiction", "Space Opera"]
+        Creates (or finds) each Category with proper parent_id and PARENT_CATEGORY links.
+        """
+        try:
+            parent_id: Optional[str] = None
+            leaf_id: Optional[str] = None
+            level = 0
+            for name in parts:
+                normalized_name = name.strip().lower()
+                if not normalized_name:
+                    continue
+                # Find existing category matching name and parent context
+                if parent_id is None:
+                    query = (
+                        "MATCH (c:Category) WHERE c.normalized_name = $normalized_name AND c.parent_id IS NULL "
+                        "RETURN c.id LIMIT 1"
+                    )
+                    params = {"normalized_name": normalized_name}
+                else:
+                    query = (
+                        "MATCH (c:Category) WHERE c.normalized_name = $normalized_name AND c.parent_id = $parent_id "
+                        "RETURN c.id LIMIT 1"
+                    )
+                    params = {"normalized_name": normalized_name, "parent_id": parent_id}
+                results = self.db.query(query, params)
+                if results and (results[0].get('result') or results[0].get('col_0')):
+                    category_id = results[0].get('result') or results[0]['col_0']
+                else:
+                    # Create new category node with parent link metadata
+                    category_id = str(uuid.uuid4())
+                    category_data = {
+                        'id': category_id,
+                        'name': name,
+                        'normalized_name': normalized_name,
+                        'description': '',
+                        'parent_id': parent_id,
+                        'level': level,
+                        'color': '',
+                        'icon': '',
+                        'book_count': 0,
+                        'user_book_count': 0,
+                        'created_at_str': datetime.utcnow().isoformat(),
+                        'updated_at_str': datetime.utcnow().isoformat()
+                    }
+                    created = self.db.create_node('Category', category_data)
+                    if not created:
+                        logger.error(f"❌ Failed to create category in path: {name} (level {level})")
+                        return None
+                    # If has parent, create explicit PARENT_CATEGORY relationship (parent -> child)
+                    if parent_id:
+                        self.db.create_relationship('Category', parent_id, 'PARENT_CATEGORY', 'Category', category_id, {})
+                    logger.info(f"📁 Created category '{name}' (id={category_id}) under parent_id={parent_id}")
+                # Advance to next level
+                leaf_id = category_id
+                parent_id = category_id
+                level += 1
+            return leaf_id
+        except Exception as e:
+            logger.error(f"❌ Failed ensuring category path exists for {parts}: {e}")
+            return None
     
     async def _create_category_relationship_by_name(self, book_id: str, category_name: str):
         """Create a category relationship by category name (create category if needed)."""

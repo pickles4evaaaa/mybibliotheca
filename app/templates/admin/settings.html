@@ -486,7 +486,11 @@
                                         <div class="col-md-4">
                                             <label for="ai_max_tokens" class="form-label">Max Tokens</label>
                                             <input type="number" class="form-control" id="ai_max_tokens" name="ai_max_tokens" 
-                                                   value="{{ ai_config.get('AI_MAX_TOKENS', '1000') if ai_config else '1000' }}" min="100" max="4000">
+                                                   value="{{ ai_config.get('AI_MAX_TOKENS', '1000') if ai_config else '1000' }}" min="100" max="128000">
+                                            <small class="form-text text-muted">Supports up to 128k. Values above 16k may be slower or rejected by some models.</small>
+                                            <div id="ai-max-tokens-warning" class="form-text text-warning" style="display:none;">
+                                                Warning: Values above 16k can be slow and may not be supported by all providers/models.
+                                            </div>
                                         </div>
                                         <div class="col-md-4">
                                             <label for="ai_temperature" class="form-label">Temperature</label>
@@ -529,6 +533,20 @@
                                     </button>
                                 </div>
                             </form>
+                            <script>
+                            document.addEventListener('DOMContentLoaded', function() {
+                                const input = document.getElementById('ai_max_tokens');
+                                const warn = document.getElementById('ai-max-tokens-warning');
+                                if (input && warn) {
+                                    const toggle = () => {
+                                        const val = parseInt(input.value || '0', 10);
+                                        warn.style.display = val > 16000 ? 'block' : 'none';
+                                    };
+                                    input.addEventListener('input', toggle);
+                                    toggle();
+                                }
+                            });
+                            </script>
                         </div>
                     </div>
                 </div>

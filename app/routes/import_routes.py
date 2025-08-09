@@ -2996,7 +2996,7 @@ def api_external_book_search():
             'has_isbn_priority': True,
             'filtered_out_count': 0
         })
-        
+
     except Exception as e:
         current_app.logger.error(f"Error in external book search: {e}")
         return jsonify({'error': 'Internal server error'}), 500

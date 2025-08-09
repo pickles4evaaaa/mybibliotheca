@@ -18,6 +18,19 @@ class AIService:
         self.config = config
         self.provider = config.get('AI_PROVIDER', 'openai')
         self.timeout = int(config.get('AI_TIMEOUT', '30'))
+        # Normalize and clamp max tokens (100..128000), warn >16k
+        try:
+            requested_max = int(config.get('AI_MAX_TOKENS', '1000'))
+        except ValueError:
+            requested_max = 1000
+        self.max_tokens = min(max(requested_max, 100), 128000)
+        if self.max_tokens > 16000:
+            try:
+                current_app.logger.warning(
+                    f"AI_MAX_TOKENS set to {self.max_tokens}. Values above 16k may be slow or unsupported by some providers/models."
+                )
+            except Exception:
+                pass
         
     def extract_book_info_from_image(self, image_data: bytes, filename: str) -> Optional[Dict[str, Any]]:
         """
@@ -33,14 +46,43 @@ class AIService:
         try:
             # Load the prompt template
             prompt = self._load_prompt_template()
-            
-            if self.provider == 'openai':
-                return self._extract_with_openai(image_data, prompt)
-            elif self.provider == 'ollama':
-                return self._extract_with_ollama(image_data, prompt)
-            else:
-                current_app.logger.error(f"Unknown AI provider: {self.provider}")
-                return None
+
+            # Determine provider order with optional fallback
+            primary = (self.provider or 'openai').lower()
+            secondary = 'ollama' if primary == 'openai' else 'openai'
+            providers_to_try = [primary]
+
+            # Enable fallback if explicitly configured or if the alternate provider appears configured
+            fallback_enabled = self.config.get('AI_FALLBACK_ENABLED', 'true').lower() == 'true'
+            other_configured = (
+                (secondary == 'openai' and bool(self.config.get('OPENAI_API_KEY')))
+                or (secondary == 'ollama' and bool(self.config.get('OLLAMA_BASE_URL', 'http://localhost:11434')))
+            )
+            if fallback_enabled and other_configured:
+                providers_to_try.append(secondary)
+
+            last_error = None
+            for prov in providers_to_try:
+                try:
+                    current_app.logger.info(f"AI extraction attempting provider: {prov}")
+                    if prov == 'openai':
+                        result = self._extract_with_openai(image_data, prompt)
+                    elif prov == 'ollama':
+                        result = self._extract_with_ollama(image_data, prompt)
+                    else:
+                        current_app.logger.error(f"Unknown AI provider: {prov}")
+                        continue
+                    if result:
+                        if prov != primary:
+                            current_app.logger.info(f"AI extraction succeeded with fallback provider: {prov}")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    current_app.logger.warning(f"Provider {prov} failed: {e}")
+
+            if last_error:
+                current_app.logger.error(f"AI extraction failed after trying providers {providers_to_try}: {last_error}")
+            return None
                 
         except Exception as e:
             current_app.logger.error(f"Error in AI book extraction: {e}")
@@ -123,7 +165,7 @@ class AIService:
                         ]
                     }
                 ],
-                'max_tokens': int(self.config.get('AI_MAX_TOKENS', '1000')),
+                'max_tokens': self.max_tokens,
                 'temperature': float(self.config.get('AI_TEMPERATURE', '0.1'))
             }
             
@@ -183,7 +225,7 @@ class AIService:
                 'stream': False,
                 'options': {
                     'temperature': float(self.config.get('AI_TEMPERATURE', '0.1')),
-                    'num_predict': int(self.config.get('AI_MAX_TOKENS', '1000'))
+                    'num_predict': self.max_tokens
                 }
             }
             

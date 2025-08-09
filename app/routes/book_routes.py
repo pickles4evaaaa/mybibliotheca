@@ -245,10 +245,12 @@ def add_book_from_image():
             isbn = extract_isbn_from_image(file)
             
             if not isbn:
+                # Return structured JSON with success flag so the UI can show a friendly message
                 return jsonify({
+                    'success': False,
                     'error': 'No ISBN found in image. Please try a clearer image with visible barcode or ISBN text.',
                     'suggestion': 'Make sure the barcode or ISBN text is clearly visible and well-lit'
-                }), 404
+                })
             
             # Optionally fetch unified book data using the extracted ISBN (not required by UI)
             # UI will call unified-metadata separately after we return ISBN, but we include
@@ -320,7 +322,7 @@ def add_book_from_image():
             
         except Exception as e:
             current_app.logger.error(f"Error processing image upload: {e}")
-            return jsonify({'error': 'Failed to process image. Please try again.'}), 500
+            return jsonify({'success': False, 'error': 'Failed to process image. Please try again.'}), 500
 
 @book_bp.route('/add/image-ai', methods=['POST'])
 @login_required
@@ -328,177 +330,55 @@ def add_book_from_image_ai():
     """Handle image upload for AI-powered book extraction"""
     try:
         current_app.logger.info("AI image processing request started")
-        
+
         # Check if AI is enabled
         from app.admin import load_ai_config
         ai_config = load_ai_config()
-        
-        current_app.logger.info(f"AI config loaded: {ai_config}")
-        
+
         if ai_config.get('AI_BOOK_EXTRACTION_ENABLED') != 'true':
             current_app.logger.warning("AI book extraction is disabled")
-            return jsonify({'error': 'AI book extraction is not enabled. Please contact your administrator.'}), 400
-        
+            return jsonify({'success': False, 'error': 'AI book extraction is not enabled. Please contact your administrator.'})
+
         # Check if file was uploaded
         if 'image' not in request.files:
             current_app.logger.error("No image file in request")
-            return jsonify({'error': 'No image file provided'}), 400
-        
+            return jsonify({'success': False, 'error': 'No image file provided'}), 400
+
         file = request.files['image']
-        if file.filename == '':
+        if not file or file.filename == '':
             current_app.logger.error("Empty filename")
-            return jsonify({'error': 'No file selected'}), 400
-        
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+
         current_app.logger.info(f"Processing file: {file.filename}")
-        
+
         # Validate file type
         allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'webp'}
         filename = file.filename or ''
         file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename and len(filename.rsplit('.', 1)) > 1 else ''
         if file_ext not in allowed_extensions:
             current_app.logger.error(f"Invalid file extension: {file_ext}")
-            return jsonify({'error': 'Invalid file type. Please upload an image file.'}), 400
-        
+            return jsonify({'success': False, 'error': 'Invalid file type. Please upload an image file.'}), 400
+
         # Process image with AI
         from app.services.ai_service import AIService
         ai_service = AIService(ai_config)
-        
+
         # Read file content
         file.seek(0)  # Reset file pointer
         file_content = file.read()
-        
+
         current_app.logger.info(f"File read successfully, size: {len(file_content)} bytes")
-        
+
         # Extract book information using AI
         book_data = ai_service.extract_book_info_from_image(file_content, filename)
-        
+
         current_app.logger.info(f"AI extraction result: {book_data}")
-        
+
         if book_data:
-            # If auto-search is enabled and we have enough info, try to fetch additional data
-            auto_search_enabled = ai_config.get('AI_BOOK_EXTRACTION_AUTO_SEARCH') == 'true'
-            has_isbn = bool(book_data.get('isbn'))
-            has_title = bool(book_data.get('title'))
-            has_authors = bool(book_data.get('authors'))
-            has_contributors = bool(book_data.get('contributors'))
-            
-            # Check if we have enough data for auto-search
-            search_criteria_met = (has_isbn or 
-                                 (has_title and has_authors) or 
-                                 (has_title and has_contributors))
-            
-            current_app.logger.info(f"Auto-search evaluation: enabled={auto_search_enabled}, criteria_met={search_criteria_met}")
-            current_app.logger.info(f"  - has_isbn: {has_isbn}")
-            current_app.logger.info(f"  - has_title: {has_title}")  
-            current_app.logger.info(f"  - has_authors: {has_authors}")
-            current_app.logger.info(f"  - has_contributors: {has_contributors}")
-            
-            if auto_search_enabled and search_criteria_met:
-                
-                current_app.logger.info("Auto-search is enabled and conditions met - attempting API enhancement")
-                current_app.logger.info(f"Book data keys: {list(book_data.keys())}")
-                current_app.logger.info(f"Has ISBN: {bool(book_data.get('isbn'))}")
-                current_app.logger.info(f"Has title: {bool(book_data.get('title'))}")
-                current_app.logger.info(f"Has authors: {bool(book_data.get('authors'))}")
-                current_app.logger.info(f"Has contributors: {bool(book_data.get('contributors'))}")
-                
-                # Try to enhance data with API lookup
-                try:
-                    # Use unified metadata helpers everywhere
-                    from app.utils import fetch_unified_by_isbn
-                    from app.utils.unified_metadata import fetch_unified_by_title
-                    
-                    api_data = None
-                    
-                    # First try ISBN lookup if available
-                    if book_data.get('isbn'):
-                        current_app.logger.info(f"Trying ISBN lookup (unified): {book_data.get('isbn')}")
-                        api_data = fetch_unified_by_isbn(book_data['isbn'])
-                        if api_data:
-                            current_app.logger.info("Successfully fetched unified data using ISBN")
-                    
-                    # If no ISBN or ISBN lookup failed, try title+author search
-                    if not api_data and book_data.get('title'):
-                        current_app.logger.info("No API data from ISBN, attempting title+author search")
-                        
-                        # Extract author from contributors if needed
-                        author = None
-                        if book_data.get('authors'):
-                            author = book_data.get('authors')
-                            current_app.logger.info(f"Found author from 'authors' field: {author}")
-                        elif book_data.get('contributors'):
-                            # Extract authors from contributors array
-                            contributors = book_data.get('contributors', [])
-                            current_app.logger.info(f"Found contributors: {contributors}")
-                            
-                            if isinstance(contributors, list):
-                                authors = [c.get('name') for c in contributors if c.get('role', '').lower() == 'author']
-                                current_app.logger.info(f"Extracted authors from contributors: {authors}")
-                                if authors:
-                                    author = authors[0]  # Use first author for search
-                                    current_app.logger.info(f"Using first author for search: {author}")
-                            elif isinstance(contributors, str):
-                                # Handle case where contributors might be a string
-                                current_app.logger.info("Contributors is a string, attempting to parse")
-                                try:
-                                    import json
-                                    contributors_parsed = json.loads(contributors.replace("'", '"'))
-                                    if isinstance(contributors_parsed, list):
-                                        authors = [c.get('name') for c in contributors_parsed if c.get('role', '').lower() == 'author']
-                                        if authors:
-                                            author = authors[0]
-                                            current_app.logger.info(f"Parsed author from string contributors: {author}")
-                                except Exception as e:
-                                    current_app.logger.warning(f"Failed to parse contributors string: {e}")
-                        
-                        if author:
-                            current_app.logger.info(f"Trying unified title search: '{book_data.get('title')}' by '{author}'")
-                            # Use enhanced title search and take the top result if present
-                            try:
-                                title_query = str(book_data.get('title') or '').strip()
-                                results = fetch_unified_by_title(title_query, max_results=5) if title_query else []
-                            except Exception:
-                                results = []
-                            api_data = None
-                            if results:
-                                # Prefer a result that contains an ISBN
-                                best = next((r for r in results if r.get('isbn_13') or r.get('isbn_10')), results[0])
-                                # Map keys from search result to API shape used below
-                                api_data = {
-                                    'title': best.get('title'),
-                                    'subtitle': best.get('subtitle'),
-                                    'authors': best.get('authors') or (best.get('author', '') and [a.strip() for a in best.get('author', '').split(',') if a.strip()]) or [],
-                                    'publisher': best.get('publisher'),
-                                    'published_date': best.get('published_date') or (str(best.get('publication_year')) if best.get('publication_year') else None),
-                                    'page_count': best.get('page_count'),
-                                    'language': best.get('language') or 'en',
-                                    'description': best.get('description'),
-                                    'categories': best.get('categories') or [],
-                                    'cover_url': best.get('cover_url') or best.get('cover'),
-                                    'isbn13': best.get('isbn_13') or best.get('isbn13'),
-                                    'isbn10': best.get('isbn_10') or best.get('isbn10'),
-                                    'google_books_id': best.get('google_books_id'),
-                                    'openlibrary_id': best.get('openlibrary_id'),
-                                }
-                            if api_data:
-                                current_app.logger.info("Successfully fetched unified data using title search")
-                            else:
-                                current_app.logger.info("Title+author search returned no results")
-                        else:
-                            current_app.logger.info("No author found for title search")
-                    
-                    if api_data:
-                        # Merge AI data with API data, preferring AI data for conflicts
-                        merged_data = {**api_data, **book_data}
-                        book_data = merged_data
-                        current_app.logger.info("Successfully enhanced AI data with API data")
-                    else:
-                        current_app.logger.info("No additional API data found, using AI data only")
-                        
-                except Exception as e:
-                    current_app.logger.warning(f"Failed to enhance AI data with API lookup: {e}")
-            
-            # Normalize published_date for HTML date input and expose ISBN variants
+            # Do not auto-search or enhance with external APIs here.
+            # We only normalize obvious fields and let the user run title search manually.
+
+            # Normalize published_date and map ISBN variants
             try:
                 import re as _re
                 try:
@@ -519,7 +399,6 @@ def add_book_from_image_ai():
                         m2 = _re.search(r"(\d{4})", s)
                         return f"{int(m2.group(1)):04d}-01-01" if m2 else None
 
-                # Date normalization
                 if book_data.get('published_date'):
                     norm = _nm(book_data.get('published_date'))
                     if norm:
@@ -529,9 +408,7 @@ def add_book_from_image_ai():
                     if _re.fullmatch(r"\d{4}", year):
                         book_data['published_date'] = f"{year}-01-01"
 
-                # ISBN variants mapping
-                raw_isbn = (book_data.get('isbn') or book_data.get('isbn13') or book_data.get('isbn_13') 
-                            or book_data.get('isbn10') or book_data.get('isbn_10'))
+                raw_isbn = (book_data.get('isbn') or book_data.get('isbn13') or book_data.get('isbn_13') or book_data.get('isbn10') or book_data.get('isbn_10'))
                 if raw_isbn:
                     digits = _re.sub(r"[^0-9Xx]", "", str(raw_isbn))
                     if len(digits) == 13:
@@ -543,22 +420,19 @@ def add_book_from_image_ai():
             except Exception as _e:
                 current_app.logger.debug(f"AI data post-process skipped: {_e}")
 
-            return jsonify({
-                'success': True,
-                'message': 'AI extraction successful',
-                **book_data
-            })
+            return jsonify({'success': True, 'message': 'AI extraction successful. Use the title search (magnifying glass) to select the correct edition.', **book_data})
         else:
             current_app.logger.warning("AI extraction returned no data")
             return jsonify({
+                'success': False,
                 'error': 'Could not extract book information from image. Please try a clearer image or use manual entry.',
                 'suggestion': 'Make sure the book cover and text are clearly visible and well-lit'
-            }), 404
-            
+            })
+
     except Exception as e:
         current_app.logger.error(f"Error processing AI image upload: {e}")
-        current_app.logger.error(f"AI image upload error traceback:", exc_info=True)
-        return jsonify({'error': f'Failed to process image with AI: {str(e)}'}), 500
+        current_app.logger.error("AI image upload error traceback:", exc_info=True)
+        return jsonify({'success': False, 'error': f'Failed to process image with AI: {str(e)}'}), 500
 
 @book_bp.route('/search_details', methods=['POST'])
 @login_required
@@ -1722,6 +1596,27 @@ def edit_book(uid):
                         # Continue anyway - the raw_categories processing might still handle it
                 
                 categories.append(category_name)  # Add to list for raw_categories processing
+
+        # Also accept hierarchical raw category paths from hidden field (JSON array)
+        raw_categories_payload = None
+        try:
+            raw_cats_json = request.form.get('raw_categories')
+            if raw_cats_json:
+                import json as _json
+                raw_cats_list = _json.loads(raw_cats_json)
+                if isinstance(raw_cats_list, list):
+                    # Dedupe and clean raw list only; keep categories (chips) unchanged
+                    cleaned = []
+                    seen = set()
+                    for item in raw_cats_list:
+                        if isinstance(item, str):
+                            s = item.strip()
+                            if s and s not in seen:
+                                cleaned.append(s)
+                                seen.add(s)
+                    raw_categories_payload = cleaned if cleaned else None
+        except Exception as _e:
+            current_app.logger.warning(f"[CATEGORIES] Failed to parse raw_categories JSON: {_e}")
         
         # Create BookContribution objects
         for contrib_index, contrib in contributor_data.items():
@@ -1861,7 +1756,7 @@ def edit_book(uid):
             'series_volume': request.form.get('series_volume', '').strip() or None,
             'series_order': int(series_order_str) if (series_order_str := request.form.get('series_order', '').strip()) else None,
             'contributors': contributors,
-            'raw_categories': categories if categories else None,
+            'raw_categories': (raw_categories_payload if raw_categories_payload is not None else (categories if categories else None)),
             # Additional metadata fields - these are Book properties, not user-specific
             'publisher': request.form.get('publisher', '').strip() or None,
             'asin': request.form.get('asin', '').strip() or None,
@@ -3282,13 +3177,21 @@ def add_book_manual():
         except json.JSONDecodeError as e:
             current_app.logger.error(f"Error parsing contributor JSON: {e}")
             contributors_data = {}
-        
-        # Handle categories from JSON
+
+        # Handle categories from JSON (visual chips) and raw hierarchical paths
         categories = []
+        raw_categories = None
         try:
             if 'categories' in request.form:
                 category_data = json.loads(request.form['categories'])
                 categories = [cat['name'] for cat in category_data if 'name' in cat]
+            # Hidden field containing raw hierarchical paths
+            if 'raw_categories' in request.form and request.form['raw_categories']:
+                try:
+                    raw_categories = json.loads(request.form['raw_categories'])
+                except json.JSONDecodeError:
+                    # Accept comma-separated fallback
+                    raw_categories = [s.strip() for s in request.form['raw_categories'].split(',') if s.strip()]
         except json.JSONDecodeError as e:
             current_app.logger.error(f"Error parsing categories JSON: {e}")
             # Fallback to manual categories field
@@ -3550,7 +3453,8 @@ def add_book_manual():
             cover_url=cover_url,  # This will be the cached URL if available
             series=series,
             series_volume=series_volume,
-            categories=categories,  # Enhanced with API data
+            # Keep SimplifiedBook categories as visual segments for display
+            categories=categories,
             additional_authors=additional_authors,
             editor=editor,
             translator=translator,
@@ -3644,6 +3548,9 @@ def add_book_manual():
                         if isbn10_form and isbn10_form != (isbn10 or ''):
                             update_data['isbn10'] = isbn10_form
                         
+                        # Also apply hierarchical raw categories after creation to trigger relationship builder
+                        if raw_categories:
+                            update_data['raw_categories'] = raw_categories
                         if update_data:
                             # Use sync facade method (previous async call wasn't awaited so data was lost)
                             book_service.update_book_sync(created_book.uid, str(current_user.id), **update_data)

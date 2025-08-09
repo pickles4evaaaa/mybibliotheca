@@ -7,7 +7,7 @@ Google Books and OpenLibrary data and normalizes dates.
 
 Use cases:
 - fetch_unified_by_isbn(isbn): merged metadata for a single ISBN
-- fetch_unified_by_title(title, max_results=10): ranked search results
+- fetch_unified_by_title(title, max_results=10, author=None): ranked search results, author-aware
 
 Note: Prefer importing from this module in new code to make future
 internal changes transparent to callers.
