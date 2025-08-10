@@ -126,105 +126,71 @@ def my_reading_logs():
 @reading_logs.route('/api/user/books')
 @login_required
 def api_user_books():
-    """API endpoint to get user's books for the reading log modal, prioritizing recent reads."""
+    """API endpoint to get user's books for the reading log modal, prioritizing recent reads.
+
+    Returns a flat JSON array of books: [{id, title, authors}]. The first
+    up-to-5 items are the most recently read books (by recent reading logs),
+    followed by additional library books to reach the requested limit.
+    """
     try:
         # Get limit from query parameter, default to 20 for recent reads, max 100
         limit = request.args.get('limit', default=20, type=int)
         limit = min(limit, 100)  # Cap at 100 books
-        
-        # First, try to get recently read books (last 5 books with reading logs)
+
+        def authors_string(book) -> str:
+            """Build a concise authors string from contributors/authors."""
+            authors_str = ''
+            if hasattr(book, 'contributors') and getattr(book, 'contributors'):
+                names = [c.person.name for c in book.contributors
+                         if getattr(c, 'contribution_type', None) and getattr(c.contribution_type, 'value', None) in ['authored', 'co_authored']]
+                if names:
+                    authors_str = ', '.join(names[:3])
+                    if len(names) > 3:
+                        authors_str += ' et al.'
+            elif hasattr(book, 'authors') and getattr(book, 'authors'):
+                names = [a.name for a in book.authors]
+                if names:
+                    authors_str = ', '.join(names[:3])
+                    if len(names) > 3:
+                        authors_str += ' et al.'
+            return authors_str
+
+        # 1) Recently read (prioritized)
         recently_read = reading_log_service.get_recently_read_books_sync(current_user.id, limit=5)
-        
-        book_data = []
-        book_ids_added = set()
-        
-        # Add recently read books first
-        for book_dict in recently_read:
-            book_id = book_dict.get('id')
-            if book_id and book_id not in book_ids_added:
-                # Get the full book details
-                book = book_service.get_book_by_id_sync(book_id)
-                if book:
-                    # Get authors string
-                    authors_str = ''
-                    if hasattr(book, 'contributors') and book.contributors:
-                        author_names = [contrib.person.name for contrib in book.contributors 
-                                      if contrib.contribution_type.value in ['authored', 'co_authored']]
-                        authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
-                        if len(author_names) > 3:
-                            authors_str += ' et al.'
-                    elif hasattr(book, 'authors') and book.authors:
-                        authors_str = ', '.join([author.name for author in book.authors[:3]])
-                        if len(book.authors) > 3:
-                            authors_str += ' et al.'
-                    
-                    book_data.append({
-                        'id': book.id,
-                        'title': book.title,
-                        'author': authors_str  # Changed 'authors' to 'author' to match frontend expectation
-                    })
-                    book_ids_added.add(book.id)
-        
-        # Fill with user's regular books up to the limit
-        if len(book_data) < limit:
-            # Get more books to fill up to the limit
-            books_needed = limit - len(book_data)
-            all_books = book_service.get_books_for_user(current_user.id, limit=books_needed + 50)  # Get extra to account for duplicates
-            
-            for book in all_books:
-                if len(book_data) >= limit:
+
+        books: list[dict] = []
+        seen: set = set()
+
+        for bdict in recently_read or []:
+            bid = bdict.get('id')
+            if not bid or bid in seen:
+                continue
+            b = book_service.get_book_by_id_sync(bid)
+            if not b:
+                continue
+            a = authors_string(b)
+            books.append({'id': b.id, 'title': b.title, 'authors': a, 'author': a})
+            seen.add(b.id)
+
+        # 2) Fill with user's other books up to the requested limit
+        if len(books) < limit:
+            remaining = limit - len(books)
+            # Fetch some extra to account for duplicates or missing data
+            more = book_service.get_books_for_user(current_user.id, limit=remaining + 50)
+            for b in more:
+                if len(books) >= limit:
                     break
-                    
-                if book.id not in book_ids_added:
-                    # Get authors string
-                    authors_str = ''
-                    if hasattr(book, 'contributors') and book.contributors:
-                        author_names = [contrib.person.name for contrib in book.contributors 
-                                      if contrib.contribution_type.value in ['authored', 'co_authored']]
-                        authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
-                        if len(author_names) > 3:
-                            authors_str += ' et al.'
-                    elif hasattr(book, 'authors') and book.authors:
-                        authors_str = ', '.join([author.name for author in book.authors[:3]])
-                        if len(book.authors) > 3:
-                            authors_str += ' et al.'
-                    
-                    book_data.append({
-                        'id': book.id,
-                        'title': book.title,
-                        'author': authors_str  # Changed 'authors' to 'author' to match frontend expectation
-                    })
-                    book_ids_added.add(book.id)
-                    
-                if book.id not in book_ids_added:
-                    # Get authors string
-                    authors_str = ''
-                    if hasattr(book, 'contributors') and book.contributors:
-                        author_names = [contrib.person.name for contrib in book.contributors 
-                                      if contrib.contribution_type.value in ['authored', 'co_authored']]
-                        authors_str = ', '.join(author_names[:3])  # Limit to 3 authors
-                        if len(author_names) > 3:
-                            authors_str += ' et al.'
-                    elif hasattr(book, 'authors') and book.authors:
-                        authors_str = ', '.join([author.name for author in book.authors[:3]])
-                        if len(book.authors) > 3:
-                            authors_str += ' et al.'
-                    
-                    book_data.append({
-                        'id': book.id,
-                        'title': book.title,
-                        'authors': authors_str
-                    })
-                    book_ids_added.add(book.id)
-        
-        return jsonify(book_data)  # Return books directly as array
-        
+                if b.id in seen:
+                    continue
+                a = authors_string(b)
+                books.append({'id': b.id, 'title': b.title, 'authors': a, 'author': a})
+                seen.add(b.id)
+
+        return jsonify(books)
+
     except Exception as e:
         logger.error(f"Error getting user books for API: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Failed to load books'
-        }), 500
+        return jsonify({'status': 'error', 'message': 'Failed to load books'}), 500
 
 
 @reading_logs.route('/stats')
@@ -286,7 +252,8 @@ def edit_reading_log(log_id):
         pages_read = request.form.get('pages_read', 0)
         minutes_read = request.form.get('minutes_read', 0)
         notes = request.form.get('notes', '').strip()
-        log_date_str = request.form.get('date')
+        # Ensure we always have a string to parse; fall back to existing log date or today
+        log_date_str = request.form.get('date') or str(existing_log.get('date') or date.today().isoformat())
         
         # Handle book association changes
         new_book_id = request.form.get('new_book_id', '').strip()
@@ -339,7 +306,6 @@ def edit_reading_log(log_id):
             pages_read=pages_read,
             minutes_read=minutes_read,
             notes=notes or None,
-            book_title=final_book_title,
             created_at=datetime.fromisoformat(existing_log['created_at']) if existing_log.get('created_at') else datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -404,8 +370,7 @@ def quick_add_bookless_log():
             date=log_date,
             pages_read=pages_read,
             minutes_read=minutes_read,
-            notes=notes or None,
-            book_title=book_title or None
+            notes=notes or None
         )
         
         result = reading_log_service.create_reading_log_sync(reading_log)

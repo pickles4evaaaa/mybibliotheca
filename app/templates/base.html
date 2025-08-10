@@ -1329,13 +1329,22 @@
       function loadUserBooks() {
         fetch('/reading-logs/api/user/books', {
           headers: {
+            // GET usually doesn't require CSRF, but keep header harmlessly for consistency
             'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
           }
         })
-        .then(response => response.json())
+        .then(r => r.json())
         .then(data => {
-          if (data.status === 'success') {
+          // Accept both formats:
+          // 1) Array of books: [{id, title, authors}]
+          // 2) Object: { status: 'success', books: [...] }
+          if (Array.isArray(data)) {
+            userBooksData = data;
+          } else if (data && Array.isArray(data.books)) {
             userBooksData = data.books;
+          } else {
+            console.warn('Unexpected books payload', data);
+            userBooksData = [];
           }
         })
         .catch(error => {
@@ -1343,15 +1352,16 @@
         });
       }
       
-      function searchBooks(query) {
+    function searchBooks(query) {
         if (!userBooksData.length) {
           return;
         }
         
         const queryLower = query.toLowerCase();
         const matchingBooks = userBooksData.filter(book => {
-          return book.title.toLowerCase().includes(queryLower) ||
-                 (book.authors && book.authors.toLowerCase().includes(queryLower));
+      const authors = (book.authors || book.author || '');
+      return (book.title && book.title.toLowerCase().includes(queryLower)) ||
+         (authors && authors.toLowerCase().includes(queryLower));
         });
         
         showBookDropdown(matchingBooks, query);
@@ -1375,12 +1385,12 @@
           noResultsItem.innerHTML = '<em>No books found</em>';
           bookDropdown.appendChild(noResultsItem);
         } else {
-          books.slice(0, 10).forEach(book => { // Limit to 10 results
+      books.slice(0, 10).forEach(book => { // Limit to 10 results
             const item = document.createElement('div');
             item.className = 'autocomplete-item';
             item.innerHTML = `
               <div class="book-title-main">${book.title}</div>
-              ${book.authors ? `<div class="book-authors-sub">by ${book.authors}</div>` : ''}
+        ${book.authors ? `<div class="book-authors-sub">by ${book.authors}</div>` : (book.author ? `<div class=\"book-authors-sub\">by ${book.author}</div>` : '')}
             `;
             item.addEventListener('click', () => selectBook(book));
             bookDropdown.appendChild(item);
@@ -1395,12 +1405,13 @@
       }
       
       function selectBook(book) {
-        selectedBookIdInput.value = book.id;
+  selectedBookIdInput.value = book.id;
         bookSearchInput.value = '';
         
         // Show selected book
         selectedBookDiv.querySelector('.book-title').textContent = book.title;
-        selectedBookDiv.querySelector('.book-authors').textContent = book.authors ? `by ${book.authors}` : '';
+  const authors = book.authors || book.author || '';
+  selectedBookDiv.querySelector('.book-authors').textContent = authors ? `by ${authors}` : '';
         selectedBookDiv.style.display = 'block';
         bookSearchInput.style.display = 'none';
         
