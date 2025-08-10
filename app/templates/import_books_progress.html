@@ -170,7 +170,7 @@
 
 <script>
 let taskId = '{{ task_id }}';
-let totalBooks = {{ total_books }};
+let totalBooks = parseInt(document.getElementById('totalCount').textContent, 10) || 0;
 let startTime = new Date('{{ start_time }}');
 
 function updateProgress() {
@@ -193,16 +193,63 @@ function updateProgress() {
                 document.getElementById('totalCount').textContent = totalForProgress;
             }
             
-            const percentage = totalForProgress > 0 ? Math.round((data.processed / totalForProgress) * 100) : 0;
+            // Derive counters with fallbacks for reading history payloads
+            const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
+            const processedCount = (typeof data.processed === 'number') ? data.processed : (isReadingHistory ? (data.success || 0) : 0);
+            const successCount = (typeof data.success === 'number') ? data.success : (isReadingHistory ? (data.reading_logs_created || 0) : 0);
+            const errorCount = (typeof data.errors === 'number') ? data.errors : (isReadingHistory ? (data.reading_log_errors || 0) : 0);
+
+            const percentage = totalForProgress > 0 ? Math.round((processedCount / totalForProgress) * 100) : 0;
             const progressBar = document.getElementById('progressBar');
             progressBar.style.width = percentage + '%';
             progressBar.setAttribute('aria-valuenow', percentage);
             progressBar.textContent = percentage + '%';
+
+            // If reading_history reports processed >= total but status hasn't flipped, treat as completed to avoid hanging UI
+            if (
+                isReadingHistory &&
+                totalForProgress > 0 &&
+                (data.status === 'processing' || data.status === 'running') &&
+                processedCount >= totalForProgress
+            ) {
+                const jobStatus = document.getElementById('jobStatus');
+                jobStatus.textContent = 'Completed';
+                jobStatus.className = 'badge bg-success';
+                progressBar.className = 'progress-bar bg-success';
+                const readingLogsCreated = data.reading_logs_created || data.success || processedCount || 0;
+                const booksProcessed = data.success || processedCount || 0;
+                const readingLogErrors = data.reading_log_errors || errorCount || 0;
+                const successMessage = readingLogsCreated > 0 ? 
+                    `Successfully created ${readingLogsCreated} reading log entries from ${booksProcessed} books` : 
+                    'No reading logs were created';
+                let statusIcon = '<i class="fas fa-check-circle"></i>';
+                let alertClass = 'alert alert-success';
+                if ((data.errors || 0) > 0 || readingLogErrors > 0) {
+                    statusIcon = '<i class="fas fa-exclamation-triangle"></i>';
+                    alertClass = 'alert alert-warning';
+                }
+                let errorMessage = '';
+                if (readingLogErrors > 0) {
+                    errorMessage = ` ${readingLogErrors} reading log entries had errors.`;
+                }
+                    document.getElementById('statusMessage').innerHTML = 
+                    `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
+                         <div class=\"mt-2\">
+                             <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">
+                                 <i class=\"fas fa-book-reader\"></i> View Reading Log
+                             </a>
+                             <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">
+                                 <i class=\"fas fa-books\"></i> Back to Library
+                             </a>
+                         </div>`;
+                document.getElementById('statusMessage').className = alertClass;
+                return; // Stop polling
+            }
             
             // Update counters
-            document.getElementById('processedCount').textContent = data.processed;
-            document.getElementById('successCount').textContent = data.success;
-            document.getElementById('errorCount').textContent = data.errors;
+            document.getElementById('processedCount').textContent = processedCount;
+            document.getElementById('successCount').textContent = successCount;
+            document.getElementById('errorCount').textContent = errorCount;
             document.getElementById('skippedCount').textContent = data.skipped || 0;
             
             // Update unmatched count - handle different data structures
@@ -255,12 +302,12 @@ function updateProgress() {
                     
                     document.getElementById('statusMessage').innerHTML = 
                         `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
-                         <div class="mt-2">
-                             <a href="/reading-log" class="btn btn-primary btn-sm">
-                                 <i class="fas fa-book-reader"></i> View Reading Log
+                         <div class=\"mt-2\">
+                             <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">
+                                 <i class=\"fas fa-book-reader\"></i> View Reading Log
                              </a>
-                             <a href="/library" class="btn btn-secondary btn-sm ms-2">
-                                 <i class="fas fa-books"></i> Back to Library
+                             <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">
+                                 <i class=\"fas fa-books\"></i> Back to Library
                              </a>
                          </div>`;
                     document.getElementById('statusMessage').className = alertClass;
@@ -321,6 +368,11 @@ function updateProgress() {
                     
                     document.getElementById('statusMessage').innerHTML = 
                         `<i class="fas fa-search fa-spin"></i> Analyzing CSV file and identifying distinct books...`;
+                } else if (data.status === 'processing') {
+                    jobStatus.textContent = 'Processing';
+                    jobStatus.className = 'badge bg-primary';
+                    document.getElementById('statusMessage').innerHTML = 
+                        `<i class="fas fa-cog fa-spin"></i> Processing reading logs...`;
                 } else {
                     jobStatus.textContent = 'Running';
                     jobStatus.className = 'badge bg-primary';
@@ -341,7 +393,7 @@ function updateProgress() {
             }
             
             // Continue polling if not completed
-            if (data.status === 'running' || data.status === 'pending' || data.status === 'analyzing') {
+            if (data.status === 'running' || data.status === 'pending' || data.status === 'analyzing' || data.status === 'processing') {
                 setTimeout(updateProgress, 2000); // Poll every 2 seconds
             }
         })

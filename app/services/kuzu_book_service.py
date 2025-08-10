@@ -419,10 +419,21 @@ class KuzuBookService:
                     book_dict[field] = value
             
             # Update the book node in Kuzu using safe query execution
+            # Whitelist of properties that exist on the Book node (avoid relationship fields like publisher)
+            allowed_properties = {
+                'title', 'subtitle', 'normalized_title', 'isbn13', 'isbn10', 'asin',
+                'description', 'published_date', 'page_count', 'language', 'cover_url',
+                'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count',
+                'series', 'series_volume', 'series_order', 'created_at', 'updated_at'
+            }
+
             set_clauses = []
             params = {"book_id": book_id}
-            
+
             for key, value in book_dict.items():
+                if key not in allowed_properties:
+                    # Skip unsupported properties (e.g., publisher)
+                    continue
                 set_clauses.append(f"b.{key} = ${key}")
                 params[key] = value
             

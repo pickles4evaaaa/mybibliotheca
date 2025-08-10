@@ -403,14 +403,30 @@ class SafeKuzuManager:
                         if not missing_tables:
                             has_complete_schema = True
                             logger.info("✅ All essential tables exist - schema appears complete")
-                            
+
+                            # Minimal post-check: ensure ReadingLog.updated_at exists (older DBs may miss it)
+                            try:
+                                temp_conn.execute("MATCH (rl:ReadingLog) RETURN rl.updated_at LIMIT 1")
+                            except Exception as rl_e:
+                                if "Cannot find property updated_at" in str(rl_e):
+                                    try:
+                                        temp_conn.execute("ALTER TABLE ReadingLog ADD updated_at TIMESTAMP")
+                                        logger.info("🛠️ Added missing updated_at column to ReadingLog table")
+                                    except Exception as alter_e:
+                                        logger.debug(f"Could not add updated_at to ReadingLog: {alter_e}")
+
                             # Log some stats for confirmation
                             try:
                                 user_result = temp_conn.execute("MATCH (u:User) RETURN COUNT(u) as count LIMIT 1")
                                 if isinstance(user_result, list):
                                     user_result = user_result[0] if user_result else None
                                 if user_result and user_result.has_next():
-                                    user_count = user_result.get_next()[0]
+                                    try:
+                                        _row = user_result.get_next()
+                                        _vals = _row if isinstance(_row, (list, tuple)) else list(_row)
+                                        user_count = _vals[0] if _vals else 0
+                                    except Exception:
+                                        user_count = 0
                                     logger.info(f"📊 Database contains {user_count} users")
                             except Exception as e:
                                 logger.debug(f"Could not get user count: {e}")

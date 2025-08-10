@@ -7,6 +7,18 @@ import requests
 import os
 from flask import current_app
 
+# Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
+_IMPORT_VERBOSE = (
+    (os.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (os.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+
+print = _dprint
+
 def search_author_by_name(author_name):
     """Search for authors on OpenLibrary by name and return the best match with most comprehensive data."""
     if not author_name:

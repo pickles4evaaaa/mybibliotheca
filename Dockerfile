@@ -96,5 +96,5 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 ENV WORKERS=1
 # Set timeout to 300 seconds (5 minutes) to handle bulk imports with rate limiting
 # Disable sendfile to prevent occasional deadlocks on Docker for macOS/overlay FS
-# Unify logs to stdout/stderr to avoid perceived duplication in Docker logs
-CMD ["gunicorn", "--no-sendfile", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5054", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "run:app"]
+# Default: disable access logs to keep container output quiet; errors still go to stderr
+CMD ["gunicorn", "--no-sendfile", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5054", "--timeout", "300", "--error-logfile", "-", "--log-level", "warning", "run:app"]

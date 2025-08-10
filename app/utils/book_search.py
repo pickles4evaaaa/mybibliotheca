@@ -11,6 +11,20 @@ from typing import List, Dict, Optional, Any
 import re
 from urllib.parse import quote_plus
 import time
+import os as _os_for_verbose
+
+# Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
+_IMPORT_VERBOSE = (
+    (_os_for_verbose.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_for_verbose.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+
+# Shadow print in this module to respect verbosity toggle
+print = _dprint
 
 
 def normalize_title(title: str) -> str:

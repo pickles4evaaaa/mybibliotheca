@@ -21,6 +21,17 @@ from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook
 
+# Quiet mode for book routes; enable with VERBOSE=true or IMPORT_VERBOSE=true
+import os as _os_for_verbose
+_IMPORT_VERBOSE = (
+    (_os_for_verbose.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_for_verbose.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+print = _dprint
+
 # Create book blueprint
 book_bp = Blueprint('book', __name__)
 
@@ -1772,6 +1783,11 @@ def edit_book(uid):
             'review': request.form.get('review', '').strip() or None,
         }
         
+        # Remove properties that belong to relationships from the node update payload (avoids Kuzu errors)
+        # They are handled elsewhere (e.g., publisher via separate relationship updates)
+        if 'publisher' in update_data:
+            update_data.pop('publisher', None)
+
         # Handle user rating
         user_rating = request.form.get('user_rating', '').strip()
         if user_rating:

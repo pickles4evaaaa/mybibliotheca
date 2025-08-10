@@ -122,7 +122,10 @@ def parse_book_data(data):
     # Parse publisher
     publisher = None
     if 'publisher' in data and data['publisher']:
-        publisher = Publisher(name=data['publisher'].strip())
+        name = str(data['publisher']).strip()
+        if name.startswith('"') and name.endswith('"') and len(name) >= 2:
+            name = name[1:-1].strip()
+        publisher = Publisher(name=name)
     
     # Parse dates
     published_date = None

@@ -75,11 +75,7 @@
                                     <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.csv" style="display: none;" onchange="handleFileUpload(this)">
                                     <div id="file-preview" class="mt-2"></div>
                                     
-                                    <div class="mt-2" id="csv-import-link" style="display: none;">
-                                        <a href="{{ url_for('import.simple_csv_import') }}" class="btn btn-outline-primary btn-sm">
-                                            <i class="bi bi-file-spreadsheet me-1"></i>CSV Import
-                                        </a>
-                                    </div>
+                                    <!-- CSV Import button removed; Proceed button handles CSV processing -->
                                 </div>
                             </div>
                         </div>
@@ -1262,10 +1258,6 @@ function handleFileUpload(input) {
     const fileSize = (file.size / 1024 / 1024).toFixed(2); // MB
     const fileType = file.type;
     const filePreview = document.getElementById('file-preview');
-    const csvImportLink = document.getElementById('csv-import-link');
-    
-    // Hide CSV import link by default
-    csvImportLink.style.display = 'none';
     
     // Detect file type and show appropriate preview
     let fileTypeDisplay = '';
@@ -1277,8 +1269,7 @@ function handleFileUpload(input) {
     } else if (fileName.toLowerCase().endsWith('.csv')) {
         fileTypeDisplay = '📁 CSV';
         processingMessage = 'Will import multiple books from CSV';
-        // Show CSV import link for CSV files
-        csvImportLink.style.display = 'block';
+        // No separate CSV button; Proceed handles CSV processing
     } else if (fileName.toLowerCase().endsWith('.db')) {
         fileTypeDisplay = '🗄️ Database';
         processingMessage = 'Will migrate books from SQLite database';

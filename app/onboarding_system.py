@@ -38,6 +38,19 @@ from .utils.safe_import_manager import (
     safe_delete_import_job
 )
 from .services import user_service
+
+# Quiet mode for onboarding logs: set IMPORT_VERBOSE=true to re-enable prints
+import os as _os_for_import_verbosity
+_IMPORT_VERBOSE = (
+    (_os_for_import_verbosity.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_for_import_verbosity.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+
+# Redirect module print to conditional debug print
+print = _dprint
 from .location_service import LocationService
 from .forms import SetupForm
 from .debug_utils import debug_route
@@ -925,20 +938,23 @@ def get_storygraph_field_mappings():
     """Get predefined field mappings for StoryGraph CSV format (same as direct_import)."""
     return {
         'Title': 'title',
+        'Author': 'author',
         'Authors': 'author',
-        'Contributors': 'contributors',  # New: Handle Contributors column
-        'ISBN/UID': 'isbn',  # Fixed: Use actual StoryGraph column name
-        'Star Rating': 'rating',  # Fixed: StoryGraph uses "Star Rating" not "My Rating"
+        'Contributors': 'contributors',
+        'ISBN': 'isbn',
+        'ISBN/UID': 'isbn',
+        'ISBN13': 'isbn',
+        'Star Rating': 'rating',
         'Read Status': 'reading_status',
         'Date Started': 'start_date',
-        'Last Date Read': 'date_read',  # Fixed: StoryGraph uses "Last Date Read"
-        'Publication Year': 'publication_year',  # StoryGraph may have this field
-        'Published Date': 'published_date',  # In case StoryGraph has full dates
-        'Publication Date': 'published_date',  # Alternative field name
+        'Last Date Read': 'date_read',
+        'Publication Year': 'publication_year',
+        'Published Date': 'published_date',
+        'Publication Date': 'published_date',
         'Tags': 'categories',
-        'Review': 'notes',  # Fixed: StoryGraph uses "Review" not "My Review"
+        'Review': 'notes',
         'Format': 'custom_global_format',
-        'Moods': 'custom_global_moods',  # Fixed: Map Moods to custom field instead of categories
+        'Moods': 'custom_global_moods',
         'Pace': 'custom_global_pace',
         'Character- or Plot-Driven?': 'custom_global_character_plot_driven',
         'Strong Character Development?': 'custom_global_strong_character_development',

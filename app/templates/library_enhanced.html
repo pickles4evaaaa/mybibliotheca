@@ -609,7 +609,7 @@
                                             {% for i in range(5) %}
                                                 {% if i < book.average_rating %}⭐{% else %}☆{% endif %}
                                             {% endfor %}
-                                            <span class="text-muted">{{ "%.1f"|format(book.average_rating) }}</span>
+                                            <span class="text-muted">{{ "%.2f"|format(book.average_rating) }}</span>
                                         </div>
                                     {% endif %}
                                 </div>

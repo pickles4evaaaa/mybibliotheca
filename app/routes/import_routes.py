@@ -17,11 +17,24 @@ import asyncio
 import tempfile
 import secrets
 import logging
+import os as _os_for_import_verbosity
 import requests  # Add requests import
 
 # Set up import-specific logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+# Quiet mode for heavy imports: set IMPORT_VERBOSE=true to re-enable prints
+_IMPORT_VERBOSE = (
+    (_os_for_import_verbosity.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_for_import_verbosity.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+
+# Redirect module print to conditional debug print
+print = _dprint
 
 from app.services import book_service, import_mapping_service, custom_field_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
@@ -425,8 +438,11 @@ def get_storygraph_field_mappings():
     # Base mappings
     base_mappings = {
         'Title': 'title',
-        'Author': 'author',
-        'ISBN': 'isbn',
+    'Author': 'author',
+    'Authors': 'author',  # Some exports use plural header
+    'Contributors': 'contributors',  # Parse role-tagged contributors
+    'ISBN': 'isbn',
+    'ISBN/UID': 'isbn',   # StoryGraph alternate column name
         'ISBN13': 'isbn',
         'Publisher': 'publisher',
         'Pages': 'page_count',
@@ -440,6 +456,7 @@ def get_storygraph_field_mappings():
         'Star Rating': 'user_rating',
         'Review': 'personal_notes',
         'Format': 'format',
+        'Additional Authors': 'additional_authors',  # Normalize if present
     }
     
     # Enhanced mappings with custom field support
@@ -1660,7 +1677,13 @@ async def process_simple_import(import_config):
             if enable_api_enrichment:
                 print(f"🔍 [PROCESS_SIMPLE] Scanning {len(rows_list)} rows for ISBNs...")
                 for row_idx, row in enumerate(rows_list):
-                    isbn = row.get('ISBN') or row.get('ISBN13') or row.get('isbn') or row.get('isbn13')
+                    isbn = (
+                        row.get('ISBN')
+                        or row.get('ISBN13')
+                        or row.get('ISBN/UID')  # StoryGraph alternate header
+                        or row.get('isbn')
+                        or row.get('isbn13')
+                    )
                     if isbn:
                         print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Found ISBN '{isbn}'")
                         # Clean ISBN (handle Goodreads formatting)
@@ -1823,9 +1846,14 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
         simplified_book.title = api_data['title']
     
     # Merge authors (prefer API authors over CSV authors)
+    api_authors = None
     if api_data.get('authors_list'):
         api_authors = api_data['authors_list']
-        
+    elif api_data.get('authors'):
+        # Fallback for unified metadata which provides 'authors'
+        api_authors = api_data['authors']
+
+    if api_authors:
         # Use the first API author as the primary author
         if api_authors:
             simplified_book.author = api_authors[0]
@@ -1858,9 +1886,13 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     else:
         print(f"🔀 [MERGE_API] No description found in API data")
     
-    # Merge publisher (prefer API if CSV doesn't have one)
-    if api_data.get('publisher') and (not simplified_book.publisher or simplified_book.publisher.strip() == ''):
-        simplified_book.publisher = api_data['publisher']
+    # Merge publisher (prefer API if CSV doesn't have one) with normalization
+    if api_data.get('publisher') and (not simplified_book.publisher or str(simplified_book.publisher).strip() == ''):
+        try:
+            from app.simplified_book_service import _normalize_publisher_name
+            simplified_book.publisher = _normalize_publisher_name(api_data['publisher'])
+        except Exception:
+            simplified_book.publisher = api_data['publisher']
         print(f"🔀 [MERGE_API] Updated publisher to: {api_data['publisher']}")
     
     # Merge page count (prefer API if CSV doesn't have one)
@@ -1895,6 +1927,13 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
         if simplified_book.categories:
             simplified_book.categories = []
     
+    # Merge raw hierarchical category paths for building proper category graph
+    if api_data.get('raw_category_paths'):
+        paths = api_data.get('raw_category_paths')
+        if isinstance(paths, list) and paths:
+            simplified_book.raw_categories = paths
+            print(f"🔀 [MERGE_API] Set raw_categories paths: {len(paths)} items")
+
     # Merge cover URL (prefer API cover) - check both possible field names
     cover_url = api_data.get('cover_url') or api_data.get('cover')
     if cover_url and not simplified_book.cover_url:
@@ -1989,19 +2028,56 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
         print(f"    Authors: {len(authors)}, Editors: {len(editors)}, Translators: {len(translators)}, Narrators: {len(narrators)}, Illustrators: {len(illustrators)}")
     
     # Add subtitle if available
-    if api_data.get('subtitle') and not simplified_book.global_custom_metadata.get('subtitle'):
-        simplified_book.global_custom_metadata['subtitle'] = api_data['subtitle']
+    if api_data.get('subtitle'):
+        # Persist to custom metadata for backward-compat UIs
+        if not simplified_book.global_custom_metadata.get('subtitle'):
+            simplified_book.global_custom_metadata['subtitle'] = api_data['subtitle']
+        # Also set core field so it renders on details page and persists to DB
+        if not getattr(simplified_book, 'subtitle', None):
+            simplified_book.subtitle = api_data['subtitle']
         print(f"🔀 [MERGE_API] Added subtitle: {api_data['subtitle']}")
     
-    # Add API identifiers to global custom metadata
+    # Helper to normalize OpenLibrary identifiers into linkable path form
+    def _normalize_openlibrary_id(olid_val: str):
+        try:
+            if not olid_val:
+                return None
+            olid = str(olid_val).strip()
+            # Already a path like /works/OL12345W or /books/OL12345M
+            if olid.startswith('/'):
+                return olid
+            # Bare IDs – infer path by suffix (W = work, M = edition/book, A = author)
+            suffix = olid[-1:].upper()
+            if suffix == 'M':
+                return f"/books/{olid}"
+            if suffix == 'W':
+                return f"/works/{olid}"
+            if suffix == 'A':
+                return f"/authors/{olid}"
+            # Fallback to works
+            return f"/works/{olid}"
+        except Exception:
+            return None
+
+    # Add API identifiers to global custom metadata and core fields
     if api_data.get('google_books_id'):
         simplified_book.global_custom_metadata['google_books_id'] = api_data['google_books_id']
+        # Ensure core field is set so templates and storage persist it
+        if not getattr(simplified_book, 'google_books_id', None):
+            simplified_book.google_books_id = api_data['google_books_id']
     
     if api_data.get('openlibrary_id'):
-        simplified_book.global_custom_metadata['openlibrary_id'] = api_data['openlibrary_id']
+        normalized_olid = _normalize_openlibrary_id(api_data['openlibrary_id'])
+        simplified_book.global_custom_metadata['openlibrary_id'] = normalized_olid or api_data['openlibrary_id']
+        # Ensure core field is set so templates and storage persist it
+        if not getattr(simplified_book, 'openlibrary_id', None):
+            simplified_book.openlibrary_id = normalized_olid or api_data['openlibrary_id']
     
     if api_data.get('asin'):
-        simplified_book.global_custom_metadata['asin'] = api_data['asin']
+        asin_val = str(api_data['asin']).strip()
+        simplified_book.global_custom_metadata['asin'] = asin_val
+        if not getattr(simplified_book, 'asin', None):
+            simplified_book.asin = asin_val
     
     print(f"🎉 [MERGE_API] Merge completed for '{simplified_book.title}':")
     print(f"    Title: {simplified_book.title}")
@@ -2850,6 +2926,9 @@ def reading_history_book_matching(task_id):
             return redirect(url_for('import.import_books_progress', task_id=task_id))
         
         books_for_matching = job_data.get('books_for_matching', [])
+        # Hide bookless pseudo-entries from the matching UI; they are auto-routed
+        if isinstance(books_for_matching, list):
+            books_for_matching = [b for b in books_for_matching if not b.get('is_bookless', False)]
         validation_errors = job_data.get('validation_errors', [])
         
         # Type safety checks to prevent template errors
@@ -2919,6 +2998,7 @@ def api_search_book_details():
             isbn10 = item.get('isbn_10') or item.get('isbn10') or ''
             results.append({
                 'title': item.get('title', ''),
+                'subtitle': item.get('subtitle', ''),
                 'author': ', '.join(authors) if authors else '',
                 'authors_list': authors,
                 'description': item.get('description', ''),
@@ -2932,12 +3012,17 @@ def api_search_book_details():
                 'categories': item.get('categories', []),
                 'google_books_id': item.get('google_books_id', ''),
                 'openlibrary_id': item.get('openlibrary_id', ''),
+                'asin': item.get('asin', ''),
+                'average_rating': item.get('average_rating'),
+                'rating_count': item.get('rating_count'),
+                'contributors': item.get('contributors', []),
+                'raw_category_paths': item.get('raw_category_paths', []),
                 'source': item.get('source', 'Unified')
             })
 
         current_app.logger.info(f"[IMPORT_SEARCH] Returning {len(results)} unified results")
         return jsonify({'success': True, 'query': query, 'results': results, 'count': len(results)})
-        
+
     except Exception as e:
         current_app.logger.error(f"[IMPORT_SEARCH] Error in book search: {e}")
         return jsonify({'success': False, 'message': 'Internal server error'}), 500
@@ -3154,47 +3239,167 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                     print(f"    Manual creation: {manual_creation}")
                     
                     if use_isbn_lookup and selected_isbn:
-                        # OPTION 2A: Create book using existing ISBN lookup process
+                        # OPTION 2A: Create book using unified metadata fetched by ISBN
                         print(f"🔍 [CREATE_BOOK] Creating book via ISBN lookup: {selected_isbn}")
-                        
+
                         from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+                        from app.utils.metadata_aggregator import fetch_unified_by_isbn
                         simplified_service = SimplifiedBookService()
-                        
-                        # Create a basic book with the ISBN, then let the service enhance it
-                        basic_book_data = {
-                            'title': resolution['title'],
-                            'author': resolution['author'] or 'Unknown Author',
-                            'isbn13': selected_isbn if len(selected_isbn) == 13 else None,
-                            'isbn10': selected_isbn if len(selected_isbn) == 10 else None,
-                        }
-                        
-                        # Use the service to create and enrich the book via ISBN
+
+                        # Fetch unified metadata for the selected ISBN
+                        unified = None
+                        try:
+                            unified = fetch_unified_by_isbn(selected_isbn)
+                        except Exception as _:
+                            unified = None
+
+                        # Build SimplifiedBook using unified metadata when available
+                        meta_authors = (unified.get('authors') if unified else None) or []
+                        primary_author = (resolution.get('author') or (meta_authors[0] if meta_authors else 'Unknown Author'))
+                        isbn13_val = None
+                        isbn10_val = None
+                        if selected_isbn:
+                            if len(selected_isbn) == 13:
+                                isbn13_val = selected_isbn
+                            elif len(selected_isbn) == 10:
+                                isbn10_val = selected_isbn
+
+                        # Normalize fields to proper types
+                        unified_title = None
+                        unified_categories = []
+                        unified_language = 'en'
+                        if unified:
+                            try:
+                                unified_title = str(unified.get('title')).strip() if unified.get('title') else None
+                            except Exception:
+                                unified_title = None
+                            cats_val = unified.get('categories')
+                            if isinstance(cats_val, list):
+                                unified_categories = [str(c).strip() for c in cats_val if c]
+                            elif cats_val:
+                                unified_categories = [str(cats_val).strip()]
+                            lang_val = unified.get('language')
+                            if isinstance(lang_val, str) and lang_val.strip():
+                                unified_language = lang_val.strip()
+
+                        # Prepare numeric fields safely
+                        _pc = None
+                        if unified and ('page_count' in unified):
+                            try:
+                                v = unified.get('page_count')
+                                if v is not None:
+                                    _pc = int(v)
+                            except Exception:
+                                _pc = None
+                        _ar = None
+                        if unified and ('average_rating' in unified):
+                            try:
+                                v = unified.get('average_rating')
+                                if v is not None and str(v).strip() not in ('', 'None'):
+                                    _ar = float(v)
+                            except Exception:
+                                _ar = None
+                        _rc = None
+                        if unified and ('rating_count' in unified):
+                            try:
+                                v = unified.get('rating_count')
+                                if v is not None:
+                                    _rc = int(v)
+                            except Exception:
+                                _rc = None
+
+                        new_book = SimplifiedBook(
+                            title=unified_title if unified_title else (resolution['title'] or 'Unknown Title'),
+                            author=str(primary_author) if primary_author else 'Unknown Author',
+                            isbn13=(unified.get('isbn_13') if unified and unified.get('isbn_13') else (unified.get('isbn13') if unified else isbn13_val)),
+                            isbn10=(unified.get('isbn_10') if unified and unified.get('isbn_10') else (unified.get('isbn10') if unified else isbn10_val)),
+                            subtitle=(str(unified.get('subtitle')).strip() if unified and unified.get('subtitle') else None),
+                            description=(str(unified.get('description')).strip() if unified and unified.get('description') else None),
+                            publisher=(str(unified.get('publisher')).strip() if unified and unified.get('publisher') else None),
+                            published_date=(unified.get('published_date') if unified else None),
+                            page_count=_pc,
+                            language=unified_language,
+                            cover_url=(
+                                (unified.get('cover_url') or unified.get('cover')) if unified else None
+                            ),
+                            categories=unified_categories,
+                            google_books_id=(str(unified.get('google_books_id')).strip() if unified and unified.get('google_books_id') else None),
+                            openlibrary_id=(str(unified.get('openlibrary_id')).strip() if unified and unified.get('openlibrary_id') else None),
+                            asin=(str(unified.get('asin')).strip() if unified and unified.get('asin') else None),
+                            average_rating=_ar,
+                            rating_count=_rc,
+                        )
+
+                        # Map contributors if present in unified metadata
+                        contributors = (unified.get('contributors') if unified else None) or []
+                        if contributors:
+                            authors = [c.get('name') for c in contributors if c.get('role') == 'author']
+                            if authors and len(authors) > 1:
+                                primary = (new_book.author or '').lower().strip()
+                                additional = authors[1:] if authors[0] and authors[0].lower().strip() == primary else authors
+                                if additional:
+                                    new_book.additional_authors = ', '.join([a for a in additional if a])
+                            editors = [c.get('name') for c in contributors if c.get('role') == 'editor']
+                            translators = [c.get('name') for c in contributors if c.get('role') == 'translator']
+                            narrators = [c.get('name') for c in contributors if c.get('role') == 'narrator']
+                            illustrators = [c.get('name') for c in contributors if c.get('role') == 'illustrator']
+                            if editors:
+                                new_book.editor = ', '.join(editors)
+                                new_book.global_custom_metadata['editors'] = new_book.editor
+                            if translators:
+                                new_book.translator = ', '.join(translators)
+                                new_book.global_custom_metadata['translators'] = new_book.translator
+                            if narrators:
+                                new_book.narrator = ', '.join(narrators)
+                                new_book.global_custom_metadata['narrators'] = new_book.narrator
+                            if illustrators:
+                                new_book.illustrator = ', '.join(illustrators)
+                                new_book.global_custom_metadata['illustrators'] = new_book.illustrator
+
+                        # Prefer hierarchical raw categories if provided
+                        if unified and unified.get('raw_category_paths'):
+                            new_book.raw_categories = unified.get('raw_category_paths')
+
+                        # Normalize OpenLibrary ID if present
+                        if new_book.openlibrary_id:
+                            try:
+                                olid_val = str(new_book.openlibrary_id).strip()
+                                if not olid_val.startswith('/'):
+                                    suffix = olid_val[-1:].upper() if olid_val else ''
+                                    if suffix == 'M':
+                                        new_book.openlibrary_id = f"/books/{olid_val}"
+                                    elif suffix == 'W':
+                                        new_book.openlibrary_id = f"/works/{olid_val}"
+                                    elif suffix == 'A':
+                                        new_book.openlibrary_id = f"/authors/{olid_val}"
+                                    else:
+                                        new_book.openlibrary_id = f"/works/{olid_val}"
+                            except Exception:
+                                pass
+
+                        # Use the service to create the enriched book
                         try:
                             success = await simplified_service.add_book_to_user_library(
-                                book_data=SimplifiedBook(
-                                    title=basic_book_data['title'],
-                                    author=basic_book_data['author'],
-                                    isbn13=basic_book_data.get('isbn13'),
-                                    isbn10=basic_book_data.get('isbn10')
-                                ),
+                                book_data=new_book,
                                 user_id=user_id,
                                 reading_status='plan_to_read'
                             )
-                            
+
                             if success:
-                                # Get the book ID by searching for it
-                                from app.services import book_service
-                                created_books_list = book_service.get_user_books_sync(user_id, limit=1)
-                                if created_books_list:
-                                    book_id = created_books_list[0].id
-                                    resolution['book_id'] = book_id
+                                # Retrieve created book id deterministically by ISBN
+                                created_book_id = simplified_service.find_book_by_isbn(selected_isbn) if selected_isbn else None
+                                if not created_book_id:
+                                    # Fallback to title/author lookup
+                                    created_book_id = simplified_service.find_book_by_title_author(new_book.title, new_book.author)
+                                if created_book_id:
+                                    resolution['book_id'] = created_book_id
                                     created_books += 1
-                                    print(f"✅ [CREATE_BOOK] Created enriched book via ISBN: {book_id}")
+                                    print(f"✅ [CREATE_BOOK] Created enriched book via ISBN: {created_book_id}")
                                 else:
                                     raise Exception("Book created but could not retrieve ID")
                             else:
                                 raise Exception("Failed to create book via ISBN lookup")
-                                
+
                         except Exception as isbn_error:
                             print(f"⚠️ [CREATE_BOOK] ISBN lookup failed, falling back to manual creation: {isbn_error}")
                             # Fall back to manual creation below
@@ -3203,7 +3408,7 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                     
                     if not use_isbn_lookup or manual_creation:
                         # OPTION 2B: Create basic book with just title and author
-                        print(f"� [CREATE_BOOK] Creating basic book manually: {resolution['title']}")
+                        print(f"🛠️ [CREATE_BOOK] Creating basic book manually: {resolution['title']}")
                         
                         # Validate required fields
                         title = resolution['title'].strip() if resolution['title'] else None
@@ -3223,12 +3428,14 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                         )
                         
                         # Apply any additional metadata from API results (non-ISBN)
-                        if api_metadata and not api_metadata.get('_manual_creation'):
+                        if api_metadata:
                             print(f"🔧 [CREATE_BOOK] Applying additional metadata from API search")
                             
                             # Apply basic metadata that doesn't require ISBN
                             if api_metadata.get('description'):
                                 new_book.description = api_metadata['description']
+                            if api_metadata.get('subtitle'):
+                                new_book.subtitle = api_metadata['subtitle']
                             if api_metadata.get('cover_url'):
                                 new_book.cover_url = api_metadata['cover_url']
                             if api_metadata.get('published_date'):
@@ -3241,6 +3448,80 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                                 new_book.language = api_metadata['language']
                             if api_metadata.get('categories'):
                                 new_book.categories = api_metadata['categories']
+                            if api_metadata.get('raw_category_paths'):
+                                new_book.raw_categories = api_metadata.get('raw_category_paths')
+                            # Map contributors if provided
+                            contributors = api_metadata.get('contributors') or []
+                            if contributors:
+                                authors = [c.get('name') for c in contributors if c.get('role') == 'author']
+                                editors = [c.get('name') for c in contributors if c.get('role') == 'editor']
+                                translators = [c.get('name') for c in contributors if c.get('role') == 'translator']
+                                narrators = [c.get('name') for c in contributors if c.get('role') == 'narrator']
+                                illustrators = [c.get('name') for c in contributors if c.get('role') == 'illustrator']
+                                # Additional authors (exclude primary)
+                                if authors and len(authors) > 1:
+                                    primary = (new_book.author or '').lower().strip()
+                                    additional = authors[1:] if authors[0] and authors[0].lower().strip() == primary else authors
+                                    if additional:
+                                        new_book.additional_authors = ', '.join([a for a in additional if a])
+                                if editors:
+                                    new_book.editor = ', '.join(editors)
+                                    new_book.global_custom_metadata['editors'] = new_book.editor
+                                if translators:
+                                    new_book.translator = ', '.join(translators)
+                                    new_book.global_custom_metadata['translators'] = new_book.translator
+                                if narrators:
+                                    new_book.narrator = ', '.join(narrators)
+                                    new_book.global_custom_metadata['narrators'] = new_book.narrator
+                                if illustrators:
+                                    new_book.illustrator = ', '.join(illustrators)
+                                    new_book.global_custom_metadata['illustrators'] = new_book.illustrator
+                            # External IDs
+                            if api_metadata.get('google_books_id'):
+                                new_book.google_books_id = api_metadata['google_books_id']
+                                new_book.global_custom_metadata['google_books_id'] = api_metadata['google_books_id']
+                            if api_metadata.get('openlibrary_id'):
+                                # Normalize OLID paths
+                                def _normalize_openlibrary_id(olid_val: str):
+                                    try:
+                                        if not olid_val:
+                                            return None
+                                        olid = str(olid_val).strip()
+                                        if olid.startswith('/'):
+                                            return olid
+                                        suffix = olid[-1:].upper()
+                                        if suffix == 'M':
+                                            return f"/books/{olid}"
+                                        if suffix == 'W':
+                                            return f"/works/{olid}"
+                                        if suffix == 'A':
+                                            return f"/authors/{olid}"
+                                        return f"/works/{olid}"
+                                    except Exception:
+                                        return None
+                                normalized_olid = _normalize_openlibrary_id(api_metadata['openlibrary_id'])
+                                new_book.openlibrary_id = normalized_olid or api_metadata['openlibrary_id']
+                                new_book.global_custom_metadata['openlibrary_id'] = new_book.openlibrary_id
+                            if api_metadata.get('asin'):
+                                new_book.asin = str(api_metadata['asin']).strip()
+                                new_book.global_custom_metadata['asin'] = new_book.asin
+                            # Ratings
+                            if api_metadata.get('average_rating') is not None:
+                                try:
+                                    new_book.average_rating = float(api_metadata['average_rating'])
+                                except Exception:
+                                    pass
+                            if api_metadata.get('rating_count') is not None:
+                                try:
+                                    new_book.rating_count = int(api_metadata['rating_count'])
+                                except Exception:
+                                    pass
+                            # If ISBNs present but we didn't or couldn't use ISBN lookup, still attach to aid de-dup
+                            if not use_isbn_lookup:
+                                if api_metadata.get('isbn13'):
+                                    new_book.isbn13 = api_metadata.get('isbn13')
+                                if api_metadata.get('isbn10'):
+                                    new_book.isbn10 = api_metadata.get('isbn10')
                         
                         # Create the book using the service
                         try:
@@ -3251,14 +3532,19 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             )
                             
                             if success:
-                                # Get the book ID by searching for it
-                                from app.services import book_service
-                                created_books_list = book_service.get_user_books_sync(user_id, limit=1)
-                                if created_books_list:
-                                    book_id = created_books_list[0].id
-                                    resolution['book_id'] = book_id
+                                # Retrieve created book id by ISBN first (if present)
+                                created_book_id = None
+                                if new_book.isbn13:
+                                    created_book_id = simplified_service.find_book_by_isbn(new_book.isbn13)
+                                if not created_book_id and new_book.isbn10:
+                                    created_book_id = simplified_service.find_book_by_isbn(new_book.isbn10)
+                                if not created_book_id:
+                                    # Fallback to title/author lookup
+                                    created_book_id = simplified_service.find_book_by_title_author(new_book.title, new_book.author)
+                                if created_book_id:
+                                    resolution['book_id'] = created_book_id
                                     created_books += 1
-                                    print(f"✅ [CREATE_BOOK] Created basic book: {book_id}")
+                                    print(f"✅ [CREATE_BOOK] Created basic book: {created_book_id}")
                                 else:
                                     raise Exception("Book created but could not retrieve ID")
                             else:
@@ -3403,8 +3689,18 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                         search_results = book_service.search_books_sync("Unassigned Reading Logs", user_id, limit=1)
                         
                         if search_results:
-                            unassigned_book_id = search_results[0].id if hasattr(search_results[0], 'id') else search_results[0].get('id')
+                            existing = search_results[0]
+                            unassigned_book_id = existing.id if hasattr(existing, 'id') else existing.get('id')
                             print(f"✅ [READING_HISTORY] Found existing 'Unassigned Reading Logs' book: {unassigned_book_id}")
+                            # Backfill subtitle if missing
+                            existing_subtitle = getattr(existing, 'subtitle', None) if hasattr(existing, 'subtitle') else existing.get('subtitle') if isinstance(existing, dict) else None
+                            desired_subtitle = 'Generated by unspecified books during reading log imports'
+                            try:
+                                if not existing_subtitle:
+                                    book_service.update_book_sync(unassigned_book_id, str(user_id), subtitle=desired_subtitle)
+                                    print("🔧 [READING_HISTORY] Backfilled subtitle on existing 'Unassigned Reading Logs' book")
+                            except Exception as _:
+                                pass
                         else:
                             # Create the default "Unassigned Reading Logs" book
                             from app.simplified_book_service import SimplifiedBook, SimplifiedBookService
@@ -3413,6 +3709,7 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             unassigned_book_data = SimplifiedBook(
                                 title='Unassigned Reading Logs',
                                 author='System Generated',
+                                subtitle='Generated by unspecified books during reading log imports',
                                 description='Default book for reading log entries that could not be matched to specific books.',
                                 published_date='',
                                 publisher='',

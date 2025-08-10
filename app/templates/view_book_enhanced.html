@@ -166,18 +166,21 @@
                                 </div>
                                 
                                 <!-- Basic Metadata Row -->
-                                <div class="row mb-3">
+                                <div class="row g-3 mb-3">
                                     {% if book.page_count %}
-                                    <div class="col-sm-6 col-md-4 mb-2">
-                                        <small class="text-muted d-block">Pages</small>
-                                        <span class="fw-medium">{{ book.page_count }}</span>
+                                    <div class="col-sm-6 col-md-4">
+                                        <div class="kv">
+                                            <small class="text-muted d-block">Pages</small>
+                                            <span class="kv-value">{{ book.page_count }}</span>
+                                        </div>
                                     </div>
                                     {% endif %}
                                     
                                     {% if book.language %}
-                                    <div class="col-sm-6 col-md-4 mb-2">
-                                        <small class="text-muted d-block">Language</small>
-                                        <span class="fw-medium">
+                                    <div class="col-sm-6 col-md-4">
+                                        <div class="kv">
+                                            <small class="text-muted d-block">Language</small>
+                                            <span class="kv-value">
                                             {% if book.language == 'en' %}English
                                             {% elif book.language == 'es' %}Spanish
                                             {% elif book.language == 'fr' %}French
@@ -189,25 +192,20 @@
                                             {% elif book.language == 'ko' %}Korean
                                             {% elif book.language == 'zh' %}Chinese
                                             {% else %}{{ book.language }}{% endif %}
-                                        </span>
+                                            </span>
+                                        </div>
                                     </div>
                                     {% endif %}
                                     
                                     {% if book.published_date %}
-                                    <div class="col-sm-6 col-md-4 mb-2">
-                                        <small class="text-muted d-block">Published</small>
-                                        <span class="fw-medium">{{ book.published_date }}</span>
+                                    <div class="col-sm-6 col-md-4">
+                                        <div class="kv">
+                                            <small class="text-muted d-block">Published</small>
+                                            <span class="kv-value">{{ book.published_date }}</span>
+                                        </div>
                                     </div>
                                     {% endif %}
                                 </div>
-                                
-                                <!-- Publisher Information -->
-                                {% if book.publisher %}
-                                <div class="mb-3">
-                                    <small class="text-muted d-block">Publisher</small>
-                                    <span class="fw-medium">{{ book.publisher.name if book.publisher.name else book.publisher }}</span>
-                                </div>
-                                {% endif %}
                                 
                                 <!-- ISBN and Identifiers Row -->
                                 {% if book.isbn13 or book.isbn10 or book.asin %}
@@ -239,7 +237,7 @@
                                 {% endif %}
                                 
                                 <!-- External Links -->
-                                {% if book.google_books_id or book.openlibrary_id %}
+                                {% if book.google_books_id or book.openlibrary_id or book.asin %}
                                 <div class="mb-3">
                                     <small class="text-muted d-block mb-2">External Links</small>
                                     <div class="d-flex flex-wrap gap-2">
@@ -250,9 +248,16 @@
                                         </a>
                                         {% endif %}
                                         {% if book.openlibrary_id %}
-                                        <a href="https://openlibrary.org{{ book.openlibrary_id }}" 
+                                        {% set olidPathTop = book.openlibrary_id if book.openlibrary_id.startswith('/') else ('/works/' + book.openlibrary_id) %}
+                                        <a href="https://openlibrary.org{{ olidPathTop }}" 
                                            target="_blank" class="btn btn-sm btn-outline-info">
                                             <i class="bi bi-book me-1"></i>OpenLibrary
+                                        </a>
+                                        {% endif %}
+                                        {% if book.asin %}
+                                        <a href="https://www.amazon.com/dp/{{ book.asin }}" 
+                                           target="_blank" class="btn btn-sm btn-outline-dark">
+                                            <i class="bi bi-amazon"></i> Amazon
                                         </a>
                                         {% endif %}
                                     </div>
@@ -284,11 +289,11 @@
                                 </div>
                                 {% endif %}
                                 
-                                <!-- User Status Section -->
-                                <div class="row user-status-section">
+                                <!-- Status & Ownership Grid -->
+                                <div class="row g-3 align-items-stretch">
                                     <!-- Reading Status -->
-                                    <div class="col-md-6 mb-3">
-                                        <div class="d-flex align-items-center">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="meta-tile h-100 d-flex align-items-center">
                                             <i class="bi bi-bookmark-check me-2 text-primary"></i>
                                             <div>
                                                 <small class="text-muted d-block">Reading Status</small>
@@ -306,8 +311,8 @@
                                     </div>
                                     
                                     <!-- Your Rating -->
-                                    <div class="col-md-6 mb-3">
-                                        <div class="d-flex align-items-center">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="meta-tile h-100 d-flex align-items-center">
                                             <i class="bi bi-star-fill me-2 text-warning"></i>
                                             <div>
                                                 <small class="text-muted d-block">Your Rating</small>
@@ -324,13 +329,10 @@
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                                
-                                <!-- Ownership & Location Section -->
-                                <div class="row ownership-section">
+                                    
                                     <!-- Ownership Status -->
-                                    <div class="col-md-4 mb-2">
-                                        <div class="d-flex align-items-center">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="meta-tile h-100 d-flex align-items-center">
                                             <i class="bi bi-house me-2 text-success"></i>
                                             <div>
                                                 <small class="text-muted d-block">Ownership</small>
@@ -346,9 +348,9 @@
                                         </div>
                                     </div>
                                     
-                                    <!-- Media Type -->
-                                    <div class="col-md-4 mb-2">
-                                        <div class="d-flex align-items-center">
+                                    <!-- Format -->
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="meta-tile h-100 d-flex align-items-center">
                                             <i class="bi bi-disc me-2 text-info"></i>
                                             <div>
                                                 <small class="text-muted d-block">Format</small>
@@ -364,46 +366,31 @@
                                     </div>
                                     
                                     <!-- Location -->
-                                    {% if book.locations and book.locations|length > 0 %}
-                                    <div class="col-md-4 mb-2">
-                                        <div class="d-flex align-items-center">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="meta-tile h-100 d-flex align-items-center">
                                             <i class="bi bi-geo-alt me-2 text-secondary"></i>
                                             <div>
                                                 <small class="text-muted d-block">Location</small>
                                                 <span class="fw-medium">
-                                                    {% if book.locations[0].name %}
-                                                        {{ book.locations[0].name }}
-                                                    {% elif book.locations[0] is string %}
-                                                        {{ book.locations[0] }}
+                                                    {% if book.locations and book.locations|length > 0 %}
+                                                        {% if book.locations[0].name %}
+                                                            {{ book.locations[0].name }}
+                                                        {% elif book.locations[0] is string %}
+                                                            {{ book.locations[0] }}
+                                                        {% else %}
+                                                            {{ book.locations[0] }}
+                                                        {% endif %}
+                                                    {% elif book.location_id %}
+                                                        {{ book.location_id }}
+                                                    {% elif book.ownership_status and book.ownership_status != 'wishlist' %}
+                                                        <span class="text-muted">Not set</span>
                                                     {% else %}
-                                                        {{ book.locations[0] }}
+                                                        <span class="text-muted">—</span>
                                                     {% endif %}
                                                 </span>
                                             </div>
                                         </div>
                                     </div>
-                                    {% elif book.location_id %}
-                                    <div class="col-md-4 mb-2">
-                                        <div class="d-flex align-items-center">
-                                            <i class="bi bi-geo-alt me-2 text-secondary"></i>
-                                            <div>
-                                                <small class="text-muted d-block">Location</small>
-                                                <span class="fw-medium">{{ book.location_id }}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {% elif book.ownership_status and book.ownership_status != 'wishlist' %}
-                                    <!-- Show location placeholder for owned books without location data -->
-                                    <div class="col-md-4 mb-2">
-                                        <div class="d-flex align-items-center">
-                                            <i class="bi bi-geo-alt me-2 text-muted"></i>
-                                            <div>
-                                                <small class="text-muted d-block">Location</small>
-                                                <span class="fw-medium text-muted">Not set</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {% endif %}
                                 </div>
                             </div>
                             
@@ -674,32 +661,7 @@
                                         </div>
                                     </div>
                                     
-                                    <!-- Personal Information Section -->
-                                    <hr class="my-4">
-                                    <h6 class="text-muted mb-3">
-                                        <i class="bi bi-person-heart me-2"></i>Personal Information
-                                    </h6>
-                                    
-                                    <!-- Personal Notes & Review -->
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="edit-personal-notes" class="form-label fw-medium">Personal Notes</label>
-                                                <textarea class="form-control" id="edit-personal-notes" name="personal_notes" rows="3" 
-                                                          placeholder="Your personal thoughts and notes about this book...">{{ book.personal_notes or '' }}</textarea>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label for="edit-review" class="form-label fw-medium">Personal Review</label>
-                                                <textarea class="form-control" id="edit-review" name="review" rows="3" 
-                                                          placeholder="Your detailed review of this book...">{{ book.review or '' }}</textarea>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-
-
+                                    <!-- Personal Notes & Review removed from main details; managed in dedicated accordion below -->
                                     
                                     <!-- Save/Cancel Buttons -->
                                     <div class="d-flex gap-2">
@@ -839,7 +801,7 @@
                                                 {% for i in range(1, 6) %}
                                                     {% if i <= book.average_rating %}⭐{% else %}☆{% endif %}
                                                 {% endfor %}
-                                                {{ "%.1f"|format(book.average_rating) }}
+                                                {{ "%.2f"|format(book.average_rating) }}
                                                 {% if book.rating_count %}({{ book.rating_count }} ratings){% endif %}
                                             </span>
                                         </div>
@@ -891,25 +853,24 @@
                                             <span class="ms-1 fw-medium font-monospace">{{ book.asin }}</span>
                                         </div>
                                         {% endif %}
-                                        
-                                        <!-- External API Links -->
-                                        {% if book.google_books_id or book.openlibrary_id %}
-                                        <div class="mb-3">
-                                            <small class="text-muted d-block mb-1">External Links:</small>
-                                            {% if book.google_books_id %}
-                                            <a href="https://books.google.com/books?id={{ book.google_books_id }}" 
-                                               target="_blank" class="btn btn-sm btn-outline-success me-1 mb-1">
-                                                <i class="bi bi-google me-1"></i>Google Books
-                                            </a>
-                                            {% endif %}
-                                            {% if book.openlibrary_id %}
-                                            <a href="https://openlibrary.org{{ book.openlibrary_id }}" 
-                                               target="_blank" class="btn btn-sm btn-outline-info me-1 mb-1">
-                                                <i class="bi bi-book me-1"></i>OpenLibrary
-                                            </a>
-                                            {% endif %}
+
+                                        {% if book.google_books_id %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Google Books ID:</small>
+                                            <a class="ms-1 fw-medium font-monospace text-decoration-none" target="_blank"
+                                               href="https://books.google.com/books?id={{ book.google_books_id }}">{{ book.google_books_id }}</a>
                                         </div>
                                         {% endif %}
+                                        {% if book.openlibrary_id %}
+                                        {% set olidPath = book.openlibrary_id if book.openlibrary_id.startswith('/') else ('/works/' + book.openlibrary_id) %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">OpenLibrary ID:</small>
+                                            <a class="ms-1 fw-medium font-monospace text-decoration-none" target="_blank"
+                                               href="https://openlibrary.org{{ olidPath }}">{{ book.openlibrary_id }}</a>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        <!-- External API Links (Removed buttons to avoid redundancy) -->
                                         
                                         <!-- Series Information (If not shown in main card) -->
                                         {% if book.series and book.series_volume %}
@@ -1043,8 +1004,8 @@
                                         <div class="col-md-6">
                                             <div class="mb-3">
                                                 <label for="average_rating" class="form-label fw-medium">Global Average Rating</label>
-                                                <input type="number" class="form-control" id="average_rating" name="average_rating" 
-                                                       value="{{ book.average_rating or '' }}" step="0.1" min="0" max="5" 
+                              <input type="number" class="form-control" id="average_rating" name="average_rating" 
+                                  value="{{ book.average_rating or '' }}" step="0.01" min="0" max="5" 
                                                        placeholder="Global average rating">
                                                 <div class="form-text">Average rating from external sources (0-5)</div>
                                             </div>
@@ -1321,6 +1282,8 @@
                                     </h6>
                                     <div class="row">
                                         {% for meta in global_metadata_display %}
+                                        {% set name_lc = (meta.display_name or '')|lower %}
+                                        {% if name_lc not in ['subtitle','google books id','openlibrary id'] %}
                                         <div class="col-md-6 mb-3">
                                             <div class="custom-field-item p-2 bg-light rounded">
                                                 <div class="fw-medium text-primary mb-1">{{ meta.display_name }}</div>
@@ -1342,6 +1305,7 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        {% endif %}
                                         {% endfor %}
                                     </div>
                                 </div>
@@ -1356,6 +1320,8 @@
                                     </h6>
                                     <div class="row">
                                         {% for meta in personal_metadata_display %}
+                                        {% set name_lc = (meta.display_name or '')|lower %}
+                                        {% if name_lc not in ['subtitle','google books id','openlibrary id'] %}
                                         <div class="col-md-6 mb-3">
                                             <div class="custom-field-item p-2 bg-light rounded">
                                                 <div class="fw-medium text-success mb-1">{{ meta.display_name }}</div>
@@ -1377,6 +1343,7 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        {% endif %}
                                         {% endfor %}
                                     </div>
                                 </div>
@@ -3579,6 +3546,31 @@ document.addEventListener('DOMContentLoaded', function() {
 .field-group h6 {
     margin-bottom: 0.75rem;
     font-weight: 600;
+}
+/* Crisp key/value alignment for details rows */
+.kv {
+    display: grid;
+    grid-template-rows: auto auto;
+}
+.kv .kv-value {
+    font-weight: 500;
+    display: inline-block;
+}
+/* Meta tiles for aligned bottom summary rows */
+.meta-tile {
+    padding: 0.35rem 0.25rem;
+    border-radius: 0.25rem;
+    gap: 0.5rem;
+}
+.meta-tile i {
+    font-size: 1.05rem;
+    min-width: 1.25rem; /* reserve column for icon for alignment */
+    text-align: center;
+}
+@media (min-width: 768px) {
+    .row.g-3 > [class^="col-"] {
+        padding-bottom: 0.25rem;
+    }
 }
 
 /* Core field highlighting */

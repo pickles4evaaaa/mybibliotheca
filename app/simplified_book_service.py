@@ -3,6 +3,18 @@ Simplified Book Service - Decoupled Architecture
 Separates book creation from user relationships for better persistence.
 """
 
+import os as _os_for_import_verbosity
+_IMPORT_VERBOSE = (
+    (_os_for_import_verbosity.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_for_import_verbosity.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+
+# Redirect module print to conditional debug print
+print = _dprint
+
 import uuid
 import json
 from datetime import datetime
@@ -63,6 +75,32 @@ def normalize_goodreads_value(value, field_type='text'):
     return value.strip()
 
 
+def _normalize_publisher_name(value: Optional[str]) -> Optional[str]:
+    """Normalize publisher strings from CSV/API:
+    - Handle Goodreads-style ="..." wrapping
+    - Strip leading/trailing straight or curly quotes
+    - Trim whitespace
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return s
+    # Excel text wrapper ="value"
+    if s.startswith('="') and s.endswith('"') and len(s) >= 3:
+        s = s[2:-1].strip()
+    # Strip paired quotes repeatedly (straight or curly)
+    quotes = ('"', '“', '”', "'")
+    changed = True
+    while changed and len(s) >= 2:
+        changed = False
+        for ql, qr in (("\"", "\""), ('“', '”'), ("'", "'")):
+            if s.startswith(ql) and s.endswith(qr):
+                s = s[1:-1].strip()
+                changed = True
+    return s
+
+
 @dataclass
 class SimplifiedBook:
     """Simplified book model focused on core bibliographic data only."""
@@ -81,8 +119,12 @@ class SimplifiedBook:
     series_volume: Optional[str] = None
     series_order: Optional[int] = None
     categories: List[str] = field(default_factory=list)
+    # Raw hierarchical category path strings (e.g., "Computers / Programming / General")
+    # When present, use these to build PARENT_CATEGORY graph and link the leaf to the book
+    raw_categories: Optional[List[str]] = None
     google_books_id: Optional[str] = None
     openlibrary_id: Optional[str] = None
+    asin: Optional[str] = None
     average_rating: Optional[float] = None
     rating_count: Optional[int] = None
     
@@ -222,6 +264,7 @@ class SimplifiedBookService:
                 # Store both ISBN formats 
                 'isbn13': book_data.isbn13 or '',
                 'isbn10': book_data.isbn10 or '',
+                'asin': book_data.asin or '',
                 'google_books_id': getattr(book_data, 'google_books_id', '') or '',
                 'openlibrary_id': getattr(book_data, 'openlibrary_id', '') or '',
                 'average_rating': book_data.average_rating or 0.0,
@@ -264,6 +307,7 @@ class SimplifiedBookService:
                     normalized_title: $normalized_title,
                     isbn13: $isbn13,
                     isbn10: $isbn10,
+                    asin: $asin,
                     description: $description,
                     published_date: $published_date,
                     page_count: $page_count,
@@ -706,13 +750,15 @@ class SimplifiedBookService:
                     print(f"❌ [SIMPLIFIED] Error creating publisher relationship: {e}")
             
             # 4. Create category relationships using clean repository
-            if book_data.categories:
-                try:
-                    # Processing categories (reduced logging)
+            try:
+                # Prefer hierarchical raw_categories if provided (from unified metadata)
+                if getattr(book_data, 'raw_categories', None):
+                    await book_repo._create_category_relationships_from_raw(book_id, book_data.raw_categories)
+                elif book_data.categories:
+                    # Fallback to flat categories
                     for category_name in book_data.categories:
                         if not category_name.strip():
                             continue
-                            
                         category_id = await book_repo._ensure_category_exists(category_name.strip())
                         if category_id:
                             # Create CATEGORIZED_AS relationship
@@ -730,14 +776,12 @@ class SimplifiedBookService:
                                     "created_at_str": datetime.utcnow().isoformat()
                                 }
                             )
-                            if categorized_result:
-                                print(f"✅ [SIMPLIFIED] Created CATEGORIZED_AS relationship for {category_name}")
-                            else:
+                            if not categorized_result:
                                 print(f"❌ [SIMPLIFIED] Failed to create CATEGORIZED_AS relationship for {category_name}")
                         else:
                             print(f"❌ [SIMPLIFIED] Failed to create category: {category_name}")
-                except Exception as e:
-                    print(f"❌ [SIMPLIFIED] Error creating category relationship: {e}")
+            except Exception as e:
+                print(f"❌ [SIMPLIFIED] Error creating category relationship(s): {e}")
             
             # 5. Handle global custom metadata (if any)
             if book_data.global_custom_metadata:
@@ -1010,6 +1054,7 @@ class SimplifiedBookService:
             'author': '',
             'isbn13': None,
             'isbn10': None,
+            'asin': None,
             'subtitle': None,
             'description': None,
             'publisher': None,
@@ -1044,7 +1089,89 @@ class SimplifiedBookService:
                 if book_field == 'title':
                     book_data['title'] = value
                 elif book_field == 'author':
-                    book_data['author'] = value
+                    # Support StoryGraph "Authors" where multiple names are comma-separated
+                    if isinstance(value, str) and (',' in value):
+                        parts = [p.strip() for p in value.split(',') if p.strip()]
+                        if parts:
+                            book_data['author'] = parts[0]
+                            if len(parts) > 1:
+                                book_data['additional_authors'] = ', '.join(parts[1:])
+                    else:
+                        book_data['author'] = value
+                elif book_field == 'contributors':
+                    # Parse entries like "Jane Doe (translator); John Smith (editor)" or comma/pipe-separated
+                    text = value if isinstance(value, str) else str(value)
+                    # Prefer semicolon or pipe as record separator; fallback to comma-space
+                    if ';' in text:
+                        parts = [p.strip() for p in text.split(';') if p.strip()]
+                    elif '|' in text:
+                        parts = [p.strip() for p in text.split('|') if p.strip()]
+                    elif ', ' in text:
+                        parts = [p.strip() for p in text.split(', ') if p.strip()]
+                    else:
+                        parts = [text.strip()] if text.strip() else []
+
+                    def push_unique(lst, name):
+                        n = (name or '').strip()
+                        if n and n not in lst:
+                            lst.append(n)
+
+                    addl, editors, translators, narrators, illustrators = [], [], [], [], []
+                    for p in parts:
+                        name = p
+                        role = None
+                        if '(' in p and ')' in p and p.index('(') < p.index(')'):
+                            i = p.index('(')
+                            j = p.index(')', i+1)
+                            role_text = p[i+1:j].strip().lower()
+                            name = (p[:i] + p[j+1:]).strip().strip(',')
+                            if 'editor' in role_text:
+                                role = 'editor'
+                            elif 'translator' in role_text:
+                                role = 'translator'
+                            elif 'narrator' in role_text:
+                                role = 'narrator'
+                            elif 'illustrator' in role_text or 'illustration' in role_text:
+                                role = 'illustrator'
+                            elif 'author' in role_text:
+                                role = 'author'
+
+                        name = name.strip()
+                        if role == 'editor':
+                            push_unique(editors, name)
+                        elif role == 'translator':
+                            push_unique(translators, name)
+                        elif role == 'narrator':
+                            push_unique(narrators, name)
+                        elif role == 'illustrator':
+                            push_unique(illustrators, name)
+                        elif role == 'author':
+                            # if primary differs, treat as additional author
+                            if not book_data.get('author') or name.lower() != str(book_data['author']).lower():
+                                push_unique(addl, name)
+                        else:
+                            # Unknown role → additional author if not primary
+                            if not book_data.get('author') or name.lower() != str(book_data['author']).lower():
+                                push_unique(addl, name)
+
+                    def merge(field, incoming):
+                        if not incoming:
+                            return
+                        existing = book_data.get(field)
+                        if existing:
+                            current = [s.strip() for s in str(existing).split(',') if s.strip()]
+                            for n in incoming:
+                                if n not in current:
+                                    current.append(n)
+                            book_data[field] = ', '.join(current)
+                        else:
+                            book_data[field] = ', '.join(incoming)
+
+                    merge('additional_authors', addl)
+                    merge('editor', editors)
+                    merge('translator', translators)
+                    merge('narrator', narrators)
+                    merge('illustrator', illustrators)
                 elif book_field == 'isbn':
                     # Clean and assign ISBN
                     clean_isbn = ''.join(c for c in str(value) if c.isdigit() or c.upper() == 'X')
@@ -1070,8 +1197,20 @@ class SimplifiedBookService:
                             book_data['isbn10'] = clean_isbn
                         elif len(clean_isbn) == 13:
                             book_data['isbn13'] = clean_isbn
+                elif book_field == 'asin':
+                    # Normalize ASIN (alphanumeric, often 10 chars)
+                    if value:
+                        s = str(value).strip()
+                        # Remove wrappers like ="..."
+                        if s.startswith('="') and s.endswith('"') and len(s) >= 3:
+                            s = s[2:-1].strip()
+                        # Strip quotes
+                        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+                            s = s[1:-1].strip()
+                        book_data['asin'] = s or None
                 elif book_field == 'publisher':
-                    book_data['publisher'] = value
+                    # Normalize publisher consistently from CSV
+                    book_data['publisher'] = _normalize_publisher_name(value)
                 elif book_field == 'page_count':
                     try:
                         book_data['page_count'] = int(value) if value else None

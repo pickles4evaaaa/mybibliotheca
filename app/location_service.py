@@ -12,10 +12,150 @@ import uuid
 from datetime import datetime
 import json
 from dataclasses import asdict
+import os as _os_for_import_verbosity
 
 from .domain.models import Location
 from .debug_system import debug_log, get_debug_manager
 from .infrastructure.kuzu_graph import safe_execute_kuzu_query
+
+# Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
+_IMPORT_VERBOSE = (
+    (_os_for_import_verbosity.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_for_import_verbosity.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+)
+
+def _dprint(*args, **kwargs):
+    if _IMPORT_VERBOSE:
+        __builtins__.print(*args, **kwargs)
+
+# Redirect module print to conditional debug print
+print = _dprint
+
+
+def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+    """Convert Kuzu QueryResult to a list of simple dict rows."""
+    if result is None:
+        return []
+    rows: List[Dict[str, Any]] = []
+    try:
+        if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            while result.has_next():
+                row = result.get_next()
+                if len(row) == 1:
+                    rows.append({'result': row[0]})
+                else:
+                    row_dict: Dict[str, Any] = {}
+                    for i, value in enumerate(row):
+                        row_dict[f'col_{i}'] = value
+                    rows.append(row_dict)
+    except Exception as e:
+        _dprint(f"[LOCATION_SERVICE] Error converting result: {e}")
+    return rows
+
+def _extract_single_value(result, default: Any = 0) -> Any:
+    rows = _convert_query_result_to_list(result)
+    if not rows:
+        return default
+    row0 = rows[0]
+    if 'result' in row0:
+        return row0['result']
+    # fallback
+    return row0.get('col_0', default)
+
+
+def _decode_value(v: Any) -> Any:
+    """Decode bytes-like values to Python types and parse common scalars.
+    - bytes/bytearray/memoryview -> UTF-8 string
+    - 'true'/'false' strings -> bool
+    - ISO timestamp strings for created_at/updated_at handled separately
+    """
+    try:
+        if isinstance(v, (bytes, bytearray, memoryview)):
+            v = bytes(v).decode('utf-8', errors='ignore')
+        # Normalize simple booleans from strings
+        if isinstance(v, str):
+            low = v.strip().lower()
+            if low in ('true', 'false'):
+                return low == 'true'
+        return v
+    except Exception:
+        return v
+
+
+def _ensure_datetime(v: Any) -> Optional[datetime]:
+    """Ensure value is a datetime. Accepts datetime, ISO string, or bytes-like."""
+    try:
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, (bytes, bytearray, memoryview)):
+            v = bytes(v).decode('utf-8', errors='ignore')
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v)
+            except Exception:
+                return None
+        return None
+    except Exception:
+        return None
+
+
+def _node_to_dict(node: Any) -> Dict[str, Any]:
+    """Convert Kuzu node object to a plain dict with str keys and decoded values."""
+    data: Dict[str, Any] = {}
+    if node is None:
+        return data
+    # Try items() first (mapping-like)
+    try:
+        items = node.items()  # type: ignore[attr-defined]
+    except Exception:
+        items = None
+    if items is not None:
+        for k, v in items:  # type: ignore[assignment]
+            if isinstance(k, memoryview):
+                key = bytes(k).decode('utf-8', errors='ignore')
+            elif isinstance(k, (bytes, bytearray)):
+                key = k.decode('utf-8', errors='ignore')
+            else:
+                key = str(k)
+            val = _decode_value(v)
+            data[key] = val
+        # Post-process timestamps
+        if 'created_at' in data:
+            parsed = _ensure_datetime(data['created_at'])
+            if parsed:
+                data['created_at'] = parsed
+        if 'updated_at' in data:
+            parsed = _ensure_datetime(data['updated_at'])
+            if parsed:
+                data['updated_at'] = parsed
+        return data
+    # Fallback: try sequence of 2-tuples
+    try:
+        for pair in list(node):  # type: ignore[call-arg]
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                k, v = pair
+                if isinstance(k, memoryview):
+                    key = bytes(k).decode('utf-8', errors='ignore')
+                elif isinstance(k, (bytes, bytearray)):
+                    key = k.decode('utf-8', errors='ignore')
+                else:
+                    key = str(k)
+                val = _decode_value(v)
+                data[key] = val
+    except Exception:
+        pass
+    # Post-process timestamps
+    if 'created_at' in data:
+        parsed = _ensure_datetime(data['created_at'])
+        if parsed:
+            data['created_at'] = parsed
+    if 'updated_at' in data:
+        parsed = _ensure_datetime(data['updated_at'])
+        if parsed:
+            data['updated_at'] = parsed
+    return data
 
 
 class LocationService:
@@ -102,19 +242,14 @@ class LocationService:
         
         print(f"DEBUG: Executing query: {query}")
         results = safe_execute_kuzu_query(query, {"location_id": location_id}, operation="location_operation")
-        print(f"DEBUG: Query results: {results}")
-        print(f"DEBUG: Results has_next: {results.has_next() if results else 'No results'}")
-        
-        if not results or not results.has_next():
+        rows = _convert_query_result_to_list(results)
+        if not rows:
             print("DEBUG: No results found, returning None")
             return None
-        
-        # Process the result and convert to Location object
-        print("DEBUG: Processing results...")
-        row = results.get_next()
-        print(f"DEBUG: Row: {row}")
-        location_data = row[0]
-        print(f"DEBUG: Location data: {location_data}")
+        location_node = rows[0].get('result') or rows[0].get('col_0')
+        location_data = _node_to_dict(location_node)
+        if not location_data:
+            return None
         
         print("DEBUG: Creating Location object...")
         location = Location(
@@ -125,8 +260,8 @@ class LocationService:
             address=location_data.get('address') or '',
             is_default=location_data.get('is_default', False),
             is_active=location_data.get('is_active', True),
-            created_at=location_data.get('created_at'),
-            updated_at=location_data.get('updated_at')
+            created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
+            updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
         )
         print(f"DEBUG: Created location: {location}")
         return location
@@ -145,10 +280,13 @@ class LocationService:
         
         result = safe_execute_kuzu_query(query, {}, operation="location_operation")
         
-        locations = []
-        while result.has_next():
-            row = result.get_next()
-            location_data = dict(row[0])
+        locations: List[Location] = []
+        rows = _convert_query_result_to_list(result)
+        for r in rows:
+            node = r.get('result') or r.get('col_0')
+            location_data = _node_to_dict(node)
+            if not location_data:
+                continue
             location = Location(
                 id=location_data['id'],
                 user_id="",  # Locations don't belong to users
@@ -158,8 +296,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
             )
             locations.append(location)
         
@@ -176,10 +314,13 @@ class LocationService:
         
         result = safe_execute_kuzu_query(query, {}, operation="location_operation")
         
-        locations = []
-        while result.has_next():
-            row = result.get_next()
-            location_data = dict(row[0])
+        locations: List[Location] = []
+        rows = _convert_query_result_to_list(result)
+        for r in rows:
+            node = r.get('result') or r.get('col_0')
+            location_data = _node_to_dict(node)
+            if not location_data:
+                continue
             location = Location(
                 id=location_data['id'],
                 user_id="",  # Locations don't belong to users
@@ -189,8 +330,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
             )
             locations.append(location)
         
@@ -269,10 +410,12 @@ class LocationService:
         LIMIT 1
         """
         result = safe_execute_kuzu_query(default_query, {}, operation="location_operation")
-        
-        if result.has_next():
-            row = result.get_next()
-            location_data = dict(row[0])
+        rows = _convert_query_result_to_list(result)
+        if rows:
+            node = rows[0].get('result') or rows[0].get('col_0')
+            location_data = _node_to_dict(node)
+            if not location_data:
+                return None
             location = Location(
                 id=location_data['id'],
                 user_id="",
@@ -282,8 +425,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
             )
             return location
         
@@ -295,10 +438,12 @@ class LocationService:
         LIMIT 1
         """
         result = safe_execute_kuzu_query(all_locations_query, {}, operation="location_operation")
-        
-        if result.has_next():
-            row = result.get_next()
-            location_data = dict(row[0])
+        rows = _convert_query_result_to_list(result)
+        if rows:
+            node = rows[0].get('result') or rows[0].get('col_0')
+            location_data = _node_to_dict(node)
+            if not location_data:
+                return None
             location = Location(
                 id=location_data['id'],
                 user_id="",
@@ -308,8 +453,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
             )
             print(f"🏠 [GET_DEFAULT] No default found, using first available location: '{location.name}' (ID: {location.id})")
             return location
@@ -363,12 +508,8 @@ class LocationService:
                 params = {'location_id': location_id}
             
             result = safe_execute_kuzu_query(query, params, operation="location_operation")
-            
-            count = 0
-            if result.has_next():
-                count_result = result.get_next()
-                if count_result and len(count_result) > 0:
-                    count = int(count_result[0])
+            val = _extract_single_value(result, 0)
+            count = int(val) if val is not None else 0
             
             debug_log(f"Location {location_id} has {count} books (user filter: {user_id})", "LOCATION", 
                      {"location_id": location_id, "user_id": user_id, "book_count": count})
@@ -421,12 +562,10 @@ class LocationService:
             params = {'location_id': location_id}
             
             result = safe_execute_kuzu_query(query, params, operation="location_operation")
-            book_ids = []
-            
-            while result.has_next():
-                row = result.get_next()
-                book_id = row[0]
-                
+            book_ids: List[str] = []
+            rows = _convert_query_result_to_list(result)
+            for r in rows:
+                book_id = r.get('result') or r.get('col_0')
                 if book_id:
                     book_ids.append(book_id)
                     debug_log(f"Found book {book_id} at location", "LOCATION", 
@@ -468,8 +607,8 @@ class LocationService:
                 "book_id": book_id,
                 "location_id": location_id
             }, operation="check_book_location")
-            
-            if result.has_next() and result.get_next()[0] > 0:
+            val = _extract_single_value(result, 0)
+            if int(val or 0) > 0:
                 debug_log(f"Book {book_id} already stored at location {location_id}", "LOCATION")
                 return True  # Already exists, that's fine
             
@@ -541,12 +680,13 @@ class LocationService:
             params = {'book_id': book_id}
             
             result = safe_execute_kuzu_query(query, params, operation="location_operation")
-            locations = []
-            
-            while result.has_next():
-                row = result.get_next()
-                location_data = dict(row[0])
-                
+            locations: List[Location] = []
+            rows = _convert_query_result_to_list(result)
+            for r in rows:
+                node = r.get('result') or r.get('col_0')
+                location_data = _node_to_dict(node)
+                if not location_data:
+                    continue
                 location = Location(
                     id=location_data['id'],
                     user_id="",  # Will be filled by relationship if needed
@@ -556,8 +696,8 @@ class LocationService:
                     address=location_data.get('address'),
                     is_default=location_data['is_default'],
                     is_active=True,
-                    created_at=datetime.fromisoformat(location_data['created_at']) if isinstance(location_data['created_at'], str) else location_data['created_at'],
-                    updated_at=datetime.fromisoformat(location_data.get('updated_at', location_data['created_at'])) if isinstance(location_data.get('updated_at', location_data['created_at']), str) else location_data.get('updated_at', location_data['created_at'])
+                    created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
+                    updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
                 )
                 locations.append(location)
                 
@@ -621,13 +761,11 @@ class LocationService:
             """
             
             result = safe_execute_kuzu_query(query, {'user_id': user_id}, operation="location_operation")
-            
+            rows = _convert_query_result_to_list(result)
             migration_count = 0
-            while result.has_next():
-                row = result.get_next()
-                book_id = row[0]
-                
-                if book_id and default_location.id and self.add_book_to_location(book_id, default_location.id, user_id):
+            for r in rows:
+                book_id = r.get('result') or r.get('col_0')
+                if book_id and default_location.id and self.add_book_to_location(str(book_id), default_location.id, user_id):
                     migration_count += 1
                     debug_log(f"Migrated book {book_id} to default location {default_location.name}", "LOCATION")
             

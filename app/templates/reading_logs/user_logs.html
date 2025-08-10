@@ -160,7 +160,15 @@
                         <img src="{{ log.book.cover_url }}" alt="Cover" class="me-2" style="width: 30px; height: 40px; object-fit: cover;">
                         {% endif %}
                         <div>
+                            {% if log.book and (log.book.uid or log.book.id) %}
+                            <div class="fw-semibold">
+                                <a href="{{ url_for('book.view_book_enhanced', uid=log.book.uid or log.book.id) }}" class="text-decoration-none">
+                                    {{ log.book.title or 'Unknown Title' }}
+                                </a>
+                            </div>
+                            {% else %}
                             <div class="fw-semibold">{{ log.book.title or 'Unknown Title' }}</div>
+                            {% endif %}
                             {% if log.book.author %}
                             <small class="text-muted">by {{ log.book.author }}</small>
                             {% endif %}
@@ -236,7 +244,7 @@
     <ul class="pagination justify-content-center">
         {% if pagination.has_prev %}
         <li class="page-item">
-            <a class="page-link" href="#" onclick="loadPage({{ pagination.page - 1 }})" aria-label="Previous">
+            <a class="page-link" href="#" data-page="{{ pagination.page - 1 }}" aria-label="Previous">
                 <span aria-hidden="true">&laquo;</span>
             </a>
         </li>
@@ -253,7 +261,7 @@
             </li>
             {% elif page_num == 1 or page_num == pagination.total_pages or (page_num >= pagination.page - 2 and page_num <= pagination.page + 2) %}
             <li class="page-item">
-                <a class="page-link" href="#" onclick="loadPage({{ page_num }})">{{ page_num }}</a>
+                <a class="page-link" href="#" data-page="{{ page_num }}">{{ page_num }}</a>
             </li>
             {% elif page_num == pagination.page - 3 or page_num == pagination.page + 3 %}
             <li class="page-item disabled">
@@ -264,7 +272,7 @@
 
         {% if pagination.has_next %}
         <li class="page-item">
-            <a class="page-link" href="#" onclick="loadPage({{ pagination.page + 1 }})" aria-label="Next">
+            <a class="page-link" href="#" data-page="{{ pagination.page + 1 }}" aria-label="Next">
                 <span aria-hidden="true">&raquo;</span>
             </a>
         </li>
@@ -421,4 +429,16 @@ function loadPage(page) {
 function changePerPage() {
     loadPage(1); // Go to first page when changing per-page count
 }
+
+// Delegated handler for pagination links
+document.addEventListener('click', function(e) {
+    const link = e.target.closest('a.page-link[data-page]');
+    if (link) {
+        e.preventDefault();
+        const page = parseInt(link.getAttribute('data-page'), 10);
+        if (!isNaN(page)) {
+            loadPage(page);
+        }
+    }
+});
 </script>

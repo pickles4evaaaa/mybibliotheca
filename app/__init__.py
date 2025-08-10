@@ -120,8 +120,8 @@ def _initialize_default_templates():
         
         global _template_creation_disabled, _template_creation_failures, _template_creation_last_attempt
         
-        # Check if verbose logging is enabled
-        verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        # Check if verbose logging is enabled (default off)
+        verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
         
         # Circuit breaker: disable template creation if too many failures
         if _template_creation_disabled:
@@ -304,7 +304,7 @@ def _initialize_default_templates():
             print("🎉 Default import templates initialized successfully!")
         
     except Exception as e:
-        verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
         if verbose_init:
             print("✅ Template initialization completed")
         # Don't fail app startup if templates can't be created
@@ -444,7 +444,7 @@ def create_app():
     # KUZU DATABASE INITIALIZATION
     with app.app_context():
         # Use environment variable to control verbose logging across multiple workers
-        verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'true').lower() == 'true'
+        verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
         
         if verbose_init:
             print("🚀 Initializing Kuzu-based MyBibliotheca...")
