@@ -308,15 +308,10 @@ class AdvancedMigrationSystem:
             # Count users
             try:
                 user_result = self.safe_manager.execute_query("MATCH (u:User) RETURN COUNT(u) as count")
-                if user_result and len(user_result) > 0:
-                    # Handle different result formats
-                    result = user_result[0]
-                    if 'count' in result:
-                        stats['users'] = result['count']
-                    elif 'result' in result:
-                        stats['users'] = result['result']
-                    else:
-                        stats['users'] = 0
+                rows = _convert_query_result_to_list(user_result) if user_result else []
+                if rows:
+                    # Kuzu returns column name 'count'
+                    stats['users'] = rows[0].get('count', 0) or 0
                 else:
                     stats['users'] = 0
             except Exception as e:
@@ -326,15 +321,9 @@ class AdvancedMigrationSystem:
             # Count books
             try:
                 book_result = self.safe_manager.execute_query("MATCH (b:Book) RETURN COUNT(b) as count")
-                if book_result and len(book_result) > 0:
-                    # Handle different result formats
-                    result = book_result[0]
-                    if 'count' in result:
-                        stats['books'] = result['count']
-                    elif 'result' in result:
-                        stats['books'] = result['result']
-                    else:
-                        stats['books'] = 0
+                rows = _convert_query_result_to_list(book_result) if book_result else []
+                if rows:
+                    stats['books'] = rows[0].get('count', 0) or 0
                 else:
                     stats['books'] = 0
             except Exception as e:
@@ -343,16 +332,11 @@ class AdvancedMigrationSystem:
             
             # Count user-book relationships (no longer OWNS, but HAS_READ or similar)
             try:
-                reading_result = self.safe_manager.execute_query("MATCH ()-[r:HAS_READ]->() RETURN COUNT(r) as count")
-                if reading_result and len(reading_result) > 0:
-                    # Handle different result formats
-                    result = reading_result[0]
-                    if 'count' in result:
-                        stats['reading_relationships'] = result['count']
-                    elif 'result' in result:
-                        stats['reading_relationships'] = result['result']
-                    else:
-                        stats['reading_relationships'] = 0
+                # Use the current schema's relationship label
+                reading_result = self.safe_manager.execute_query("MATCH ()-[r:READS]->() RETURN COUNT(r) as count")
+                rows = _convert_query_result_to_list(reading_result) if reading_result else []
+                if rows:
+                    stats['reading_relationships'] = rows[0].get('count', 0) or 0
                 else:
                     stats['reading_relationships'] = 0
             except Exception as e:
@@ -397,11 +381,21 @@ class AdvancedMigrationSystem:
                 password_must_change=False
             )
             
-            admin_user_id = getattr(admin_user, 'id', None) if admin_user else None
+            # Support both domain object and plain dict return types
+            admin_user_id = None
+            if admin_user:
+                if isinstance(admin_user, dict):
+                    admin_user_id = admin_user.get('id')
+                else:
+                    admin_user_id = getattr(admin_user, 'id', None)
+
             if admin_user and admin_user_id:
                 self.current_status = MigrationStatus.ADMIN_CREATED
                 self._log_action(f"First admin user created successfully: {admin_user_id}")
                 logger.info(f"✅ First admin user created: {username}")
+                # If returned as dict, keep state but return None to satisfy type hints
+                if isinstance(admin_user, dict):
+                    return None
                 return admin_user
             else:
                 logger.error(f"❌ Failed to create first admin user - no ID returned")
