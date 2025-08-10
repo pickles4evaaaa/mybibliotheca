@@ -266,45 +266,65 @@ class SimpleBackupService:
                 return False
             
             logger.info(f"Starting simple restore from backup: {backup_info.name}")
+            # Mark restore in progress
+            self._set_restore_flag(backup_info)
             
             # Step 1: Disconnect KuzuDB cleanly
             logger.info("Disconnecting KuzuDB connections...")
             self._disconnect_kuzu_database()
             
-            # Step 2: Skip backup during restore if database is active
+            # Step 2: Make a pre-restore safety backup by moving aside and zipping
             current_backup_path = None
+            moved_old_dir = None
             if self.kuzu_db_path.exists():
-                logger.info("Database backup during restore skipped to avoid file locks")
-                # We'll rely on the existing backup being restored from for safety
+                try:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    short_id = str(uuid.uuid4())[:8]
+                    moved_old_dir = self.kuzu_db_path.parent / f"kuzu.pre_restore_{timestamp}_{short_id}"
+                    logger.info(f"Moving current Kuzu directory to {moved_old_dir} for safety snapshot...")
+                    shutil.move(str(self.kuzu_db_path), str(moved_old_dir))
+                    logger.info("Current Kuzu directory moved aside successfully")
+
+                    # Create a zip snapshot in backups
+                    pre_name = f"pre_restore_{timestamp}"
+                    pre_backup_filename = f"{pre_name}_{short_id}.zip"
+                    pre_backup_path = self.backup_dir / pre_backup_filename
+                    metadata = {
+                        'backup_id': str(uuid.uuid4()),
+                        'created_at': datetime.now().isoformat(),
+                        'kuzu_db_path': str(moved_old_dir),
+                        'original_size': self._get_directory_size(moved_old_dir),
+                        'backup_type': 'pre_restore_snapshot',
+                        'source_backup_restored': backup_info.name,
+                    }
+                    logger.info(f"Creating pre-restore backup zip at {pre_backup_path} ...")
+                    with zipfile.ZipFile(pre_backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                        zipf.writestr('backup_metadata.json', json.dumps(metadata, indent=2))
+                        files_count = 0
+                        for file_path in moved_old_dir.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(moved_old_dir)
+                                zipf.write(file_path, f"kuzu/{relative_path}")
+                                files_count += 1
+                        logger.info(f"Pre-restore snapshot archived: {files_count} files")
+
+                    # Record in index for visibility
+                    backup_info_obj = SimpleBackupInfo(
+                        id=metadata['backup_id'],
+                        name=pre_name,
+                        created_at=datetime.now(),
+                        file_path=str(pre_backup_path),
+                        file_size=pre_backup_path.stat().st_size,
+                        description=f"Auto-created before restoring '{backup_info.name}'",
+                        metadata=metadata,
+                    )
+                    self._backup_index[backup_info_obj.id] = backup_info_obj
+                    self._save_backup_index()
+                except Exception as e:
+                    logger.warning(f"Failed to create pre-restore snapshot: {e}. Proceeding cautiously.")
             
-            # Step 3: Remove current database with retry
-            if self.kuzu_db_path.exists():
-                retry_count = 0
-                max_retries = 5
-                while retry_count < max_retries:
-                    try:
-                        # KuzuDB is always a directory
-                        shutil.rmtree(self.kuzu_db_path)
-                        logger.info("Removed current database directory")
-                        break
-                    except OSError as e:
-                        if e.errno == 35:  # Resource deadlock avoided
-                            retry_count += 1
-                            if retry_count < max_retries:
-                                logger.warning(f"Database removal failed (attempt {retry_count}), retrying in 3 seconds...")
-                                import time
-                                time.sleep(3)
-                                # Try extra disconnect before retry
-                                import gc
-                                gc.collect()
-                                import time
-                                time.sleep(1)
-                            else:
-                                logger.error(f"Failed to remove database after {max_retries} attempts: {e}")
-                                return False
-                        else:
-                            logger.error(f"Error removing current database: {e}")
-                            return False
+            # Step 3: Ensure fresh target directory exists (it was moved away above)
+            self.kuzu_db_path.mkdir(parents=True, exist_ok=True)
             
             # Step 4: Extract backup to restore database and static files
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -434,7 +454,15 @@ class SimpleBackupService:
                         
                         logger.info(f"Restored {uploads_restored} uploaded files")
             
-            # Step 5: Set restart flag instead of immediate reconnection
+            # Step 5: Cleanup moved old dir after successful restore
+            try:
+                if moved_old_dir and moved_old_dir.exists():
+                    shutil.rmtree(moved_old_dir)
+                    logger.info(f"Removed pre-restore directory: {moved_old_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to remove pre-restore directory {moved_old_dir}: {e}")
+
+            # Step 6: Set restart flag instead of immediate reconnection
             logger.info("Setting restart flag for clean reconnection...")
             self._set_restart_required_flag()
             
@@ -450,11 +478,29 @@ class SimpleBackupService:
                 logger.info("Cleaned up temporary backup")
             
             return True
-            
         except Exception as e:
             logger.error(f"Failed to restore simple backup {backup_id}: {e}")
-            # Always clear the restore flag
-            self._clear_restore_flag()
+            # Attempt rollback if possible
+            try:
+                # Find any moved pre-restore directory to roll back
+                parent = self.kuzu_db_path.parent
+                candidates = sorted(parent.glob('kuzu.pre_restore_*'), key=lambda p: p.stat().st_mtime, reverse=True)
+                moved_old_dir = candidates[0] if candidates else None
+                if moved_old_dir and moved_old_dir.exists():
+                    logger.warning(f"Attempting rollback from {moved_old_dir} ...")
+                    # Remove partially restored target dir
+                    if self.kuzu_db_path.exists():
+                        try:
+                            shutil.rmtree(self.kuzu_db_path)
+                        except Exception:
+                            pass
+                    shutil.move(str(moved_old_dir), str(self.kuzu_db_path))
+                    logger.info("Rollback completed; original database restored")
+            except Exception as rb_err:
+                logger.error(f"Rollback failed: {rb_err}")
+            finally:
+                # Always clear the restore flag
+                self._clear_restore_flag()
             return False
     
     def _disconnect_kuzu_database(self) -> None:
@@ -538,8 +584,27 @@ class SimpleBackupService:
     
     def _clear_restore_flag(self) -> None:
         """Clear the restore-in-progress flag."""
-        # Simplified - no longer using flags
-        pass
+        try:
+            flag_path = self.backup_dir / '.restore_in_progress'
+            if flag_path.exists():
+                flag_path.unlink()
+                logger.info("Restore-in-progress flag cleared")
+        except Exception as e:
+            logger.warning(f"Failed to clear restore flag: {e}")
+
+    def _set_restore_flag(self, backup_info: SimpleBackupInfo) -> None:
+        """Set a flag indicating a restore is in progress."""
+        try:
+            flag_path = self.backup_dir / '.restore_in_progress'
+            details = {
+                'started_at': datetime.now().isoformat(),
+                'backup_id': backup_info.id,
+                'backup_name': backup_info.name,
+            }
+            flag_path.write_text(json.dumps(details))
+            logger.info(f"Restore-in-progress flag set at: {flag_path}")
+        except Exception as e:
+            logger.warning(f"Failed to set restore flag: {e}")
     
     def _set_restart_required_flag(self) -> None:
         """Set a flag indicating that application restart is required."""

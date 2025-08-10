@@ -81,11 +81,20 @@ else
     echo "✅ No stale lock files found"
 fi
 
-# Check if database path exists as a directory and clean it up if needed
-if [ -d "$KUZU_DB_PATH/bibliotheca.db" ]; then
-    echo "⚠️  Found existing KuzuDB directory at $KUZU_DB_PATH/bibliotheca.db - cleaning up for fresh start..."
-    rm -rf "$KUZU_DB_PATH/bibliotheca.db" 2>/dev/null || echo "❌ Failed to remove existing directory"
-    echo "✅ Cleaned up existing KuzuDB directory"
+# Dangerous cleanup is disabled by default; only enabled when explicitly requested
+if [ "${KUZU_FORCE_RESET:-false}" = "true" ]; then
+    if [ -d "$KUZU_DB_PATH/bibliotheca.db" ]; then
+        echo "🚨 KUZU_FORCE_RESET=true - performing safety backup and resetting database directory"
+        mkdir -p /app/data/backups
+        RESET_BACKUP="/app/data/backups/startup_reset_$(date +%Y%m%d-%H%M%S).tar.gz"
+        # Best-effort archive; ignore errors so we don't block reset if tar fails
+        tar -czf "$RESET_BACKUP" -C "$KUZU_DB_PATH" bibliotheca.db 2>/dev/null && \
+            echo "📦 Safety backup created at $RESET_BACKUP" || \
+            echo "⚠️  Failed to create safety backup (continuing reset)"
+        echo "🧹 Removing $KUZU_DB_PATH/bibliotheca.db ..."
+        rm -rf "$KUZU_DB_PATH/bibliotheca.db" 2>/dev/null || echo "❌ Failed to remove existing directory"
+        echo "✅ Database directory reset complete"
+    fi
 fi
 
 # Additional KuzuDB diagnostic info

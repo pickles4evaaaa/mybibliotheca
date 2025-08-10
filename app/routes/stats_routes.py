@@ -114,17 +114,51 @@ def library_journey():
                 if status_filter and book_data['reading_status'] != status_filter:
                     continue
                     
-                # 2. Date filter - use the selected date type for positioning, with fallback
-                target_date = book_data.get(date_type)
+                # 2. Date filter - use the selected date type for positioning, with robust fallbacks
+                # Try the selected date first, then fall back to other available dates
+                fallback_order = [date_type, 'date_added', 'finish_date', 'start_date', 'publication_date']
+                # Remove duplicates while keeping order
+                seen = set()
+                fallback_order = [f for f in fallback_order if not (f in seen or seen.add(f))]
+                target_date = None
+                for field in fallback_order:
+                    if book_data.get(field):
+                        target_date = book_data.get(field)
+                        break
                 if not target_date:
-                    # Fallback to date_added if the selected date type is not available
-                    target_date = book_data.get('date_added')
-                    if not target_date:
-                        continue  # Skip only if no dates are available at all
+                    continue  # Skip only if no dates are available at all
                 
-                # 3. Year range filter
+                # 3. Year range filter (support year-only and YYYY-MM dates)
                 try:
-                    book_year = datetime.fromisoformat(target_date).year
+                    normalized_date = None
+                    if isinstance(target_date, str):
+                        td = target_date.strip()
+                        if len(td) == 4 and td.isdigit():
+                            book_year = int(td)
+                            normalized_date = f"{td}-01-01"
+                        elif len(td) == 7 and td[4] == '-':  # YYYY-MM
+                            book_year = int(td[:4])
+                            normalized_date = f"{td}-01"
+                        else:
+                            dt = datetime.fromisoformat(td.replace('Z', '+00:00'))
+                            book_year = dt.year
+                            # store date in YYYY-MM-DD
+                            normalized_date = (dt.date() if hasattr(dt, 'date') else dt).isoformat()
+                    else:
+                        # date or datetime
+                        by = getattr(target_date, 'year', None)
+                        if by is None:
+                            raise ValueError('Unsupported date type')
+                        book_year = int(by)
+                        if hasattr(target_date, 'isoformat'):
+                            # if datetime, convert to date()
+                            try:
+                                normalized_date = target_date.date().isoformat()
+                            except Exception:
+                                normalized_date = target_date.isoformat()
+                        else:
+                            normalized_date = str(target_date)
+
                     if year_from and book_year < int(year_from):
                         continue
                     if year_to and book_year > int(year_to):
@@ -132,8 +166,8 @@ def library_journey():
                 except (ValueError, TypeError):
                     continue
                 
-                # Use the selected date type as the primary date for positioning
-                book_data['timeline_date'] = target_date
+                # Use the normalized/selected date as the primary date for positioning
+                book_data['timeline_date'] = normalized_date or target_date
                 processed_books.append(book_data)
                 
             except Exception as book_error:
@@ -619,12 +653,19 @@ def _extract_date(book, field_name):
         elif hasattr(date_value, 'isoformat'):
             return date_value.isoformat()
         elif isinstance(date_value, str):
+            # Normalize common short formats
+            s = date_value.strip()
+            if len(s) == 4 and s.isdigit():
+                # Year-only
+                return f"{s}-01-01"
+            if len(s) == 7 and s[4] == '-':  # YYYY-MM
+                return f"{s}-01"
             # Try to parse and reformat
             try:
-                parsed = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                parsed = datetime.fromisoformat(s.replace('Z', '+00:00'))
                 return parsed.date().isoformat()
-            except:
-                return date_value
+            except Exception:
+                return s
         else:
             return str(date_value)
     except Exception:
@@ -646,8 +687,15 @@ def _get_book_date(book, date_type):
     
     # Convert string dates to datetime if needed
     if isinstance(date_value, str):
+        s = date_value.strip()
         try:
-            date_value = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+            if len(s) == 4 and s.isdigit():
+                # Year only
+                return datetime(int(s), 1, 1)
+            if len(s) == 7 and s[4] == '-':  # YYYY-MM
+                return datetime.strptime(s + '-01', '%Y-%m-%d')
+            # Full ISO or with time
+            return datetime.fromisoformat(s.replace('Z', '+00:00'))
         except (ValueError, AttributeError):
             return None
     

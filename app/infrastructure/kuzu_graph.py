@@ -82,26 +82,53 @@ class KuzuGraphDB:
                 # Check if this is a database recovery error
                 if "std::bad_alloc" in str(e) or "Error during recovery" in str(e):
                     logger.error("Database recovery failed - this usually indicates corrupted or incomplete database files")
-                    logger.error("Attempting to recover by clearing database directory...")
                     
+                    # Do NOT clear the database by default. Require explicit opt-in.
+                    allow_clear = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() == 'true'
+                    if not allow_clear:
+                        logger.error("Safety lock engaged: KUZU_AUTO_RECOVER_CLEAR is not true. Skipping destructive recovery to protect data.")
+                        logger.error("To force a rebuild, set KUZU_AUTO_RECOVER_CLEAR=true (optional: KUZU_DEBUG=true) and restart. Back up /app/data/kuzu first.")
+                        raise
+
+                    logger.warning("Attempting destructive recovery by clearing database path (opt-in enabled)...")
                     try:
-                        # Try to recover by clearing the database directory
                         db_path = Path(self.database_path)
                         if db_path.exists():
-                            import shutil
-                            shutil.rmtree(db_path, ignore_errors=True)
-                            logger.info("Database directory cleared, creating fresh database...")
-                            
-                            # Create directory and try again
-                            Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-                            self._database = kuzu.Database(self.database_path)
-                            self._connection = kuzu.Connection(self._database)
-                            logger.info("Database connection established, initializing schema...")
-                            self._initialize_schema()
-                            logger.info(f"Kuzu connected at {self.database_path} (recovered)")
-                        else:
-                            logger.error("Database directory doesn't exist - cannot recover")
-                            raise
+                            # Back up existing DB path first (file or directory)
+                            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                            backup_dir = Path(os.getenv('KUZU_BACKUP_DIR', '/app/data/backups'))
+                            backup_dir.mkdir(parents=True, exist_ok=True)
+                            backup_target = backup_dir / f"kuzu_backup_{ts}"
+                            try:
+                                import shutil
+                                if db_path.is_dir():
+                                    shutil.make_archive(str(backup_target), 'gztar', root_dir=db_path)
+                                else:
+                                    # Single-file DB: copy to backups with timestamp
+                                    shutil.copy2(str(db_path), str(backup_target.with_suffix('.db')))
+                                logger.info(f"📦 Backed up Kuzu DB to {backup_target}")
+                            except Exception as be:
+                                logger.warning(f"Backup before recovery failed: {be}")
+
+                            # Now clear the path
+                            try:
+                                import shutil
+                                if db_path.is_dir():
+                                    shutil.rmtree(db_path, ignore_errors=True)
+                                else:
+                                    db_path.unlink(missing_ok=True)  # type: ignore
+                                logger.info("Database path cleared, creating fresh database...")
+                            except Exception as de:
+                                logger.error(f"Failed to clear database path: {de}")
+                                raise
+
+                        # Create parent and reinitialize
+                        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+                        self._database = kuzu.Database(self.database_path)
+                        self._connection = kuzu.Connection(self._database)
+                        logger.info("Database connection established, initializing schema...")
+                        self._initialize_schema()
+                        logger.info(f"Kuzu connected at {self.database_path} (recovered)")
                     except Exception as recovery_error:
                         logger.error(f"Database recovery failed: {recovery_error}")
                         print("🔧 Make sure KuzuDB is running and accessible")
