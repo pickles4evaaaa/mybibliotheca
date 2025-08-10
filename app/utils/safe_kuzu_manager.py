@@ -997,6 +997,19 @@ def get_safe_kuzu_manager() -> SafeKuzuManager:
     return _safe_kuzu_manager
 
 
+def reset_safe_kuzu_manager(database_path: Optional[str] = None) -> None:
+    """
+    Reset the global SafeKuzuManager instance.
+
+    Useful in tests to ensure a fresh manager picks up environment changes
+    such as KUZU_DB_PATH. Optionally provide a database_path to immediately
+    seed a new manager with that path.
+    """
+    global _safe_kuzu_manager
+    with _manager_lock:
+        _safe_kuzu_manager = SafeKuzuManager(database_path) if database_path else None
+
+
 def safe_execute_query(query: str, params: Optional[Dict[str, Any]] = None, 
                       user_id: Optional[str] = None, operation: str = "query") -> Any:
     """

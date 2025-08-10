@@ -681,8 +681,9 @@ class KuzuBookRepository:
                 'series_volume': getattr(book, 'series_volume', None),
                 'series_order': getattr(book, 'series_order', None),
                 'custom_metadata': getattr(book, 'custom_metadata', None),
-                'created_at': getattr(book, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
-                'updated_at': getattr(book, 'updated_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'updated_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                # Use *_str variants so adapter casts to TIMESTAMP via timestamp($param)
+                'created_at_str': getattr(book, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
+                'updated_at_str': getattr(book, 'updated_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'updated_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
             }
             
             # Create the book node first
