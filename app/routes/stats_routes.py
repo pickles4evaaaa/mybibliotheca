@@ -4,6 +4,7 @@ from app.services import book_service, reading_log_service, user_service
 from datetime import datetime, date, timedelta
 import logging
 import calendar
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -101,29 +102,44 @@ def library_journey():
                 
                 # Extract authors
                 book_data['authors'] = _extract_authors(book)
+                # Provide authors_text for templates
+                try:
+                    book_data['authors_text'] = ', '.join([a for a in book_data['authors'] if a]) if isinstance(book_data['authors'], list) else (book_data['authors'] or 'Unknown Author')
+                except Exception:
+                    book_data['authors_text'] = 'Unknown Author'
                 
                 # Extract categories
                 book_data['categories'] = _extract_categories(book)
+                # Provide categories_text for templates
+                try:
+                    book_data['categories_text'] = ', '.join(book_data['categories']) if isinstance(book_data['categories'], list) else (book_data['categories'] or '')
+                except Exception:
+                    book_data['categories_text'] = ''
                 
                 # Extract all date fields for filtering
                 for date_field in ['date_added', 'start_date', 'finish_date', 'publication_date']:
                     book_data[date_field] = _extract_date(book, date_field)
                 
+                # Status color and display title for UI
+                book_data['status_color'] = _get_status_color(book_data.get('reading_status'))
+                book_data['display_title'] = (book_data['title'][:10] + ('' if len(book_data['title']) <= 10 else '')) if isinstance(book_data.get('title'), str) else 'Unknown'
+
                 # Apply filters
                 # 1. Status filter
                 if status_filter and book_data['reading_status'] != status_filter:
                     continue
                     
-                # 2. Date filter - use the selected date type for positioning, with robust fallbacks
-                # Try the selected date first, then fall back to other available dates
+                # 2. Date filter - Use the selected date type primarily, with transparent fallback to retain data density
                 fallback_order = [date_type, 'date_added', 'finish_date', 'start_date', 'publication_date']
                 # Remove duplicates while keeping order
                 seen = set()
                 fallback_order = [f for f in fallback_order if not (f in seen or seen.add(f))]
                 target_date = None
+                source_field = None
                 for field in fallback_order:
                     if book_data.get(field):
                         target_date = book_data.get(field)
+                        source_field = field
                         break
                 if not target_date:
                     continue  # Skip only if no dates are available at all
@@ -168,6 +184,7 @@ def library_journey():
                 
                 # Use the normalized/selected date as the primary date for positioning
                 book_data['timeline_date'] = normalized_date or target_date
+                book_data['timeline_source'] = source_field or date_type
                 processed_books.append(book_data)
                 
             except Exception as book_error:
@@ -676,6 +693,20 @@ def _get_book_date(book, date_type):
     """Get the appropriate date from book based on date_type."""
     date_value = None
     
+    # Prefer the pre-computed timeline_date if present to honor earlier fallback logic
+    timeline_date = book.get('timeline_date') if isinstance(book, dict) else None
+    if timeline_date:
+        s = timeline_date.strip() if isinstance(timeline_date, str) else timeline_date
+        try:
+            if isinstance(s, str):
+                return _parse_flexible_date(s)
+            # If it's already a date/datetime
+            if hasattr(s, 'year'):
+                return datetime(s.year, getattr(s, 'month', 1), getattr(s, 'day', 1))
+        except Exception:
+            # Fallback to legacy logic below if parsing fails
+            pass
+    
     if date_type == 'finish_date' and book.get('finish_date'):
         date_value = book['finish_date']
     elif date_type == 'start_date' and book.get('start_date'):
@@ -687,19 +718,51 @@ def _get_book_date(book, date_type):
     
     # Convert string dates to datetime if needed
     if isinstance(date_value, str):
-        s = date_value.strip()
         try:
-            if len(s) == 4 and s.isdigit():
-                # Year only
-                return datetime(int(s), 1, 1)
-            if len(s) == 7 and s[4] == '-':  # YYYY-MM
-                return datetime.strptime(s + '-01', '%Y-%m-%d')
-            # Full ISO or with time
-            return datetime.fromisoformat(s.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
+            return _parse_flexible_date(date_value)
+        except Exception:
             return None
     
     return date_value
+
+
+def _parse_flexible_date(s: str) -> datetime:
+    """Parse common date shapes to a datetime: YYYY, YYYY-MM, YYYY-MM-DD, handles 00 for month/day and slash formats."""
+    if not s:
+        raise ValueError('empty date string')
+    s = s.strip()
+    # Normalize Zulu suffix
+    s = s.replace('Z', '+00:00')
+    # Replace slashes with hyphens
+    s2 = s.replace('/', '-')
+    # If full ISO parses, use it
+    try:
+        return datetime.fromisoformat(s2)
+    except Exception:
+        pass
+    # Year only
+    if len(s2) == 4 and s2.isdigit():
+        return datetime(int(s2), 1, 1)
+    # YYYY-MM (allow 00 month)
+    if re.match(r'^\d{4}-\d{2}$', s2):
+        year = int(s2[:4])
+        month = int(s2[5:7]) or 1
+        return datetime(year, month, 1)
+    # YYYY-MM-DD (allow 00 month/day)
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})', s2)
+    if m:
+        year = int(m.group(1))
+        month = int(m.group(2)) or 1
+        day = int(m.group(3)) or 1
+        # Clamp day to 28 to avoid invalid dates for Feb/April
+        day = min(day, 28)
+        return datetime(year, month, day)
+    # As a last resort, extract first 4-digit year and use Jan 1
+    m = re.search(r'(\d{4})', s2)
+    if m:
+        return datetime(int(m.group(1)), 1, 1)
+    # Could not parse
+    raise ValueError(f'unrecognized date format: {s}')
 
 
 def _calculate_timeline_positions(books, date_type):
@@ -925,7 +988,18 @@ def reading_journey():
         
         if not all_logs:
             calendar_data = _generate_empty_calendar(year, month)
-            stats = {'total_logs': 0, 'month_name': calendar.month_name[month], 'year': year}
+            stats = {
+                'total_logs': 0,
+                'month_name': calendar.month_name[month],
+                'year': year,
+                'active_days': 0,
+                'current_streak': 0,
+                'intensity_level': 'None',
+                'max_activity': 0,
+                'avg_activity': 0,
+                'weekend_activity': 0,
+                'total_activity_count': 0
+            }
             filters = {'year': year, 'month': month, 'status': status_filter}
             return render_template('stats/reading_journey.html', 
                                 calendar_data=calendar_data, 

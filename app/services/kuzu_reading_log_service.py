@@ -281,6 +281,34 @@ class KuzuReadingLogService:
                     "log_id": log_id,
                     "book_id": reading_log.book_id
                 })
+
+                # Auto-set start_date on OWNS if empty when the first reading log is added for this book
+                try:
+                    # Determine a TIMESTAMP value for start_date
+                    # Prefer the reading_log.date (DATE) at 00:00:00Z; fallback to created_at or now
+                    if reading_log.date:
+                        start_ts = datetime(
+                            reading_log.date.year,
+                            reading_log.date.month,
+                            reading_log.date.day,
+                            tzinfo=dt_timezone.utc
+                        )
+                    else:
+                        start_ts = (reading_log.created_at or datetime.now(dt_timezone.utc))
+
+                    auto_start_query = """
+                    MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
+                    WHERE owns.start_date IS NULL
+                    SET owns.start_date = $start_ts
+                    RETURN owns
+                    """
+                    safe_execute_kuzu_query(auto_start_query, {
+                        "user_id": reading_log.user_id,
+                        "book_id": reading_log.book_id,
+                        "start_ts": start_ts,
+                    })
+                except Exception as e:
+                    logger.warning(f"Auto-set start_date skipped: {e}")
             
             # Return a simple success response instead of trying to access col_0
             created_log = {

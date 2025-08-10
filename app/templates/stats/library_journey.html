@@ -123,7 +123,7 @@
                         {% for item in books %}
                         {% if item.type == 'cluster' %}
                         <!-- Book Cluster -->
-                        <div class="timeline-cluster" 
+                    <div class="timeline-cluster" 
                              style="position: absolute; 
                                     left: calc({{ item.x_position }}% - 25px); 
                                     top: calc({{ item.y_position }}% - 25px); 
@@ -133,7 +133,7 @@
                              data-cluster-year="{{ item.year }}"
                              data-bs-toggle="tooltip" 
                              data-bs-placement="top" 
-                             title="{{ item.books|length }} books from {{ item.year }}"
+                        title="{{ item.books|length }} books from {{ item.year }}"
                              {% for book in item.books %}
                              data-book-{{ loop.index0 }}-id="{{ book.id }}"
                              data-book-{{ loop.index0 }}-uid="{{ book.uid }}"
@@ -146,7 +146,8 @@
                              data-book-{{ loop.index0 }}-pages="{{ book.page_count or '' }}"
                              data-book-{{ loop.index0 }}-categories="{{ book.categories_text or '' }}"
                              data-book-{{ loop.index0 }}-notes="{{ book.personal_notes or '' }}"
-                             data-book-{{ loop.index0 }}-date="{{ book.date_added or '' }}"
+                        data-book-{{ loop.index0 }}-date="{{ book.timeline_date or book.date_added or '' }}"
+                        data-book-{{ loop.index0 }}-date-source="{{ book.timeline_source or 'date_added' }}"
                              data-book-{{ loop.index0 }}-display-title="{{ book.display_title or book.title[:10] }}"
                              {% endfor %}>
                             
@@ -185,7 +186,7 @@
                         </div>
                         {% else %}
                         <!-- Individual Book -->
-                        <div class="timeline-book" 
+                    <div class="timeline-book" 
                              style="position: absolute; 
                                     left: calc({{ item.x_position }}% - 30px); 
                                     top: calc({{ item.y_position }}% - 40px); 
@@ -202,10 +203,11 @@
                              data-book-pages="{{ item.book.page_count or '' }}"
                              data-book-categories="{{ item.book.categories_text or '' }}"
                              data-book-notes="{{ item.book.personal_notes or '' }}"
-                             data-book-date="{{ item.book.date_added or '' }}"
+                        data-book-date="{{ item.book.timeline_date or item.book.date_added or '' }}"
+                        data-book-date-source="{{ item.book.timeline_source or 'date_added' }}"
                              data-bs-toggle="tooltip" 
                              data-bs-placement="top" 
-                             title="{{ item.book.title }} by {{ item.book.authors_text }}">
+                        title="{{ item.book.title }} by {{ item.book.authors_text }} • Using: {{ item.book.timeline_source|replace('_', ' ')|title }}">
                             
                             <!-- Book Cover or Placeholder -->
                             <div class="book-cover-container" style="position: relative;">
@@ -550,11 +552,11 @@ document.addEventListener('DOMContentLoaded', function() {
         return new bootstrap.Tooltip(tooltipTriggerEl);
     });
     
-    // Restore filter values from URL parameters
+    // Restore filter values from URL parameters or server-provided filters
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('date_type')) {
-        document.getElementById('dateTypeFilter').value = urlParams.get('date_type');
-    }
+    const dateTypeFromUrl = urlParams.get('date_type');
+    const dateTypeFromServer = '{{ filters.date_type if filters and filters.date_type else "date_added" }}';
+    document.getElementById('dateTypeFilter').value = dateTypeFromUrl || dateTypeFromServer;
     if (urlParams.get('status')) {
         document.getElementById('statusFilter').value = urlParams.get('status');
     }
@@ -563,6 +565,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (urlParams.get('year_to')) {
         document.getElementById('yearTo').value = urlParams.get('year_to');
+    }
+    
+    // Auto-apply when date type filter changes
+    const dateTypeEl = document.getElementById('dateTypeFilter');
+    if (dateTypeEl) {
+        dateTypeEl.addEventListener('change', function() {
+            applyFilters();
+        });
     }
     
     // Handle individual book clicks

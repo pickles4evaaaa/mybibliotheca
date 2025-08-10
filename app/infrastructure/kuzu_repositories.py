@@ -1854,11 +1854,11 @@ class KuzuUserBookRepository:
     async def get_reading_timeline(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Get user's reading timeline - recent activity and books."""
         try:
-            # Get recent books added to library, ordered by date_added
+            # Get recent books added to library, ordered by book creation time
             query = """
             MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
             RETURN b, owns
-            ORDER BY owns.date_added DESC
+            ORDER BY b.created_at DESC
             LIMIT $limit
             """
             
@@ -1874,7 +1874,8 @@ class KuzuUserBookRepository:
                     timeline_entry = {
                         'book': book_data,
                         'activity_type': 'added_to_library',
-                        'activity_date': owns_data.get('date_added'),
+                        # In universal library, treat book.created_at as the global 'date added'
+                        'activity_date': book_data.get('created_at'),
                         'reading_status': owns_data.get('reading_status'),
                         'ownership_status': owns_data.get('ownership_status'),
                         'media_type': owns_data.get('media_type'),

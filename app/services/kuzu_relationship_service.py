@@ -187,7 +187,13 @@ class KuzuRelationshipService:
         setattr(book, 'user_rating', combined.get('user_rating'))
         setattr(book, 'personal_notes', combined.get('personal_notes'))
         setattr(book, 'review', combined.get('user_review') or combined.get('review'))  # Map user_review back to review
-        setattr(book, 'date_added', combined.get('date_added'))
+        # In universal library mode, "date added" is a global property of the Book (creation time),
+        # not user-specific. Prefer book.created_at, fall back to any legacy relationship date if present.
+        try:
+            book_created = getattr(book, 'created_at', None)
+        except Exception:
+            book_created = None
+        setattr(book, 'date_added', book_created or combined.get('date_added'))
         setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
         setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
         
@@ -394,15 +400,17 @@ class KuzuRelationshipService:
             # Prepare SET clauses
             set_parts = []
             # Provide a creation timestamp param for ON CREATE to avoid unsupported DB functions
-            params = {'user_id': user_id, 'book_id': book_id, 'date_added': datetime.now(timezone.utc)}
+            params = {'user_id': user_id, 'book_id': book_id}
             for key, value in storage_updates.items():
+                # Do not persist date_added on OWNS in universal library mode
+                if key == 'date_added':
+                    continue
                 set_parts.append(f"owns.{key} = ${key}")
                 params[key] = value
             set_clause = ", ".join(set_parts)
             query = f"""
             MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
             MERGE (u)-[owns:OWNS]->(b)
-            ON CREATE SET owns.date_added = $date_added
             SET {set_clause}
             RETURN owns
             """
@@ -437,19 +445,24 @@ class KuzuRelationshipService:
     async def get_all_books_with_user_overlay(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all books with user-specific overlay data (universal library model)."""
         try:
-            # Universal library - get ALL books with their STORED_AT locations
-            # No OWNS relationships - books are universal and stored at locations
+            # Universal library base: get ALL books with their STORED_AT locations
+            # Enhance with optional user overlay: OWNS relationship and personal metadata if present
             query = """
             MATCH (b:Book)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-            RETURN b, COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations
+            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
+            OPTIONAL MATCH (u)-[pm:HAS_PERSONAL_METADATA]->(b)
+            RETURN b,
+                   COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations,
+                   owns,
+                   pm
             """
-            
-            result = safe_execute_kuzu_query(query, {})
+
+            result = safe_execute_kuzu_query(query, {"user_id": user_id})
             results = _convert_query_result_to_list(result)
-            
-            logger.info(f"[RELATIONSHIP_SERVICE] Raw query returned {len(results)} results for universal library")
-            
+
+            logger.info(f"[RELATIONSHIP_SERVICE] Raw query returned {len(results)} results with optional user overlay")
+
             # Convert all books to dictionaries with user overlay
             book_dicts = []
             for i, result_row in enumerate(results):
@@ -457,16 +470,15 @@ class KuzuRelationshipService:
                     if 'col_0' not in result_row:
                         logger.warning(f"[RELATIONSHIP_SERVICE] Row {i} missing col_0 (book data)")
                         continue
-                        
+
                     book_data = result_row['col_0']
                     locations_data = result_row.get('col_1', []) or []
-                    
-                    # No relationship data in universal library - books don't belong to users
-                    relationship_data = {}
-                    
-                    # Create enriched book object
-                    book = self._create_enriched_book(book_data, relationship_data, locations_data)
-                    
+                    relationship_data = result_row.get('col_2') or {}
+                    personal_meta = result_row.get('col_3') or {}
+
+                    # Create enriched book object (filters locations internally)
+                    book = self._create_enriched_book(book_data, relationship_data, locations_data, personal_meta)
+
                     # Convert to dictionary
                     if hasattr(book, '__dict__'):
                         book_dict = book.__dict__.copy()
@@ -477,18 +489,18 @@ class KuzuRelationshipService:
                             'title': getattr(book, 'title', ''),
                             'uid': getattr(book, 'id', ''),
                         }
-                    
+
                     # Ensure uid is available (some templates expect this)
                     if 'id' in book_dict and 'uid' not in book_dict:
                         book_dict['uid'] = book_dict['id']
-                    
+
                     book_dicts.append(book_dict)
-                    
+
                 except Exception as e:
                     logger.error(f"[RELATIONSHIP_SERVICE] Error processing book {i}: {e}")
                     continue
-            
-            logger.info(f"[RELATIONSHIP_SERVICE] Successfully processed {len(book_dicts)} books for universal library")
+
+            logger.info(f"[RELATIONSHIP_SERVICE] Successfully processed {len(book_dicts)} books with optional user overlay")
             return book_dicts
             
         except Exception as e:
