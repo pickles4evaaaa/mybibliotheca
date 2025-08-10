@@ -6,7 +6,7 @@ Currently a basic implementation that returns empty results.
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone as dt_timezone
 import logging
 import uuid
 
@@ -761,7 +761,7 @@ class KuzuReadingLogService:
                 "pages_read": reading_log.pages_read,
                 "minutes_read": reading_log.minutes_read,
                 "notes": reading_log.notes,
-                "updated_at": reading_log.updated_at or datetime.utcnow()
+                "updated_at": reading_log.updated_at or datetime.now(dt_timezone.utc)
             })
             
             if result:
@@ -777,7 +777,7 @@ class KuzuReadingLogService:
                     'minutes_read': reading_log.minutes_read,
                     'notes': reading_log.notes,
                     'created_at': reading_log.created_at.isoformat() if reading_log.created_at else None,
-                    'updated_at': (reading_log.updated_at or datetime.utcnow()).isoformat()
+                    'updated_at': (reading_log.updated_at or datetime.now(dt_timezone.utc)).isoformat()
                 }
                 
                 return updated_log

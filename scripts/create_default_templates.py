@@ -6,7 +6,7 @@ that are available to all users.
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import asdict
 
 # Add the parent directory to the path so we can import from app
@@ -64,8 +64,8 @@ def create_goodreads_template():
         },
         times_used=0,
         last_used=None,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+    created_at=datetime.now(timezone.utc),
+    updated_at=datetime.now(timezone.utc)
     )
     return template
 
@@ -114,8 +114,8 @@ def create_storygraph_template():
         },
         times_used=0,
         last_used=None,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+    created_at=datetime.now(timezone.utc),
+    updated_at=datetime.now(timezone.utc)
     )
     return template
 

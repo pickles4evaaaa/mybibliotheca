@@ -7,7 +7,7 @@ similar to the person management functionality.
 
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash, abort
 from flask_login import login_required, current_user
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import traceback
 import random
@@ -545,7 +545,7 @@ def edit_category(category_id):
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
                 'created_at': getattr(category, 'created_at', None),
-                'updated_at': datetime.utcnow()
+                'updated_at': datetime.now(timezone.utc)
             }
             
             # Create new Category object with updated data

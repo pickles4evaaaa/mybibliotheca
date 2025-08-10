@@ -218,8 +218,8 @@ class KuzuCategoryService:
                 aliases=category_data.get('aliases', []),
                 book_count=category_data.get('book_count', 0),
                 user_book_count=category_data.get('user_book_count', 0),
-                created_at=created_at if created_at else datetime.utcnow(),
-                updated_at=updated_at if updated_at else datetime.utcnow()
+                created_at=created_at if created_at else datetime.now(timezone.utc),
+                updated_at=updated_at if updated_at else datetime.now(timezone.utc)
             )
             
             # Recursively build parent hierarchy if parent_id exists
@@ -635,8 +635,8 @@ class KuzuCategoryService:
                 aliases=category_data.get('aliases', []),
                 book_count=category_data.get('book_count', 0),
                 user_book_count=category_data.get('user_book_count', 0),
-                created_at=category_data.get('created_at', datetime.utcnow()),
-                updated_at=category_data.get('updated_at', datetime.utcnow())
+                created_at=category_data.get('created_at', datetime.now(timezone.utc)),
+                updated_at=category_data.get('updated_at', datetime.now(timezone.utc))
             )
         else:
             category = category_data

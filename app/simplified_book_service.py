@@ -17,7 +17,7 @@ print = _dprint
 
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
@@ -272,8 +272,8 @@ class SimplifiedBookService:
                 'series': book_data.series or '',
                 'series_volume': book_data.series_volume,
                 'series_order': book_data.series_order,
-                'created_at_str': datetime.utcnow().isoformat(),
-                'updated_at_str': datetime.utcnow().isoformat()
+                'created_at_str': datetime.now(timezone.utc).isoformat(),
+                'updated_at_str': datetime.now(timezone.utc).isoformat()
             }
             
             # Remove only the fields that can be None (series_volume and series_order)
@@ -395,7 +395,7 @@ class SimplifiedBookService:
                         {
                             "book_id": book_id,
                             "cover_url": final_cover_url,
-                            "updated_at_str": datetime.utcnow().isoformat()
+                            "updated_at_str": datetime.now(timezone.utc).isoformat()
                         }
                     )
                     
@@ -430,7 +430,7 @@ class SimplifiedBookService:
                         self.image_url: Optional[str] = None
                         self.birth_place: Optional[str] = None
                         self.website: Optional[str] = None
-                        self.created_at = datetime.utcnow()
+                        self.created_at = datetime.now(timezone.utc)
                 
                 person_data = PersonData(name)
                 
@@ -521,7 +521,7 @@ class SimplifiedBookService:
                                 "book_id": book_id,
                                 "role": 'authored',
                                 "order_index": 0,
-                                "created_at_str": datetime.utcnow().isoformat()
+                                "created_at_str": datetime.now(timezone.utc).isoformat()
                             }
                         )
                         if not authored_result:
@@ -557,7 +557,7 @@ class SimplifiedBookService:
                                     "book_id": book_id,
                                     "role": 'authored',
                                     "order_index": index + 1,
-                                    "created_at_str": datetime.utcnow().isoformat()
+                                    "created_at_str": datetime.now(timezone.utc).isoformat()
                                 }
                             )
                             if authored_result:
@@ -594,7 +594,7 @@ class SimplifiedBookService:
                                     "book_id": book_id,
                                     "role": 'narrated',
                                     "order_index": index,
-                                    "created_at_str": datetime.utcnow().isoformat()
+                                    "created_at_str": datetime.now(timezone.utc).isoformat()
                                 }
                             )
                             if narrated_result:
@@ -631,7 +631,7 @@ class SimplifiedBookService:
                                     "book_id": book_id,
                                     "role": 'edited',
                                     "order_index": index,
-                                    "created_at_str": datetime.utcnow().isoformat()
+                                    "created_at_str": datetime.now(timezone.utc).isoformat()
                                 }
                             )
                             if edited_result:
@@ -668,7 +668,7 @@ class SimplifiedBookService:
                                     "book_id": book_id,
                                     "role": 'translated',
                                     "order_index": index,
-                                    "created_at_str": datetime.utcnow().isoformat()
+                                    "created_at_str": datetime.now(timezone.utc).isoformat()
                                 }
                             )
                             if translated_result:
@@ -705,7 +705,7 @@ class SimplifiedBookService:
                                     "book_id": book_id,
                                     "role": 'illustrated',
                                     "order_index": index,
-                                    "created_at_str": datetime.utcnow().isoformat()
+                                    "created_at_str": datetime.now(timezone.utc).isoformat()
                                 }
                             )
                             if illustrated_result:
@@ -737,7 +737,7 @@ class SimplifiedBookService:
                             {
                                 "book_id": book_id,
                                 "publisher_id": publisher_id,
-                                "created_at_str": datetime.utcnow().isoformat()
+                                "created_at_str": datetime.now(timezone.utc).isoformat()
                             }
                         )
                         if published_result:
@@ -773,7 +773,7 @@ class SimplifiedBookService:
                                 {
                                     "book_id": book_id,
                                     "category_id": category_id,
-                                    "created_at_str": datetime.utcnow().isoformat()
+                                    "created_at_str": datetime.now(timezone.utc).isoformat()
                                 }
                             )
                             if not categorized_result:
@@ -833,7 +833,7 @@ class SimplifiedBookService:
         try:
             # Ensure date_added is set
             if annotation.date_added is None:
-                annotation.date_added = datetime.utcnow()
+                annotation.date_added = datetime.now(timezone.utc)
             
             # In universal library mode, create a USER_ANNOTATES relationship instead of OWNS
             # This preserves user's personal data without implying ownership

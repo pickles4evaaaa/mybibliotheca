@@ -6,7 +6,7 @@ Handles reading log functionality including creating, viewing, and managing read
 
 from flask import Blueprint, request, jsonify, render_template, flash, redirect, url_for
 from flask_login import login_required, current_user
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import logging
 
 from app.forms import ReadingLogEntryForm
@@ -306,8 +306,8 @@ def edit_reading_log(log_id):
             pages_read=pages_read,
             minutes_read=minutes_read,
             notes=notes or None,
-            created_at=datetime.fromisoformat(existing_log['created_at']) if existing_log.get('created_at') else datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=datetime.fromisoformat(existing_log['created_at']) if existing_log.get('created_at') else datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
         
         # Update the log

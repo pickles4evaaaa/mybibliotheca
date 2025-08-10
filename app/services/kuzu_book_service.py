@@ -11,7 +11,7 @@ improved thread safety and connection management.
 import uuid
 import traceback
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..domain.models import Book, ReadingStatus
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
@@ -110,8 +110,8 @@ class KuzuBookService:
             average_rating=book_data.get('average_rating'),
             rating_count=book_data.get('rating_count'),
             custom_metadata=book_data.get('custom_metadata', {}),
-            created_at=book_data.get('created_at', datetime.utcnow()),
-            updated_at=book_data.get('updated_at', datetime.utcnow())
+            created_at=book_data.get('created_at', datetime.now(timezone.utc)),
+            updated_at=book_data.get('updated_at', datetime.now(timezone.utc))
         )
         
         # Handle series fields - the database stores series as a string, but the model expects a Series object
@@ -276,8 +276,8 @@ class KuzuBookService:
                         aliases=result.get('col_5', []),
                         book_count=result.get('col_9', 0),
                         user_book_count=result.get('col_10', 0),
-                        created_at=result.get('col_11') or datetime.utcnow(),
-                        updated_at=result.get('col_12') or datetime.utcnow()
+                        created_at=result.get('col_11') or datetime.now(timezone.utc),
+                        updated_at=result.get('col_12') or datetime.now(timezone.utc)
                     )
                     categories.append(category)
             
@@ -353,8 +353,8 @@ class KuzuBookService:
                 domain_book.id = str(uuid.uuid4())
             
             # Set timestamps
-            domain_book.created_at = datetime.utcnow()
-            domain_book.updated_at = datetime.utcnow()
+            domain_book.created_at = datetime.now(timezone.utc)
+            domain_book.updated_at = datetime.now(timezone.utc)
             
             # Create the book in Kuzu
             created_book = await self.book_repo.create(domain_book)
@@ -395,7 +395,7 @@ class KuzuBookService:
                 if hasattr(book, field):
                     setattr(book, field, value)
             
-            book.updated_at = datetime.utcnow()
+            book.updated_at = datetime.now(timezone.utc)
             
             # Prepare update data - ONLY include fields that were actually updated
             book_dict = {}

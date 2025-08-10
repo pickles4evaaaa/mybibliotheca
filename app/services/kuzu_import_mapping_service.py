@@ -8,7 +8,7 @@ import traceback
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..domain.models import ImportMappingTemplate
@@ -134,11 +134,11 @@ class KuzuImportMappingService:
             print(f"📋 [IMPORT_MAPPING] Step 4: Setting IDs and timestamps")
             # Generate ID if not provided
             if not template.id:
-                template.id = f"template_{datetime.utcnow().timestamp()}"
+                template.id = f"template_{datetime.now(timezone.utc).timestamp()}"
             
             # Update timestamps
-            template.created_at = datetime.utcnow()
-            template.updated_at = datetime.utcnow()
+            template.created_at = datetime.now(timezone.utc)
+            template.updated_at = datetime.now(timezone.utc)
             
             print(f"📋 [IMPORT_MAPPING] Step 5: Template data before insertion:")
             print(f"📋 [IMPORT_MAPPING]   ID: {template.id}")
@@ -233,7 +233,7 @@ class KuzuImportMappingService:
         
         try:
             # Update timestamp
-            template.updated_at = datetime.utcnow()
+            template.updated_at = datetime.now(timezone.utc)
             
             # Update template with proper data types
             query = """
@@ -411,18 +411,18 @@ class KuzuImportMappingService:
                     created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                 elif created_at is not None and not isinstance(created_at, datetime):
                     # Handle other timestamp formats
-                    created_at = datetime.utcnow()
+                    created_at = datetime.now(timezone.utc)
             except Exception as e:
-                created_at = datetime.utcnow()
+                created_at = datetime.now(timezone.utc)
             
             try:
                 if updated_at is not None and isinstance(updated_at, str):
                     updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
                 elif updated_at is not None and not isinstance(updated_at, datetime):
                     # Handle other timestamp formats
-                    updated_at = datetime.utcnow()
+                    updated_at = datetime.now(timezone.utc)
             except Exception as e:
-                updated_at = datetime.utcnow()
+                updated_at = datetime.now(timezone.utc)
             
             try:
                 if last_used is not None and isinstance(last_used, str):
@@ -472,8 +472,8 @@ class KuzuImportMappingService:
                 'field_mappings': field_mappings,
                 'times_used': times_used,
                 'last_used': last_used,
-                'created_at': created_at or datetime.utcnow(),
-                'updated_at': updated_at or datetime.utcnow()
+                'created_at': created_at or datetime.now(timezone.utc),
+                'updated_at': updated_at or datetime.now(timezone.utc)
             }
             
             template = ImportMappingTemplate(**template_data)

@@ -377,8 +377,8 @@ class Person:
     image_url: Optional[str] = None
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
     
     def __post_init__(self):
         if not self.normalized_name and self.name:
@@ -812,8 +812,8 @@ class UserBookRelationship:
     source: str = "manual"  # "manual", "goodreads", "storygraph", "admin_assigned"
     
     # Timestamps
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
 
 
 @dataclass

@@ -60,7 +60,7 @@ def setup():
             # Create the admin user
             from werkzeug.security import generate_password_hash
             import uuid
-            from datetime import datetime
+            from datetime import datetime, timezone
             
             admin_user = User(
                 id=str(uuid.uuid4()),
@@ -69,8 +69,8 @@ def setup():
                 password_hash=generate_password_hash(password),
                 is_admin=True,
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
             )
             
             # Save the user
@@ -553,7 +553,7 @@ def privacy_settings():
     except:
         timezone_info = {
             'name': 'UTC',
-            'current_time': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'current_time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
             'offset': '+0000'
         }
     

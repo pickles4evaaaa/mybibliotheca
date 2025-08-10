@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 # Add infrastructure path for direct imports
@@ -17,9 +17,9 @@ infrastructure_path = os.path.join(current_dir, 'infrastructure')
 sys.path.insert(0, infrastructure_path)
 
 try:
-    from kuzu_graph import KuzuGraphDB
-except ImportError:
     from app.infrastructure.kuzu_graph import KuzuGraphDB
+except Exception:
+    from .infrastructure.kuzu_graph import KuzuGraphDB
 
 try:
     from app.infrastructure.kuzu_repositories import (
@@ -395,9 +395,9 @@ class KuzuIntegrationService:
             
             # Set timestamps if missing
             if not hasattr(book, 'created_at') or not book.created_at:
-                book.created_at = datetime.utcnow()
+                book.created_at = datetime.now(timezone.utc)
             if not hasattr(book, 'updated_at') or not book.updated_at:
-                book.updated_at = datetime.utcnow()
+                book.updated_at = datetime.now(timezone.utc)
             
             # Use the clean repository which handles relationships
             book_repo = self._get_book_repo()
@@ -614,7 +614,7 @@ class KuzuIntegrationService:
             # Ensure date_added is a proper datetime object
             date_added_value = ownership_data.get('date_added')
             if date_added_value is None:
-                final_date_added = datetime.utcnow()
+                final_date_added = datetime.now(timezone.utc)
             elif isinstance(date_added_value, datetime):
                 final_date_added = date_added_value
             elif isinstance(date_added_value, str):
@@ -622,16 +622,16 @@ class KuzuIntegrationService:
                     # Try to parse ISO format string
                     final_date_added = datetime.fromisoformat(date_added_value.replace('Z', '+00:00'))
                 except ValueError:
-                    final_date_added = datetime.utcnow()
+                    final_date_added = datetime.now(timezone.utc)
             elif isinstance(date_added_value, (int, float)):
                 try:
                     # Try to parse as timestamp
                     final_date_added = datetime.fromtimestamp(date_added_value)
                 except (ValueError, OSError):
-                    final_date_added = datetime.utcnow()
+                    final_date_added = datetime.now(timezone.utc)
             else:
                 # Fallback to current time for any other type
-                final_date_added = datetime.utcnow()
+                final_date_added = datetime.now(timezone.utc)
             
             # Create ownership relationship
             user_book_repo = self._get_user_book_repo()

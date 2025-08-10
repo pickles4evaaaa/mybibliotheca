@@ -6,7 +6,7 @@ Handles user management operations using clean Kuzu architecture.
 
 import uuid
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 import logging
 
 from flask import current_app
@@ -43,7 +43,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.utcnow()
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -65,7 +65,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.utcnow()
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -87,7 +87,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.utcnow()
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
                 return user
             return None
@@ -114,7 +114,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.utcnow()
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -140,7 +140,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.utcnow()
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -175,7 +175,7 @@ class KuzuUserService:
                     timezone=created_user_data.get('timezone', 'UTC'),
                     is_admin=created_user_data.get('is_admin', False),
                     is_active=created_user_data.get('is_active', True),
-                    created_at=created_user_data.get('created_at') or datetime.utcnow()
+                    created_at=created_user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -226,7 +226,7 @@ class KuzuUserService:
                     timezone=created_user_data.get('timezone', 'UTC'),
                     is_admin=created_user_data.get('is_admin', False),
                     is_active=created_user_data.get('is_active', True),
-                    created_at=created_user_data.get('created_at') or datetime.utcnow()
+                    created_at=created_user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
                 return user
             else:
@@ -271,7 +271,7 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.utcnow()
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
                 users.append(user)
             return users
@@ -310,7 +310,7 @@ class KuzuUserService:
                     timezone=updated_user_data.get('timezone', 'UTC'),
                     is_admin=updated_user_data.get('is_admin', False),
                     is_active=updated_user_data.get('is_active', True),
-                    created_at=updated_user_data.get('created_at') or datetime.utcnow()
+                    created_at=updated_user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -333,7 +333,7 @@ class KuzuUserService:
                 location_type=location_type,
                 is_default=is_default,
                 is_active=True,
-                created_at=datetime.utcnow()
+                created_at=datetime.now(dt_timezone.utc)
             )
             
             created_location = await self.location_repo.create(location, user_id)

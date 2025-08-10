@@ -5,7 +5,7 @@ Clean Kuzu repositories that work with the simplified graph schema.
 import uuid
 import logging
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 if TYPE_CHECKING:
     # Use TYPE_CHECKING to avoid circular imports during runtime
@@ -199,7 +199,7 @@ class KuzuUserRepository:
                 'timezone': getattr(user, 'timezone', 'UTC'),
                 'is_admin': getattr(user, 'is_admin', False),
                 'is_active': getattr(user, 'is_active', True),
-                'created_at_str': getattr(user, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(user, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at_str': getattr(user, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(user, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat()
             }
             
             # Create user using SafeKuzuManager with direct Cypher query
@@ -333,7 +333,7 @@ class KuzuPersonRepository:
                 birth_year = person.get('birth_year', None)
                 death_year = person.get('death_year', None)
                 bio = person.get('bio', '')
-                created_at = person.get('created_at', datetime.utcnow())
+                created_at = person.get('created_at', datetime.now(timezone.utc))
                 openlibrary_id = person.get('openlibrary_id', None)
                 birth_place = person.get('birth_place', None)
                 website = person.get('website', None)
@@ -344,7 +344,7 @@ class KuzuPersonRepository:
                 birth_year = getattr(person, 'birth_year', None)
                 death_year = getattr(person, 'death_year', None)
                 bio = getattr(person, 'bio', '')
-                created_at = getattr(person, 'created_at', datetime.utcnow())
+                created_at = getattr(person, 'created_at', datetime.now(timezone.utc))
                 openlibrary_id = getattr(person, 'openlibrary_id', None)
                 birth_place = getattr(person, 'birth_place', None)
                 website = getattr(person, 'website', None)
@@ -413,8 +413,8 @@ class KuzuPersonRepository:
                 'website': website,
                 'openlibrary_id': openlibrary_id,
                 'image_url': image_url,
-                'created_at_str': created_at.isoformat() if hasattr(created_at, 'isoformat') else datetime.utcnow().isoformat(),
-                'updated_at_str': datetime.utcnow().isoformat()
+                'created_at_str': created_at.isoformat() if hasattr(created_at, 'isoformat') else datetime.now(timezone.utc).isoformat(),
+                'updated_at_str': datetime.now(timezone.utc).isoformat()
             }
             
             success = self.safe_manager.execute_query("""
@@ -682,8 +682,8 @@ class KuzuBookRepository:
                 'series_order': getattr(book, 'series_order', None),
                 'custom_metadata': getattr(book, 'custom_metadata', None),
                 # Use *_str variants so adapter casts to TIMESTAMP via timestamp($param)
-                'created_at_str': getattr(book, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
-                'updated_at_str': getattr(book, 'updated_at', datetime.utcnow()).isoformat() if hasattr(getattr(book, 'updated_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at_str': getattr(book, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(book, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat(),
+                'updated_at_str': getattr(book, 'updated_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(book, 'updated_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat()
             }
             
             # Create the book node first
@@ -884,8 +884,8 @@ class KuzuBookRepository:
                 'website': website,
                 'openlibrary_id': openlibrary_id,
                 'image_url': image_url,
-                'created_at_str': getattr(person, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(person, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat(),
-                'updated_at_str': datetime.utcnow().isoformat()
+                'created_at_str': getattr(person, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(person, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat(),
+                'updated_at_str': datetime.now(timezone.utc).isoformat()
             }
             # Filter out fields that don't exist in the current schema
             # birth_place and website are not in the current schema, but openlibrary_id and image_url are
@@ -1004,8 +1004,8 @@ class KuzuBookRepository:
                         'icon': '',
                         'book_count': 0,
                         'user_book_count': 0,
-                        'created_at_str': datetime.utcnow().isoformat(),
-                        'updated_at_str': datetime.utcnow().isoformat()
+                        'created_at_str': datetime.now(timezone.utc).isoformat(),
+                        'updated_at_str': datetime.now(timezone.utc).isoformat()
                     }
                     created = self.db.create_node('Category', category_data)
                     if not created:
@@ -1112,8 +1112,8 @@ class KuzuBookRepository:
                 'icon': '',
                 'book_count': 0,
                 'user_book_count': 0,
-                'created_at_str': datetime.utcnow().isoformat(),
-                'updated_at_str': datetime.utcnow().isoformat()
+                'created_at_str': datetime.now(timezone.utc).isoformat(),
+                'updated_at_str': datetime.now(timezone.utc).isoformat()
             }
             # Note: parent_id and aliases are not included as they need special handling
             
@@ -1188,7 +1188,7 @@ class KuzuBookRepository:
                 'name': publisher_name,
                 'country': publisher_country or '',
                 'founded_year': publisher_founded,
-                'created_at_str': datetime.utcnow().isoformat()
+                'created_at_str': datetime.now(timezone.utc).isoformat()
             }
             # Note: Filtering out updated_at as it doesn't exist in DB schema
             
@@ -1590,7 +1590,7 @@ class KuzuUserBookRepository:
                 'reading_status': str(reading_status),
                 'ownership_status': str(ownership_status),
                 'media_type': str(media_type),
-                'date_added': datetime.utcnow().isoformat(),  # Always use current time as ISO string
+                'date_added': datetime.now(timezone.utc).isoformat(),  # Always use current time as ISO string
                 'source': str('manual'),
                 'personal_notes': str(notes or ''),
                 'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
@@ -1686,7 +1686,7 @@ class KuzuUserBookRepository:
             
             # Ensure date_added is a proper datetime object
             if date_added is None:
-                final_date_added = datetime.utcnow()
+                final_date_added = datetime.now(timezone.utc)
             elif isinstance(date_added, datetime):
                 final_date_added = date_added
             elif isinstance(date_added, str):
@@ -1694,16 +1694,16 @@ class KuzuUserBookRepository:
                     # Try to parse ISO format string
                     final_date_added = datetime.fromisoformat(date_added.replace('Z', '+00:00'))
                 except ValueError:
-                    final_date_added = datetime.utcnow()
+                    final_date_added = datetime.now(timezone.utc)
             elif isinstance(date_added, (int, float)):
                 try:
                     # Try to parse as timestamp
                     final_date_added = datetime.fromtimestamp(date_added)
                 except (ValueError, OSError):
-                    final_date_added = datetime.utcnow()
+                    final_date_added = datetime.now(timezone.utc)
             else:
                 # Fallback to current time for any other type
-                final_date_added = datetime.utcnow()
+                final_date_added = datetime.now(timezone.utc)
             
             # Ensure all properties are the correct types
             owns_props = {
@@ -1926,7 +1926,7 @@ class KuzuLocationRepository:
                 'description': getattr(location, 'description', ''),
                 'location_type': getattr(location, 'location_type', 'room'),
                 'is_default': getattr(location, 'is_default', False),
-                'created_at': getattr(location, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(location, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at': getattr(location, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(location, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat()
             }
             
             success = self.db.create_node('Location', location_data)
@@ -2056,8 +2056,8 @@ class KuzuCategoryRepository:
                 'aliases': getattr(category, 'aliases', []),
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
-                'created_at': getattr(category, 'created_at', datetime.utcnow()),
-                'updated_at': getattr(category, 'updated_at', datetime.utcnow())
+                'created_at': getattr(category, 'created_at', datetime.now(timezone.utc)),
+                'updated_at': getattr(category, 'updated_at', datetime.now(timezone.utc))
             }
             # Note: parent_id and aliases need special handling
             
@@ -2078,8 +2078,8 @@ class KuzuCategoryRepository:
                     aliases=getattr(category, 'aliases', []),
                     book_count=getattr(category, 'book_count', 0),
                     user_book_count=getattr(category, 'user_book_count', 0),
-                    created_at=getattr(category, 'created_at', datetime.utcnow()),
-                    updated_at=getattr(category, 'updated_at', datetime.utcnow())
+                    created_at=getattr(category, 'created_at', datetime.now(timezone.utc)),
+                    updated_at=getattr(category, 'updated_at', datetime.now(timezone.utc))
                 )
                 return created_category
             else:
@@ -2181,7 +2181,7 @@ class KuzuCategoryRepository:
                 'color': getattr(category, 'color', ''),
                 'icon': getattr(category, 'icon', ''),
                 'aliases': getattr(category, 'aliases', []),
-                'updated_at': datetime.utcnow()  # KuzuDB requires datetime objects for TIMESTAMP fields
+                'updated_at': datetime.now(timezone.utc)  # KuzuDB requires datetime objects for TIMESTAMP fields
             }
             
             # Update using Kuzu query
@@ -2254,7 +2254,7 @@ class KuzuCustomFieldRepository:
                 'is_global': getattr(field_def, 'is_global', False),
                 'default_value': getattr(field_def, 'default_value', ''),
                 'usage_count': getattr(field_def, 'usage_count', 0),
-                'created_at': getattr(field_def, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(field_def, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at': getattr(field_def, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(field_def, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat()
             }
             
             # Convert enum to string if needed
@@ -2314,7 +2314,7 @@ class KuzuCustomFieldRepository:
                 'display_name': getattr(field_def, 'display_name', ''),
                 'description': getattr(field_def, 'description', ''),
                 'is_shareable': getattr(field_def, 'is_shareable', False),
-                'updated_at': datetime.utcnow().isoformat()
+                'updated_at': datetime.now(timezone.utc).isoformat()
             }
             
             success = self.db.update_node('CustomField', field_id, field_data)
@@ -2469,7 +2469,7 @@ class KuzuImportMappingRepository:
                 'field_mappings': getattr(template, 'field_mappings', ''),
                 'sample_headers': getattr(template, 'sample_headers', ''),
                 'usage_count': getattr(template, 'usage_count', 0),
-                'created_at': getattr(template, 'created_at', datetime.utcnow()).isoformat() if hasattr(getattr(template, 'created_at', datetime.utcnow()), 'isoformat') else datetime.utcnow().isoformat()
+                'created_at': getattr(template, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(template, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat()
             }
             
             success = self.db.create_node('ImportMapping', template_data)
@@ -2524,7 +2524,7 @@ class KuzuImportMappingRepository:
                 'name': getattr(template, 'name', ''),
                 'description': getattr(template, 'description', ''),
                 'field_mappings': getattr(template, 'field_mappings', ''),
-                'updated_at': datetime.utcnow().isoformat()
+                'updated_at': datetime.now(timezone.utc).isoformat()
             }
             
             success = self.db.update_node('ImportMapping', template_id, template_data)
@@ -2613,7 +2613,7 @@ class KuzuImportMappingRepository:
             """
             self.db.query(query, {
                 "template_id": template_id,
-                "updated_at": datetime.utcnow().isoformat()
+                "updated_at": datetime.now(timezone.utc).isoformat()
             })
         except Exception as e:
             logger.warning(f"Could not increment usage count for template {template_id}: {e}")

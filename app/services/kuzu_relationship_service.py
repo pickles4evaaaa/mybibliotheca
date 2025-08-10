@@ -11,7 +11,7 @@ improved thread safety and connection management.
 import json
 import traceback
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from ..domain.models import Book, UserBookRelationship, ReadingStatus, OwnershipStatus, Person, BookContribution, ContributionType
 from ..infrastructure.kuzu_repositories import KuzuUserRepository
@@ -390,11 +390,11 @@ class KuzuRelationshipService:
                 else:
                     storage_updates[k] = v
             # Always bump updated_at
-            storage_updates['updated_at'] = datetime.utcnow()
+            storage_updates['updated_at'] = datetime.now(timezone.utc)
             # Prepare SET clauses
             set_parts = []
             # Provide a creation timestamp param for ON CREATE to avoid unsupported DB functions
-            params = {'user_id': user_id, 'book_id': book_id, 'date_added': datetime.utcnow()}
+            params = {'user_id': user_id, 'book_id': book_id, 'date_added': datetime.now(timezone.utc)}
             for key, value in storage_updates.items():
                 set_parts.append(f"owns.{key} = ${key}")
                 params[key] = value

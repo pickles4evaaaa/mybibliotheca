@@ -25,7 +25,7 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import pytz
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .advanced_migration_system import AdvancedMigrationSystem, DatabaseVersion
 from .routes.import_routes import store_job_in_kuzu, start_import_job, auto_create_custom_fields, update_job_in_kuzu
@@ -2049,7 +2049,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             'success': 0,
             'errors': 0,
             'total': 0,
-            'start_time': datetime.utcnow().isoformat(),
+            'start_time': datetime.now(timezone.utc).isoformat(),
             'current_book': None,
             'error_messages': [],
             'recent_activity': []

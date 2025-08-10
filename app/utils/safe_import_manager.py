@@ -125,7 +125,7 @@ class SafeImportJobManager:
             
             # Update the job data
             user_jobs[task_id].update(updates)
-            user_jobs[task_id]['updated_at'] = datetime.utcnow().isoformat()
+            user_jobs[task_id]['updated_at'] = datetime.now(timezone.utc).isoformat()
             
             # Update statistics based on status change
             if 'status' in updates:

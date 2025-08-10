@@ -12,7 +12,7 @@ import logging
 import uuid
 import traceback
 from typing import Optional, Dict, Any, List, Union
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -1027,9 +1027,9 @@ class KuzuGraphStorage:
             # Add metadata
             serialized_data['id'] = node_id
             if not serialized_data.get('created_at'):
-                serialized_data['created_at'] = datetime.utcnow()
+                serialized_data['created_at'] = datetime.now(timezone.utc)
             if not serialized_data.get('updated_at'):
-                serialized_data['updated_at'] = datetime.utcnow()
+                serialized_data['updated_at'] = datetime.now(timezone.utc)
             
             # Print debug info after ensuring datetime
             for ts_field in ['created_at', 'updated_at']:
@@ -1130,7 +1130,7 @@ class KuzuGraphStorage:
                     pass
             serialized_updates = self._serialize_datetime_values(updates)
             # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
-            serialized_updates['updated_at'] = datetime.utcnow()
+            serialized_updates['updated_at'] = datetime.now(timezone.utc)
             
             print(f"🔧 [UPDATE_NODE] Serialized updates: {serialized_updates}")
             
@@ -1296,14 +1296,14 @@ class KuzuGraphStorage:
             
             # Ensure created_at is set as datetime object (not ISO string)
             if 'created_at' not in processed_props:
-                processed_props['created_at'] = datetime.utcnow()
+                processed_props['created_at'] = datetime.now(timezone.utc)
             elif isinstance(processed_props['created_at'], str):
                 try:
                     if processed_props['created_at'].endswith('Z'):
                         processed_props['created_at'] = processed_props['created_at'][:-1] + '+00:00'
                     processed_props['created_at'] = datetime.fromisoformat(processed_props['created_at'])
                 except (ValueError, TypeError):
-                    processed_props['created_at'] = datetime.utcnow()
+                    processed_props['created_at'] = datetime.now(timezone.utc)
             
             # Build properties clause
             if processed_props:
@@ -1510,7 +1510,7 @@ class KuzuGraphStorage:
                         'book_id': book_id,
                         'field_name': field_name,
                         'field_value': field_value,
-                        'created_at': datetime.utcnow().isoformat()
+                        'created_at': datetime.now(timezone.utc).isoformat()
                     }
                     
                     success = self.create_relationship(
@@ -1537,7 +1537,7 @@ class KuzuGraphStorage:
                         "field_id": field_definition_id,
                         "book_id": book_id,
                         "field_value": field_value,
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.now(timezone.utc)
                     })
                     
             else:

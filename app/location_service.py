@@ -9,7 +9,7 @@ The system uses proper graph relationships, not properties on nodes.
 
 from typing import List, Optional, Dict, Any, Set
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from dataclasses import asdict
 import os as _os_for_import_verbosity
@@ -194,8 +194,8 @@ class LocationService:
             address=address,
             is_default=is_default,
             is_active=True,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
         
         # Store in KuzuDB without any user association
@@ -260,8 +260,8 @@ class LocationService:
             address=location_data.get('address') or '',
             is_default=location_data.get('is_default', False),
             is_active=location_data.get('is_active', True),
-            created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
-            updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
+            created_at=_ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc),
+            updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc)
         )
         print(f"DEBUG: Created location: {location}")
         return location
@@ -296,8 +296,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
-                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc)
             )
             locations.append(location)
         
@@ -330,8 +330,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
-                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc)
             )
             locations.append(location)
         
@@ -370,7 +370,7 @@ class LocationService:
         if set_clauses:
             set_clauses.append("l.updated_at = $updated_at")
             # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
-            params["updated_at"] = datetime.utcnow()
+            params["updated_at"] = datetime.now(timezone.utc)
             
             update_query = f"""
             MATCH (l:Location) 
@@ -425,8 +425,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
-                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc)
             )
             return location
         
@@ -453,8 +453,8 @@ class LocationService:
                 address=location_data.get('address'),
                 is_default=location_data['is_default'],
                 is_active=location_data.get('is_active', True),
-                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
-                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
+                created_at=_ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc),
+                updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc)
             )
             print(f"🏠 [GET_DEFAULT] No default found, using first available location: '{location.name}' (ID: {location.id})")
             return location
@@ -621,7 +621,7 @@ class LocationService:
             safe_execute_kuzu_query(create_query, {
                 "book_id": book_id,
                 "location_id": location_id,
-                "created_at": datetime.utcnow()
+                "created_at": datetime.now(timezone.utc)
             }, operation="add_book_to_location")
             
             debug_log(f"✅ Book {book_id} added to location {location_id} for user {user_id}", "LOCATION")
@@ -696,8 +696,8 @@ class LocationService:
                     address=location_data.get('address'),
                     is_default=location_data['is_default'],
                     is_active=True,
-                    created_at=_ensure_datetime(location_data.get('created_at')) or datetime.utcnow(),
-                    updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.utcnow()
+                    created_at=_ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc),
+                    updated_at=_ensure_datetime(location_data.get('updated_at')) or _ensure_datetime(location_data.get('created_at')) or datetime.now(timezone.utc)
                 )
                 locations.append(location)
                 

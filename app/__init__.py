@@ -9,7 +9,7 @@ import sys
 import time
 import atexit
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
 from flask_login import LoginManager
@@ -200,8 +200,8 @@ def _initialize_default_templates():
                     },
                     times_used=0,
                     last_used=None,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc)
                 )
                 
                 # Attempt to create template with error tracking
@@ -268,8 +268,8 @@ def _initialize_default_templates():
                     },
                     times_used=0,
                     last_used=None,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc)
                 )
                 
                 # Attempt to create template with error tracking

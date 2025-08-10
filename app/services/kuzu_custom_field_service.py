@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .kuzu_async_helper import run_async
@@ -296,8 +296,8 @@ class KuzuCustomFieldService:
                 return existing_field
             
             # Field doesn't exist, create new one
-            field_id = f"field_{datetime.utcnow().timestamp()}"
-            current_time = datetime.utcnow()
+            field_id = f"field_{datetime.now(timezone.utc).timestamp()}"
+            current_time = datetime.now(timezone.utc)
             
             # Validate field type
             valid_types = ['text', 'textarea', 'number', 'date', 'boolean', 'rating_5', 'rating_10', 'tags']
@@ -423,7 +423,7 @@ class KuzuCustomFieldService:
                 merged_global_metadata = existing_global_metadata.copy()
                 merged_global_metadata.update(global_metadata)
                 
-                current_time = datetime.utcnow()
+                current_time = datetime.now(timezone.utc)
                 
                 if existing_global_results and len(existing_global_results) > 0:
                     # Update existing global metadata
@@ -517,7 +517,7 @@ class KuzuCustomFieldService:
                 merged_personal_metadata = existing_personal_metadata.copy()
                 merged_personal_metadata.update(personal_metadata)
                 
-                current_time = datetime.utcnow()
+                current_time = datetime.now(timezone.utc)
                 
                 if existing_results and len(existing_results) > 0:
                     # Update existing relationship
@@ -892,7 +892,7 @@ class KuzuCustomFieldService:
             if field.get('created_by_user_id') != user_id:
                 return None
             
-            current_time = datetime.utcnow()
+            current_time = datetime.now(timezone.utc)
             
             # Update field definition
             query = """

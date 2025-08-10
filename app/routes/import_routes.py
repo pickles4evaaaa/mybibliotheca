@@ -6,7 +6,7 @@ Handles book import functionality including CSV processing, progress tracking, a
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, make_response, session
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
-from datetime import datetime
+from datetime import datetime, date, timedelta, timezone
 from typing import List, Any
 import uuid
 import os
@@ -880,7 +880,7 @@ def import_books_execute():
                             field_type=field_type_enum,
                             is_global=is_global,
                             created_by_user_id=current_user.id,
-                            created_at=datetime.utcnow(),
+                            created_at=datetime.now(timezone.utc),
                             description=f'Created during CSV import for column "{csv_field}"'
                         )
                         
@@ -937,10 +937,10 @@ def import_books_execute():
         'processed': 0,
         'success': 0,
         'errors': 0,
-        'skipped': 0,  # Initialize skipped counter
-        'total': 0,
-        'start_time': datetime.utcnow().isoformat(),
-        'current_book': None,
+    'skipped': 0,  # Initialize skipped counter
+    'total': 0,
+    'start_time': datetime.now(timezone.utc).isoformat(),
+    'current_book': None,
         'error_messages': [],
         'recent_activity': []
     }
@@ -1196,7 +1196,7 @@ def direct_import():
             'errors': 0,
             'skipped': 0,
             'total': total_rows,
-            'start_time': datetime.utcnow().isoformat(),
+            'start_time': datetime.now(timezone.utc).isoformat(),
             'current_book': None,
             'error_messages': [],
             'recent_activity': []
@@ -1425,7 +1425,7 @@ def upload_import():
             'errors': 0,
             'skipped': 0,
             'total': 0,
-            'start_time': datetime.utcnow().isoformat(),
+            'start_time': datetime.now(timezone.utc).isoformat(),
             'current_book': None,
             'error_messages': [],
             'recent_activity': []
@@ -1556,7 +1556,7 @@ def simple_import():
             'errors': 0,
             'skipped': 0,
             'total': 0,
-            'start_time': datetime.utcnow().isoformat(),
+            'start_time': datetime.now(timezone.utc).isoformat(),
             'current_book': None,
             'error_messages': [],
             'recent_activity': []
@@ -2801,7 +2801,7 @@ def import_reading_history_execute():
             'errors': 0,
             'skipped': 0,
             'total': 0,
-            'start_time': datetime.utcnow().isoformat(),
+            'start_time': datetime.now(timezone.utc).isoformat(),
             'current_book': None,
             'error_messages': [],
             'recent_activity': []
@@ -3649,8 +3649,8 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             pages_read=entry.get('pages_read', 0),
                             minutes_read=entry.get('minutes_read', 0),
                             notes=None,
-                            created_at=datetime.utcnow(),
-                            updated_at=datetime.utcnow()
+                            created_at=datetime.now(timezone.utc),
+                            updated_at=datetime.now(timezone.utc)
                         )
                         
                         created_log = reading_log_service.create_reading_log_sync(reading_log)
@@ -3746,8 +3746,8 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             pages_read=entry.get('pages_read', 0),
                             minutes_read=entry.get('minutes_read', 0),
                             notes=f"Original book name: {csv_name}",  # Store original book name in notes
-                            created_at=datetime.utcnow(),
-                            updated_at=datetime.utcnow()
+                            created_at=datetime.now(timezone.utc),
+                            updated_at=datetime.now(timezone.utc)
                         )
                         
                         created_log = reading_log_service.create_reading_log_sync(reading_log)
