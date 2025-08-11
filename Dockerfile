@@ -99,4 +99,4 @@ ENV WORKERS=1
 # Use sync worker class and force single threaded operation for KuzuDB
 # Preload application to avoid multiple KuzuDB initialization attempts
 # Default: disable access logs to keep container output quiet; errors still go to stderr
-CMD ["gunicorn", "--worker-class", "sync", "--no-sendfile", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5054", "--timeout", "300", "--graceful-timeout", "300", "--error-logfile", "-", "--access-logfile", "-", "--log-level", "debug", "--capture-output", "--max-requests", "1000", "--max-requests-jitter", "100", "run:app"]
+CMD ["gunicorn", "--worker-class", "sync", "--no-sendfile", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5054", "--timeout", "300", "--graceful-timeout", "300", "--error-logfile", "-", "--access-logfile", "-", "--max-requests", "1000", "--max-requests-jitter", "100", "run:app"]

@@ -32,9 +32,20 @@ def _convert_query_result_to_list(result):
         # Fallback to empty list if conversion fails
         return []
 
+def _get_root_env_path() -> str:
+    """Resolve the project root .env path regardless of CWD or Docker paths."""
+    try:
+        # current_app.root_path points to .../app; parent is project root
+        root_dir = Path(current_app.root_path).parent
+    except Exception:
+        # Fallback to this file's parent directory's parent
+        root_dir = Path(__file__).resolve().parents[1]
+    return str(root_dir / '.env')
+
+
 def load_ai_config():
-    """Load AI configuration from .env file in data directory"""
-    env_path = os.path.join(current_app.config.get('DATA_DIR', 'data'), '.env')
+    """Load AI configuration from the project root .env file"""
+    env_path = _get_root_env_path()
     config = {}
     
     if os.path.exists(env_path):
@@ -160,50 +171,58 @@ def load_system_config():
     }
 
 def save_ai_config(config):
-    """Save AI configuration to .env file in data directory"""
-    env_path = os.path.join(current_app.config.get('DATA_DIR', 'data'), '.env')
-    
+    """Safely update AI configuration keys in the project root .env without clobbering other values"""
+    env_path = _get_root_env_path()
+    ai_keys = [
+        'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL',
+        'OLLAMA_BASE_URL', 'OLLAMA_MODEL',
+        'AI_PROVIDER', 'AI_TIMEOUT', 'AI_MAX_TOKENS', 'AI_TEMPERATURE',
+        'AI_BOOK_EXTRACTION_ENABLED', 'AI_BOOK_EXTRACTION_AUTO_SEARCH'
+    ]
     try:
-        # Ensure data directory exists
+        # Ensure parent directory exists
         os.makedirs(os.path.dirname(env_path), exist_ok=True)
-        
-        # Read existing content to preserve comments
+
         existing_lines = []
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 existing_lines = f.readlines()
-        
-        # Build new content
-        lines = ['# AI Configuration for MyBibliotheca\n',
-                '# This file stores API keys and configuration for AI book extraction features\n',
-                '# Keep this file secure and do not commit to version control\n\n']
-        
-        # Add configuration sections
-        lines.append('# OpenAI Configuration\n')
-        lines.append(f"OPENAI_API_KEY={config.get('OPENAI_API_KEY', '')}\n")
-        lines.append(f"OPENAI_BASE_URL={config.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')}\n")
-        lines.append(f"OPENAI_MODEL={config.get('OPENAI_MODEL', 'gpt-4o')}\n\n")
-        
-        lines.append('# Ollama Configuration (Local AI)\n')
-        lines.append(f"OLLAMA_BASE_URL={config.get('OLLAMA_BASE_URL', 'http://localhost:11434')}\n")
-        lines.append(f"OLLAMA_MODEL={config.get('OLLAMA_MODEL', 'llama3.2-vision:11b')}\n\n")
-        
-        lines.append('# AI Processing Settings\n')
-        lines.append(f"AI_PROVIDER={config.get('AI_PROVIDER', 'openai')}\n")
-        lines.append(f"AI_TIMEOUT={config.get('AI_TIMEOUT', '30')}\n")
-        lines.append(f"AI_MAX_TOKENS={config.get('AI_MAX_TOKENS', '1000')}\n")
-        lines.append(f"AI_TEMPERATURE={config.get('AI_TEMPERATURE', '0.1')}\n\n")
-        
-        lines.append('# Feature Flags\n')
-        lines.append(f"AI_BOOK_EXTRACTION_ENABLED={config.get('AI_BOOK_EXTRACTION_ENABLED', 'false')}\n")
-        lines.append(f"AI_BOOK_EXTRACTION_AUTO_SEARCH={config.get('AI_BOOK_EXTRACTION_AUTO_SEARCH', 'true')}\n")
-        
+
+        # Track which keys we've updated
+        updated = {k: False for k in ai_keys}
+        new_lines = []
+
+        # Replace existing AI key lines in-place, preserve others verbatim
+        for line in existing_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#') or '=' not in stripped:
+                new_lines.append(line)
+                continue
+            key, _sep, _val = stripped.partition('=')
+            key = key.strip()
+            if key in updated:
+                value = str(config.get(key, '')).strip()
+                new_lines.append(f"{key}={value}\n")
+                updated[key] = True
+            else:
+                new_lines.append(line)
+
+        # Append any missing AI keys at the end with a tiny header if needed
+        missing = [k for k, done in updated.items() if not done]
+        if missing:
+            new_lines.append('\n# AI Configuration (managed by Admin UI)\n')
+            for key in missing:
+                value = str(config.get(key, '')).strip()
+                new_lines.append(f"{key}={value}\n")
+
         with open(env_path, 'w') as f:
-            f.writelines(lines)
-        
+            f.writelines(new_lines)
         return True
     except Exception as e:
-        current_app.logger.error(f"Error saving AI config: {e}")
+        try:
+            current_app.logger.error(f"Error saving AI config: {e}")
+        except Exception:
+            print(f"Error saving AI config: {e}")
         return False
 
 def admin_required(f):

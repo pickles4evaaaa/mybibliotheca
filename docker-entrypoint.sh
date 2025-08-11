@@ -134,6 +134,11 @@ echo "  - Data directory size: $(du -sh /app/data 2>/dev/null || echo 'N/A')"
 echo "  - KuzuDB directory size: $(du -sh $KUZU_DB_PATH 2>/dev/null || echo 'N/A')"
 echo "  - Process ID: $$"
 
+# Configure logging level for Gunicorn from LOG_LEVEL env (default ERROR)
+LOG_LEVEL_NORMALIZED=$(echo "${LOG_LEVEL:-ERROR}" | tr '[:upper:]' '[:lower:]')
+export GUNICORN_CMD_ARGS="${GUNICORN_CMD_ARGS} --log-level ${LOG_LEVEL_NORMALIZED}"
+
 # Execute the main command with visibility
+echo "🪵 Log level: ${LOG_LEVEL_NORMALIZED} (set via LOG_LEVEL env)"
 echo "🔧 Executing: $@"
 exec "$@"

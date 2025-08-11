@@ -312,6 +312,7 @@ def _initialize_default_templates():
 
 def create_app():
     import os
+    import logging
     
     # Ensure static folder exists and is correctly configured
     static_folder = os.path.join(os.path.dirname(__file__), 'static')
@@ -321,6 +322,16 @@ def create_app():
     # Disable Flask's default static file handling completely
     app = Flask(__name__, static_folder=None, static_url_path=None)
     app.config.from_object(Config)
+    
+    # Configure Python logging level from LOG_LEVEL env (default ERROR)
+    try:
+        log_level_name = os.getenv('LOG_LEVEL', 'ERROR').upper()
+        log_level = getattr(logging, log_level_name, logging.ERROR)
+        logging.getLogger().setLevel(log_level)
+        # Also set Flask app logger level
+        app.logger.setLevel(log_level)
+    except Exception:
+        pass
     
     # Explicitly set the secret key for Flask-Session compatibility
     # Must be set before Flask-Session initialization
@@ -949,11 +960,12 @@ def create_app():
             return app_wsgi(environ, _sr)
         return _wrapped
 
-    # Install WSGI logger once
-    if not getattr(app, '_wsgi_logger_installed', False):
+    # Install WSGI logger only when explicitly enabled
+    _enable_req_log = os.getenv('MYBIBLIOTHECA_REQUEST_LOG', 'false').lower() == 'true'
+    if _enable_req_log and not getattr(app, '_wsgi_logger_installed', False):
         app.wsgi_app = _wsgi_log_wrapper(app.wsgi_app)
         app._wsgi_logger_installed = True  # type: ignore
-        print("[APP] WSGI request logger installed")
+        print("[APP] WSGI request logger installed (MYBIBLIOTHECA_REQUEST_LOG=true)")
 
     # Readiness probe on first request with very visible stdout logs
     @app.before_first_request
