@@ -21,6 +21,15 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
+# Logging controls
+_QUERY_LOG_ENABLED = os.getenv('KUZU_QUERY_LOG', 'false').lower() in ('1', 'true', 'on', 'yes')
+try:
+    _SLOW_QUERY_MS = int(os.getenv('KUZU_SLOW_QUERY_MS', '150'))
+except Exception:
+    _SLOW_QUERY_MS = 150
+_VERBOSE_INIT = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() in ('1', 'true', 'on', 'yes') or \
+                os.getenv('KUZU_DEBUG', 'false').lower() in ('1', 'true', 'on', 'yes')
+
 
 class SafeKuzuManager:
     """
@@ -57,6 +66,12 @@ class SafeKuzuManager:
         self._lock_wait_times: List[float] = []
         
         logger.info(f"SafeKuzuManager initialized for database: {self.database_path}")
+        # Track creating PID to detect forks
+        try:
+            import os as _os
+            self._creator_pid = _os.getpid()
+        except Exception:
+            self._creator_pid = None
     
     def _get_thread_info(self) -> Dict[str, Any]:
         """Get current thread information for tracking."""
@@ -75,12 +90,40 @@ class SafeKuzuManager:
         This method is called only once, protected by locks to prevent
         race conditions during initialization.
         """
+        # Detect process fork: if PID changed, reset state
+        try:
+            import os as _os
+            current_pid = _os.getpid()
+            if hasattr(self, "_creator_pid") and self._creator_pid and self._creator_pid != current_pid:
+                # Reset all state in child process before initializing
+                self._database = None
+                self._is_initialized = False
+                self._active_connections.clear()
+                self._connection_count = 0
+                self._total_connections_created = 0
+                self._last_access_time = None
+                self._initialization_time = None
+                self._lock_wait_times.clear()
+                self._creator_pid = current_pid
+                try:
+                    print(f"[KUZU] ♻️ Detected fork; resetting manager state in pid {current_pid}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         if self._is_initialized:
             return
             
         start_time = time.time()
         thread_info = self._get_thread_info()
         
+        # Visible stdout only when verbose init is enabled
+        if _VERBOSE_INIT:
+            try:
+                print(f"[KUZU] ⏳ Initializing database at {self.database_path} (thread {thread_info['thread_id']})")
+            except Exception:
+                pass
         logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                    f"Initializing KuzuDB database...")
         
@@ -94,6 +137,11 @@ class SafeKuzuManager:
             # CRITICAL FIX: Initialize the database schema
             logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                        f"Initializing database schema...")
+            if _VERBOSE_INIT:
+                try:
+                    print("[KUZU] 🧩 Ensuring schema ...")
+                except Exception:
+                    pass
             self._initialize_schema()
             
             self._is_initialized = True
@@ -102,12 +150,22 @@ class SafeKuzuManager:
             initialization_duration = time.time() - start_time
             logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                        f"KuzuDB database initialized successfully in {initialization_duration:.3f}s")
+            if _VERBOSE_INIT:
+                try:
+                    print(f"[KUZU] ✅ Database ready in {initialization_duration:.2f}s")
+                except Exception:
+                    pass
             
         except Exception as e:
             logger.error(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                         f"Failed to initialize KuzuDB database: {e}")
             self._is_initialized = False
             self._database = None
+            if _VERBOSE_INIT:
+                try:
+                    print(f"[KUZU] ❌ Initialization error: {e}")
+                except Exception:
+                    pass
             raise
     
     @contextmanager
@@ -246,8 +304,23 @@ class SafeKuzuManager:
         Returns:
             Query result
         """
+        # Visible probe logs gated by env var
+        if _QUERY_LOG_ENABLED:
+            try:
+                q_snippet = ' '.join(query.splitlines())[:120].strip()
+                print(f"[KUZU] ▶ execute_query op='{operation}' q='{q_snippet}'")
+            except Exception:
+                pass
         with self.get_connection(user_id=user_id, operation=operation) as conn:
+            t0 = time.time()
             result = conn.execute(query, params or {})
+            dt = time.time() - t0
+            # Log completion if query logging is enabled or the query is slow
+            if _QUERY_LOG_ENABLED or (dt * 1000) >= _SLOW_QUERY_MS:
+                try:
+                    print(f"[KUZU] ◀ execute_query done in {dt:.2f}s")
+                except Exception:
+                    pass
             
             # Handle both single QueryResult and list[QueryResult]
             if isinstance(result, list):

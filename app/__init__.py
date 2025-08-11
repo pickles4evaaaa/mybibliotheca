@@ -931,4 +931,68 @@ def create_app():
     if debug_mode:
         logger.debug("Signal handlers registered for SIGTERM/SIGINT - KuzuDB persistence fixed!")
 
+    # Ultra-visibility WSGI request logger to stdout
+    def _wsgi_log_wrapper(app_wsgi):
+        def _wrapped(environ, start_response):
+            _path = environ.get('PATH_INFO', '-')
+            _method = environ.get('REQUEST_METHOD', '-')
+            try:
+                print(f"[WSGI] ▶ {_method} {_path}")
+            except Exception:
+                pass
+            def _sr(status, headers, exc_info=None):
+                try:
+                    print(f"[WSGI] ◀ {status} for {_method} {_path}")
+                except Exception:
+                    pass
+                return start_response(status, headers, exc_info)
+            return app_wsgi(environ, _sr)
+        return _wrapped
+
+    # Install WSGI logger once
+    if not getattr(app, '_wsgi_logger_installed', False):
+        app.wsgi_app = _wsgi_log_wrapper(app.wsgi_app)
+        app._wsgi_logger_installed = True  # type: ignore
+        print("[APP] WSGI request logger installed")
+
+    # Readiness probe on first request with very visible stdout logs
+    @app.before_first_request
+    def _log_startup_and_check_db():
+        verbose_probe = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
+        if verbose_probe:
+            print("[APP] before_first_request: starting readiness checks ...")
+        try:
+            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
+            if verbose_probe:
+                print("[APP] before_first_request: acquired get_safe_kuzu_manager")
+            mgr = get_safe_kuzu_manager()
+            if verbose_probe:
+                print("[APP] before_first_request: executing RETURN 1 as ok ...")
+            # Run the readiness query with a timeout so first request never hangs
+            import concurrent.futures
+            start_ts = time.time()
+            def _run_probe():
+                return mgr.execute_query("RETURN 1 as ok")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                future = _pool.submit(_run_probe)
+                try:
+                    res = future.result(timeout=10)
+                    if verbose_probe:
+                        print("[APP] before_first_request: query executed, parsing result ...")
+                    ok_val = None
+                    if res and hasattr(res, 'has_next') and res.has_next():
+                        row = res.get_next()
+                        ok_val = row[0] if isinstance(row, (list, tuple)) else list(row)[0]
+                    elapsed = time.time() - start_ts
+                    if verbose_probe:
+                        print(f"[APP] before_first_request: Readiness DB check returned: {ok_val} in {elapsed:.2f}s")
+                except concurrent.futures.TimeoutError:
+                    elapsed = time.time() - start_ts
+                    if verbose_probe:
+                        print(f"[APP] before_first_request: Readiness DB check timed out after {elapsed:.2f}s — continuing without blocking")
+        except Exception as e:
+            if verbose_probe:
+                print(f"[APP] before_first_request: Readiness DB check failed: {e}")
+
+    print("[APP] Flask app factory completed; application is ready to serve.")
     return app

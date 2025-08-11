@@ -29,10 +29,22 @@ def index():
     """Main index route - redirect to library for authenticated users, login for others"""
     from flask_login import current_user
     from flask import redirect, url_for
+    try:
+        print("[ROUTE] Enter main.index")
+    except Exception:
+        pass
     
     if current_user.is_authenticated:
+        try:
+            print("[ROUTE] main.index: authenticated -> redirect book.library")
+        except Exception:
+            pass
         return redirect(url_for('book.library'))
     else:
+        try:
+            print("[ROUTE] main.index: anonymous -> redirect auth.login")
+        except Exception:
+            pass
         return redirect(url_for('auth.login'))
 
 @main_bp.route('/api/user/books')

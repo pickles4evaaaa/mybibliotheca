@@ -57,10 +57,18 @@ class KuzuCustomFieldService:
     """Service for managing custom metadata fields in KuzuDB."""
     
     def __init__(self):
-        self._ensure_custom_field_tables()
+        # Defer heavy DDL to avoid duplicate schema execution during import/fork
+        self._ddl_ensured = False
+        try:
+            self._ensure_custom_field_tables()
+        except Exception:
+            # If startup path hits locks, we'll retry on first actual use
+            self._ddl_ensured = False
     
     def _ensure_custom_field_tables(self):
         """Ensure custom field tables exist in KuzuDB."""
+        if getattr(self, "_ddl_ensured", False):
+            return
         try:
             # CustomField table for field definitions
             create_table_query = """
@@ -154,9 +162,11 @@ class KuzuCustomFieldService:
                 else:
                     raise e
                 
+            # Mark ensured to avoid re-running on every import
+            self._ddl_ensured = True
         except Exception as e:
-            # Tables might already exist, continue
-            pass
+            # Tables might already exist or DB unavailable; leave flag false to retry later
+            self._ddl_ensured = False
     
     def get_custom_metadata_for_display(self, custom_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Convert custom metadata to display format."""

@@ -10,9 +10,22 @@ from .forms import (LoginForm, RegistrationForm, UserProfileForm, ChangePassword
                    PrivacySettingsForm, ForcedPasswordChangeForm, SetupForm, ReadingStreakForm)
 from .debug_utils import debug_route, debug_auth, debug_csrf, debug_session
 from datetime import datetime, timezone
-from typing import cast
+from typing import cast, Any
 
 auth = Blueprint('auth', __name__)
+
+def _safe_get_row_value(row: Any, index: int) -> Any:
+    """Safely extract a value from a KuzuDB row at the given index."""
+    if isinstance(row, list):
+        return row[index] if index < len(row) else None
+    elif isinstance(row, dict):
+        keys = list(row.keys())
+        return row[keys[index]] if index < len(keys) else None
+    else:
+        try:
+            return row[index]  # type: ignore
+        except (IndexError, KeyError, TypeError):
+            return None
 
 @auth.route('/setup', methods=['GET', 'POST'])
 @debug_route('SETUP')
@@ -726,7 +739,7 @@ def debug_user_count():
             query_result = safe_manager.execute_query("MATCH (u:User) RETURN COUNT(u) as count")
             
             if query_result and hasattr(query_result, 'get_next') and query_result.has_next():
-                count3 = query_result.get_next()[0]
+                count3 = _safe_get_row_value(query_result.get_next(), 0)
                 results['direct_count'] = count3
             elif query_result and hasattr(query_result, 'get_as_df'):
                 df = query_result.get_as_df()

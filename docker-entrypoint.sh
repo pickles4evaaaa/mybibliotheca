@@ -134,5 +134,6 @@ echo "  - Data directory size: $(du -sh /app/data 2>/dev/null || echo 'N/A')"
 echo "  - KuzuDB directory size: $(du -sh $KUZU_DB_PATH 2>/dev/null || echo 'N/A')"
 echo "  - Process ID: $$"
 
-# Execute the main command
+# Execute the main command with visibility
+echo "🔧 Executing: $@"
 exec "$@"

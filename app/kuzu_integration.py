@@ -92,10 +92,7 @@ class KuzuIntegrationService:
             if self._initialized:
                 return True
             
-            # Create database connection
-            self.db = KuzuGraphDB()
-            self.db.connect()
-            
+            # Repositories handle their own safe connections, no need to store database reference
             # Create repositories (they handle their own DB connections)
             self.user_repo = KuzuUserRepository()
             self.book_repo = KuzuBookRepository()

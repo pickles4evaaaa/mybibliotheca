@@ -19,6 +19,19 @@ from ..utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager, sa
 # Set up logging
 logger = logging.getLogger(__name__)
 
+def _safe_get_row_value(row: Any, index: int) -> Any:
+    """Safely extract a value from a KuzuDB row at the given index."""
+    if isinstance(row, list):
+        return row[index] if index < len(row) else None
+    elif isinstance(row, dict):
+        keys = list(row.keys())
+        return row[keys[index]] if index < len(keys) else None
+    else:
+        try:
+            return row[index]  # type: ignore
+        except (IndexError, KeyError, TypeError):
+            return None
+
 # Compatibility adapter for repository patterns
 class KuzuRepositoryAdapter:
     """
@@ -67,7 +80,7 @@ class KuzuRepositoryAdapter:
                 # Convert row to dict format expected by services
                 if len(row) == 1:
                     # Single column result
-                    rows.append({'result': row[0]})
+                    rows.append({'result': _safe_get_row_value(row, 0)})
                 else:
                     # Multiple columns - create dict with generic column names
                     row_dict = {}
