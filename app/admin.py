@@ -4,6 +4,7 @@ Provides admin-only decorators, middleware, and management functions
 """
 
 import os
+from typing import Dict
 from functools import wraps
 from pathlib import Path
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort, current_app
@@ -44,10 +45,22 @@ def _get_root_env_path() -> str:
 
 
 def load_ai_config():
-    """Load AI configuration from the project root .env file"""
+    """Load AI configuration combining persisted JSON override and .env, with caching."""
+    import json, time
+    cache_key = '_cached_ai_config'
+    cache_ts_key = '_cached_ai_config_ts'
+    try:
+        # Quick in-process cache (5s) to avoid re-reading files on rapid requests
+        if cache_key in current_app.config and cache_ts_key in current_app.config:
+            if (time.time() - current_app.config[cache_ts_key]) < 5:
+                return current_app.config[cache_key]
+    except Exception:
+        pass
+
     env_path = _get_root_env_path()
-    config = {}
-    
+    config: Dict[str,str] = {}
+
+    # 1. Load .env base values
     if os.path.exists(env_path):
         try:
             with open(env_path, 'r') as f:
@@ -57,9 +70,32 @@ def load_ai_config():
                         key, value = line.split('=', 1)
                         config[key.strip()] = value.strip()
         except Exception as e:
-            current_app.logger.error(f"Error loading AI config: {e}")
-    
-    # Set defaults for missing values
+            try:
+                current_app.logger.error(f"Error loading AI config from .env: {e}")
+            except Exception:
+                pass
+
+    # 2. Overlay runtime-persisted JSON (data/ai_config.json) if present
+    try:
+        data_dir = current_app.config.get('DATA_DIR', 'data')
+    except Exception:
+        data_dir = 'data'
+    ai_json_path = os.path.join(data_dir, 'ai_config.json')
+    if os.path.exists(ai_json_path):
+        try:
+            with open(ai_json_path, 'r') as jf:
+                json_data = json.load(jf)
+            # Overlay keys explicitly stored
+            for k,v in json_data.items():
+                if isinstance(v, (str,int,float)):
+                    config[k] = str(v)
+        except Exception as e:
+            try:
+                current_app.logger.warning(f"Failed reading ai_config.json: {e}")
+            except Exception:
+                pass
+
+    # 3. Apply defaults for any unset keys
     defaults = {
         'OPENAI_API_KEY': '',
         'OPENAI_BASE_URL': 'https://api.openai.com/v1',
@@ -73,11 +109,16 @@ def load_ai_config():
         'AI_BOOK_EXTRACTION_ENABLED': 'false',
         'AI_BOOK_EXTRACTION_AUTO_SEARCH': 'true'
     }
-    
     for key, default_value in defaults.items():
-        if key not in config:
+        if key not in config or config[key] == '':
             config[key] = default_value
-    
+
+    # Cache result
+    try:
+        current_app.config[cache_key] = config
+        current_app.config[cache_ts_key] = time.time()
+    except Exception:
+        pass
     return config
 
 def save_system_config(config):
@@ -171,7 +212,7 @@ def load_system_config():
     }
 
 def save_ai_config(config):
-    """Safely update AI configuration keys in the project root .env without clobbering other values"""
+    """Safely update AI configuration keys: write to .env and persist overrides JSON."""
     env_path = _get_root_env_path()
     ai_keys = [
         'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL',
@@ -179,6 +220,15 @@ def save_ai_config(config):
         'AI_PROVIDER', 'AI_TIMEOUT', 'AI_MAX_TOKENS', 'AI_TEMPERATURE',
         'AI_BOOK_EXTRACTION_ENABLED', 'AI_BOOK_EXTRACTION_AUTO_SEARCH'
     ]
+    # If user provided any provider/model key and did not explicitly set extraction flag, auto-enable extraction
+    try:
+        if 'AI_BOOK_EXTRACTION_ENABLED' not in config or str(config.get('AI_BOOK_EXTRACTION_ENABLED')).strip() == '':
+            provider_keys = ['OPENAI_API_KEY','OLLAMA_MODEL','OPENAI_MODEL']
+            if any(str(config.get(k,'')).strip() for k in provider_keys):
+                # Auto-enable cover lookup / book extraction after initial configuration
+                config['AI_BOOK_EXTRACTION_ENABLED'] = 'true'
+    except Exception:
+        pass
     try:
         # Ensure parent directory exists
         os.makedirs(os.path.dirname(env_path), exist_ok=True)
@@ -217,6 +267,31 @@ def save_ai_config(config):
 
         with open(env_path, 'w') as f:
             f.writelines(new_lines)
+
+        # Persist a JSON overlay for runtime (so containerized env without committed .env still remembers UI changes)
+        try:
+            try:
+                data_dir = current_app.config.get('DATA_DIR', 'data')
+            except Exception:
+                data_dir = 'data'
+            os.makedirs(data_dir, exist_ok=True)
+            ai_json_path = os.path.join(data_dir, 'ai_config.json')
+            # Only store AI keys to keep file minimal
+            subset = {k: config.get(k, '') for k in ai_keys}
+            import json
+            with open(ai_json_path, 'w') as jf:
+                json.dump(subset, jf, indent=2)
+        except Exception as je:
+            try:
+                current_app.logger.warning(f"Failed writing ai_config.json: {je}")
+            except Exception:
+                pass
+
+        # Invalidate cache
+        try:
+            current_app.config.pop('_cached_ai_config', None)
+        except Exception:
+            pass
         return True
     except Exception as e:
         try:

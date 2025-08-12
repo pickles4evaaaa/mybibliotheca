@@ -108,7 +108,7 @@ def process_image_from_url(url: str) -> str:
 
     # Already a processed local cover path
     if url.startswith('/covers/'):
-        current_app.logger.error(f"[COVER][SKIP] Already local cover path: {url}")
+        current_app.logger.info(f"[COVER][SKIP] Already local cover path: {url}")
         return url
 
     parsed = urlparse(url)
@@ -119,7 +119,7 @@ def process_image_from_url(url: str) -> str:
         fname = parsed.path.split('/covers/')[-1]
         local_path = covers_dir / fname
         if local_path.exists():
-            current_app.logger.error(f"[COVER][SKIP] Loopback cover fetch avoided, using existing file: {local_path}")
+            current_app.logger.info(f"[COVER][SKIP] Loopback cover fetch avoided, using existing file: {local_path}")
             return f"/covers/{fname}"
         # Fall through to download if not present
 

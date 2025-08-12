@@ -161,6 +161,29 @@ def fetch_book(isbn):
             current_app.logger.debug(f"Best cover helper failed (unified path) for {isbn}: {ce}")
 
         cover_url = book_data.get('cover_url') or book_data.get('cover')
+        # If no cover yet but we have title/author, perform a lightweight title/author search to attempt cover recovery
+        if not cover_url and (book_data.get('title') and (book_data.get('author') or book_data.get('authors'))):
+            try:
+                from app.utils.metadata_aggregator import fetch_unified_by_title
+                author_for_search = book_data.get('author')
+                authors_list = book_data.get('authors')
+                if not author_for_search and isinstance(authors_list, list):
+                    str_authors = [a for a in authors_list if isinstance(a, str)]
+                    if str_authors:
+                        author_for_search = ', '.join(str_authors)
+                title_for_search = book_data.get('title') or ''
+                search_results = fetch_unified_by_title(str(title_for_search), max_results=4, author=author_for_search)
+                for sr in search_results or []:
+                    c = sr.get('cover_url') or sr.get('cover')
+                    if c:
+                        book_data['cover'] = c
+                        book_data['cover_url'] = c
+                        book_data['cover_source'] = sr.get('cover_source') or 'TitleFallback'
+                        cover_url = c
+                        current_app.logger.info(f"[COVER][ISBN_FALLBACK] Acquired via title/author search isbn={isbn}")
+                        break
+            except Exception as fb_err:
+                current_app.logger.debug(f"[COVER][ISBN_FALLBACK_FAIL] isbn={isbn} err={fb_err}")
         async_requested = request.args.get('async_cover') == '1'
         if cover_url and not async_requested:
             try:
@@ -254,13 +277,42 @@ def fetch_book(isbn):
 def api_quick_isbn(isbn):
     """API-first fast ISBN metadata endpoint with optional async cover processing (no auth redirect)."""
     try:
+        import time as _t_perf
+        _marks = []
+        def _mark(label):
+            _marks.append((label, _t_perf.perf_counter()))
+        def _summary():
+            if not _marks:
+                return ''
+            base = _marks[0][1]
+            last = base
+            parts = []
+            for label, t in _marks:
+                parts.append(f"{label}+{(t-base)*1000:.1f}ms(Δ{(t-last)*1000:.1f}ms)")
+                last = t
+            parts.append(f"TOTAL={(last-base)*1000:.1f}ms")
+            return ' | '.join(parts)
+        _mark('start')
         from app.utils.metadata_aggregator import fetch_unified_by_isbn
         unified = fetch_unified_by_isbn(isbn) or {}
+        _mark('unified_fetch')
         data = dict(unified)
         data['isbn'] = data.get('isbn13') or data.get('isbn10') or isbn
         if not data.get('author') and data.get('authors'):
             if isinstance(data['authors'], list):
                 data['author'] = ', '.join([a for a in data['authors'] if isinstance(a, str)])
+        # High-quality cover normalization (post-merge guard)
+        try:
+            from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
+            if data.get('image_links_all'):
+                best = select_highest_google_image(data.get('image_links_all'))
+                if best:
+                    data['cover_url'] = upgrade_google_cover_url(best)
+            elif data.get('cover_url'):
+                data['cover_url'] = upgrade_google_cover_url(data.get('cover_url'))
+        except Exception:
+            pass
+        _mark('cover_norm')
         async_mode = request.args.get('async_cover') == '1'
         from app.services.cover_service import cover_service
         if async_mode:
@@ -270,12 +322,18 @@ def api_quick_isbn(isbn):
                 data['cover_url'] = cand.get('url')
             job = cover_service.schedule_async_processing(isbn=isbn, title=data.get('title'), author=data.get('author'))
             data['cover_job_id'] = job['id']
+            _mark('async_schedule')
         else:
             cr = cover_service.fetch_and_cache(isbn=isbn, title=data.get('title'), author=data.get('author'))
             if cr.cached_url:
                 data['cover_url'] = cr.cached_url
                 data['cover_source'] = cr.source
                 data['cover_quality'] = cr.quality
+            _mark('cover_process')
+        try:
+            current_app.logger.info(f"[BOOK][QUICK_ISBN][PERF] isbn={isbn} { _summary() }")
+        except Exception:
+            pass
         return jsonify(data), 200 if data else 404
     except Exception as e:  # pragma: no cover
         return jsonify({'error': 'failed', 'message': str(e)}), 500
@@ -361,7 +419,8 @@ def add_book_from_image():
             # UI will call unified-metadata separately after we return ISBN, but we include
             # data here when available for completeness/debugging.
             try:
-                from app.utils import fetch_unified_by_isbn
+                # Use unified metadata aggregator (already normalizes covers downstream)
+                from app.utils.unified_metadata import fetch_unified_by_isbn
                 book_data = fetch_unified_by_isbn(isbn)
                 # Ensure cover is processed and stored
                 if book_data:
@@ -575,197 +634,143 @@ def search_book_details():
         from app.utils import search_book_by_title_author, fetch_book_data
         import requests
         
+        # Basic in-memory request cache (per-process) to prevent duplicate searches during rapid retries
+        global _TITLE_AUTHOR_SEARCH_CACHE  # module-level simple cache
+        if '_TITLE_AUTHOR_SEARCH_CACHE' not in globals():
+            _TITLE_AUTHOR_SEARCH_CACHE = {}
+        _SEARCH_CACHE = _TITLE_AUTHOR_SEARCH_CACHE
+        cache_key = f"{title.lower()}|{author.lower()}"
+        if cache_key in _SEARCH_CACHE:
+            cached = _SEARCH_CACHE[cache_key]
+            current_app.logger.debug("[SEARCH] Cache hit for title/author combination")
+            return jsonify(cached)
+
         results = []
-        
-        # Try title+author search on OpenLibrary
-        try:
-            current_app.logger.info("Searching OpenLibrary...")
-            
-            # Build search query
-            if title and author:
-                search_title = title
-                search_author = author
-                current_app.logger.info(f"Searching with both title and author: '{search_title}' by '{search_author}'")
-            elif title:
-                search_title = title
-                search_author = None
-                current_app.logger.info(f"Searching with title only: '{search_title}'")
-            else:
-                search_title = author  # Search author name as title
-                search_author = None
-                current_app.logger.info(f"Searching with author as title: '{search_title}'")
-            
-            # Use OpenLibrary search API to get multiple results
-            import requests
-            query_parts = [search_title]
-            if search_author:
-                query_parts.append(search_author)
-            
-            query = ' '.join(query_parts)
-            url = f"https://openlibrary.org/search.json?q={query}&limit=10"
-            
-            current_app.logger.info(f"OpenLibrary search URL: {url}")
-            
-            response = requests.get(url, timeout=15)
-            response.raise_for_status()
-            search_data = response.json()
-            
-            docs = search_data.get('docs', [])
-            current_app.logger.info(f"Found {len(docs)} OpenLibrary results")
-            
-            for i, doc in enumerate(docs[:10]):  # Limit to 10 results
-                doc_title = doc.get('title', '')
-                doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
-                doc_isbn = doc.get('isbn', [])
-                
-                # Get best ISBN (prefer 13-digit)
-                best_isbn = None
-                if doc_isbn:
-                    for isbn in doc_isbn:
-                        if len(isbn) == 13:
-                            best_isbn = isbn
-                            break
-                    if not best_isbn and doc_isbn:
-                        best_isbn = doc_isbn[0]
-                
-                # Build result object
-                result = {
-                    'title': doc_title,
-                    'authors': ', '.join(doc_authors) if doc_authors else '',
-                    'authors_list': doc_authors,
-                    'isbn': best_isbn,
-                    'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
-                    'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
-                    'page_count': doc.get('number_of_pages_median'),
-                    'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
-                    'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None,
-                    'source': 'OpenLibrary'
-                }
-                
-                # Unified cover selection (Google Books preferred, fallback OpenLibrary)
-                try:
-                    from app.utils.book_utils import get_best_cover_for_book
-                    unified_cover = get_best_cover_for_book(isbn=best_isbn, title=doc_title, author=', '.join(doc_authors) if doc_authors else None)
-                    if unified_cover and unified_cover.get('cover_url'):
-                        result['cover_url'] = unified_cover['cover_url']
-                        result['cover_source'] = unified_cover.get('source')
-                        result['cover_quality'] = unified_cover.get('quality')
-                except Exception as _ce:
-                    current_app.logger.debug(f"Unified cover selection failed: {_ce}")
-                
-                # If we have an ISBN, try to get enhanced data
-                if best_isbn:
-                    try:
-                        enhanced_data = fetch_book_data(best_isbn)
-                        if enhanced_data:
-                            # Merge enhanced data with search result
-                            result.update(enhanced_data)
-                            current_app.logger.info(f"Enhanced result {i} with ISBN data")
-                    except Exception as e:
-                        current_app.logger.warning(f"Failed to enhance result {i} with ISBN {best_isbn}: {e}")
-                
-                results.append(result)
-                current_app.logger.info(f"Added result {i}: '{doc_title}' by {doc_authors}")
-        
-        except Exception as e:
-            current_app.logger.error(f"OpenLibrary search failed: {e}")
-        
-        # Try Google Books as fallback if OpenLibrary didn't return enough results
-        if len(results) < 5:
+
+        # Build query components once
+        ol_query = ' '.join([q for q in [title or author, author if (title and author) else None] if q])
+        gb_parts = []
+        if title:
+            gb_parts.append(f'intitle:"{title}"')
+        if author:
+            gb_parts.append(f'inauthor:"{author}"')
+        gb_query = '+'.join(gb_parts)
+
+        import concurrent.futures
+        import requests as _req
+
+        def _fetch_openlibrary():
             try:
-                current_app.logger.info("Searching Google Books for additional results...")
-                
-                # Google Books search
-                query_parts = []
-                if title:
-                    query_parts.append(f'intitle:"{title}"')
-                if author:
-                    query_parts.append(f'inauthor:"{author}"')
-                
-                google_query = '+'.join(query_parts)
-                google_url = f"https://www.googleapis.com/books/v1/volumes?q={google_query}&maxResults=10"
-                
-                current_app.logger.info(f"Google Books search URL: {google_url}")
-                
-                response = requests.get(google_url, timeout=10)
-                response.raise_for_status()
-                google_data = response.json()
-                
-                if 'items' in google_data:
-                    
-                    for item in google_data['items']:
-                        book_info = item['volumeInfo']
-                        
-                        # Extract data
-                        gb_title = book_info.get('title', '')
-                        gb_authors = book_info.get('authors', [])
-                        gb_publisher = book_info.get('publisher', '')
-                        gb_published = book_info.get('publishedDate', '')
-                        gb_description = book_info.get('description', '')
-                        gb_page_count = book_info.get('pageCount')
-                        gb_language = book_info.get('language', 'en')
-                        
-                        # Get ISBN
-                        gb_isbn = None
-                        if 'industryIdentifiers' in book_info:
-                            for identifier in book_info['industryIdentifiers']:
-                                if identifier.get('type') == 'ISBN_13':
-                                    gb_isbn = identifier.get('identifier')
-                                    break
-                                elif identifier.get('type') == 'ISBN_10':
-                                    gb_isbn = identifier.get('identifier')
-                        
-                        # Get cover image with highest quality priority
-                        gb_cover = None
-                        image_links = book_info.get('imageLinks', {})
-                        # Prioritize highest quality images first
-                        for size in ['extraLarge', 'large', 'medium', 'thumbnail', 'smallThumbnail']:
-                            if size in image_links:
-                                gb_cover = image_links[size].replace('http:', 'https:')
-                                break
-                        
-                        # Enhance Google Books cover URLs for higher resolution
-                        if gb_cover and 'books.google.com' in gb_cover:
-                            # Add zoom parameter for higher quality if not already present
-                            if 'zoom=' not in gb_cover:
-                                separator = '&' if '?' in gb_cover else '?'
-                                gb_cover = f"{gb_cover}{separator}zoom=1"
-                            
-                            # Replace small thumbnail sizes with larger ones in the URL
-                            if 'zoom=0' in gb_cover:
-                                gb_cover = gb_cover.replace('zoom=0', 'zoom=1')
-                            if 'zoom=2' in gb_cover:
-                                gb_cover = gb_cover.replace('zoom=2', 'zoom=1')
-                            if 'zoom=3' in gb_cover:
-                                gb_cover = gb_cover.replace('zoom=3', 'zoom=1')
-                        
-                        # Check if this result is already in our list (avoid duplicates)
-                        duplicate = False
-                        for existing in results:
-                            if (existing.get('title', '').lower() == gb_title.lower() and 
-                                existing.get('authors', '').lower() == ', '.join(gb_authors).lower()):
-                                duplicate = True
-                                break
-                        
-                        if not duplicate:
-                            google_result = {
-                                'title': gb_title,
-                                'authors': ', '.join(gb_authors) if gb_authors else '',
-                                'authors_list': gb_authors,
-                                'isbn': gb_isbn,
-                                'publisher': gb_publisher,
-                                'published_date': gb_published,
-                                'description': gb_description,
-                                'page_count': gb_page_count,
-                                'language': gb_language,
-                                'cover_url': gb_cover,
-                                'source': 'Google Books'
-                            }
-                            results.append(google_result)
-                            current_app.logger.info(f"Added Google Books result: '{gb_title}' by {gb_authors}")
-            
+                if not ol_query:
+                    return []
+                url = f"https://openlibrary.org/search.json?q={ol_query}&limit=8"
+                r = _req.get(url, timeout=6)
+                r.raise_for_status()
+                data = r.json()
+                docs = data.get('docs', [])[:8]
+                out = []
+                for doc in docs:
+                    doc_title = doc.get('title','')
+                    doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name','')]
+                    doc_isbn = doc.get('isbn', []) or []
+                    best_isbn = next((i for i in doc_isbn if len(i)==13), (doc_isbn[0] if doc_isbn else None))
+                    res = {
+                        'title': doc_title,
+                        'authors': ', '.join(doc_authors) if doc_authors else '',
+                        'authors_list': doc_authors,
+                        'isbn': best_isbn,
+                        'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher',''),
+                        'published_date': str(doc.get('first_publish_year','')) if doc.get('first_publish_year') else '',
+                        'page_count': doc.get('number_of_pages_median'),
+                        'language': (doc.get('language') or ['en'])[0],
+                        'openlibrary_id': doc.get('key','').replace('/works/','') if doc.get('key') else None,
+                        'source': 'OpenLibrary'
+                    }
+                    # Cover selection (non-blocking catch)
+                    try:
+                        from app.utils.book_utils import get_best_cover_for_book
+                        cov = get_best_cover_for_book(isbn=best_isbn, title=doc_title, author=', '.join(doc_authors) if doc_authors else None)
+                        if cov and cov.get('cover_url'):
+                            res['cover_url'] = cov['cover_url']
+                            res['cover_source'] = cov.get('source')
+                            res['cover_quality'] = cov.get('quality')
+                    except Exception:
+                        pass
+                    out.append(res)
+                return out
             except Exception as e:
-                current_app.logger.error(f"Google Books search failed: {e}")
+                current_app.logger.debug(f"[SEARCH] OpenLibrary failed: {e}")
+                return []
+
+        def _fetch_google():
+            try:
+                if not gb_query:
+                    return []
+                g_url = f"https://www.googleapis.com/books/v1/volumes?q={gb_query}&maxResults=8"
+                r = _req.get(g_url, timeout=5)
+                r.raise_for_status()
+                data = r.json()
+                items = data.get('items', [])[:8]
+                out = []
+                for item in items:
+                    info = item.get('volumeInfo', {})
+                    gb_title = info.get('title','')
+                    gb_authors = info.get('authors', []) or []
+                    identifiers = info.get('industryIdentifiers', []) or []
+                    gb_isbn = None
+                    for ident in identifiers:
+                        t = ident.get('type')
+                        if t == 'ISBN_13':
+                            gb_isbn = ident.get('identifier'); break
+                        if t == 'ISBN_10' and not gb_isbn:
+                            gb_isbn = ident.get('identifier')
+                    gb_cover = None
+                    try:
+                        from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
+                        gb_cover = upgrade_google_cover_url(select_highest_google_image(info.get('imageLinks', {})))
+                    except Exception:
+                        pass
+                    out.append({
+                        'title': gb_title,
+                        'authors': ', '.join(gb_authors) if gb_authors else '',
+                        'authors_list': gb_authors,
+                        'isbn': gb_isbn,
+                        'publisher': info.get('publisher',''),
+                        'published_date': info.get('publishedDate',''),
+                        'description': info.get('description',''),
+                        'page_count': info.get('pageCount'),
+                        'language': info.get('language','en'),
+                        'cover_url': gb_cover,
+                        'source': 'Google Books'
+                    })
+                return out
+            except Exception as e:
+                current_app.logger.debug(f"[SEARCH] Google Books failed: {e}")
+                return []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            fut_ol = ex.submit(_fetch_openlibrary)
+            fut_gb = ex.submit(_fetch_google)
+            ol_results = fut_ol.result()
+            results.extend(ol_results)
+            # Early stop if we already have many
+            gb_results = fut_gb.result() if len(results) < 8 else []
+            # Deduplicate
+            existing_keys = {(r.get('title','').lower(), r.get('authors','').lower()) for r in results}
+            for r in gb_results:
+                key = (r.get('title','').lower(), r.get('authors','').lower())
+                if key not in existing_keys:
+                    results.append(r)
+                    existing_keys.add(key)
+
+        payload = {
+            'success': bool(results),
+            'results': results,
+            'message': f"Found {len(results)} books matching your search" if results else 'No books found matching your search criteria. Try different keywords or check spelling.'
+        }
+        # Store small cache entry (TTL not implemented; acceptable for session)
+        _SEARCH_CACHE[cache_key] = payload
+        return jsonify(payload)
         
         if results:
             current_app.logger.info(f"Returning {len(results)} search results")
@@ -818,6 +823,9 @@ def bulk_import():
     return redirect(url_for('main.import_books'))
 
 # Legacy route removed - all book views now use enhanced view directly
+
+# Module-level lightweight search cache (title+author -> payload)
+_TITLE_AUTHOR_SEARCH_CACHE: dict = {}
 
 @book_bp.route('/book/<uid>/log', methods=['POST'])
 @login_required
@@ -2425,26 +2433,80 @@ def replace_cover(uid):
         user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
         if not user_book:
             return jsonify({'success': False, 'error': 'Book not found'}), 404
-        
+
         data = request.get_json()
         new_cover_url = data.get('new_cover_url')
-        
+        allow_downgrade = bool(data.get('allow_downgrade'))
+
         if not new_cover_url:
             return jsonify({'success': False, 'error': 'No cover URL provided'}), 400
-        
+
         # Store old cover URL for cleanup
         old_cover_url = user_book.cover_url
-        
+
         # Download, process, and cache the new cover image (unified pipeline)
         try:
-            current_app.logger.error(f"[COVER][REPLACE] START uid={uid} src={new_cover_url}")
+            # Normalize source URL before processing to ensure consistent final asset
+            try:
+                from app.utils.book_utils import normalize_cover_url
+                new_cover_url = normalize_cover_url(new_cover_url)
+            except Exception:
+                pass
+            current_app.logger.info(f"[COVER][REPLACE] START uid={uid} src={new_cover_url}")
+            if not isinstance(new_cover_url, str):
+                return jsonify({'success': False, 'error': 'Invalid cover URL'}), 400
             new_cached_cover_url = process_image_from_url(new_cover_url)
             abs_cover_url = new_cached_cover_url
             if new_cached_cover_url.startswith('/'):
                 abs_cover_url = request.host_url.rstrip('/') + new_cached_cover_url
+
+            # Optional downgrade protection: if existing local cover is significantly larger than new one, skip replacement
+            try:
+                if old_cover_url and not allow_downgrade:
+                    # Only evaluate if both old and new are locally cached covers
+                    def _cover_file_size(url: str) -> int:
+                        try:
+                            if not url:
+                                return 0
+                            if url.startswith('http://') or url.startswith('https://'):
+                                return 0  # remote, skip
+                            fname = url.split('/')[-1]
+                            fpath = get_covers_dir() / fname
+                            if fpath.exists():
+                                return fpath.stat().st_size
+                            return 0
+                        except Exception:
+                            return 0
+
+                    old_size = _cover_file_size(old_cover_url)
+                    new_size = _cover_file_size(new_cached_cover_url)
+                    downgrade = False
+                    if old_size and new_size:
+                        # Heuristics: new very small absolute OR less than 50% of old
+                        if (new_size < 12000 and old_size > 20000) or (new_size / old_size) < 0.5:
+                            downgrade = True
+                    if downgrade:
+                        # Remove newly created (inferior) file to avoid clutter
+                        try:
+                            nf = get_covers_dir() / new_cached_cover_url.split('/')[-1]
+                            if nf.exists():
+                                nf.unlink()
+                        except Exception:
+                            pass
+                        current_app.logger.info(
+                            f"[COVER][REPLACE][DOWNGRADE_SKIP] uid={uid} old_size={old_size} new_size={new_size} kept_old_cover"
+                        )
+                        return jsonify({
+                            'success': True,
+                            'cover_url': old_cover_url,
+                            'message': 'Kept existing higher-quality cover (skip downgrade)'
+                        })
+            except Exception as downgrade_err:
+                current_app.logger.debug(f"[COVER][REPLACE][DOWNGRADE_CHECK_FAIL] uid={uid} err={downgrade_err}")
+
             book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=abs_cover_url)
-            current_app.logger.error(f"[COVER][REPLACE] STORED uid={uid} cached={new_cached_cover_url}")
-            
+            current_app.logger.info(f"[COVER][REPLACE] STORED uid={uid} cached={new_cached_cover_url}")
+
             # Clean up old cover file if it exists and is a local file
             if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
                 try:
@@ -2455,22 +2517,22 @@ def replace_cover(uid):
                         current_app.logger.debug(f"Cleaned up old cover file: {old_filename}")
                 except Exception as cleanup_error:
                     current_app.logger.debug(f"Failed to clean up old cover file: {cleanup_error}")
-            
-            current_app.logger.error(f"[COVER][REPLACE] DONE uid={uid} src={new_cover_url}")
-            
+
+            current_app.logger.info(f"[COVER][REPLACE] DONE uid={uid} src={new_cover_url}")
+
             return jsonify({
-                'success': True, 
+                'success': True,
                 'cover_url': new_cached_cover_url,
                 'message': 'Cover updated successfully'
             })
-            
+
         except requests.RequestException as e:
             current_app.logger.error(f"[COVER][REPLACE] REQUEST_FAIL uid={uid} src={new_cover_url} err={e}")
             return jsonify({'success': False, 'error': 'Failed to download new cover image'}), 500
         except Exception as e:
             current_app.logger.error(f"[COVER][REPLACE] FAIL uid={uid} src={new_cover_url} err={e}")
             return jsonify({'success': False, 'error': 'Failed to process new cover image'}), 500
-            
+
     except Exception as e:
         current_app.logger.error(f"Error replacing cover: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -3046,7 +3108,15 @@ def search_books_in_library():
         data = resp.json()
         for item in data.get('items', []):
             volume_info = item.get('volumeInfo', {})
-            image = volume_info.get('imageLinks', {}).get('thumbnail')
+            image_links = volume_info.get('imageLinks', {})
+            image = None
+            try:
+                from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
+                raw = select_highest_google_image(image_links)
+                if raw:
+                    image = upgrade_google_cover_url(raw)
+            except Exception:
+                image = image_links.get('thumbnail')
             isbn = None
             for iden in volume_info.get('industryIdentifiers', []):
                 if iden['type'] in ('ISBN_13', 'ISBN_10'):

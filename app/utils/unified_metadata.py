@@ -561,21 +561,19 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	# Series: prefer explicit Google series, else OpenLibrary series; fallback: None
 	merged['series'] = g_series or o_series or google.get('series') or openlib.get('series')
 
-	# Cover: centralized via CoverService with fallback to raw URL
-	try:
-		from app.services.cover_service import cover_service
-		raw_cover_url = google.get('cover_url') or openlib.get('cover_url')
-		cr = cover_service.fetch_and_cache(isbn=merged.get('isbn13') or merged.get('isbn10'),
-											  title=merged.get('title'),
-											  author=(merged.get('authors') or [None])[0])
-		if cr and cr.cached_url:
-			merged['cover_url'] = cr.cached_url
-			merged['cover_source'] = cr.source
-			merged['cover_quality'] = cr.quality
+	# Cover: use ONLY Google-provided URL (no processing here). OpenLibrary fallback only if Google missing.
+	from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
+	raw_google_cover = google.get('cover_url') or select_highest_google_image(google.get('image_links_all'))
+	if raw_google_cover:
+		merged['cover_url'] = upgrade_google_cover_url(raw_google_cover)
+		merged['cover_source'] = 'Google Books'
+	else:
+		fallback_ol = openlib.get('cover_url')
+		if fallback_ol:
+			merged['cover_url'] = fallback_ol
+			merged['cover_source'] = 'OpenLibrary'
 		else:
-			merged['cover_url'] = raw_cover_url
-	except Exception as e:
-		merged['cover_url'] = google.get('cover_url') or openlib.get('cover_url')
+			merged['cover_url'] = None
 
 	# IDs & ISBNs
 	merged['google_books_id'] = google.get('google_books_id')

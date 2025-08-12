@@ -3,7 +3,7 @@ Import/Export routes for the MyBibliotheca application.
 Handles book import functionality including CSV processing, progress tracking, and batch operations.
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, make_response, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, make_response, session, Response
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from datetime import datetime, date, timedelta, timezone
@@ -1052,20 +1052,127 @@ def api_import_progress(task_id):
     
     if not job:
         return jsonify({'error': 'Job not found'}), 404
-    
-    return jsonify(job)
+    # Augment response with status buckets for UI (success_titles, error_titles, skipped_titles, unmatched_titles)
+    # Derive lazily so we don't store large arrays permanently in job record.
+    success_titles = []
+    error_titles = []
+    skipped_titles = []
+    unmatched_titles = []
+    try:
+        if job.get('import_type') == 'reading_history':
+            # For reading history we enumerate log entries with date + status if available.
+            # Job may not store per-entry status; approximate: matched/created entries counted as success,
+            # skipped as skipped, errors as errors. We derive representative strings including first/last date.
+            books_for_matching = job.get('books_for_matching') or []
+            # Each item expected to have csv_name, entries list (each entry may have date/started_at/finished_at)
+            for b in books_for_matching:
+                try:
+                    entries = b.get('entries') or []
+                    if not isinstance(entries, list):
+                        continue
+                    # Collect dates
+                    dates = []
+                    for e in entries:
+                        d = e.get('date') or e.get('finished_at') or e.get('started_at') or ''
+                        if d:
+                            dates.append(str(d))
+                    date_span = ''
+                    if dates:
+                        dates_sorted = sorted(dates)
+                        date_span = dates_sorted[0]
+                        if len(dates_sorted) > 1 and dates_sorted[-1] != dates_sorted[0]:
+                            date_span += f" → {dates_sorted[-1]}"
+                    label = b.get('csv_name') or b.get('matched_title') or b.get('title') or 'Unknown'
+                    if date_span:
+                        label = f"{label} ({date_span})"
+                    # Determine bucket: if user resolution stored? fallback heuristics
+                    status = (b.get('status') or '').lower()
+                    if status in ('success','matched','created'):
+                        success_titles.append(label)
+                    elif status in ('skipped', 'ignored'):
+                        skipped_titles.append(label)
+                    elif status in ('unmatched','needs_match'):
+                        unmatched_titles.append(label)
+                except Exception:
+                    continue
+            # Errors specific to reading logs
+            for err in job.get('reading_log_error_messages') or []:
+                if isinstance(err, dict):
+                    t = err.get('title') or err.get('csv_name') or err.get('book') or ''
+                    if t:
+                        error_titles.append(t)
+        else:
+            # Regular book import handling
+            books = job.get('processed_books') or job.get('books') or []
+            for b in books:
+                try:
+                    status = (b.get('status') or '').lower()
+                    title = b.get('title') or b.get('raw_title') or b.get('name') or ''
+                    if not title:
+                        continue
+                    if status == 'success':
+                        success_titles.append(title)
+                    elif status == 'skipped':
+                        skipped_titles.append(title)
+                    elif status == 'unmatched':
+                        unmatched_titles.append(title)
+                except Exception:
+                    continue
+            for err in job.get('error_messages') or []:
+                if isinstance(err, dict):
+                    t = err.get('title') or err.get('raw_title') or ''
+                    if t:
+                        error_titles.append(t)
+    except Exception:
+        pass
+    enriched = dict(job)
+    enriched['success_titles'] = success_titles
+    enriched['error_titles'] = error_titles
+    enriched['skipped_titles'] = skipped_titles
+    enriched['unmatched_titles'] = unmatched_titles
+    enriched['success_preview'] = success_titles[:25]
+    enriched['error_preview'] = error_titles[:25]
+    enriched['skipped_preview'] = skipped_titles[:25]
+    enriched['unmatched_preview'] = unmatched_titles[:25]
+    return jsonify(enriched)
 
 @import_bp.route('/api/import/errors/<task_id>')
 @login_required
 def api_import_errors(task_id):
-    """API endpoint for import errors with proper user isolation."""
-    # Get job safely with user isolation
+    """Download import errors as CSV (was JSON)."""
     job = safe_get_import_job(current_user.id, task_id)
-    
     if not job:
         return jsonify({'error': 'Job not found'}), 404
-    
-    return jsonify({'errors': job.get('error_messages', [])})
+    errors = job.get('error_messages') or []
+
+    header = ['row_number','error_type','message','raw_isbn','title','author','raw_row']
+    def _escape(v: str):
+        if v is None:
+            v = ''
+        v = str(v)
+        if any(c in v for c in [',','"','\n','\r']):
+            v = '"' + v.replace('"','""') + '"'
+        return v
+    rows = [','.join(header)]
+    if errors:
+        for err in errors:
+            if isinstance(err, dict):
+                row = [
+                    err.get('row_number') or err.get('row') or '',
+                    err.get('type') or err.get('error_type') or 'error',
+                    (err.get('message') or err.get('error') or '').replace('\n',' ').replace('\r',' ')[:500],
+                    err.get('isbn') or err.get('raw_isbn') or '',
+                    err.get('title') or '',
+                    err.get('author') or '',
+                    err.get('raw_row') or ''
+                ]
+            else:
+                row = ['', 'error', str(err).replace('\n',' '), '', '', '', '']
+            rows.append(','.join(_escape(v) for v in row))
+    csv_content = '\n'.join(rows) + '\n'
+    return Response(csv_content, mimetype='text/csv', headers={
+        'Content-Disposition': f'attachment; filename="import_errors_{task_id}.csv"'
+    })
 
 @import_bp.route('/debug/import-jobs')
 @login_required
@@ -1958,7 +2065,8 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
             title=api_data.get('title') or simplified_book.title,
             author=api_data.get('author') or simplified_book.author
         )
-        cover_url = best_cover.get('cover_url') or api_data.get('cover_url') or api_data.get('cover')
+        from app.utils.book_utils import normalize_cover_url
+        cover_url = normalize_cover_url(best_cover.get('cover_url') or api_data.get('cover_url') or api_data.get('cover'))
         if cover_url and not simplified_book.cover_url:
             try:
                 processed_url = process_image_from_url(cover_url)

@@ -167,25 +167,15 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
                     elif identifier.get('type') == 'ISBN_13':
                         isbn_13 = identifier.get('identifier')
                 
-                # Extract cover image (centralized via CoverService)
-                image_links = volume_info.get('imageLinks', {})
+                # Extract and normalize Google cover image (no immediate download for speed)
                 cover_url = None
-                for size in ['extraLarge', 'large', 'medium', 'small', 'thumbnail']:
-                    if size in image_links:
-                        raw_cover = image_links[size]
-                        if raw_cover and raw_cover.startswith('http:'):
-                            raw_cover = raw_cover.replace('http:', 'https:')
-                        try:
-                            from app.services.cover_service import cover_service
-                            cr = cover_service.fetch_and_cache(isbn=isbn_13 or isbn_10, title=book_title, author=authors[0] if authors else None)
-                            if cr and cr.cached_url:
-                                cover_url = cr.cached_url
-                            else:
-                                cover_url = raw_cover
-                        except Exception as e:
-                            cover_url = raw_cover
-                            print(f"[COVER_SERVICE] Failure for Google result: {e}")
-                        break
+                try:
+                    from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
+                    raw_cover = select_highest_google_image(volume_info.get('imageLinks', {}))
+                    if raw_cover:
+                        cover_url = upgrade_google_cover_url(raw_cover)
+                except Exception as ce:
+                    print(f"[COVER_NORMALIZE] Google cover normalization failed: {ce}")
                 
                 # Extract publication year
                 publication_year = None

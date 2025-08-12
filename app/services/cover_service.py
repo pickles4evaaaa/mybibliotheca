@@ -1,5 +1,6 @@
 """Centralized cover fetching & processing service (temporary instrumentation)."""
 from __future__ import annotations
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -35,9 +36,15 @@ class CoverService:
         t0 = time.perf_counter()
         steps: list[str] = []
         sel = None
+        # Global processing deadline (seconds) after which we short‑circuit and return original URL unprocessed
+        try:
+            deadline = float(os.getenv('COVER_PROCESS_DEADLINE', '2.5'))
+        except Exception:
+            deadline = 2.5
         try:
             steps.append('candidates:start')
-            candidates = get_cover_candidates(isbn=isbn, title=title, author=author)
+            # Google-only fast path: if ISBN present, avoid OpenLibrary lookups inside get_cover_candidates
+            candidates = get_cover_candidates(isbn=isbn, title=None, author=None) if isbn else get_cover_candidates(isbn=isbn, title=title, author=author)
             steps.append(f"candidates={len(candidates)}")
             chosen = None
             if prefer_provider:
@@ -79,10 +86,31 @@ class CoverService:
                     return 100
                 chosen = min(candidates, key=_rank)
             cover_url = chosen.get('url') if chosen else None
+            if cover_url:
+                try:
+                    from app.utils.book_utils import normalize_cover_url
+                    cover_url = normalize_cover_url(cover_url)
+                except Exception:
+                    pass
             if not cover_url:
                 steps.append('fallback:legacy_selector')
                 sel = get_best_cover_for_book(isbn=isbn, title=title, author=author)
                 cover_url = sel.get('cover_url')
+            # Secondary fallback: if still no cover and we have title/author, attempt title/author driven candidates
+            if not cover_url and (title or author):
+                try:
+                    steps.append('fallback:title_author_candidates')
+                    ta_candidates = get_cover_candidates(isbn=None, title=title, author=author)
+                    if ta_candidates:
+                        cover_url = ta_candidates[0].get('url')
+                        if cover_url:
+                            from app.utils.book_utils import normalize_cover_url
+                            try:
+                                cover_url = normalize_cover_url(cover_url)
+                            except Exception:
+                                pass
+                except Exception:
+                    steps.append('fallback:title_author_fail')
             cached_url = None
             if cover_url:
                 try:
@@ -90,32 +118,37 @@ class CoverService:
                         cached_url = _PROCESSED_CACHE[cover_url]
                         steps.append('cache:hit')
                     else:
+                        # If we've already burned most of the deadline, pass through original to avoid user-visible lag
+                        if time.perf_counter() - t0 > deadline:
+                            steps.append('deadline:pass_through')
+                            cached_url = cover_url  # Return remote URL directly (UI can still display it)
+                        else:
                         # Optional HEAD probe to validate asset size (skip if non-http)
-                        if cover_url.startswith('http'):
-                            try:
-                                h = requests.head(cover_url, timeout=4, allow_redirects=True)
-                                cl = int(h.headers.get('Content-Length','0') or 0)
-                                if cl < 15_000:
-                                    steps.append(f'probe:tiny={cl}')
-                                else:
-                                    steps.append(f'probe:bytes={cl}')
-                            except Exception:
-                                steps.append('probe:fail')
-                        steps.append('download:start')
-                        rel = process_image_from_url(cover_url)
-                        steps.append('download:ok')
-                        if rel and rel.startswith('/'):
-                            if has_request_context():
+                            if cover_url.startswith('http'):
                                 try:
-                                    cached_url = request.host_url.rstrip('/') + rel
+                                    h = requests.head(cover_url, timeout=1.5, allow_redirects=True)
+                                    cl = int(h.headers.get('Content-Length','0') or 0)
+                                    if cl < 15_000:
+                                        steps.append(f'probe:tiny={cl}')
+                                    else:
+                                        steps.append(f'probe:bytes={cl}')
                                 except Exception:
+                                    steps.append('probe:fail')
+                            steps.append('download:start')
+                            rel = process_image_from_url(cover_url)
+                            steps.append('download:ok')
+                            if rel and rel.startswith('/'):
+                                if has_request_context():
+                                    try:
+                                        cached_url = request.host_url.rstrip('/') + rel
+                                    except Exception:
+                                        cached_url = rel
+                                else:
                                     cached_url = rel
                             else:
                                 cached_url = rel
-                        else:
-                            cached_url = rel
-                        if cached_url:
-                            _PROCESSED_CACHE[cover_url] = cached_url
+                            if cached_url:
+                                _PROCESSED_CACHE[cover_url] = cached_url
                 except Exception as e:
                     steps.append(f'download:fail={e.__class__.__name__}')
                     current_app.logger.warning(f"[COVER][SERVICE] Download/process failed url={cover_url} err={e}")
@@ -186,6 +219,12 @@ class CoverService:
         The UI can display the remote candidate immediately; poll status endpoint to swap to processed local URL.
         """
         cand = self.select_candidate(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
+        if cand and cand.get('url'):
+            try:
+                from app.utils.book_utils import normalize_cover_url
+                cand['url'] = normalize_cover_url(cand['url'])
+            except Exception:
+                pass
         job_id = str(uuid.uuid4())
         job_record = {
             'id': job_id,
@@ -202,28 +241,41 @@ class CoverService:
         }
         _COVER_JOBS[job_id] = job_record
 
-        def _worker():
-            # Run without assuming request/app context; only logging if available
+        # Capture app context object so background thread can log safely
+        try:
+            # current_app is a proxy; capturing it directly is acceptable
+            app_obj = current_app
+        except Exception:
+            app_obj = None
+
+        def _worker(app_obj=app_obj):
+            ctx = app_obj.app_context() if app_obj else None
+            if ctx:
+                ctx.push()
             try:
-                if not cand or not cand.get('url'):
-                    job_record['status'] = 'no_candidate'
-                    job_record['completed'] = time.time()
-                    return
-                cr = self.fetch_and_cache(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
-                if cr and cr.cached_url:
-                    job_record['processed_url'] = cr.cached_url
-                    job_record['status'] = 'done'
-                else:
-                    job_record['status'] = 'failed'
-                job_record['completed'] = time.time()
-            except Exception as e:  # pragma: no cover
-                job_record['status'] = 'error'
-                job_record['error'] = str(e)
-                job_record['completed'] = time.time()
                 try:
-                    current_app.logger.error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
-                except Exception:
-                    pass
+                    if not cand or not cand.get('url'):
+                        job_record['status'] = 'no_candidate'
+                        job_record['completed'] = time.time()
+                        return
+                    cr = self.fetch_and_cache(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
+                    if cr and cr.cached_url:
+                        job_record['processed_url'] = cr.cached_url
+                        job_record['status'] = 'done'
+                    else:
+                        job_record['status'] = 'failed'
+                    job_record['completed'] = time.time()
+                except Exception as e:  # pragma: no cover
+                    job_record['status'] = 'error'
+                    job_record['error'] = str(e)
+                    job_record['completed'] = time.time()
+                    try:
+                        current_app.logger.error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
+                    except Exception:
+                        pass
+            finally:
+                if ctx:
+                    ctx.pop()
         _EXECUTOR.submit(_worker)
         return job_record
 

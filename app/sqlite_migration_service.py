@@ -416,7 +416,9 @@ class SQLiteMigrationService:
             publisher_name = publisher_name or api_data.get('publisher')
             page_count = page_count or api_data.get('page_count')
             language = language or api_data.get('language', 'en')
-            cover_url = cover_url or api_data.get('cover_url')
+            if not cover_url and api_data.get('cover_url'):
+                from app.utils.book_utils import normalize_cover_url
+                cover_url = normalize_cover_url(api_data.get('cover_url'))
             if not categories and api_data.get('categories'):
                 categories = api_data.get('categories')
         

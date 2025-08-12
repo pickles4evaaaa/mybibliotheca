@@ -962,10 +962,11 @@ class AdvancedMigrationSystem:
                     if best_cover and best_cover.get('cover_url'):
                         if api_data is None:
                             api_data = {}
-                        api_data['cover'] = best_cover['cover_url']
+                        from app.utils.book_utils import normalize_cover_url
+                        api_data['cover'] = normalize_cover_url(best_cover['cover_url'])
                         api_data['cover_source'] = best_cover.get('source')
                         api_data['cover_quality'] = best_cover.get('quality')
-                        logger.info(f"�️ Selected cover ({best_cover.get('source')}) for {isbn}")
+                        logger.info(f"🖼️ Selected cover ({best_cover.get('source')}) for {isbn}")
                 except Exception as e:
                     logger.warning(f"⚠️ Unified cover selection failed for {isbn}: {e}")
                 

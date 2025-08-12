@@ -1,4 +1,142 @@
-_BEST_COVER_CACHE = {}
+_BEST_COVER_CACHE: dict = {}
+_PROVIDER_META_CACHE: dict = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes; cover metadata rarely changes
+
+# Verbose flag for cover & search debug (ENV: VERBOSE, IMPORT_VERBOSE, COVER_VERBOSE)
+import os as _os_cover_debug
+_COVER_VERBOSE = (
+    (_os_cover_debug.getenv('VERBOSE') or 'false').lower() == 'true'
+    or (_os_cover_debug.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+    or (_os_cover_debug.getenv('COVER_VERBOSE') or 'false').lower() == 'true'
+)
+
+def _cache_get(key):
+    rec = _PROVIDER_META_CACHE.get(key)
+    if not rec:
+        return None
+    data, ts = rec
+    import time as _t
+    if _t.time() - ts > _CACHE_TTL_SECONDS:
+        try:
+            del _PROVIDER_META_CACHE[key]
+        except Exception:
+            pass
+        return None
+    return data
+
+def _cache_set(key, data):
+    import time as _t
+    _PROVIDER_META_CACHE[key] = (data, _t.time())
+
+# --- Google Cover Utilities ---
+_GOOGLE_SIZE_ORDER = ['extraLarge','large','medium','small','thumbnail','smallThumbnail']
+
+def select_highest_google_image(image_links: dict | None) -> str | None:
+    if not image_links or not isinstance(image_links, dict):
+        return None
+    for size in _GOOGLE_SIZE_ORDER:
+        url = image_links.get(size)
+        if url:
+            if isinstance(url, str) and url.startswith('http:'):
+                url = url.replace('http:','https:')
+            return url
+    # fallback: any value
+    for v in image_links.values():
+        if isinstance(v,str):
+            return v
+    return None
+
+def upgrade_google_cover_url(raw_url: str | None) -> str | None:
+    """Normalize and opportunistically upgrade Google Books cover URL.
+
+    Strategy:
+    1. Ensure base params (printsec=frontcover, img=1).
+    2. If no zoom, default zoom=1.
+    3. Probe a zoom=0 variant (largest) ONLY if original isn't already explicit extraLarge/large and we don't already have zoom=0.
+       - Use a 1s HEAD request; if Content-Length improves ( > original or above threshold ) adopt it.
+    Safe + fast: short timeout, swallow errors.
+    """
+    if not raw_url or 'books.google' not in raw_url:
+        return raw_url
+    import re as _re
+    from flask import current_app
+    url = raw_url
+    # Normalize protocol
+    if url.startswith('http:'):
+        url = url.replace('http:', 'https:')
+    # Base params
+    if 'printsec=' not in url:
+        sep = '&' if '?' in url else '?'
+        url = f"{url}{sep}printsec=frontcover"
+    if 'img=1' not in url:
+        url += '&img=1'
+    # Ensure some zoom if none specified
+    has_zoom = 'zoom=' in url
+    if not has_zoom:
+        sep = '&' if '?' in url else '?'
+        url = f"{url}{sep}zoom=1"
+
+    # Decide whether to attempt zoom=0 upgrade
+    attempt_zoom0 = ('zoom=0' not in url) and ('extraLarge' not in url) and ('large' not in url)
+    chosen = url
+    if attempt_zoom0:
+        z0 = _re.sub(r'zoom=\d', 'zoom=0', url) if has_zoom else url + '&zoom=0'
+        try:
+            import requests
+            h1 = None
+            h2 = None
+            # Probe current URL
+            try:
+                h1 = requests.head(chosen, timeout=1, allow_redirects=True)
+            except Exception:
+                pass
+            try:
+                h2 = requests.head(z0, timeout=1, allow_redirects=True)
+            except Exception:
+                h2 = None
+            def _len(resp):
+                if not resp: return 0
+                try:
+                    return int(resp.headers.get('Content-Length','0') or 0)
+                except Exception:
+                    return 0
+            size_curr = _len(h1)
+            size_z0 = _len(h2)
+            # Adopt zoom=0 if clearly larger or current size tiny
+            if size_z0 > size_curr * 1.15 or (size_curr < 35_000 and size_z0 > size_curr):
+                chosen = z0
+                if _COVER_VERBOSE:
+                    try:
+                        current_app.logger.info(f"[COVER][UPGRADE] zoom0 adopted curr={size_curr} z0={size_z0} url={chosen}")
+                    except Exception:
+                        pass
+            else:
+                if _COVER_VERBOSE:
+                    try:
+                        current_app.logger.debug(f"[COVER][UPGRADE] zoom0 skipped curr={size_curr} z0={size_z0}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return chosen
+def normalize_cover_url(url: str | None) -> str | None:
+    """Universal normalization entrypoint for any discovered cover URL.
+
+    - Google Books: ensure https, printsec=frontcover, img=1, zoom parameter (adaptive via upgrade_google_cover_url)
+    - OpenLibrary: prefer large (-L.jpg), upgrade M/S to L when pattern fits
+    - Others: unchanged
+    """
+    if not url:
+        return url
+    try:
+        if 'books.google' in url:
+            return upgrade_google_cover_url(url)
+        if 'covers.openlibrary.org' in url:
+            import re as _re
+            return _re.sub(r'-(S|M)\.(jpg|png)$', r'-L.\2', url)
+    except Exception:
+        return url
+    return url
 
 def get_best_cover_for_book(isbn=None, title=None, author=None):
     """
@@ -33,25 +171,18 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
     cover_url = None
     quality = 'none'
     if gb_data and gb_data.get('cover_url'):
-        cover_url = gb_data['cover_url']
-        # Normalize Google Books sizing parameters to highest reasonable quality
-        if cover_url:
-            # Standard pattern upgrade: remove edge cropping params, enforce zoom=1 & printsec=frontcover
-            if 'books.google' in cover_url:
-                # Replace small/thumbnail segments if present
-                cover_url = cover_url.replace('&zoom=0', '').replace('&zoom=2', '').replace('&zoom=3', '')
-                if 'zoom=' not in cover_url:
-                    sep = '&' if '?' in cover_url else '?'
-                    cover_url = f"{cover_url}{sep}zoom=1"
-                # Prefer highest quality by adding edge=c if missing (Google often serves better quality)
-                if 'edge=' not in cover_url:
-                    sep = '&' if '?' in cover_url else '?'
-                    cover_url = f"{cover_url}{sep}edge=c"
-                # Add printsec frontcover for consistency
-                if 'printsec=' not in cover_url:
-                    sep = '&' if '?' in cover_url else '?'
-                    cover_url = f"{cover_url}{sep}printsec=frontcover"
-        # Determine quality tag
+        cover_url = normalize_cover_url(gb_data['cover_url'])
+        # Prefer provided explicit largest variants; avoid forcing zoom=0 which can degrade quality
+        if cover_url and 'books.google' in cover_url:
+            # If no explicit size or zoom parameter, add zoom=1 (empirically high quality)
+            if 'zoom=' not in cover_url and not any(x in cover_url for x in ('extraLarge', 'large', 'medium', 'small', 'thumbnail')):
+                sep = '&' if '?' in cover_url else '?'
+                cover_url = f"{cover_url}{sep}zoom=1"
+            # Ensure printsec frontcover for consistency
+            if 'printsec=' not in cover_url:
+                sep = '&' if '?' in cover_url else '?'
+                cover_url = f"{cover_url}{sep}printsec=frontcover"
+        # Determine quality tag based on known larger indicators
         if cover_url and ('extraLarge' in cover_url or 'zoom=1' in cover_url or 'large' in cover_url):
             quality = 'high'
         else:
@@ -74,7 +205,7 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
             phase_logs.append(f"openlibrary_title={time.perf_counter()-t_ol_title:.3f}s res={count}")
             ol_data = ol_results if isinstance(ol_results, dict) else (ol_results[0] if ol_results else None)
         if ol_data and ol_data.get('cover_url'):
-            cover_url = ol_data['cover_url']
+            cover_url = normalize_cover_url(ol_data['cover_url'])
             quality = 'medium' if 'L.jpg' in str(cover_url) else 'low'
             source = 'OpenLibrary'
         else:
@@ -91,7 +222,8 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
     total = time.perf_counter() - t0
     try:
         from flask import current_app
-        current_app.logger.info(f"[COVER][SELECT] total={total:.3f}s isbn={isbn} title='{(title or '')[:40]}' source={result_obj['source']} quality={result_obj['quality']} steps={' | '.join(phase_logs)}")
+        if _COVER_VERBOSE:
+            current_app.logger.info(f"[COVER][SELECT] total={total:.3f}s isbn={isbn} title='{(title or '')[:40]}' source={result_obj['source']} quality={result_obj['quality']} steps={' | '.join(phase_logs)}")
     except Exception:
         pass
     return result_obj
@@ -222,6 +354,52 @@ def _dprint(*args, **kwargs):
         __builtins__.print(*args, **kwargs)
 
 print = _dprint
+
+def merge_book_metadata(original: dict, new: dict) -> dict:
+    """Merge new metadata into original without degrading existing cover quality.
+
+    Rules:
+    - Skip empty incoming values.
+    - For textual fields, keep longer (more informative) value.
+    - For authors list, keep longer list.
+    - cover_url: never replace with empty; only replace if heuristic says higher quality.
+    """
+    if not original:
+        original = {}
+    if not new:
+        return original
+    result = original.copy()
+    for k, v in new.items():
+        if v in (None, '', [], {}):
+            continue
+        ov = result.get(k)
+        if ov in (None, '', [], {}):
+            result[k] = v
+            continue
+        if k in ('title','subtitle','description'):
+            if isinstance(v,str) and isinstance(ov,str) and len(v) > len(ov):
+                result[k] = v
+        elif k == 'authors':
+            if isinstance(v, (list, tuple)) and isinstance(ov, (list, tuple)) and len(v) > len(ov):
+                result[k] = v
+        elif k == 'cover_url':
+            if isinstance(v,str) and isinstance(ov,str):
+                better_markers = ['extraLarge','zoom=1','zoom=0','large','800','1000','original']
+                worse_markers = ['smallThumbnail','thumbnail','small','zoom=4','zoom=5','200']
+                def _score(u:str):
+                    s=0
+                    for i,m in enumerate(better_markers):
+                        if m in u: s += 100 - i
+                    for m in worse_markers:
+                        if m in u: s -= 10
+                    s += len(u)//50  # slight preference for longer parameterized URLs (often higher res hints)
+                    return s
+                if _score(v) > _score(ov):
+                    result[k] = v
+        else:
+            if isinstance(v,str) and isinstance(ov,str) and len(v) > len(ov)+10:
+                result[k] = v
+    return result
 
 def search_author_by_name(author_name):
     """Search for authors on OpenLibrary by name and return the best match with most comprehensive data."""
@@ -624,8 +802,14 @@ def get_google_books_cover(isbn, fetch_title_author=False):
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
     print(f"📚 [GOOGLE_BOOKS] Request URL: {url}")
     
+    # Cached metadata short‑circuit
+    cache_key = ('google_isbn', isbn, fetch_title_author)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3.5)
         print(f"📚 [GOOGLE_BOOKS] Response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
@@ -657,6 +841,8 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     break
             
             result['cover_url'] = cover_url
+            # Legacy zoom/printsec/img param forcing removed. Central normalization now handled
+            # by normalize_cover_url and upgrade_google_cover_url elsewhere in the pipeline.
             # Keep all image links for variant expansion later
             if image_links:
                 # Normalize all to https
@@ -750,6 +936,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 print(f"    publisher='{publisher}'")
             
             print(f"✅ [GOOGLE_BOOKS] Successfully retrieved data for ISBN {isbn}: {list(result.keys())}")
+            _cache_set(cache_key, result)
             return result
         else:
             print(f"❌ [GOOGLE_BOOKS] No items found for ISBN {isbn}")
@@ -1256,8 +1443,15 @@ def search_book_by_title_author(title, author=None):
 
 def search_google_books_by_title_author(title, author=None, limit=10):
     """Search Google Books API by title and optionally author."""
+    import os as _os
+    _VERBOSE = (
+        (_os.getenv('VERBOSE') or 'false').lower() == 'true'
+        or (_os.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
+        or (_os.getenv('COVER_VERBOSE') or 'false').lower() == 'true'
+    )
     if not title:
-        print(f"[GOOGLE_BOOKS] No title provided for book search")
+        if _VERBOSE:
+            print(f"[GOOGLE_BOOKS] No title provided for book search")
         return []
     
     # Build search query for Google Books
@@ -1268,25 +1462,32 @@ def search_google_books_by_title_author(title, author=None, limit=10):
     query = '+'.join(query_parts)
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={min(limit, 40)}"
     
-    print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{title}', author='{author}' at {url}")
+    if _VERBOSE:
+        print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{title}', author='{author}' at {url}")
     
     try:
-        response = requests.get(url, timeout=15)
-        print(f"[GOOGLE_BOOKS] Multiple book search response status: {response.status_code}")
+        response = requests.get(url, timeout=10)
+        if _VERBOSE:
+            print(f"[GOOGLE_BOOKS] Multiple book search response status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"[GOOGLE_BOOKS] Google Books API returned {response.status_code}")
+            if _VERBOSE:
+                print(f"[GOOGLE_BOOKS] Google Books API returned {response.status_code}")
             return []
             
         data = response.json()
         
         items = data.get('items', [])
         if not items:
-            print(f"[GOOGLE_BOOKS] No search results found for '{title}' by '{author}'")
+            if _VERBOSE:
+                print(f"[GOOGLE_BOOKS] No search results found for '{title}' by '{author}'")
             return []
             
-        print(f"[GOOGLE_BOOKS] Found {len(items)} book search results")
+        if _VERBOSE:
+            print(f"[GOOGLE_BOOKS] Found {len(items)} book search results")
+
         
+        from .book_utils import select_highest_google_image, upgrade_google_cover_url as _upgrade
         results = []
         for i, item in enumerate(items):
             try:
@@ -1312,8 +1513,9 @@ def search_google_books_by_title_author(title, author=None, limit=10):
                         isbn10 = identifier.get('identifier')
                 
                 # Get cover image
-                image_links = volume_info.get('imageLinks', {})
-                cover_url = image_links.get('large') or image_links.get('medium') or image_links.get('small') or image_links.get('thumbnail')
+                image_links = volume_info.get('imageLinks', {}) or {}
+                raw_cover = select_highest_google_image(image_links)
+                cover_url = _upgrade(raw_cover) if raw_cover else None
                 
                 result = {
                     'title': book_title,
@@ -1334,7 +1536,8 @@ def search_google_books_by_title_author(title, author=None, limit=10):
                     'source': 'Google Books'
                 }
                 
-                print(f"[GOOGLE_BOOKS] Result {i}: title='{book_title}', authors={book_authors}, isbn={isbn13 or isbn10}")
+                if _VERBOSE:
+                    print(f"[GOOGLE_BOOKS] Result {i}: title='{book_title}', authors={book_authors}, isbn={isbn13 or isbn10}")
                 
                 # Only add if we have at least a title
                 if result['title']:
@@ -1345,12 +1548,16 @@ def search_google_books_by_title_author(title, author=None, limit=10):
                     break
                     
             except Exception as item_error:
-                print(f"[GOOGLE_BOOKS] Error processing item {i}: {item_error}")
+                if _VERBOSE:
+                    print(f"[GOOGLE_BOOKS] Error processing item {i}: {item_error}")
                 continue
-        
-        print(f"[GOOGLE_BOOKS] Returning {len(results)} valid results")
+
+        if _VERBOSE:
+            print(f"[GOOGLE_BOOKS] Returning {len(results)} valid results")
         return results
-        
+
     except Exception as e:
-        print(f"[GOOGLE_BOOKS] Failed to search for book '{title}' by '{author}': {e}")
+        # Ensure _VERBOSE defined
+        if _VERBOSE:
+            print(f"[GOOGLE_BOOKS] Failed to search for book '{title}' by '{author}': {e}")
         return []

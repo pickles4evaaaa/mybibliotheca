@@ -311,20 +311,9 @@ def get_google_books_cover(isbn, fetch_title_author=False):
             if cover_url and cover_url.startswith('http://'):
                 cover_url = cover_url.replace('http://', 'https://')
             
-            # Enhance Google Books cover URLs for higher resolution
-            if cover_url and 'books.google.com' in cover_url:
-                # Add zoom parameter for higher quality if not already present
-                if 'zoom=' not in cover_url:
-                    separator = '&' if '?' in cover_url else '?'
-                    cover_url = f"{cover_url}{separator}zoom=1"
-                
-                # Replace small thumbnail sizes with larger ones in the URL
-                if 'zoom=0' in cover_url:
-                    cover_url = cover_url.replace('zoom=0', 'zoom=1')
-                if 'zoom=2' in cover_url:
-                    cover_url = cover_url.replace('zoom=2', 'zoom=1')
-                if 'zoom=3' in cover_url:
-                    cover_url = cover_url.replace('zoom=3', 'zoom=1')
+            # Legacy zoom forcing removed; high-quality normalization now handled centrally
+            # via app.utils.book_utils.normalize_cover_url and upgrade_google_cover_url.
+            # Leave raw Google URL here; downstream logic will normalize/upgrade adaptively.
             
             if fetch_title_author:
                 title = volume_info.get('title', '')

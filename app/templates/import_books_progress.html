@@ -85,42 +85,46 @@
                     </div>
                     
                     <div class="row text-center">
-                        <div class="col-md-2">
-                            <div class="border rounded p-2">
+                        <div class="col-md-2 status-tile" data-status="processed" role="button" tabindex="0">
+                            <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="processedCount">0</div>
                                 <small class="text-muted">Processed</small>
                             </div>
                         </div>
-                        <div class="col-md-2">
-                            <div class="border rounded p-2">
+                        <div class="col-md-2 status-tile" data-status="success" role="button" tabindex="0">
+                            <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="successCount">0</div>
                                 <small class="text-success">Success</small>
                             </div>
                         </div>
-                        <div class="col-md-2">
-                            <div class="border rounded p-2">
+                        <div class="col-md-2 status-tile" data-status="errors" role="button" tabindex="0">
+                            <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="errorCount">0</div>
                                 <small class="text-danger">Errors</small>
                             </div>
                         </div>
-                        <div class="col-md-2">
-                            <div class="border rounded p-2">
+                        <div class="col-md-2 status-tile" data-status="skipped" role="button" tabindex="0">
+                            <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="skippedCount">0</div>
                                 <small class="text-warning">Skipped</small>
                             </div>
                         </div>
-                        <div class="col-md-2">
-                            <div class="border rounded p-2">
+                        <div class="col-md-2 status-tile" data-status="unmatched" role="button" tabindex="0">
+                            <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="unmatchedCount">0</div>
                                 <small class="text-info">Unmatched</small>
                             </div>
                         </div>
                         <div class="col-md-2">
-                            <div class="border rounded p-2">
+                            <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="totalCount">{{ total_books }}</div>
                                 <small class="text-muted">Total</small>
                             </div>
                         </div>
+                    </div>
+                    <div class="mt-3" id="statusDetails" style="display:none;">
+                        <h6 class="mb-2" id="statusDetailsTitle"></h6>
+                        <div class="list-group small" id="statusDetailsList" style="max-height:240px;overflow:auto;"></div>
                     </div>
                     
                     <div class="mt-3">
@@ -172,6 +176,32 @@
 let taskId = '{{ task_id }}';
 let totalBooks = parseInt(document.getElementById('totalCount').textContent, 10) || 0;
 let startTime = new Date('{{ start_time }}');
+// Cache books by status as they come in (lightweight - only titles)
+const statusBuckets = {success: [], errors: [], skipped: [], unmatched: []};
+
+function toggleStatusDetails(statusKey, label){
+    const container = document.getElementById('statusDetails');
+    if(container.dataset.active === statusKey){
+        container.style.display = 'none';
+        container.dataset.active = '';
+        return;
+    }
+    const listEl = document.getElementById('statusDetailsList');
+    listEl.innerHTML = (statusBuckets[statusKey]||[]).map(b => `<div class="list-group-item">${b}</div>`).join('') || '<div class="text-muted list-group-item">No entries</div>';
+    document.getElementById('statusDetailsTitle').textContent = label + ' Details';
+    container.style.display = 'block';
+    container.dataset.active = statusKey;
+}
+
+document.addEventListener('click', (e)=>{
+    const tile = e.target.closest('.status-tile');
+    if(!tile) return;
+    const status = tile.dataset.status;
+    const labelMap = {processed:'Processed', success:'Success', errors:'Errors', skipped:'Skipped', unmatched:'Unmatched'};
+    if(status in {success:1, errors:1, skipped:1, unmatched:1}){
+        toggleStatusDetails(status,labelMap[status]);
+    }
+});
 
 function updateProgress() {
     fetch(`/api/import/progress/${taskId}`)
@@ -246,6 +276,12 @@ function updateProgress() {
                 return; // Stop polling
             }
             
+            // Fill buckets from enriched arrays (override lightweight parsing)
+            if (Array.isArray(data.success_titles)) statusBuckets.success = data.success_titles.slice();
+            if (Array.isArray(data.error_titles)) statusBuckets.errors = data.error_titles.slice();
+            if (Array.isArray(data.skipped_titles)) statusBuckets.skipped = data.skipped_titles.slice();
+            if (Array.isArray(data.unmatched_titles)) statusBuckets.unmatched = data.unmatched_titles.slice();
+
             // Update counters
             document.getElementById('processedCount').textContent = processedCount;
             document.getElementById('successCount').textContent = successCount;
@@ -390,6 +426,7 @@ function updateProgress() {
                     .map(activity => `<div class="mb-1">${activity}</div>`)
                     .join('');
                 activityLog.scrollTop = activityLog.scrollHeight;
+                // (No longer parsing activity lines for buckets; using enriched arrays.)
             }
             
             // Continue polling if not completed
