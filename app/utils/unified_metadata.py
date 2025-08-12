@@ -9,6 +9,7 @@ search passthrough to the enhanced search implementation.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import requests
 
@@ -560,8 +561,21 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	# Series: prefer explicit Google series, else OpenLibrary series; fallback: None
 	merged['series'] = g_series or o_series or google.get('series') or openlib.get('series')
 
-	# Cover: prefer Google, fallback to OpenLibrary
-	merged['cover_url'] = google.get('cover_url') or openlib.get('cover_url')
+	# Cover: centralized via CoverService with fallback to raw URL
+	try:
+		from app.services.cover_service import cover_service
+		raw_cover_url = google.get('cover_url') or openlib.get('cover_url')
+		cr = cover_service.fetch_and_cache(isbn=merged.get('isbn13') or merged.get('isbn10'),
+											  title=merged.get('title'),
+											  author=(merged.get('authors') or [None])[0])
+		if cr and cr.cached_url:
+			merged['cover_url'] = cr.cached_url
+			merged['cover_source'] = cr.source
+			merged['cover_quality'] = cr.quality
+		else:
+			merged['cover_url'] = raw_cover_url
+	except Exception as e:
+		merged['cover_url'] = google.get('cover_url') or openlib.get('cover_url')
 
 	# IDs & ISBNs
 	merged['google_books_id'] = google.get('google_books_id')
@@ -579,13 +593,28 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 
 
 def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
-	"""Fetch and merge Google Books and OpenLibrary metadata for an ISBN."""
+	"""Fetch and merge Google Books and OpenLibrary metadata for an ISBN (parallel IO)."""
 	isbn = (isbn or '').strip()
 	if not isbn:
 		return {}
 
-	google = _fetch_google_by_isbn(isbn)
-	openlib = _fetch_openlibrary_by_isbn(isbn)
+	google = {}
+	openlib = {}
+	with ThreadPoolExecutor(max_workers=2) as ex:
+		future_map = {
+			ex.submit(_fetch_google_by_isbn, isbn): 'google',
+			ex.submit(_fetch_openlibrary_by_isbn, isbn): 'openlib'
+		}
+		for fut in as_completed(future_map):
+			kind = future_map[fut]
+			try:
+				data = fut.result() or {}
+			except Exception:
+				data = {}
+			if kind == 'google':
+				google = data
+			else:
+				openlib = data
 
 	if not google and not openlib:
 		return {}

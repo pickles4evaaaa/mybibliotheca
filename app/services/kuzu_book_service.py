@@ -12,6 +12,8 @@ import uuid
 import traceback
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
+import time
+from flask import current_app
 
 from ..domain.models import Book, ReadingStatus
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
@@ -360,21 +362,31 @@ class KuzuBookService:
     async def create_book(self, domain_book: Book) -> Book:
         """Create a book in Kuzu."""
         try:
+            t0 = time.perf_counter()
             
             # Ensure the book has an ID
             if not domain_book.id:
                 domain_book.id = str(uuid.uuid4())
+            t_id = time.perf_counter()
             
             # Set timestamps
             domain_book.created_at = datetime.now(timezone.utc)
             domain_book.updated_at = datetime.now(timezone.utc)
+            t_ts = time.perf_counter()
             
             # Create the book in Kuzu
             created_book = await self.book_repo.create(domain_book)
+            t_repo = time.perf_counter()
             
             if not created_book:
                 raise ValueError("Failed to create book in repository")
             
+            try:
+                current_app.logger.info(
+                    f"[BOOK][CREATE] id={domain_book.id} total={t_repo - t0:.3f}s gen_id={t_id - t0:.3f}s set_ts={t_ts - t_id:.3f}s repo={t_repo - t_ts:.3f}s"
+                )
+            except Exception:
+                pass
             return domain_book
             
         except Exception as e:
@@ -583,7 +595,15 @@ class KuzuBookService:
     # Sync wrappers for backward compatibility
     def create_book_sync(self, domain_book: Book) -> Book:
         """Sync wrapper for create_book."""
-        return run_async(self.create_book(domain_book))
+        start = time.perf_counter()
+        book = run_async(self.create_book(domain_book))
+        end = time.perf_counter()
+        try:
+            from flask import current_app
+            current_app.logger.info(f"[BOOK][CREATE_SYNC] total={end-start:.3f}s id={book.id if book else 'n/a'}")
+        except Exception:
+            pass
+        return book
     
     def get_book_by_id_sync(self, book_id: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_id."""

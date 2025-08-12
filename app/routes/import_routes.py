@@ -40,6 +40,8 @@ from app.services import book_service, import_mapping_service, custom_field_serv
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import CustomFieldDefinition, CustomFieldType
 from app.utils import normalize_goodreads_value
+from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
+from app.utils.book_utils import get_best_cover_for_book
 from app.utils.safe_import_manager import (
     safe_import_manager, 
     safe_create_import_job,
@@ -1839,6 +1841,20 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
     
     print(f"🔀 [MERGE_API] API data keys: {list(api_data.keys())}")
     
+    # Centralized cover selection & caching (only if we don't already have a processed local cover)
+    try:
+        if not simplified_book.cover_url or not simplified_book.cover_url.startswith('/covers/'):
+            from app.services.cover_service import cover_service
+            cr = cover_service.fetch_and_cache(isbn=simplified_book.isbn13 or simplified_book.isbn10,
+                                               title=simplified_book.title,
+                                               author=simplified_book.author)
+            if cr.cached_url:
+                simplified_book.cover_url = cr.cached_url
+                simplified_book.global_custom_metadata['cover_source'] = cr.source
+                simplified_book.global_custom_metadata['cover_quality'] = cr.quality
+    except Exception as e:
+        print(f"[MERGE_API][COVER] Failed unified cover selection: {e}")
+
     # Merge title (prefer API if available and different)
     if api_data.get('title') and api_data['title'] != simplified_book.title:
         print(f"🔀 [MERGE_API] Updating title from '{simplified_book.title}' to '{api_data['title']}'")
@@ -1935,14 +1951,28 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
             print(f"🔀 [MERGE_API] Set raw_categories paths: {len(paths)} items")
 
     # Merge cover URL (prefer API cover) - check both possible field names
-    cover_url = api_data.get('cover_url') or api_data.get('cover')
-    if cover_url and not simplified_book.cover_url:
-        simplified_book.cover_url = cover_url
-        print(f"🔀 [MERGE_API] Updated cover URL to: {cover_url}")
-    elif cover_url:
-        print(f"🔀 [MERGE_API] Cover URL already set, not overriding")
-    else:
-        print(f"🔀 [MERGE_API] No cover URL found in API data")
+    # Unified best cover selection
+    try:
+        best_cover = get_best_cover_for_book(
+            isbn=simplified_book.isbn13 or simplified_book.isbn10,
+            title=api_data.get('title') or simplified_book.title,
+            author=api_data.get('author') or simplified_book.author
+        )
+        cover_url = best_cover.get('cover_url') or api_data.get('cover_url') or api_data.get('cover')
+        if cover_url and not simplified_book.cover_url:
+            try:
+                processed_url = process_image_from_url(cover_url)
+                simplified_book.cover_url = processed_url
+                print(f"🔀 [MERGE_API] Updated cover URL to: {processed_url} (source={best_cover.get('source')})")
+            except Exception as e:
+                simplified_book.cover_url = cover_url
+                print(f"🔀 [MERGE_API] Failed to process cover, using raw URL: {cover_url} ({e})")
+        elif cover_url:
+            print(f"🔀 [MERGE_API] Cover URL already set, not overriding")
+        else:
+            print(f"🔀 [MERGE_API] No cover URL found in API data or best-cover helper")
+    except Exception as ce:
+        print(f"🔀 [MERGE_API] Best cover helper failed: {ce}")
     
     # Merge description (prefer API if CSV doesn't have one)
     if api_data.get('description') and not simplified_book.description:
@@ -3007,7 +3037,8 @@ def api_search_book_details():
                 'page_count': item.get('page_count', 0),
                 'isbn13': isbn13,
                 'isbn10': isbn10,
-                'cover_url': item.get('cover_url') or item.get('cover') or '',
+                # Always process cover URLs for search results
+                'cover_url': process_image_from_url(item.get('cover_url') or item.get('cover') or '') if (item.get('cover_url') or item.get('cover')) else '',
                 'language': item.get('language', 'en'),
                 'categories': item.get('categories', []),
                 'google_books_id': item.get('google_books_id', ''),
@@ -3319,9 +3350,7 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             published_date=(unified.get('published_date') if unified else None),
                             page_count=_pc,
                             language=unified_language,
-                            cover_url=(
-                                (unified.get('cover_url') or unified.get('cover')) if unified else None
-                            ),
+                            cover_url=((unified.get('cover_url') or unified.get('cover')) if unified else None),
                             categories=unified_categories,
                             google_books_id=(str(unified.get('google_books_id')).strip() if unified and unified.get('google_books_id') else None),
                             openlibrary_id=(str(unified.get('openlibrary_id')).strip() if unified and unified.get('openlibrary_id') else None),
@@ -3329,6 +3358,18 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             average_rating=_ar,
                             rating_count=_rc,
                         )
+
+                        # Unified cover selection to possibly upgrade cover
+                        try:
+                            from app.utils.book_utils import get_best_cover_for_book
+                            best_cover = get_best_cover_for_book(isbn=selected_isbn, title=new_book.title, author=new_book.author)
+                            if best_cover and best_cover.get('cover_url'):
+                                new_book.cover_url = best_cover['cover_url']
+                                new_book.global_custom_metadata['cover_source'] = best_cover.get('source')
+                                new_book.global_custom_metadata['cover_quality'] = best_cover.get('quality')
+                                print(f"🖼️ [CREATE_BOOK] Unified cover selected ({best_cover.get('source')}) for {selected_isbn}")
+                        except Exception as e:
+                            print(f"⚠️ [CREATE_BOOK] Unified cover selection failed for {selected_isbn}: {e}")
 
                         # Map contributors if present in unified metadata
                         contributors = (unified.get('contributors') if unified else None) or []
@@ -3426,6 +3467,18 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             title=title,
                             author=author_name if author_name else 'Unknown Author'
                         )
+
+                        # Attempt unified cover selection even for manual creation (title/author only)
+                        try:
+                            from app.utils.book_utils import get_best_cover_for_book
+                            best_cover = get_best_cover_for_book(title=new_book.title, author=new_book.author)
+                            if best_cover and best_cover.get('cover_url') and not new_book.cover_url:
+                                new_book.cover_url = best_cover['cover_url']
+                                new_book.global_custom_metadata['cover_source'] = best_cover.get('source')
+                                new_book.global_custom_metadata['cover_quality'] = best_cover.get('quality')
+                                print(f"🖼️ [CREATE_BOOK] Unified cover selected ({best_cover.get('source')}) for manual '{new_book.title}'")
+                        except Exception as e:
+                            print(f"⚠️ [CREATE_BOOK] Unified cover selection failed for manual '{new_book.title}': {e}")
                         
                         # Apply any additional metadata from API results (non-ISBN)
                         if api_metadata:
@@ -3719,6 +3772,16 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                                 language='',
                                 categories=['Reading Logs'],
                             )
+                            # Attempt a neutral cover via unified helper (optional)
+                            try:
+                                from app.utils.book_utils import get_best_cover_for_book
+                                best_cover = get_best_cover_for_book(title=unassigned_book_data.title, author=unassigned_book_data.author)
+                                if best_cover and best_cover.get('cover_url'):
+                                    unassigned_book_data.cover_url = best_cover['cover_url']
+                                    unassigned_book_data.global_custom_metadata['cover_source'] = best_cover.get('source')
+                                    unassigned_book_data.global_custom_metadata['cover_quality'] = best_cover.get('quality')
+                            except Exception as e:
+                                print(f"⚠️ [READING_HISTORY] Unified cover selection failed for Unassigned book: {e}")
                             
                             # Use SimplifiedBookService to create the book
                             simplified_service = SimplifiedBookService()

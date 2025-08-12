@@ -167,14 +167,24 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
                     elif identifier.get('type') == 'ISBN_13':
                         isbn_13 = identifier.get('identifier')
                 
-                # Extract cover image
+                # Extract cover image (centralized via CoverService)
                 image_links = volume_info.get('imageLinks', {})
                 cover_url = None
                 for size in ['extraLarge', 'large', 'medium', 'small', 'thumbnail']:
                     if size in image_links:
-                        cover_url = image_links[size]
-                        if cover_url and cover_url.startswith('http:'):
-                            cover_url = cover_url.replace('http:', 'https:')
+                        raw_cover = image_links[size]
+                        if raw_cover and raw_cover.startswith('http:'):
+                            raw_cover = raw_cover.replace('http:', 'https:')
+                        try:
+                            from app.services.cover_service import cover_service
+                            cr = cover_service.fetch_and_cache(isbn=isbn_13 or isbn_10, title=book_title, author=authors[0] if authors else None)
+                            if cr and cr.cached_url:
+                                cover_url = cr.cached_url
+                            else:
+                                cover_url = raw_cover
+                        except Exception as e:
+                            cover_url = raw_cover
+                            print(f"[COVER_SERVICE] Failure for Google result: {e}")
                         break
                 
                 # Extract publication year
@@ -312,11 +322,21 @@ def search_openlibrary(title: str, max_results: int = 20, author: Optional[str] 
                 subject = doc.get('subject', [])
                 categories = subject[:5] if subject else []  # Limit to first 5 subjects
                 
-                # Extract cover image
+                # Extract cover image (centralized via CoverService)
                 cover_i = doc.get('cover_i')
                 cover_url = None
                 if cover_i:
-                    cover_url = f"https://covers.openlibrary.org/b/id/{cover_i}-L.jpg"
+                    raw_cover = f"https://covers.openlibrary.org/b/id/{cover_i}-L.jpg"
+                    try:
+                        from app.services.cover_service import cover_service
+                        cr = cover_service.fetch_and_cache(isbn=isbn_13 or isbn_10, title=book_title, author=authors[0] if authors else None)
+                        if cr and cr.cached_url:
+                            cover_url = cr.cached_url
+                        else:
+                            cover_url = raw_cover
+                    except Exception as e:
+                        cover_url = raw_cover
+                        print(f"[COVER_SERVICE] Failure for OpenLibrary result: {e}")
                 
                 # Extract OpenLibrary ID
                 openlibrary_id = None
@@ -527,16 +547,27 @@ def search_books_with_display_fields(title: str, max_results: int = 10, isbn_req
     # Format results for display - keep only essential fields visible, store full data
     display_results = []
     for result in results:
+        # Non-blocking cover strategy: select candidate quickly; let UI optionally schedule async processing
+        cover_url = result.get('cover_url')
+        if not cover_url:
+            try:
+                from app.services.cover_service import cover_service
+                cand = cover_service.select_candidate(isbn=result.get('isbn_13') or result.get('isbn_10'), title=result.get('title'), author=(result.get('authors') or [None])[0] if isinstance(result.get('authors'), list) else result.get('author'))
+                if cand:
+                    cover_url = cand.get('url')
+                    result['cover_candidate'] = cand
+                    result['cover_url'] = cover_url
+            except Exception:
+                pass
         display_item = {
-            # Display fields
             'title': result.get('title', ''),
             'author': result.get('author', ''),
             'publication_year': result.get('publication_year'),
             'page_count': result.get('page_count'),
             'similarity_score': result.get('similarity_score', 0),
             'source': result.get('source', ''),
-            
-            # Full data stored for later use
+            'cover_url': cover_url,
+            'cover_candidate': result.get('cover_candidate'),
             'full_data': result
         }
         display_results.append(display_item)

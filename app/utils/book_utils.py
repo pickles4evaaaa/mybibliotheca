@@ -1,3 +1,207 @@
+_BEST_COVER_CACHE = {}
+
+def get_best_cover_for_book(isbn=None, title=None, author=None):
+    """
+    Universal cover selection: favor Google Books, fall back to OpenLibrary, select largest/clearest image.
+    Args:
+        isbn (str): ISBN-13 or ISBN-10
+        title (str): Book title
+        author (str): Book author(s)
+    Returns:
+        dict: {'cover_url': ..., 'source': ..., 'quality': ...}
+    """
+    # Simple in-memory cache (module-level) to cut repeated latency
+    global _BEST_COVER_CACHE
+    cache_key = (isbn or '').strip(), (title or '').lower().strip(), (author or '').lower().strip()
+    if cache_key in _BEST_COVER_CACHE:
+        return _BEST_COVER_CACHE[cache_key]
+
+    import time
+    t0 = time.perf_counter()
+    phase_logs = []
+    # Try Google Books first
+    gb_data = None
+    if isbn:
+        t_gb_start = time.perf_counter()
+        gb_data = get_google_books_cover(isbn, fetch_title_author=True)
+        phase_logs.append(f"google_isbn={time.perf_counter()-t_gb_start:.3f}s has={'yes' if gb_data else 'no'}")
+    if not gb_data and title:
+        t_gb_title = time.perf_counter()
+        gb_results = search_google_books_by_title_author(title, author, limit=1)
+        phase_logs.append(f"google_title={time.perf_counter()-t_gb_title:.3f}s res={len(gb_results) if gb_results else 0}")
+        gb_data = gb_results[0] if gb_results else None
+    cover_url = None
+    quality = 'none'
+    if gb_data and gb_data.get('cover_url'):
+        cover_url = gb_data['cover_url']
+        # Normalize Google Books sizing parameters to highest reasonable quality
+        if cover_url:
+            # Standard pattern upgrade: remove edge cropping params, enforce zoom=1 & printsec=frontcover
+            if 'books.google' in cover_url:
+                # Replace small/thumbnail segments if present
+                cover_url = cover_url.replace('&zoom=0', '').replace('&zoom=2', '').replace('&zoom=3', '')
+                if 'zoom=' not in cover_url:
+                    sep = '&' if '?' in cover_url else '?'
+                    cover_url = f"{cover_url}{sep}zoom=1"
+                # Prefer highest quality by adding edge=c if missing (Google often serves better quality)
+                if 'edge=' not in cover_url:
+                    sep = '&' if '?' in cover_url else '?'
+                    cover_url = f"{cover_url}{sep}edge=c"
+                # Add printsec frontcover for consistency
+                if 'printsec=' not in cover_url:
+                    sep = '&' if '?' in cover_url else '?'
+                    cover_url = f"{cover_url}{sep}printsec=frontcover"
+        # Determine quality tag
+        if cover_url and ('extraLarge' in cover_url or 'zoom=1' in cover_url or 'large' in cover_url):
+            quality = 'high'
+        else:
+            quality = 'medium'
+    # Fallback to OpenLibrary if Google Books failed or image is missing/poor
+    if not cover_url or quality == 'none':
+        ol_data = None
+        if isbn:
+            t_ol_start = time.perf_counter()
+            try:
+                ol_data = fetch_book_data(isbn)
+            except Exception:
+                ol_data = None
+            phase_logs.append(f"openlibrary_isbn={time.perf_counter()-t_ol_start:.3f}s has={'yes' if ol_data else 'no'}")
+        if not ol_data and title:
+            t_ol_title = time.perf_counter()
+            ol_results = search_book_by_title_author(title, author)
+            # ol_results may be list or dict
+            count = (len(ol_results) if isinstance(ol_results, list) else (1 if ol_results else 0))
+            phase_logs.append(f"openlibrary_title={time.perf_counter()-t_ol_title:.3f}s res={count}")
+            ol_data = ol_results if isinstance(ol_results, dict) else (ol_results[0] if ol_results else None)
+        if ol_data and ol_data.get('cover_url'):
+            cover_url = ol_data['cover_url']
+            quality = 'medium' if 'L.jpg' in str(cover_url) else 'low'
+            source = 'OpenLibrary'
+        else:
+            source = 'none'
+    else:
+        source = 'Google Books'
+    # Final fallback: None
+    result_obj = {
+        'cover_url': cover_url,
+        'source': source,
+        'quality': quality
+    }
+    _BEST_COVER_CACHE[cache_key] = result_obj
+    total = time.perf_counter() - t0
+    try:
+        from flask import current_app
+        current_app.logger.info(f"[COVER][SELECT] total={total:.3f}s isbn={isbn} title='{(title or '')[:40]}' source={result_obj['source']} quality={result_obj['quality']} steps={' | '.join(phase_logs)}")
+    except Exception:
+        pass
+    return result_obj
+
+def get_cover_candidates(isbn=None, title=None, author=None):
+    """Return ordered list of candidate cover URLs with metadata without downloading.
+
+    Order preference:
+    1. Google: extraLarge, large, medium, small, thumbnail
+    2. OpenLibrary: large (L), medium (M), small (S)
+    Returns list of dicts: {'provider': 'google'|'openlibrary', 'size': label, 'url': url}
+    """
+    candidates = []
+    def _expand_google_variants(url: str):
+        """Generate ordered google image variants (largest first) heuristically.
+
+        Google Books image URLs often look like:
+          https://books.google.com/books/content?id=XXXX&printsec=frontcover&img=1&zoom=1&edge=curl&source=gbs_api
+
+        Empirically: smaller zoom number => higher resolution (zoom=0 or 1 larger than zoom=3/4/5). Some items only have zoom=1 & zoom=5.
+        We create variants removing decorative edge=curl and trying zoom values 0..5.
+        We do NOT fetch here; selection layer may optionally HEAD request to confirm size later.
+        """
+        import re
+        base = url
+        # Normalize protocol
+        if base.startswith('http:'):
+            base = base.replace('http:', 'https:')
+        # Remove existing zoom; we'll re-add
+        base_no_zoom = re.sub(r'([&?])zoom=\d', r'\1', base)
+        # Remove any duplicated && or ?& patterns
+        base_no_zoom = base_no_zoom.replace('?&', '?').rstrip('&')
+        # Remove edge=curl for raw variant
+        base_no_edge = re.sub(r'(&|\?)edge=curl', r'\1', base_no_zoom)
+        zoom_levels = [0,1,2,3,4,5]
+        variants = []
+        seen = set()
+        for z in zoom_levels:
+            sep = '&' if ('?' in base_no_edge and not base_no_edge.endswith('?')) else '?'
+            variant = f"{base_no_edge}{sep}zoom={z}"
+            # Ensure printsec=frontcover present for consistency
+            if 'printsec=' not in variant:
+                variant += '&printsec=frontcover'
+            if 'img=1' not in variant:
+                variant += '&img=1'
+            # Basic cleanup of duplicate ampersands
+            while '&&' in variant:
+                variant = variant.replace('&&', '&')
+            variant = variant.replace('?&', '?')
+            if variant not in seen:
+                variants.append({'provider': 'google', 'size': f'zoom{z}', 'url': variant})
+                seen.add(variant)
+        # Add original last if not already
+        if url not in seen:
+            variants.append({'provider': 'google', 'size': 'original', 'url': url})
+        return variants
+    try:
+        gb_data = None
+        if isbn:
+            try:
+                gb_data = get_google_books_cover(isbn, fetch_title_author=True)
+            except Exception:
+                gb_data = None
+        if not gb_data and title:
+            try:
+                gb_results = search_google_books_by_title_author(title, author, limit=1)
+                gb_data = gb_results[0] if gb_results else None
+            except Exception:
+                gb_data = None
+        if gb_data:
+            # Include each provided size first (ordered by presumed largest to smallest)
+            order = ['extraLarge','large','medium','small','thumbnail','smallThumbnail']
+            links_all = gb_data.get('image_links_all') or {}
+            added_urls=set()
+            for key in order:
+                if key in links_all and links_all[key]:
+                    u = links_all[key]
+                    if u not in added_urls:
+                        candidates.append({'provider':'google','size':key,'url':u})
+                        added_urls.add(u)
+            # Expand zoom variants from the largest available base
+            base = gb_data.get('cover_url')
+            if base:
+                for variant in _expand_google_variants(base):
+                    if variant['url'] not in added_urls:
+                        candidates.append(variant)
+                        added_urls.add(variant['url'])
+        # OpenLibrary candidates
+        ol_data = None
+        if isbn:
+            try:
+                ol_data = fetch_book_data(isbn)
+            except Exception:
+                ol_data = None
+        if not ol_data and title:
+            try:
+                ol_data = search_book_by_title_author(title, author)
+            except Exception:
+                ol_data = None
+        if isinstance(ol_data, dict) and ol_data.get('cover_url'):
+            candidates.append({'provider': 'openlibrary', 'size': 'L', 'url': ol_data['cover_url']})
+    except Exception:
+        pass
+    return candidates
+
+# USAGE INSTRUCTIONS:
+# For all entry points (quick ISBN lookup, OCR, imports, title/author search, migration, reading log import),
+# replace any direct cover selection logic with:
+#   best_cover = get_best_cover_for_book(isbn=..., title=..., author=...)
+#   cover_url = best_cover['cover_url']
 from datetime import date, timedelta, datetime
 import pytz
 import calendar
@@ -453,6 +657,16 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     break
             
             result['cover_url'] = cover_url
+            # Keep all image links for variant expansion later
+            if image_links:
+                # Normalize all to https
+                normalized_links = {}
+                for k,v in image_links.items():
+                    if isinstance(v,str) and v.startswith('http:'):
+                        normalized_links[k] = v.replace('http:','https:')
+                    else:
+                        normalized_links[k] = v
+                result['image_links_all'] = normalized_links
             
             if fetch_title_author:
                 # Get title and author information

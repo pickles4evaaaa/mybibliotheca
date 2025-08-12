@@ -911,59 +911,63 @@ class AdvancedMigrationSystem:
         
         if should_fetch_api:
             try:
+                # Use unified cover/metadata helper for consistency across system
                 from app.utils import get_google_books_cover, fetch_book_data
+                from app.utils.book_utils import get_best_cover_for_book
                 
                 # Add small random delay for migration to avoid overwhelming APIs
                 delay = random.uniform(0.4, 0.8)  # Random delay between 400-800ms
                 time.sleep(delay)
                 
-                # Try Google Books first (usually more complete)
+                # Use existing granular retrieval for rich metadata
                 google_data = None
+                openlibrary_data = None
                 try:
                     google_data = get_google_books_cover(isbn, fetch_title_author=True)
                     if google_data:
                         logger.info(f"✅ Got Google Books data for {isbn}")
                 except Exception as e:
                     logger.warning(f"⚠️ Google Books failed for {isbn}: {e}")
-                
-                # Try OpenLibrary as backup/supplement
-                openlibrary_data = None
                 try:
                     openlibrary_data = fetch_book_data(isbn)
                     if openlibrary_data:
                         logger.info(f"✅ Got OpenLibrary data for {isbn}")
                 except Exception as e:
                     logger.warning(f"⚠️ OpenLibrary failed for {isbn}: {e}")
-                
-                # Merge API data intelligently
+
+                # Merge metadata preserving richer Google info then supplementing
                 if google_data or openlibrary_data:
                     api_data = {}
-                    
                     if google_data:
                         api_data.update(google_data)
-                    
                     if openlibrary_data:
-                        # Merge categories intelligently
                         if google_data and google_data.get('categories') and openlibrary_data.get('categories'):
                             google_cats = set(google_data.get('categories', []))
                             ol_cats = set(openlibrary_data.get('categories', []))
-                            api_data['categories'] = list(google_cats.union(ol_cats))[:10]  # Limit to 10
+                            api_data['categories'] = list(google_cats.union(ol_cats))[:10]
                         elif openlibrary_data.get('categories') and not api_data.get('categories'):
                             api_data['categories'] = openlibrary_data.get('categories', [])
-                        
-                        # Use OpenLibrary data for missing fields
                         for field in ['description', 'publisher', 'page_count', 'published_date']:
                             if not api_data.get(field) and openlibrary_data.get(field):
                                 api_data[field] = openlibrary_data[field]
-                        
                         if openlibrary_data.get('openlibrary_id'):
                             api_data['openlibrary_id'] = openlibrary_data['openlibrary_id']
-                        
                         logger.info(f"✅ Merged OpenLibrary data for {isbn}")
-                    
-                    # Log category information
                     if api_data.get('categories'):
                         logger.info(f"📚 Categories for {isbn}: {api_data['categories']}")
+
+                # Unified cover selection
+                try:
+                    best_cover = get_best_cover_for_book(isbn=isbn)
+                    if best_cover and best_cover.get('cover_url'):
+                        if api_data is None:
+                            api_data = {}
+                        api_data['cover'] = best_cover['cover_url']
+                        api_data['cover_source'] = best_cover.get('source')
+                        api_data['cover_quality'] = best_cover.get('quality')
+                        logger.info(f"�️ Selected cover ({best_cover.get('source')}) for {isbn}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Unified cover selection failed for {isbn}: {e}")
                 
             except Exception as e:
                 logger.warning(f"⚠️ Failed to fetch API metadata for {isbn}: {e}")
@@ -976,6 +980,7 @@ class AdvancedMigrationSystem:
             title=safe_get(row, 'title') or (api_data.get('title') if api_data else '') or '',
             isbn13=isbn13 or (api_data.get('isbn13') if api_data else None),
             isbn10=isbn10 or (api_data.get('isbn10') if api_data else None),
+            # Prefer existing sqlite cover, else unified selected cover
             cover_url=safe_get(row, 'cover_url') or (api_data.get('cover') if api_data else None),
             description=safe_get(row, 'description') or (api_data.get('description') if api_data else None),
             published_date=safe_get(row, 'published_date') or (api_data.get('published_date') if api_data else None),

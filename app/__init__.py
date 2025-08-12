@@ -861,9 +861,17 @@ def create_app():
     from .api.books import books_api
     from .api.reading_logs import reading_logs_api
     from .api.users import users_api
+    from .routes.cover_routes import cover_bp
+    try:
+        from .routes.book_routes import api_book_bp
+    except Exception:
+        api_book_bp = None
     app.register_blueprint(books_api)
     app.register_blueprint(reading_logs_api)
     app.register_blueprint(users_api)
+    app.register_blueprint(cover_bp)
+    if api_book_bp:
+        app.register_blueprint(api_book_bp)
 
     # Add shutdown logging
     from datetime import datetime

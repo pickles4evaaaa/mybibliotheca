@@ -448,67 +448,78 @@ def get_reading_streak(timezone=None):
     return current_user.get_reading_streak()
 
 def generate_month_review_image(books, month, year):
+    """Generate a high-quality monthly collage with preserved aspect ratios and crisp resizing.
+
+    Returns a BytesIO PNG buffer suitable for send_file.
+    """
     import calendar
     from PIL import Image, ImageDraw, ImageFont
     from io import BytesIO
     import requests
     import os
 
-    img_size = 1080
+    # Canvas setup
+    img_size = 1440  # higher resolution for sharper output
     cols = 4
-    cover_w, cover_h = 200, 300
-    padding = 30
-    # Increase title_height to give more space for the text
-    title_height = 220
+    cover_w, cover_h = 260, 390  # 2:3 aspect box, room for quality
+    padding = 36
+    title_height = 240  # more space for large title
     grid_w = cols * cover_w + (cols - 1) * padding
     rows = ((len(books) - 1) // cols) + 1 if books else 1
     grid_h = rows * cover_h + (rows - 1) * padding
-    # Move grid lower to avoid overlap
     grid_top = title_height + 40
-    grid_left = (img_size - grid_w) // 2
+    grid_left = max(0, (img_size - grid_w) // 2)
 
-    # Try bookshelf background
+    # Background
     bg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'static', 'bookshelf.png'))
-    print("Looking for bookshelf background at:", bg_path)
     try:
-        bg = Image.open(bg_path).convert('RGBA').resize((img_size, img_size))
-        print("Bookshelf background loaded!")
-    except Exception as e:
-        print("Failed to load bookshelf background:", e)
+        bg = Image.open(bg_path).convert('RGBA').resize((img_size, img_size), Image.Resampling.LANCZOS)
+    except Exception:
         bg = Image.new('RGBA', (img_size, img_size), (255, 230, 200, 255))
 
     draw = ImageDraw.Draw(bg)
 
-    # Draw month title in white
+    # Title
     month_name = f"{str(calendar.month_name[month]).upper()} {year}"
-    max_width = img_size - 80  # 40px margin on each side
-    font_size = 220
+    max_width = img_size - 120
+    font_size = 240
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     if not os.path.exists(font_path):
         font_path = os.path.join(os.path.dirname(__file__), "static", "Arial.ttf")
-    
-    # Initialize font and width variables
-    font = ImageFont.load_default()  # Default fallback
+
+    font = ImageFont.load_default()
     w = 0
-    
     while font_size > 10:
         try:
             font = ImageFont.truetype(font_path, font_size)
-        except Exception as e:
-            print("Font load failed:", e)
+        except Exception:
             font = ImageFont.load_default()
         bbox = draw.textbbox((0, 0), month_name, font=font)
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         if w <= max_width:
             break
-        font_size -= 10
-    shadow_offset = 4
-    # Draw shadow for readability
-    draw.text(((img_size - w) // 2 + shadow_offset, 40 + shadow_offset), month_name, fill=(0,0,0,128), font=font)
-    # Draw main text in white
-    draw.text(((img_size - w) // 2, 40), month_name, fill=(255, 255, 255), font=font)
+        font_size -= 12
 
-    # Place covers
+    shadow_offset = 4
+    draw.text(((img_size - w) // 2 + shadow_offset, 40 + shadow_offset), month_name, fill=(0, 0, 0, 128), font=font)
+    draw.text(((img_size - w) // 2, 40), month_name, fill=(255, 255, 255, 255), font=font)
+
+    # Helper: resize with aspect fit and center-pad into (cover_w, cover_h)
+    def fit_cover(image: Image.Image, box_w: int, box_h: int) -> Image.Image:
+        image = image.convert('RGBA')
+        src_w, src_h = image.size
+        # Preserve aspect ratio
+        scale = min(box_w / src_w, box_h / src_h)
+        new_w = max(1, int(src_w * scale))
+        new_h = max(1, int(src_h * scale))
+        resized = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        # Create canvas and center paste
+        canvas = Image.new('RGBA', (box_w, box_h), (245, 245, 245, 255))
+        offset = ((box_w - new_w) // 2, (box_h - new_h) // 2)
+        canvas.paste(resized, offset, resized)
+        return canvas
+
+    # Place covers with high-quality resampling
     for idx, book in enumerate(books):
         row = idx // cols
         col = idx % cols
@@ -517,16 +528,21 @@ def generate_month_review_image(books, month, year):
         cover_url = getattr(book, 'cover_url', None)
         try:
             if cover_url:
-                r = requests.get(cover_url, timeout=10)
-                cover = Image.open(BytesIO(r.content)).convert("RGBA")
-                cover = cover.resize((cover_w, cover_h))
+                r = requests.get(cover_url, timeout=12)
+                r.raise_for_status()
+                cover = Image.open(BytesIO(r.content))
+                cover_box = fit_cover(cover, cover_w, cover_h)
             else:
-                raise Exception("No cover")
+                raise ValueError('No cover URL')
         except Exception:
-            cover = Image.new('RGBA', (cover_w, cover_h), (220, 220, 220, 255))
-        bg.paste(cover, (x, y), cover if cover.mode == 'RGBA' else None)
+            cover_box = Image.new('RGBA', (cover_w, cover_h), (220, 220, 220, 255))
+        bg.paste(cover_box, (x, y), cover_box)
 
-    return bg.convert('RGB')
+    # Output buffer (PNG is lossless; optimize to keep size modest)
+    out = BytesIO()
+    bg.convert('RGB').save(out, format='PNG', optimize=True)
+    out.seek(0)
+    return out
 
 def normalize_goodreads_value(value, field_type='text'):
     """

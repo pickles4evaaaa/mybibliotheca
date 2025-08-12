@@ -98,5 +98,6 @@ ENV WORKERS=1
 # Disable sendfile to prevent occasional deadlocks on Docker for macOS/overlay FS
 # Use sync worker class and force single threaded operation for KuzuDB
 # Preload application to avoid multiple KuzuDB initialization attempts
+ARG ACCESS_LOGS="false"
 # Default: disable access logs to keep container output quiet; errors still go to stderr
-CMD ["gunicorn", "--worker-class", "sync", "--no-sendfile", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5054", "--timeout", "300", "--graceful-timeout", "300", "--error-logfile", "-", "--access-logfile", "-", "--max-requests", "1000", "--max-requests-jitter", "100", "run:app"]
+CMD ["/bin/sh", "-c", "if [ \"$ACCESS_LOGS\" = \"true\" ]; then exec gunicorn --worker-class sync --no-sendfile -w 1 --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --access-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; else exec gunicorn --worker-class sync --no-sendfile -w 1 --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; fi"]

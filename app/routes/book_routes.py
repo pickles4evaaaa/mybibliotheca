@@ -18,6 +18,8 @@ from io import BytesIO
 from app.services import book_service, reading_log_service, custom_field_service, user_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
+from app.utils.book_utils import get_best_cover_for_book
+from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook
 
@@ -34,6 +36,7 @@ print = _dprint
 
 # Create book blueprint
 book_bp = Blueprint('book', __name__)
+api_book_bp = Blueprint('api_book', __name__, url_prefix='/api/book')
 
 def _convert_query_result_to_list(result):
     """Convert SafeKuzuManager query result to legacy list format"""
@@ -144,8 +147,49 @@ def fetch_book(isbn):
                 book_data['author'] = book_data['authors']
 
         # If neither source provides a cover, set a default
-        if not book_data.get('cover') and not book_data.get('cover_url'):
-            book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
+        from app.utils.image_processing import process_image_from_url
+        # Select best cover (favor Google Books)
+        try:
+            best_cover = get_best_cover_for_book(isbn=isbn,
+                                                title=book_data.get('title'),
+                                                author=book_data.get('author') or (', '.join(book_data.get('authors', [])) if isinstance(book_data.get('authors'), list) else None))
+            if best_cover.get('cover_url'):
+                book_data['cover'] = best_cover['cover_url']
+                book_data['cover_url'] = best_cover['cover_url']
+                book_data['cover_source'] = best_cover.get('source')
+        except Exception as ce:
+            current_app.logger.debug(f"Best cover helper failed (unified path) for {isbn}: {ce}")
+
+        cover_url = book_data.get('cover_url') or book_data.get('cover')
+        async_requested = request.args.get('async_cover') == '1'
+        if cover_url and not async_requested:
+            try:
+                from app.services.cover_service import cover_service
+                if not cover_url.startswith('/covers/'):
+                    cr = cover_service.fetch_and_cache(isbn=isbn,
+                                                       title=book_data.get('title'),
+                                                       author=book_data.get('author'))
+                    if cr.cached_url:
+                        cover_url = cr.cached_url
+                        book_data['cover_source'] = cr.source
+                        book_data['cover_quality'] = cr.quality
+                book_data['cover'] = cover_url
+                book_data['cover_url'] = cover_url
+            except Exception as e:
+                current_app.logger.error(f"[COVER][UNIFIED_FETCH] Failed cover service processing: {e}")
+        elif async_requested:
+            # Schedule background processing and return candidate immediately
+            from app.services.cover_service import cover_service
+            cand = cover_service.select_candidate(isbn=isbn, title=book_data.get('title'), author=book_data.get('author'))
+            if cand:
+                book_data['cover_candidate'] = cand
+                book_data['cover_url'] = cand.get('url')
+            job = cover_service.schedule_async_processing(isbn=isbn, title=book_data.get('title'), author=book_data.get('author'))
+            book_data['cover_job_id'] = job['id']
+        if not book_data.get('cover'):
+            fallback = url_for('serve_static', filename='bookshelf.png', _external=True)
+            book_data['cover'] = fallback
+            book_data['cover_url'] = fallback
 
         # Date is already normalized by unified aggregator; still ensure input format
         if book_data.get('published_date'):
@@ -167,8 +211,29 @@ def fetch_book(isbn):
             for key, value in google_data.items():
                 if key not in book_data or not book_data[key]:
                     book_data[key] = value
-            if google_data.get('cover_url') and not book_data.get('cover'):
-                book_data['cover'] = google_data['cover_url']
+        # Apply best cover selection
+        try:
+            best_cover = get_best_cover_for_book(isbn=isbn,
+                                                title=book_data.get('title'),
+                                                author=book_data.get('author'))
+            if best_cover.get('cover_url'):
+                book_data['cover'] = best_cover['cover_url']
+                book_data['cover_url'] = best_cover['cover_url']
+                book_data['cover_source'] = best_cover.get('source')
+        except Exception as ce:
+            current_app.logger.debug(f"Best cover helper failed (fallback path) for {isbn}: {ce}")
+            from app.utils.image_processing import process_image_from_url
+            cover_url = google_data.get('cover_url')
+            if cover_url and not book_data.get('cover'):
+                try:
+                    processed_cover = process_image_from_url(cover_url)
+                    if processed_cover:
+                        if processed_cover.startswith('/'):
+                            book_data['cover'] = request.host_url.rstrip('/') + processed_cover
+                        else:
+                            book_data['cover'] = processed_cover
+                except Exception as e:
+                    current_app.logger.warning(f"Failed to process cover image: {cover_url} ({e})")
         if not book_data.get('isbn'):
             if google_data and google_data.get('isbn_13'):
                 book_data['isbn'] = google_data['isbn_13']
@@ -185,6 +250,35 @@ def fetch_book(isbn):
         if not book_data.get('cover'):
             book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
         return jsonify(book_data), 200 if book_data else 404
+@api_book_bp.route('/quick_isbn/<isbn>', methods=['GET'])
+def api_quick_isbn(isbn):
+    """API-first fast ISBN metadata endpoint with optional async cover processing (no auth redirect)."""
+    try:
+        from app.utils.metadata_aggregator import fetch_unified_by_isbn
+        unified = fetch_unified_by_isbn(isbn) or {}
+        data = dict(unified)
+        data['isbn'] = data.get('isbn13') or data.get('isbn10') or isbn
+        if not data.get('author') and data.get('authors'):
+            if isinstance(data['authors'], list):
+                data['author'] = ', '.join([a for a in data['authors'] if isinstance(a, str)])
+        async_mode = request.args.get('async_cover') == '1'
+        from app.services.cover_service import cover_service
+        if async_mode:
+            cand = cover_service.select_candidate(isbn=isbn, title=data.get('title'), author=data.get('author'))
+            if cand:
+                data['cover_candidate'] = cand
+                data['cover_url'] = cand.get('url')
+            job = cover_service.schedule_async_processing(isbn=isbn, title=data.get('title'), author=data.get('author'))
+            data['cover_job_id'] = job['id']
+        else:
+            cr = cover_service.fetch_and_cache(isbn=isbn, title=data.get('title'), author=data.get('author'))
+            if cr.cached_url:
+                data['cover_url'] = cr.cached_url
+                data['cover_source'] = cr.source
+                data['cover_quality'] = cr.quality
+        return jsonify(data), 200 if data else 404
+    except Exception as e:  # pragma: no cover
+        return jsonify({'error': 'failed', 'message': str(e)}), 500
 
 @book_bp.route('/')
 @login_required
@@ -269,6 +363,21 @@ def add_book_from_image():
             try:
                 from app.utils import fetch_unified_by_isbn
                 book_data = fetch_unified_by_isbn(isbn)
+                # Ensure cover is processed and stored
+                if book_data:
+                    from app.utils.image_processing import process_image_from_url
+                    cover_url = book_data.get('cover_url') or book_data.get('cover')
+                    if cover_url:
+                        try:
+                            processed_cover = process_image_from_url(cover_url)
+                            if processed_cover:
+                                abs_cover_url = processed_cover
+                                if processed_cover.startswith('/'):
+                                    abs_cover_url = request.host_url.rstrip('/') + processed_cover
+                                book_data['cover'] = abs_cover_url
+                                book_data['cover_url'] = abs_cover_url
+                        except Exception as e:
+                            current_app.logger.warning(f"Failed to process cover image: {cover_url} ({e})")
             except Exception:
                 book_data = None
             
@@ -533,41 +642,16 @@ def search_book_details():
                     'source': 'OpenLibrary'
                 }
                 
-                # Try to get cover image - start simple and enhance if possible
-                cover_url = None
-                
-                # Primary: Use cover_i (most reliable)
-                if doc.get('cover_i'):
-                    cover_id = doc['cover_i']
-                    cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
-                    
-                # Fallback: Use ISBN if no cover_i
-                elif doc.get('isbn') and len(doc['isbn']) > 0:
-                    isbn = doc['isbn'][0]
-                    cover_url = f"https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg"
-                    
-                # Last resort: Try editions
-                elif doc.get('key'):
-                    work_key = doc.get('key', '').replace('/works/', '')
-                    if work_key:
-                        try:
-                            editions_url = f"https://openlibrary.org/works/{work_key}/editions.json?limit=3"
-                            editions_response = requests.get(editions_url, timeout=2)
-                            if editions_response.status_code == 200:
-                                editions_data = editions_response.json()
-                                for edition in editions_data.get('entries', []):
-                                    if edition.get('covers'):
-                                        cover_id = edition['covers'][0]
-                                        cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
-                                        break
-                        except Exception as e:
-                            current_app.logger.debug(f"Failed to get editions: {e}")
-                
-                # Always include the cover URL if we found one
-                if cover_url:
-                    result['cover_url'] = cover_url
-                else:
-                    current_app.logger.debug(f"No cover URL found for result: {result.get('title', 'Unknown')}")
+                # Unified cover selection (Google Books preferred, fallback OpenLibrary)
+                try:
+                    from app.utils.book_utils import get_best_cover_for_book
+                    unified_cover = get_best_cover_for_book(isbn=best_isbn, title=doc_title, author=', '.join(doc_authors) if doc_authors else None)
+                    if unified_cover and unified_cover.get('cover_url'):
+                        result['cover_url'] = unified_cover['cover_url']
+                        result['cover_source'] = unified_cover.get('source')
+                        result['cover_quality'] = unified_cover.get('quality')
+                except Exception as _ce:
+                    current_app.logger.debug(f"Unified cover selection failed: {_ce}")
                 
                 # If we have an ISBN, try to get enhanced data
                 if best_isbn:
@@ -2351,61 +2435,28 @@ def replace_cover(uid):
         # Store old cover URL for cleanup
         old_cover_url = user_book.cover_url
         
-        # Download and cache the new cover image (same process as manual addition)
+        # Download, process, and cache the new cover image (unified pipeline)
         try:
-            # Use persistent covers directory in data folder
-            covers_dir = Path('/app/data/covers')
-            
-            # Fallback to local development path if Docker path doesn't exist
-            if not covers_dir.exists():
-                # Check config for data directory path
-                data_dir = getattr(current_app.config, 'DATA_DIR', None)
-                if data_dir:
-                    covers_dir = Path(data_dir) / 'covers'
-                else:
-                    # Last resort - use relative path from app root
-                    base_dir = Path(current_app.root_path).parent
-                    covers_dir = base_dir / 'data' / 'covers'
-            
-            covers_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Generate new filename with UUID
-            book_temp_id = str(uuid.uuid4())
-            file_extension = '.jpg'
-            if new_cover_url.lower().endswith('.png'):
-                file_extension = '.png'
-            elif new_cover_url.lower().endswith('.gif'):
-                file_extension = '.gif'
-            
-            filename = f"{book_temp_id}{file_extension}"
-            filepath = covers_dir / filename
-            
-            # Download the image
-            response = requests.get(new_cover_url, timeout=10, stream=True)
-            response.raise_for_status()
-            
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            # Generate new cover URL
-            new_cached_cover_url = f"/covers/{filename}"
-            
-            # Update the book with the new cover URL
-            book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=new_cached_cover_url)
+            current_app.logger.error(f"[COVER][REPLACE] START uid={uid} src={new_cover_url}")
+            new_cached_cover_url = process_image_from_url(new_cover_url)
+            abs_cover_url = new_cached_cover_url
+            if new_cached_cover_url.startswith('/'):
+                abs_cover_url = request.host_url.rstrip('/') + new_cached_cover_url
+            book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=abs_cover_url)
+            current_app.logger.error(f"[COVER][REPLACE] STORED uid={uid} cached={new_cached_cover_url}")
             
             # Clean up old cover file if it exists and is a local file
             if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
                 try:
                     old_filename = old_cover_url.split('/')[-1]
-                    old_filepath = covers_dir / old_filename
+                    old_filepath = get_covers_dir() / old_filename
                     if old_filepath.exists():
                         old_filepath.unlink()
-                        current_app.logger.info(f"Cleaned up old cover file: {old_filename}")
+                        current_app.logger.debug(f"Cleaned up old cover file: {old_filename}")
                 except Exception as cleanup_error:
-                    current_app.logger.warning(f"Failed to clean up old cover file: {cleanup_error}")
+                    current_app.logger.debug(f"Failed to clean up old cover file: {cleanup_error}")
             
-            current_app.logger.info(f"Updated cover for book {uid} with new image from {new_cover_url}")
+            current_app.logger.error(f"[COVER][REPLACE] DONE uid={uid} src={new_cover_url}")
             
             return jsonify({
                 'success': True, 
@@ -2414,8 +2465,11 @@ def replace_cover(uid):
             })
             
         except requests.RequestException as e:
-            current_app.logger.error(f"Failed to download new cover image: {e}")
+            current_app.logger.error(f"[COVER][REPLACE] REQUEST_FAIL uid={uid} src={new_cover_url} err={e}")
             return jsonify({'success': False, 'error': 'Failed to download new cover image'}), 500
+        except Exception as e:
+            current_app.logger.error(f"[COVER][REPLACE] FAIL uid={uid} src={new_cover_url} err={e}")
+            return jsonify({'success': False, 'error': 'Failed to process new cover image'}), 500
             
     except Exception as e:
         current_app.logger.error(f"Error replacing cover: {e}")
@@ -2459,48 +2513,26 @@ def upload_cover(uid):
         # Store old cover URL for cleanup
         old_cover_url = user_book.cover_url
         
-        # Set up covers directory in data folder
-        covers_dir = Path('/app/data/covers')
-        
-        # Fallback to local development path if Docker path doesn't exist
-        if not covers_dir.exists():
-            # Check config for data directory path
-            data_dir = getattr(current_app.config, 'DATA_DIR', None)
-            if data_dir:
-                covers_dir = Path(data_dir) / 'covers'
-            else:
-                # Last resort - use relative path from app root
-                base_dir = Path(current_app.root_path).parent
-                covers_dir = base_dir / 'data' / 'covers'
-        
-        covers_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Generate new filename with UUID
-        book_temp_id = str(uuid.uuid4())
-        filename = f"{book_temp_id}{file_ext}"
-        filepath = covers_dir / filename
-        
-        # Save the uploaded file
-        file.save(str(filepath))
-        
-        # Generate new cover URL
-        new_cover_url = f"/covers/{filename}"
-        
+        # Process the uploaded image via unified helper
+        new_cover_url = process_image_from_filestorage(file)
+        abs_cover_url = new_cover_url
+        if new_cover_url.startswith('/'):
+            abs_cover_url = request.host_url.rstrip('/') + new_cover_url
         # Update the book with the new cover URL
-        book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=new_cover_url)
+        book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=abs_cover_url)
         
         # Clean up old cover file if it exists and is a local file
         if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
             try:
                 old_filename = old_cover_url.split('/')[-1]
-                old_filepath = covers_dir / old_filename
+                old_filepath = get_covers_dir() / old_filename
                 if old_filepath.exists():
                     old_filepath.unlink()
-                    current_app.logger.info(f"Cleaned up old cover file: {old_filename}")
+                current_app.logger.debug(f"Cleaned up old cover file: {old_filename}")
             except Exception as cleanup_error:
-                current_app.logger.warning(f"Failed to clean up old cover file: {cleanup_error}")
+                current_app.logger.debug(f"Failed to clean up old cover file: {cleanup_error}")
         
-        current_app.logger.info(f"Uploaded new cover for book {uid}: {filename}")
+        current_app.logger.debug(f"Uploaded new cover for book {uid}")
         
         return jsonify({
             'success': True, 
@@ -2701,6 +2733,7 @@ def edit_book_custom_metadata(uid):
 
 
 @book_bp.route('/month_review/<int:year>/<int:month>.jpg')
+@book_bp.route('/month_review/<int:year>/<int:month>.png')
 @login_required  
 def month_review(year, month):
     # Query books finished in the given month/year by current user using global book visibility
@@ -3361,23 +3394,8 @@ def add_book_manual():
 
                                 covers_dir.mkdir(parents=True, exist_ok=True)
 
-                                # Generate filename
-                                file_extension = '.jpg'
-                                if cover_url.lower().endswith('.png'):
-                                    file_extension = '.png'
-
-                                filename = f"{book_temp_id}{file_extension}"
-                                filepath = covers_dir / filename
-
-                                # Download the image
-                                response = requests.get(cover_url, timeout=10, stream=True)
-                                response.raise_for_status()
-
-                                with open(filepath, 'wb') as f:
-                                    for chunk in response.iter_content(chunk_size=8192):
-                                        f.write(chunk)
-
-                                cached_cover_url = f"/covers/{filename}"
+                                # Use unified processing pipeline
+                                cached_cover_url = process_image_from_url(cover_url)
                                 cover_url = cached_cover_url
 
                             except Exception as e:
@@ -3929,26 +3947,8 @@ def add_book_manual():
                     
                     covers_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Generate filename
-                    book_temp_id = str(uuid.uuid4())
-                    file_extension = '.jpg'
-                    if final_cover_url.lower().endswith('.png'):
-                        file_extension = '.png'
-                    elif final_cover_url.lower().endswith('.gif'):
-                        file_extension = '.gif'
-                    
-                    filename = f"{book_temp_id}{file_extension}"
-                    filepath = covers_dir / filename
-                    
-                    # Download image
-                    response = requests.get(final_cover_url, timeout=10, stream=True)
-                    response.raise_for_status()
-                    
-                    with open(filepath, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    
-                    cached_cover_url = f"/covers/{filename}"
+                    # Unified processing pipeline
+                    cached_cover_url = process_image_from_url(final_cover_url)
                     
                 except Exception as e:
                     cached_cover_url = final_cover_url  # Fallback to original URL
