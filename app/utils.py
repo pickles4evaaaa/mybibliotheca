@@ -361,7 +361,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                         seen.add(cat.lower())
                 categories = unique_categories[:10]  # Limit to 10 most relevant
                 
-                # Enhanced ISBN extraction from industryIdentifiers
+                # Enhanced ISBN and ASIN extraction from industryIdentifiers
                 isbn10 = None
                 isbn13 = None
                 asin = None
@@ -375,8 +375,19 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                         isbn10 = id_value
                     elif id_type == 'ISBN_13':
                         isbn13 = id_value
+                    elif id_type == 'ASIN':
+                        # Validate ASIN format
+                        if id_value and len(id_value.strip()) == 10 and id_value.strip().isalnum():
+                            asin = id_value.strip().upper()
                     elif id_type == 'OTHER' and 'ASIN' in str(id_value):
-                        asin = id_value
+                        # Fallback for incorrectly categorized ASINs
+                        # Extract ASIN pattern from the identifier value
+                        import re
+                        asin_match = re.search(r'[A-Z0-9]{10}', str(id_value).upper())
+                        if asin_match:
+                            candidate_asin = asin_match.group()
+                            if len(candidate_asin) == 10 and candidate_asin.isalnum():
+                                asin = candidate_asin
                 
                 # Additional metadata
                 google_books_id = items[0].get('id', '')
