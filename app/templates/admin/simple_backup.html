@@ -149,6 +149,45 @@
                     <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Available Backups</h5>
                 </div>
                 <div class="card-body">
+                    <!-- Scheduler Settings -->
+                    <div class="mb-4 p-3 border rounded bg-light">
+                        <h6 class="mb-3"><i class="bi bi-clock-history me-2"></i>Automatic Backup Settings</h6>
+                        <form id="backupSettingsForm" class="row g-3">
+                            <div class="col-md-2 col-sm-6">
+                                <label class="form-label fw-semibold">Enabled</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="enabledToggle" {% if backup_settings.enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="enabledToggle">Daily Schedule</label>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-sm-6">
+                                <label for="retentionDays" class="form-label fw-semibold">Retention (days)</label>
+                                <input type="number" min="1" class="form-control" id="retentionDays" value="{{ backup_settings.retention_days }}">
+                            </div>
+                            <div class="col-md-2 col-sm-4">
+                                <label for="scheduledHour" class="form-label fw-semibold">Hour (24h)</label>
+                                <input type="number" min="0" max="23" class="form-control" id="scheduledHour" value="{{ backup_settings.scheduled_hour }}">
+                            </div>
+                            <div class="col-md-2 col-sm-4">
+                                <label for="scheduledMinute" class="form-label fw-semibold">Minute</label>
+                                <input type="number" min="0" max="59" class="form-control" id="scheduledMinute" value="{{ backup_settings.scheduled_minute }}">
+                            </div>
+                            <div class="col-md-2 col-sm-4">
+                                <label class="form-label fw-semibold">Frequency</label>
+                                <select id="frequency" class="form-select">
+                                    <option value="daily" {% if backup_settings.frequency == 'daily' %}selected{% endif %}>Daily</option>
+                                    <option value="weekly" {% if backup_settings.frequency == 'weekly' %}selected{% endif %}>Weekly (future)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2 d-flex align-items-end">
+                                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save me-1"></i>Save</button>
+                            </div>
+                            <div class="col-12">
+                                <small class="text-muted">Last run: {{ backup_settings.last_run or 'None' }}. Settings changes apply immediately; next run occurs after the scheduled time passes.</small>
+                                <div id="settingsFeedback" class="mt-2 small"></div>
+                            </div>
+                        </form>
+                    </div>
                     {% if backups %}
                         <div class="table-responsive">
                             <table class="table table-striped">
@@ -231,7 +270,7 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <form method="post" action="{{ url_for('simple_backup.create_backup') }}">
-                {{ csrf_token() }}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-header">
                     <h5 class="modal-title" id="createBackupModalLabel">
                         <i class="bi bi-plus-circle me-2"></i>Create Simple Backup
@@ -331,6 +370,36 @@ setInterval(() => {
         })
         .catch(error => console.error('Error refreshing stats:', error));
 }, 30000);
+
+// Backup settings form submission
+document.getElementById('backupSettingsForm')?.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const payload = {
+        enabled: document.getElementById('enabledToggle').checked,
+        retention_days: parseInt(document.getElementById('retentionDays').value, 10),
+        scheduled_hour: parseInt(document.getElementById('scheduledHour').value, 10),
+        scheduled_minute: parseInt(document.getElementById('scheduledMinute').value, 10),
+        frequency: document.getElementById('frequency').value
+    };
+    fetch('{{ url_for("simple_backup.api_backup_settings") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        const el = document.getElementById('settingsFeedback');
+        if (data.status === 'ok') {
+            el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Settings saved</span>';
+        } else {
+            el.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>' + (data.error || 'Save failed') + '</span>';
+        }
+    })
+    .catch(err => {
+        const el = document.getElementById('settingsFeedback');
+        el.innerHTML = '<span class="text-danger">Error: ' + err + '</span>';
+    });
+});
 </script>
 
 {% endblock %}

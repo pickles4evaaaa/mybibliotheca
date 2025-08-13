@@ -379,6 +379,26 @@
                 {% elif onboarding_data.data_options.option == 'import' %}
                     Import Books from File
                 {% endif %}
+        <div class="config-section">
+            <div class="config-title"><i class="fas fa-database text-primary"></i> Automatic Backup Settings</div>
+            {% set backup = onboarding_data.data_options.backup_settings if onboarding_data.data_options and onboarding_data.data_options.backup_settings is defined else None %}
+            {% if backup %}
+                <div class="config-item">
+                    <div class="config-label">Enabled</div>
+                    <div class="config-value">{{ 'Yes' if backup.enabled else 'No' }}</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Retention</div>
+                    <div class="config-value">{{ backup.retention_days }} days</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Schedule</div>
+                    <div class="config-value">{{ '%02d'|format(backup.scheduled_hour) }}:{{ '%02d'|format(backup.scheduled_minute) }} ({{ backup.frequency|capitalize }})</div>
+                </div>
+            {% else %}
+                <div class="text-muted">Using default backup settings (enabled daily at 02:30, 14-day retention)</div>
+            {% endif %}
+        </div>
             </span>
         </div>
         

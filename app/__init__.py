@@ -354,6 +354,16 @@ def create_app():
         
         # Check for SQLite migration needs
         _check_for_sqlite_migration()
+        
+        # At end of factory before returning app, ensure backup scheduler initialized
+        try:
+            from .services.simple_backup_service import get_simple_backup_service
+            backup_service = get_simple_backup_service()
+            # Scheduler auto-starts if enabled; force ensure here
+            backup_service.ensure_scheduler()
+            app.logger.info("Automatic backup scheduler ensured (daily backups)")
+        except Exception as e:
+            app.logger.warning(f"Failed to initialize backup scheduler: {e}")
 
     # Initialize extensions (no SQLAlchemy)
     csrf.init_app(app)

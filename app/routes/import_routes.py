@@ -1903,6 +1903,21 @@ async def process_simple_import(import_config):
         update_job_in_kuzu(task_id, completion_data)
         # Update safely with user isolation
         safe_update_import_job(user_id, task_id, completion_data)
+
+        # Post-import automatic backup (fire and forget thread)
+        try:
+            if success_count > 0:
+                def _run_backup():
+                    try:
+                        from app.services.simple_backup_service import get_simple_backup_service
+                        svc = get_simple_backup_service()
+                        svc.create_backup(description=f'Post-import backup: {success_count} books added', reason='post_import_books')
+                    except Exception as be:
+                        current_app.logger.warning(f"Post-import backup failed: {be}")
+                t = threading.Thread(target=_run_backup, daemon=True)
+                t.start()
+        except Exception as outer_be:
+            current_app.logger.warning(f"Failed launching post-import backup thread: {outer_be}")
         
         print(f"🎉 [PROCESS_SIMPLE] Import completed! {success_count} success, {error_count} errors, {skipped_count} skipped")
         
@@ -3971,6 +3986,21 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                 f"New books created: {created_books}"
             ]
         })
+
+        # Trigger post-import backup for reading history imports if any logs created
+        try:
+            if success_count > 0:
+                def _run_backup():
+                    try:
+                        from app.services.simple_backup_service import get_simple_backup_service
+                        svc = get_simple_backup_service()
+                        svc.create_backup(description=f'Post-reading-history import backup: {success_count} logs', reason='post_import_reading_history')
+                    except Exception as be:
+                        current_app.logger.warning(f"Post-reading-history backup failed: {be}")
+                t = threading.Thread(target=_run_backup, daemon=True)
+                t.start()
+        except Exception as outer_be:
+            current_app.logger.warning(f"Failed launching post-reading-history backup thread: {outer_be}")
         
         print(f"🎉 [READING_HISTORY] Final import complete:")
         print(f"   Reading logs created: {success_count}")

@@ -1112,6 +1112,63 @@ def safe_execute_query(query: str, params: Optional[Dict[str, Any]] = None,
     return manager.execute_query(query, params, user_id, operation)
 
 
+def safe_query_value(query: str, params: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None,
+                     operation: str = "query", default: Any = None) -> Any:
+    """Execute a query and return the first column of the first row or default.
+
+    This helper mirrors prior test expectations that previously relied on
+    a convenience wrapper in legacy code. Reintroduced to maintain backward
+    compatibility for tests referencing safe_query_value.
+    """
+    try:
+        result = safe_execute_query(query, params, user_id=user_id, operation=operation)
+        if not result or not hasattr(result, 'has_next'):
+            # If result is already a list (perhaps from manager adaptation)
+            if isinstance(result, list) and result:
+                first = result[0]
+                if isinstance(first, dict):
+                    return next(iter(first.values()), default)
+                return first
+            return default
+        if result.has_next():
+            row = result.get_next()
+            if len(row) > 0:
+                return row[0]
+        return default
+    except Exception:
+        return default
+
+
+def safe_query_list(query: str, params: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None,
+                    operation: str = "query") -> List[Dict[str, Any]]:
+    """Execute a query and return list of dict rows (column_name -> value)."""
+    rows: List[Dict[str, Any]] = []
+    try:
+        result = safe_execute_query(query, params, user_id=user_id, operation=operation)
+        # If already a python list of dicts
+        if isinstance(result, list):
+            for item in result:
+                if isinstance(item, dict):
+                    rows.append(item)
+            return rows
+        if not result:
+            return rows
+        # Kuzu result iteration
+        while result.has_next():
+            row = result.get_next()
+            record: Dict[str, Any] = {}
+            col_names = result.get_column_names()
+            for i, col in enumerate(col_names):
+                try:
+                    record[col] = row[i]
+                except Exception:
+                    record[col] = None
+            rows.append(record)
+    except Exception:
+        return rows
+    return rows
+
+
 def safe_get_connection(user_id: Optional[str] = None, operation: str = "unknown"):
     """
     Get a thread-safe KuzuDB connection context manager.

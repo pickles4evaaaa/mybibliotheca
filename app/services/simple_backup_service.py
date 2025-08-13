@@ -11,7 +11,9 @@ import zipfile
 import tempfile
 import logging
 import json
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -79,6 +81,7 @@ class SimpleBackupService:
         self.data_dir = self.base_dir / "data"
         self.backup_dir = self.data_dir / "backups"
         self.backup_index_file = self.backup_dir / "simple_backup_index.json"
+        self.backup_settings_file = self.data_dir / "backup_settings.json"
         
         # KuzuDB database path - points to the entire kuzu directory
         self.kuzu_db_path = self.data_dir / "kuzu"
@@ -87,12 +90,97 @@ class SimpleBackupService:
         self.app_static_dir = self.base_dir / "app" / "static"
         self.covers_dir = self.data_dir / "covers"
         self.uploads_dir = self.data_dir / "uploads"
+        self.env_file = self.base_dir / ".env"
+        self.ai_config_file = self.data_dir / "ai_config.json"
         
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
         # Load existing backup index
         self._backup_index: Dict[str, SimpleBackupInfo] = self._load_backup_index()
+
+        # Scheduler internals
+        self._scheduler_thread: Optional[threading.Thread] = None
+        self._scheduler_stop = threading.Event()
+        self._last_scheduled_backup: Optional[datetime] = None
+        # Initialize settings (creates defaults if missing)
+        self._settings = self._load_or_create_settings()
+        # Auto-start scheduler if enabled
+        if self._settings.get('enabled', True):
+            self.ensure_scheduler()
+
+    # -------------------------- Settings & Scheduling -----------------------
+    def _load_or_create_settings(self) -> Dict[str, Any]:
+        defaults = {
+            'enabled': True,
+            'frequency': 'daily',  # future: weekly
+            'retention_days': 14,
+            'last_run': None,
+            'scheduled_hour': 2,   # 02:30 local
+            'scheduled_minute': 30
+        }
+        try:
+            if self.backup_settings_file.exists():
+                with open(self.backup_settings_file, 'r') as f:
+                    data = json.load(f)
+                # Merge defaults
+                merged = {**defaults, **data}
+            else:
+                merged = defaults
+                with open(self.backup_settings_file, 'w') as f:
+                    json.dump(merged, f, indent=2)
+            return merged
+        except Exception as e:
+            logger.error(f"Failed loading backup settings, using defaults: {e}")
+            return defaults
+
+    def _save_settings(self):
+        try:
+            with open(self.backup_settings_file, 'w') as f:
+                json.dump(self._settings, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed saving backup settings: {e}")
+
+    def ensure_scheduler(self):
+        if self._scheduler_thread and self._scheduler_thread.is_alive():
+            return
+        def _loop():
+            logger.info("Backup scheduler thread started")
+            while not self._scheduler_stop.is_set():
+                try:
+                    self._maybe_run_scheduled_backup()
+                except Exception as e:
+                    logger.warning(f"Scheduled backup check failed: {e}")
+                # Sleep 5 minutes between checks to keep lightweight
+                self._scheduler_stop.wait(300)
+            logger.info("Backup scheduler thread exiting")
+        self._scheduler_thread = threading.Thread(target=_loop, daemon=True)
+        self._scheduler_thread.start()
+
+    def _maybe_run_scheduled_backup(self):
+        if not self._settings.get('enabled', True):
+            return
+        freq = self._settings.get('frequency', 'daily')
+        now = datetime.now()
+        last_run_iso = self._settings.get('last_run')
+        last_run = datetime.fromisoformat(last_run_iso) if last_run_iso else None
+        # Determine if due
+        due = False
+        if freq == 'daily':
+            if not last_run or (now.date() > last_run.date() and now.hour >= self._settings.get('scheduled_hour', 2) and now.minute >= self._settings.get('scheduled_minute', 30)):
+                due = True
+        # Future expansion: weekly
+        if due:
+            logger.info("Running scheduled daily backup")
+            self.create_backup(description='Scheduled daily backup', reason='scheduled_daily')
+            self._settings['last_run'] = datetime.now().isoformat()
+            self._save_settings()
+
+    def stop_scheduler(self):
+        if self._scheduler_thread:
+            self._scheduler_stop.set()
+
+    # -----------------------------------------------------------------------
     
     def _load_backup_index(self) -> Dict[str, SimpleBackupInfo]:
         """Load the backup index from disk."""
@@ -124,7 +212,7 @@ class SimpleBackupService:
         except Exception as e:
             logger.error(f"Failed to save backup index: {e}")
     
-    def create_backup(self, name: Optional[str] = None, description: str = "") -> Optional[SimpleBackupInfo]:
+    def create_backup(self, name: Optional[str] = None, description: str = "", reason: str = 'manual') -> Optional[SimpleBackupInfo]:
         """
         Create a simple backup of the KuzuDB database.
         
@@ -170,7 +258,8 @@ class SimpleBackupService:
                 'uploads_path': str(self.uploads_dir),
                 'covers_size': self._get_directory_size(self.covers_dir) if self.covers_dir.exists() else 0,
                 'uploads_size': self._get_directory_size(self.uploads_dir) if self.uploads_dir.exists() else 0,
-                'backup_type': 'simple_database_backup_with_images'
+                'backup_type': 'simple_database_backup_with_images_and_settings',
+                'reason': reason
             }
             
             # Create the backup ZIP file
@@ -212,6 +301,22 @@ class SimpleBackupService:
                             logger.debug(f"Added upload to backup: data/uploads/{relative_path}")
                     
                     logger.info(f"Backed up {uploads_count} uploaded files")
+
+                # Add settings/config files (non-secret)
+                settings_added = 0
+                try:
+                    if self.env_file.exists():
+                        zipf.write(self.env_file, f"config/.env")
+                        settings_added += 1
+                    if self.ai_config_file.exists():
+                        zipf.write(self.ai_config_file, f"config/ai_config.json")
+                        settings_added += 1
+                    if self.backup_settings_file.exists():
+                        zipf.write(self.backup_settings_file, f"config/backup_settings.json")
+                        settings_added += 1
+                    logger.info(f"Included {settings_added} config/settings files in backup")
+                except Exception as se:
+                    logger.warning(f"Failed adding settings files to backup: {se}")
             
             # Get backup file size
             file_size = backup_path.stat().st_size
@@ -232,6 +337,12 @@ class SimpleBackupService:
             self._save_backup_index()
             
             logger.info(f"Simple backup created successfully: {name} ({file_size / 1024 / 1024:.2f} MB)")
+            # Apply retention pruning
+            try:
+                self._apply_retention_policy()
+            except Exception as rp_err:
+                logger.warning(f"Retention pruning failed: {rp_err}")
+
             return backup_info
             
         except Exception as e:
@@ -273,7 +384,7 @@ class SimpleBackupService:
             logger.info("Disconnecting KuzuDB connections...")
             self._disconnect_kuzu_database()
             
-            # Step 2: Make a pre-restore safety backup by moving aside and zipping
+            # Step 2: Make a pre-restore safety backup by moving aside and zipping (expanded to include covers/uploads/settings)
             current_backup_path = None
             moved_old_dir = None
             if self.kuzu_db_path.exists():
@@ -285,7 +396,7 @@ class SimpleBackupService:
                     shutil.move(str(self.kuzu_db_path), str(moved_old_dir))
                     logger.info("Current Kuzu directory moved aside successfully")
 
-                    # Create a zip snapshot in backups
+                    # Create a zip snapshot in backups including covers/uploads/settings
                     pre_name = f"pre_restore_{timestamp}"
                     pre_backup_filename = f"{pre_name}_{short_id}.zip"
                     pre_backup_path = self.backup_dir / pre_backup_filename
@@ -294,7 +405,7 @@ class SimpleBackupService:
                         'created_at': datetime.now().isoformat(),
                         'kuzu_db_path': str(moved_old_dir),
                         'original_size': self._get_directory_size(moved_old_dir),
-                        'backup_type': 'pre_restore_snapshot',
+                        'backup_type': 'pre_restore_snapshot_full',
                         'source_backup_restored': backup_info.name,
                     }
                     logger.info(f"Creating pre-restore backup zip at {pre_backup_path} ...")
@@ -306,6 +417,28 @@ class SimpleBackupService:
                                 relative_path = file_path.relative_to(moved_old_dir)
                                 zipf.write(file_path, f"kuzu/{relative_path}")
                                 files_count += 1
+                        # Add covers
+                        if self.covers_dir.exists():
+                            for file_path in self.covers_dir.rglob('*'):
+                                if file_path.is_file():
+                                    rel = file_path.relative_to(self.covers_dir)
+                                    zipf.write(file_path, f"data/covers/{rel}")
+                        # Add uploads
+                        if self.uploads_dir.exists():
+                            for file_path in self.uploads_dir.rglob('*'):
+                                if file_path.is_file():
+                                    rel = file_path.relative_to(self.uploads_dir)
+                                    zipf.write(file_path, f"data/uploads/{rel}")
+                        # Add settings
+                        try:
+                            if self.env_file.exists():
+                                zipf.write(self.env_file, f"config/.env")
+                            if self.ai_config_file.exists():
+                                zipf.write(self.ai_config_file, f"config/ai_config.json")
+                            if self.backup_settings_file.exists():
+                                zipf.write(self.backup_settings_file, f"config/backup_settings.json")
+                        except Exception as se:
+                            logger.warning(f"Failed adding settings to pre-restore snapshot: {se}")
                         logger.info(f"Pre-restore snapshot archived: {files_count} files")
 
                     # Record in index for visibility
@@ -874,6 +1007,30 @@ class SimpleBackupService:
             'oldest_backup': sorted_backups[0].created_at.isoformat(),
             'newest_backup': sorted_backups[-1].created_at.isoformat()
         }
+
+    # -------------------------- Retention Policy ---------------------------
+    def _apply_retention_policy(self):
+        """Delete backups older than retention_days (except protected types)."""
+        retention_days = int(self._settings.get('retention_days', 14))
+        if retention_days <= 0:
+            return
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        to_delete = []
+        for b in self._backup_index.values():
+            # Keep pre-restore snapshots for minimum retention as well; allow deletion like others
+            if b.created_at < cutoff:
+                # Allow manual protection via metadata flag protected=True
+                if b.metadata and b.metadata.get('protected'):
+                    continue
+                to_delete.append(b.id)
+        if not to_delete:
+            return
+        logger.info(f"Retention policy: deleting {len(to_delete)} old backups (>{retention_days} days)")
+        for bid in to_delete:
+            try:
+                self.delete_backup(bid)
+            except Exception as e:
+                logger.warning(f"Failed deleting old backup {bid}: {e}")
 
 
 # Global instance

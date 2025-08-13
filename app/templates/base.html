@@ -872,7 +872,7 @@
             
             {% if current_user.is_authenticated %}
               <span class="navbar-text me-3">
-                Welcome, {{ current_user.username }}
+                Welcome, {{ current_user.display_name if current_user.display_name else current_user.username }}
                 {% if current_user.is_admin %}
                   <span class="badge bg-danger ms-1">Admin</span>
                 {% endif %}

@@ -8,6 +8,7 @@ from datetime import datetime
 import os
 from typing import Optional
 
+from app import csrf
 from app.services.simple_backup_service import get_simple_backup_service
 from app.admin import admin_required
 
@@ -76,10 +77,28 @@ def index():
             }
             enhanced_backups.append(enhanced_backup)
         
+        # Load current backup settings if available
+        backup_settings = {}
+        try:
+            svc = backup_service
+            if hasattr(svc, '_settings'):
+                # expose a safe copy
+                backup_settings = {
+                    'enabled': svc._settings.get('enabled', True),
+                    'frequency': svc._settings.get('frequency', 'daily'),
+                    'retention_days': svc._settings.get('retention_days', 14),
+                    'last_run': svc._settings.get('last_run'),
+                    'scheduled_hour': svc._settings.get('scheduled_hour', 2),
+                    'scheduled_minute': svc._settings.get('scheduled_minute', 30)
+                }
+        except Exception as se:
+            current_app.logger.warning(f"Failed loading backup settings for UI: {se}")
+
         return render_template(
             'admin/simple_backup.html',
             backups=enhanced_backups,
-            backup_stats=stats
+            backup_stats=stats,
+            backup_settings=backup_settings
         )
     except Exception as e:
         current_app.logger.error(f"Error loading simple backup page: {e}")
@@ -265,12 +284,59 @@ def api_backup_stats():
     try:
         backup_service = get_simple_backup_service()
         stats = backup_service.get_backup_stats()
+        # Attach settings
+        try:
+            if hasattr(backup_service, '_settings'):
+                stats['settings'] = backup_service._settings
+        except Exception:
+            pass
         return jsonify(stats)
         
     except Exception as e:
         current_app.logger.error(f"Error getting backup stats: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+@simple_backup_bp.route('/api/settings', methods=['GET', 'POST'])
+@login_required
+@admin_required
+@csrf.exempt  # JSON API endpoint; protecting via auth+admin
+def api_backup_settings():
+    """Get or update backup scheduler settings (admin only)."""
+    try:
+        backup_service = get_simple_backup_service()
+        if request.method == 'GET':
+            return jsonify(backup_service._settings if hasattr(backup_service, '_settings') else {})
+        # POST update
+        data = request.get_json(silent=True) or {}
+        changed = {}
+        if hasattr(backup_service, '_settings'):
+            settings = backup_service._settings
+            for key in ['enabled', 'frequency', 'retention_days', 'scheduled_hour', 'scheduled_minute']:
+                if key in data:
+                    settings[key] = data[key]
+                    changed[key] = data[key]
+            # Persist
+            try:
+                backup_service._save_settings()
+            except Exception as se:
+                current_app.logger.warning(f"Failed saving backup settings via API: {se}")
+            # Restart scheduler if needed
+            if settings.get('enabled'):
+                try:
+                    backup_service.ensure_scheduler()
+                except Exception:
+                    pass
+            else:
+                try:
+                    backup_service.stop_scheduler()
+                except Exception:
+                    pass
+            return jsonify({'status': 'ok', 'changed': changed, 'settings': settings})
+        return jsonify({'error': 'Settings not available'}), 500
+    except Exception as e:
+        current_app.logger.error(f"Error handling backup settings: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @simple_backup_bp.route('/api/status/<backup_id>')
 @login_required
@@ -280,12 +346,9 @@ def api_backup_status(backup_id: str):
     try:
         backup_service = get_simple_backup_service()
         backup_info = backup_service.get_backup(backup_id)
-        
         if not backup_info:
             return jsonify({'error': 'Backup not found'}), 404
-        
         return jsonify(backup_info.to_dict())
-        
     except Exception as e:
         current_app.logger.error(f"Error getting backup status {backup_id}: {e}")
         return jsonify({'error': 'Internal server error'}), 500

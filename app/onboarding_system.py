@@ -474,6 +474,45 @@ def data_options_step():
             
             data_option = request.form.get('data_option')
             data_options: Dict[str, Any] = {'option': data_option}
+
+            # Capture optional automatic backup settings injected by JS
+            try:
+                backup_enabled_raw = request.form.get('backup_enabled')
+                if backup_enabled_raw is not None:
+                    # Normalize values from checkbox true/false or on/off
+                    backup_enabled = str(backup_enabled_raw).lower() in ('1', 'true', 'yes', 'on')
+                    retention_days = int(request.form.get('backup_retention_days') or 14)
+                    scheduled_hour = int(request.form.get('backup_scheduled_hour') or 2)
+                    scheduled_minute = int(request.form.get('backup_scheduled_minute') or 30)
+                    frequency = request.form.get('backup_frequency') or 'daily'
+                    if frequency not in ('daily', 'weekly'):
+                        frequency = 'daily'
+
+                    data_options['backup_settings'] = {
+                        'enabled': backup_enabled,
+                        'retention_days': retention_days,
+                        'scheduled_hour': scheduled_hour,
+                        'scheduled_minute': scheduled_minute,
+                        'frequency': frequency
+                    }
+                    logger.info(f"🔍 ONBOARDING DEBUG: Captured backup settings from onboarding: {data_options['backup_settings']}")
+
+                    # Persist immediately via backup service so schedule starts without waiting for completion
+                    try:
+                        from .services.simple_backup_service import get_simple_backup_service
+                        svc = get_simple_backup_service()
+                        if hasattr(svc, '_settings'):
+                            svc._settings.update(data_options['backup_settings'])
+                            svc._save_settings()  # internal persistence
+                            if svc._settings.get('enabled'):
+                                svc.ensure_scheduler()
+                            else:
+                                svc.stop_scheduler()
+                            logger.info("🔍 ONBOARDING DEBUG: Applied onboarding backup settings to backup service")
+                    except Exception as e:
+                        logger.warning(f"⚠️ ONBOARDING DEBUG: Failed applying backup settings during onboarding: {e}")
+            except Exception as e:
+                logger.warning(f"⚠️ ONBOARDING DEBUG: Error capturing backup settings: {e}")
             
             logger.info(f"🔍 ONBOARDING DEBUG: Selected data option: {data_option}")
             
@@ -1292,6 +1331,14 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
         site_config = onboarding_data.get('site_config', {})
         password_hash = generate_password_hash(admin_data['password'])
         
+        display_name = admin_data.get('display_name') or admin_data['username']
+        try:
+            # Simple beautify: if username looks like random id (hex-ish), fall back to 'Admin'
+            import re
+            if re.fullmatch(r'[0-9a-f]{4,}$', display_name.lower()):
+                display_name = 'Admin'
+        except Exception:
+            pass
         admin_user = user_service.create_user_sync(
             username=admin_data['username'],
             email=admin_data['email'],
@@ -1300,7 +1347,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
             is_active=True,
             password_must_change=False,
             timezone=site_config.get('timezone', 'UTC'),  # Set timezone from site config
-            display_name=admin_data.get('display_name', ''),
+            display_name=display_name,
             location=site_config.get('location', '')
         )
         
@@ -1666,6 +1713,13 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         
         try:
             print(f"🚀 [SETUP] Calling user_service.create_user_sync...")
+            display_name = admin_data.get('display_name') or admin_data['username']
+            try:
+                import re
+                if re.fullmatch(r'[0-9a-f]{4,}$', display_name.lower()):
+                    display_name = 'Admin'
+            except Exception:
+                pass
             admin_user = user_service.create_user_sync(
                 username=admin_data['username'],
                 email=admin_data['email'],
@@ -1674,7 +1728,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 is_active=True,
                 password_must_change=False,
                 timezone=site_config.get('timezone', 'UTC'),  # Set timezone from site config
-                display_name=admin_data.get('display_name', ''),
+                display_name=display_name,
                 location=site_config.get('location', '')
             )
             print(f"🚀 [SETUP] user_service.create_user_sync returned: {admin_user}")
