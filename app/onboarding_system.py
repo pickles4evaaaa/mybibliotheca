@@ -155,8 +155,7 @@ def start():
     # Check if user is already authenticated (onboarding completed)
     from flask_login import current_user
     if current_user.is_authenticated:
-        logger.info(f"🔍 ONBOARDING DEBUG: User is already authenticated - redirecting to library")
-        flash('You have already completed the setup process.', 'info')
+        logger.info("🔍 ONBOARDING DEBUG: Authenticated user hit /onboarding/start; redirecting without flash banner")
         return redirect(url_for('main.library'))
     
     try:
@@ -219,13 +218,11 @@ def step(step_num: int):
     # Check if user is already authenticated (onboarding completed)
     from flask_login import current_user
     if current_user.is_authenticated:
-        # If user is logged in and there's no onboarding session, they've completed onboarding
+        # Silent redirect for logged-in users without showing completion flash repeatedly
         current_step = get_onboarding_step()
         onboarding_data = get_onboarding_data()
-        
-        if current_step == 1 and not onboarding_data:  # Default empty state after session clear
-            logger.info(f"🔍 ONBOARDING DEBUG: User is authenticated but accessing onboarding routes - redirecting to library")
-            flash('You have already completed the setup process.', 'info')
+        if current_step == 1 and not onboarding_data:
+            logger.info("🔍 ONBOARDING DEBUG: Authenticated user accessing onboarding; silent redirect to library")
             return redirect(url_for('main.library'))
     
     # Allow backward navigation always

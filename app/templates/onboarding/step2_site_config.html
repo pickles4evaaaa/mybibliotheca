@@ -4,7 +4,7 @@
 
 {% block progress_width %}40%{% endblock %}
 
-{% block step_info %}Step 2 of 5: Site Configuration{% endblock %}
+{% block step_info %}Step 2 of 5: Site Configuration & Backups{% endblock %}
 
 {% block content %}
 <div class="form-header">
@@ -12,7 +12,7 @@
         <i class="bi bi-gear-fill"></i>
     </div>
     <h2>Customize Your Installation</h2>
-    <p>These settings can be changed later in the admin panel.</p>
+    <p>These settings (and backup settings below) can be changed later in the admin panel.</p>
 </div>
 
 <form method="POST" class="needs-validation" novalidate>
@@ -112,6 +112,39 @@
         <div class="form-text">This affects how book classifications are displayed throughout the interface</div>
     </div>
     
+    <!-- Automatic Backup Settings (moved from former Step 3) -->
+    <hr class="my-4">
+    <h4 class="mb-3"><i class="bi bi-shield-lock me-2"></i>Automatic Backups</h4>
+    <p class="text-muted">Protect your data with daily automatic backups (recommended). You can change these settings later in Admin &gt; Backups.</p>
+    <div class="row g-3 align-items-end mb-2">
+        <div class="col-md-2 col-6">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="ob_backup_enabled" name="backup_enabled" {% if current_config.get('backup_settings', {}).get('enabled', True) %}checked{% endif %}>
+                <label class="form-check-label" for="ob_backup_enabled">Enable daily backups</label>
+            </div>
+        </div>
+        <div class="col-md-2 col-6">
+            <label for="ob_retention" class="form-label">Retention (days)</label>
+            <input type="number" id="ob_retention" name="backup_retention_days" class="form-control" value="{{ current_config.get('backup_settings', {}).get('retention_days', 14) }}" min="1">
+        </div>
+        <div class="col-md-2 col-6">
+            <label for="ob_hour" class="form-label">Hour</label>
+            <input type="number" id="ob_hour" name="backup_scheduled_hour" class="form-control" value="{{ current_config.get('backup_settings', {}).get('scheduled_hour', 2) }}" min="0" max="23">
+        </div>
+        <div class="col-md-2 col-6">
+            <label for="ob_minute" class="form-label">Minute</label>
+            <input type="number" id="ob_minute" name="backup_scheduled_minute" class="form-control" value="{{ current_config.get('backup_settings', {}).get('scheduled_minute', 30) }}" min="0" max="59">
+        </div>
+        <div class="col-md-2 col-6">
+            <label for="ob_frequency" class="form-label">Frequency</label>
+            <select id="ob_frequency" name="backup_frequency" class="form-select">
+                <option value="daily" {% if current_config.get('backup_settings', {}).get('frequency', 'daily') == 'daily' %}selected{% endif %}>Daily</option>
+                <option value="weekly" {% if current_config.get('backup_settings', {}).get('frequency') == 'weekly' %}selected{% endif %}>Weekly (future)</option>
+            </select>
+        </div>
+    </div>
+    <small class="text-muted d-block mb-4">A backup runs after imports and at the scheduled time. Backups include database, covers, uploads, and settings.</small>
+
     <!-- Navigation Buttons -->
     <div class="navigation-buttons">
         <a href="{{ url_for('onboarding.step', step_num=1) }}" 

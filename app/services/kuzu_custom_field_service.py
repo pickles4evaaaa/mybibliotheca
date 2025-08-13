@@ -16,6 +16,14 @@ from .kuzu_async_helper import run_async
 
 logger = logging.getLogger(__name__)
 
+# Reserved core book fields that must not be auto-created as custom fields
+RESERVED_CORE_BOOK_FIELDS = {"subtitle", "google_books_id", "openlibrary_id"}
+
+def is_reserved_core_field(field_name: str) -> bool:
+    if not field_name:
+        return False
+    return field_name.lower() in RESERVED_CORE_BOOK_FIELDS
+
 
 def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
     """
@@ -197,7 +205,9 @@ class KuzuCustomFieldService:
     
     def _get_field_definition(self, field_name: str) -> Optional[Dict[str, Any]]:
         """Get field definition by name."""
-        
+        # Never treat reserved core fields as custom field definitions
+        if is_reserved_core_field(field_name):
+            return None
         try:
             query = "MATCH (f:CustomField) WHERE f.name = $name RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at"
             result = safe_execute_kuzu_query(query, {"name": field_name})
@@ -243,9 +253,13 @@ class KuzuCustomFieldService:
                 # KuzuDB returns column-based results (col_0, col_1, etc.) instead of named columns
                 # Based on the query: f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at, f.updated_at
                 # Mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, col_4=description, col_5=is_global, col_6=created_at, col_7=updated_at
+                name_val = result.get('col_1')
+                if name_val and is_reserved_core_field(name_val):
+                    logger.debug(f"Skipping reserved core field in get_user_fields_sync listing: {name_val}")
+                    continue
                 fields.append({
                     'id': result.get('col_0'),
-                    'name': result.get('col_1'),
+                    'name': name_val,
                     'display_name': result.get('col_2'),
                     'field_type': result.get('col_3', 'text'),
                     'description': result.get('col_4', ''),
@@ -269,6 +283,9 @@ class KuzuCustomFieldService:
         logger.debug(f"Creating {'global' if is_global else 'personal'} field '{field_name}' for user {user_id}")
         
         try:
+            if is_reserved_core_field(field_name):
+                logger.debug(f"Refusing to create field for reserved core field name: {field_name}")
+                return None
             # Check if field already exists with same scope
             if is_global:
                 # For global fields, check if any global field with this name exists
@@ -384,8 +401,10 @@ class KuzuCustomFieldService:
             # Separate global vs personal fields based on field definitions
             for field_name, field_value in custom_metadata.items():
                 if field_value is not None and field_value != '':
+                    if is_reserved_core_field(field_name):
+                        logger.debug(f" Skipping reserved core field in metadata save: {field_name}")
+                        continue
                     field_def = self._get_field_definition(field_name)
-                    
                     if field_def and field_def.get('is_global', False):
                         global_metadata[field_name] = field_value
                         logger.debug(f" Classified '{field_name}' as GLOBAL field")
@@ -761,6 +780,9 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5', False),
                     'created_at': result.get('col_6')
                 }
+                if field_data['name'] and is_reserved_core_field(field_data['name']):
+                    logger.debug(f" Skipping reserved core field in user list: {field_data['name']}")
+                    continue
                 # Calculate actual usage count for this field
                 usage_count = self._calculate_field_usage_count(field_data['name'], field_data['is_global'])
                 
@@ -827,6 +849,9 @@ class KuzuCustomFieldService:
                     'is_global': result.get('col_5', False),
                     'created_at': result.get('col_6')
                 }
+                if field_data['name'] and is_reserved_core_field(field_data['name']):
+                    logger.debug(f" Skipping reserved core field in shareable list: {field_data['name']}")
+                    continue
                 # Calculate actual usage count for this field
                 usage_count = self._calculate_field_usage_count(field_data['name'], field_data['is_global'])
                 
@@ -1036,9 +1061,13 @@ class KuzuCustomFieldService:
                 # KuzuDB returns column-based results (col_0, col_1, etc.) instead of named columns
                 # Based on the query: f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
                 # Mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, col_4=description, col_5=is_global, col_6=created_at
+                name_val = result.get('col_1')
+                if name_val and is_reserved_core_field(name_val):
+                    logger.debug(f"Skipping reserved core field in get_available_fields_sync listing: {name_val}")
+                    continue
                 fields.append({
                     'id': result.get('col_0'),
-                    'name': result.get('col_1'),
+                    'name': name_val,
                     'display_name': result.get('col_2'),
                     'field_type': result.get('col_3', 'text'),
                     'description': result.get('col_4', ''),
@@ -1063,6 +1092,9 @@ class KuzuCustomFieldService:
             # Process global custom fields
             for field_name, value in global_custom_metadata.items():
                 if value is not None and value != '':
+                    if is_reserved_core_field(field_name):
+                        logger.debug(f" Skipping reserved core field (global) ensure: {field_name}")
+                        continue
                     field_def = self._get_field_definition(field_name)
                     if not field_def:
                         logger.debug(f" Creating global field definition: {field_name}")
@@ -1075,12 +1107,13 @@ class KuzuCustomFieldService:
                         })
                         if not field_def:
                             return False
-                    else:
-                        pass  # Global field already exists
             
             # Process personal custom fields
             for field_name, value in personal_custom_metadata.items():
                 if value is not None and value != '':
+                    if is_reserved_core_field(field_name):
+                        logger.debug(f" Skipping reserved core field (personal) ensure: {field_name}")
+                        continue
                     field_def = self._get_field_definition(field_name)
                     if not field_def:
                         logger.debug(f" Creating personal field definition: {field_name}")
@@ -1093,8 +1126,6 @@ class KuzuCustomFieldService:
                         })
                         if not field_def:
                             return False
-                    else:
-                        pass  # Personal field already exists
             
             total_fields = len(global_custom_metadata) + len(personal_custom_metadata)
             return True
@@ -1218,11 +1249,117 @@ class KuzuCustomFieldService:
         except Exception as e:
             return False
     
+    def cleanup_reserved_core_custom_fields(self) -> bool:
+        """Remove any mistakenly created CustomField nodes and metadata JSON entries for reserved core fields.
+        Steps:
+          1. Delete CustomField nodes whose name is in RESERVED_CORE_BOOK_FIELDS.
+          2. Strip reserved keys from all HAS_GLOBAL_METADATA.global_custom_fields JSON blobs.
+          3. (Personal metadata normally shouldn't contain these; strip if present.)
+        """
+        logger.debug("🧹 Starting cleanup of reserved core custom field artifacts")
+        try:
+            reserved_list = list(RESERVED_CORE_BOOK_FIELDS)
+            # Delete field definitions
+            find_query = "MATCH (f:CustomField) WHERE toLower(f.name) IN $names RETURN f.id, f.name"
+            find_results_temp = safe_execute_kuzu_query(find_query, {"names": [n.lower() for n in reserved_list]})
+            find_results = _convert_query_result_to_list(find_results_temp)
+            if find_results:
+                logger.debug(f" Found {len(find_results)} reserved field definitions to delete")
+                delete_query = "MATCH (f:CustomField) WHERE toLower(f.name) IN $names DETACH DELETE f"
+                safe_execute_kuzu_query(delete_query, {"names": [n.lower() for n in reserved_list]})
+            # Clean global metadata JSON
+            global_meta_query = """
+            MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+            WHERE r.global_custom_fields IS NOT NULL AND r.global_custom_fields <> ''
+            RETURN b.id, r.global_custom_fields
+            """
+            global_meta_results_temp = safe_execute_kuzu_query(global_meta_query, {})
+            global_meta_results = _convert_query_result_to_list(global_meta_results_temp)
+            cleaned = 0
+            for row in global_meta_results:
+                book_id = row.get('col_0')
+                metadata_json = row.get('col_1')
+                if not metadata_json:
+                    continue
+                try:
+                    if isinstance(metadata_json, str):
+                        data = json.loads(metadata_json)
+                    elif isinstance(metadata_json, dict):
+                        data = metadata_json
+                    else:
+                        continue
+                except Exception:
+                    continue
+                modified = False
+                for key in list(data.keys()):
+                    if key and is_reserved_core_field(key):
+                        data.pop(key, None)
+                        modified = True
+                if modified:
+                    update_query = """
+                    MATCH (b:Book {id: $book_id})-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                    SET r.global_custom_fields = $json, r.updated_at = $updated_at
+                    """
+                    safe_execute_kuzu_query(update_query, {
+                        "book_id": book_id,
+                        "json": json.dumps(data),
+                        "updated_at": datetime.now(timezone.utc)
+                    })
+                    cleaned += 1
+            # Clean personal metadata JSON (unlikely but just in case)
+            personal_meta_query = """
+            MATCH (u:User)-[r:HAS_PERSONAL_METADATA]->(b:Book)
+            WHERE r.personal_custom_fields IS NOT NULL AND r.personal_custom_fields <> ''
+            RETURN u.id, b.id, r.personal_custom_fields
+            """
+            personal_meta_results_temp = safe_execute_kuzu_query(personal_meta_query, {})
+            personal_meta_results = _convert_query_result_to_list(personal_meta_results_temp)
+            personal_cleaned = 0
+            for row in personal_meta_results:
+                user_id = row.get('col_0')
+                book_id = row.get('col_1')
+                metadata_json = row.get('col_2')
+                if not metadata_json:
+                    continue
+                try:
+                    if isinstance(metadata_json, str):
+                        data = json.loads(metadata_json)
+                    elif isinstance(metadata_json, dict):
+                        data = metadata_json
+                    else:
+                        continue
+                except Exception:
+                    continue
+                modified = False
+                for key in list(data.keys()):
+                    if key and is_reserved_core_field(key):
+                        data.pop(key, None)
+                        modified = True
+                if modified:
+                    update_p_query = """
+                    MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book {id: $book_id})
+                    SET r.personal_custom_fields = $json, r.updated_at = $updated_at
+                    """
+                    safe_execute_kuzu_query(update_p_query, {
+                        "user_id": user_id,
+                        "book_id": book_id,
+                        "json": json.dumps(data),
+                        "updated_at": datetime.now(timezone.utc)
+                    })
+                    personal_cleaned += 1
+            logger.debug(f" Reserved core field cleanup complete. Deleted defs: {len(find_results) if find_results else 0}, updated global rels: {cleaned}, updated personal rels: {personal_cleaned}")
+            return True
+        except Exception:
+            traceback.print_exc()
+            return False
+    
     def _calculate_field_usage_count(self, field_name: str, is_global: bool) -> int:
         """Calculate how many times a custom field is actually used in the database."""
         try:
             usage_count = 0
             
+            if is_reserved_core_field(field_name):
+                return 0
             if is_global:
                 # First, let's debug what's actually in the HAS_GLOBAL_METADATA relationship
                 debug_global_query = """

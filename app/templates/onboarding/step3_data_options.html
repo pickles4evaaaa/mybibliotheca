@@ -218,63 +218,7 @@
     <p>How would you like to set up your book collection?</p>
 </div>
 
-<div class="additional-options mt-4">
-    <div class="section-title"><i class="bi bi-shield-lock"></i> Automatic Backups</div>
-    <p class="mb-2">Protect your data with daily automatic backups (recommended). You can change these settings later in Admin &gt; Backups.</p>
-    <div class="row g-3 align-items-end">
-        <div class="col-sm-4 col-6">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="ob_backup_enabled" checked>
-                <label class="form-check-label" for="ob_backup_enabled">Enable daily backups</label>
-            </div>
-        </div>
-        <div class="col-sm-2 col-6">
-            <label for="ob_retention" class="form-label">Retention (days)</label>
-            <input type="number" id="ob_retention" class="form-control" value="14" min="1">
-        </div>
-        <div class="col-sm-2 col-6">
-            <label for="ob_hour" class="form-label">Hour</label>
-            <input type="number" id="ob_hour" class="form-control" value="2" min="0" max="23">
-        </div>
-        <div class="col-sm-2 col-6">
-            <label for="ob_minute" class="form-label">Minute</label>
-            <input type="number" id="ob_minute" class="form-control" value="30" min="0" max="59">
-        </div>
-        <div class="col-sm-2 col-12">
-            <label for="ob_frequency" class="form-label">Frequency</label>
-            <select id="ob_frequency" class="form-select">
-                <option value="daily" selected>Daily</option>
-                <option value="weekly">Weekly (future)</option>
-            </select>
-        </div>
-    </div>
-    <small class="text-muted d-block mt-2">A backup runs after imports and at the scheduled time daily. Backups include database, covers, uploads, and settings.</small>
-</div>
-
-<script>
-// When onboarding form submits, append backup settings into hidden inputs
-document.addEventListener('DOMContentLoaded', () => {
-    const form = document.querySelector('form');
-    if (!form) return;
-    form.addEventListener('submit', () => {
-        const ensure = (name, value) => {
-            let input = form.querySelector(`input[name="${name}"]`);
-            if (!input) {
-                input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = name;
-                form.appendChild(input);
-            }
-            input.value = value;
-        };
-        ensure('backup_enabled', document.getElementById('ob_backup_enabled').checked ? 'true' : 'false');
-        ensure('backup_retention_days', document.getElementById('ob_retention').value);
-        ensure('backup_hour', document.getElementById('ob_hour').value);
-        ensure('backup_minute', document.getElementById('ob_minute').value);
-        ensure('backup_frequency', document.getElementById('ob_frequency').value);
-    });
-});
-</script>
+<!-- Backup settings moved to Step 2 -->
 
 <form method="POST" enctype="multipart/form-data">
     <!-- CSRF Token -->
