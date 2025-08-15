@@ -16,7 +16,11 @@ Usage:
   python scripts/export_postgres_single_user_to_sqlite.py --output legacy_snapshot.sqlite
 
 Environment:
-  DATABASE_URL=postgresql://user:password@host:5432/dbname
+    DATABASE_URL can be in any of these forms (will be normalized):
+        - postgresql://user:pass@host:5432/dbname
+        - postgres://user:pass@host:5432/dbname
+        - postgresql+psycopg://user:pass@host:5432/dbname (SQLAlchemy style)
+    We normalize to a psycopg-compatible "postgresql://" URL.
 
 Safety:
   - Read-only SELECT access required.
@@ -112,6 +116,14 @@ def get_database_url() -> str:
     if not url:
         print("DATABASE_URL not set in environment or .env file")
         sys.exit(1)
+    # Normalize SQLAlchemy style driver prefixes to plain postgres
+    # e.g. postgresql+psycopg://  -> postgresql://
+    #      postgresql+psycopg2:// -> postgresql://
+    # Accept "postgres://" (common Heroku style) and leave as-is (psycopg accepts both)
+    if url.startswith("postgresql+"):
+        plus_idx = url.find("+")
+        rest = url.split("://", 1)[1]
+        url = "postgresql://" + rest
     return url
 
 
@@ -138,26 +150,38 @@ def ensure_sqlite_schema(sqlite_conn):
 
 
 def export_table(pg_cur, sqlite_conn, table: str, columns: list):
-    # Skip if source table missing
+    """Export a single table, adapting to missing columns (e.g. subtitle)."""
     if not table_exists(pg_cur, table):
         print(f"[SKIP] Table {table} not found in source")
         return 0
+    # Introspect actual columns present
+    pg_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
+    present_cols = {r[0] for r in pg_cur.fetchall()}
+    # Build select list; if a requested column missing, substitute NULL AS col
+    select_exprs = []
+    for c in columns:
+        if c in present_cols:
+            select_exprs.append(c)
+        else:
+            select_exprs.append(f"NULL AS {c}")
+            if table == 'book':
+                print(f"[WARN] Column '{c}' missing in source 'book' table; filling with NULL")
+    select_sql = ",".join(select_exprs)
     total = fetch_count(pg_cur, table)
     if total == 0:
         print(f"[INFO] Table {table} empty")
         return 0
     print(f"[EXPORT] {table} rows={total}")
-    col_list = ",".join(columns)
     offset = 0
     inserted = 0
+    placeholder = ",".join(["?"] * len(columns))
     while offset < total:
-        pg_cur.execute(f"SELECT {col_list} FROM {table} ORDER BY {columns[0]} OFFSET %s LIMIT %s", (offset, BATCH_SIZE))
+        pg_cur.execute(f"SELECT {select_sql} FROM {table} ORDER BY {columns[0]} OFFSET %s LIMIT %s", (offset, BATCH_SIZE))
         rows = pg_cur.fetchall()
         if not rows:
             break
-        placeholder = ",".join(["?"] * len(columns))
         sqlite_conn.executemany(
-            f"INSERT INTO {table} ({col_list}) VALUES ({placeholder})",
+            f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholder})",
             rows
         )
         inserted += len(rows)
@@ -201,36 +225,39 @@ def main():
         if os.path.exists(args.output):
             os.remove(args.output)
         sqlite_conn = sqlite3.connect(args.output)
-        # Performance pragmas
-        sqlite_conn.execute("PRAGMA journal_mode=WAL")
-        sqlite_conn.execute("PRAGMA synchronous=OFF")
-        sqlite_conn.execute("PRAGMA temp_store=MEMORY")
-        ensure_sqlite_schema(sqlite_conn)
+        try:
+            # Performance pragmas
+            sqlite_conn.execute("PRAGMA journal_mode=WAL")
+            sqlite_conn.execute("PRAGMA synchronous=OFF")
+            sqlite_conn.execute("PRAGMA temp_store=MEMORY")
+            ensure_sqlite_schema(sqlite_conn)
 
-        def _iso_utc_now():
-            return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            def _iso_utc_now():
+                return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-        manifest = {"exported_tables": {}, "started_at": _iso_utc_now(), "source": "postgres_single_user"}
+            manifest = {"exported_tables": {}, "started_at": _iso_utc_now(), "source": "postgres_single_user"}
 
-        for table in LEGACY_TABLES:
-            if args.skip_custom_fields and table.startswith("custom_field"):
-                continue
-            cols = COLUMN_MAP.get(table)
-            if not cols:
-                continue
-            count = export_table(pg_cur, sqlite_conn, table, cols)
-            manifest["exported_tables"][table] = count
+            for table in LEGACY_TABLES:
+                if args.skip_custom_fields and table.startswith("custom_field"):
+                    continue
+                cols = COLUMN_MAP.get(table)
+                if not cols:
+                    continue
+                count = export_table(pg_cur, sqlite_conn, table, cols)
+                manifest["exported_tables"][table] = count
 
-        # Ensure user table present & row
-        insert_single_user(sqlite_conn)
-        manifest["exported_tables"]["user"] = 1
+            # Ensure user table present & row
+            insert_single_user(sqlite_conn)
+            manifest["exported_tables"]["user"] = 1
 
-    # Meta
-    manifest["completed_at"] = _iso_utc_now()
-    manifest["duration_sec"] = round(time.time() - start, 2)
-    write_meta(sqlite_conn, manifest)
-    sqlite_conn.close()
+            # Meta
+            manifest["completed_at"] = _iso_utc_now()
+            manifest["duration_sec"] = round(time.time() - start, 2)
+            write_meta(sqlite_conn, manifest)
+        finally:
+            sqlite_conn.close()
 
+    # After context managers closed
     print("\n[SUMMARY]")
     print(json.dumps(manifest, indent=2))
     print(f"\n[OK] Export complete -> {args.output}")
