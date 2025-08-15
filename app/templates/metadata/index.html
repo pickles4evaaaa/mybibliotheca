@@ -25,11 +25,11 @@
                                     <div class="list-group-item">
                                         <div class="d-flex justify-content-between align-items-center">
                                             <div>
-                                                <h6 class="mb-1">{{ field.display_name }}</h6>
+                                                <h6 class="mb-1">{{ field.display_name or field.field_display_name }}</h6>
                                                 <small class="text-muted">
-                                                    {{ field.field_type.value|title }} • 
+                                                    {{ field.field_type.value|default(field.field_type)|title }} • 
                                                     {% if field.is_global %}Global{% else %}Personal{% endif %}
-                                                    {% if field.is_shareable %} • Shareable{% endif %}
+                                                    <!-- Shareable flag removed -->
                                                 </small>
                                             </div>
                                             <small class="text-muted">Used {{ field.usage_count }} times</small>
@@ -69,9 +69,9 @@
                                     <div class="list-group-item">
                                         <div class="d-flex justify-content-between align-items-center">
                                             <div>
-                                                <h6 class="mb-1">{{ field.display_name }}</h6>
+                                                <h6 class="mb-1">{{ field.display_name or field.field_display_name }}</h6>
                                                 <small class="text-muted">
-                                                    {{ field.field_type.value|title }}
+                                                    {{ field.field_type.value|default(field.field_type)|title }}
                                                     {% if field.description %} • {{ field.description }}{% endif %}
                                                 </small>
                                             </div>

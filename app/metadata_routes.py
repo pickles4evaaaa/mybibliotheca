@@ -24,15 +24,8 @@ def index():
         user_fields = custom_field_service.get_user_fields_with_calculated_usage_sync(current_user.id)
         if user_fields is None:
             user_fields = []
-        
-        # Get popular shareable fields with calculated usage
-        popular_fields = custom_field_service.get_shareable_fields_with_calculated_usage_sync(exclude_user_id=current_user.id)
-        # Handle case where popular_fields might be None
-        if popular_fields is None:
-            popular_fields = []
-        # Sort by usage count to get most popular first
-        popular_fields.sort(key=lambda x: x.get('usage_count', 0), reverse=True)
-        popular_fields = popular_fields[:10]  # Limit to top 10
+        # Shareable concept removed; no separate popular fields
+        popular_fields = []
         
         # Get user's import templates
         import_templates = import_mapping_service.get_user_templates_sync(current_user.id)
@@ -59,11 +52,8 @@ def fields():
         user_fields = custom_field_service.get_user_fields_with_calculated_usage_sync(current_user.id)
         if user_fields is None:
             user_fields = []
-        
-        # Get shareable fields from other users with calculated usage
-        shareable_fields = custom_field_service.get_shareable_fields_with_calculated_usage_sync(exclude_user_id=current_user.id)
-        if shareable_fields is None:
-            shareable_fields = []
+        # Shareable fields removed
+        shareable_fields = []
         
         return render_template(
             'metadata/fields.html',
@@ -87,7 +77,8 @@ def create_field():
             display_name = request.form.get('display_name', '').strip()
             field_type = request.form.get('field_type', 'text')
             description = request.form.get('description', '').strip()
-            is_shareable = request.form.get('is_shareable') == 'on'
+            # is_shareable removed (all definitions visible)
+            is_shareable = False
             is_global = request.form.get('is_global') == 'on'
             
             current_app.logger.info(f"ℹ️ [METADATA_ROUTES] Received request to create custom field '{name}' for user {current_user.id}")
@@ -167,7 +158,7 @@ def create_field():
                 'field_type': field_def.field_type.value if hasattr(field_def.field_type, 'value') else str(field_def.field_type),
                 'description': field_def.description,
                 'is_global': field_def.is_global,
-                'is_shareable': field_def.is_shareable,
+                'is_shareable': False,
                 'default_value': getattr(field_def, 'default_value', None),
                 'placeholder_text': getattr(field_def, 'placeholder_text', None),
                 'help_text': getattr(field_def, 'help_text', None),

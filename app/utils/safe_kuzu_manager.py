@@ -131,10 +131,66 @@ class SafeKuzuManager:
             # Ensure directory exists
             os.makedirs(os.path.dirname(self.database_path), exist_ok=True)
             
-            # Create database instance
-            self._database = kuzu.Database(self.database_path)
-            
-            # CRITICAL FIX: Initialize the database schema
+            # Create database instance with corruption/IO recovery guard
+            try:
+                self._database = kuzu.Database(self.database_path)
+            except Exception as open_err:
+                err_str = str(open_err)
+                # Detect classic corruption / truncated WAL style errors
+                is_io_corruption = (
+                    'Cannot read from file' in err_str or
+                    'bad_alloc' in err_str or
+                    'Error during recovery' in err_str
+                )
+                auto_recover = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() in ('1', 'true', 'yes')
+                if is_io_corruption:
+                    db_path = Path(self.database_path)
+                    if auto_recover:
+                        try:
+                            # Full backup + wipe strategy
+                            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                            backup_dir = db_path.parent / 'corrupt_backups'
+                            backup_dir.mkdir(parents=True, exist_ok=True)
+                            if db_path.exists():
+                                if db_path.is_dir():
+                                    target = backup_dir / f'kuzu_backup_{ts}'
+                                    import shutil
+                                    shutil.copytree(db_path, target)
+                                    shutil.rmtree(db_path, ignore_errors=True)
+                                else:
+                                    target = backup_dir / f'kuzu_backup_{ts}.db'
+                                    import shutil
+                                    shutil.copy2(str(db_path), str(target))
+                                    db_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                                logger.warning(f"[KUZU] 📦 Backed up suspected corrupt DB to {target}")
+                            self._database = kuzu.Database(self.database_path)
+                            logger.warning("[KUZU] ✅ Auto-recovery created fresh database after IO error (env-driven)")
+                        except Exception as rec_err:  # pragma: no cover
+                            logger.error(f"[KUZU] ❌ Auto-recovery failed: {rec_err}")
+                            raise open_err
+                    else:
+                        # Non-destructive soft fallback: rename corrupt file and create new
+                        if os.getenv('KUZU_DISABLE_AUTO_RENAME_CORRUPT', 'false').lower() not in ('1','true','yes'):
+                            try:
+                                if db_path.exists() and db_path.is_file():
+                                    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                                    renamed = db_path.parent / f"bibliotheca.db.corrupt.{ts}"
+                                    db_path.rename(renamed)
+                                    logger.warning(f"[KUZU] 📛 Detected IO corruption. Renamed original DB to {renamed.name} (set KUZU_DISABLE_AUTO_RENAME_CORRUPT=1 to disable)")
+                                # Attempt fresh create
+                                self._database = kuzu.Database(self.database_path)
+                                logger.warning("[KUZU] ✅ Created fresh database after soft rename (enable KUZU_AUTO_RECOVER_CLEAR=1 for full backup+wipe)")
+                            except Exception as soft_err:
+                                logger.error(f"[KUZU] ❌ Soft rename recovery failed: {soft_err}")
+                                raise open_err
+                        else:
+                            logger.error("[KUZU] ❌ IO corruption detected but auto-recovery disabled (set KUZU_AUTO_RECOVER_CLEAR=1 or unset KUZU_DISABLE_AUTO_RENAME_CORRUPT)")
+                            raise open_err
+                else:
+                    # Reraise original error if not recoverable / not opted in
+                    raise
+
+            # CRITICAL FIX: Initialize the database schema (may still raise)
             logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                        f"Initializing database schema...")
             if _VERBOSE_INIT:
@@ -143,10 +199,10 @@ class SafeKuzuManager:
                 except Exception:
                     pass
             self._initialize_schema()
-            
+
             self._is_initialized = True
             self._initialization_time = datetime.now(timezone.utc)
-            
+
             initialization_duration = time.time() - start_time
             logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                        f"KuzuDB database initialized successfully in {initialization_duration:.3f}s")
@@ -155,7 +211,7 @@ class SafeKuzuManager:
                     print(f"[KUZU] ✅ Database ready in {initialization_duration:.2f}s")
                 except Exception:
                     pass
-            
+
         except Exception as e:
             logger.error(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
                         f"Failed to initialize KuzuDB database: {e}")
@@ -873,41 +929,47 @@ class SafeKuzuManager:
             ]
             
             # Create relationship tables
-            relationship_queries = [
-                """
-                CREATE REL TABLE OWNS(
-                    FROM User TO Book,
-                    reading_status STRING,
-                    date_added TIMESTAMP,
-                    start_date TIMESTAMP,
-                    finish_date TIMESTAMP,
-                    current_page INT64,
-                    total_pages INT64,
-                    ownership_status STRING,
-                    media_type STRING,
-                    borrowed_from STRING,
-                    borrowed_from_user_id STRING,
-                    borrowed_date TIMESTAMP,
-                    borrowed_due_date TIMESTAMP,
-                    loaned_to STRING,
-                    loaned_to_user_id STRING,
-                    loaned_date TIMESTAMP,
-                    loaned_due_date TIMESTAMP,
-                    location_id STRING,
-                    user_rating DOUBLE,
-                    rating_date TIMESTAMP,
-                    user_review STRING,
-                    review_date TIMESTAMP,
-                    is_review_spoiler BOOLEAN,
-                    personal_notes STRING,
-                    pace STRING,
-                    character_driven BOOLEAN,
-                    source STRING,
-                    custom_metadata STRING,
-                    created_at TIMESTAMP,
-                    updated_at TIMESTAMP
+            relationship_queries = []
+            import os as _os_dep_owns_mgr
+            if _os_dep_owns_mgr.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes'):  # pragma: no cover
+                relationship_queries.append(
+                    """
+                    CREATE REL TABLE OWNS(
+                        FROM User TO Book,
+                        reading_status STRING,
+                        date_added TIMESTAMP,
+                        start_date TIMESTAMP,
+                        finish_date TIMESTAMP,
+                        current_page INT64,
+                        total_pages INT64,
+                        ownership_status STRING,
+                        media_type STRING,
+                        borrowed_from STRING,
+                        borrowed_from_user_id STRING,
+                        borrowed_date TIMESTAMP,
+                        borrowed_due_date TIMESTAMP,
+                        loaned_to STRING,
+                        loaned_to_user_id STRING,
+                        loaned_date TIMESTAMP,
+                        loaned_due_date TIMESTAMP,
+                        location_id STRING,
+                        user_rating DOUBLE,
+                        rating_date TIMESTAMP,
+                        user_review STRING,
+                        review_date TIMESTAMP,
+                        is_review_spoiler BOOLEAN,
+                        personal_notes STRING,
+                        pace STRING,
+                        character_driven BOOLEAN,
+                        source STRING,
+                        custom_metadata STRING,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
                 )
-                """,
+            
+            relationship_queries += [
                 "CREATE REL TABLE READS(FROM User TO Book, started_at TIMESTAMP, finished_at TIMESTAMP, status STRING, current_page INT64, progress_percentage DOUBLE)",
                 """
                 CREATE REL TABLE WRITTEN_BY(
@@ -1081,6 +1143,17 @@ def reset_safe_kuzu_manager(database_path: Optional[str] = None) -> None:
     global _safe_kuzu_manager
     with _manager_lock:
         _safe_kuzu_manager = SafeKuzuManager(database_path) if database_path else None
+
+
+def is_safe_kuzu_initialized() -> bool:
+    """Return True if the global SafeKuzuManager exists and database initialized.
+
+    Used by shutdown handlers to avoid triggering a late initialization cycle
+    (which could emit noisy IO errors if the process is already tearing down
+    or the underlying filesystem state is changing during test cleanup).
+    """
+    global _safe_kuzu_manager
+    return bool(_safe_kuzu_manager and getattr(_safe_kuzu_manager, '_is_initialized', False))
 
 
 def safe_execute_query(query: str, params: Optional[Dict[str, Any]] = None, 

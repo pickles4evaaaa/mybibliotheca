@@ -1753,12 +1753,28 @@ def edit_book(uid):
                     
                     person = None
                     if person_data_list:
-                        person_data = person_data_list[0]
-                        # Convert back to Person object
+                        raw_person_data = person_data_list[0]
+                        # Some query result conversions produce col_0..col_N keys instead of aliases
+                        # Query column order (see find_person_query): id, name, normalized_name, birth_year, death_year, birth_place, bio, website
+                        if 'id' not in raw_person_data and 'col_0' in raw_person_data:
+                            person_data = {
+                                'id': raw_person_data.get('col_0'),
+                                'name': raw_person_data.get('col_1'),
+                                'normalized_name': raw_person_data.get('col_2'),
+                                'birth_year': raw_person_data.get('col_3'),
+                                'death_year': raw_person_data.get('col_4'),
+                                'birth_place': raw_person_data.get('col_5'),
+                                'bio': raw_person_data.get('col_6'),
+                                'website': raw_person_data.get('col_7'),
+                            }
+                        else:
+                            person_data = raw_person_data
+
+                        # Convert back to Person object using normalized mapping
                         person = Person(
                             id=person_data.get('id'),
-                            name=person_data.get('name', ''),
-                            normalized_name=person_data.get('normalized_name', ''),
+                            name=person_data.get('name', '') or '',
+                            normalized_name=(person_data.get('normalized_name') or '').strip().lower(),
                             birth_year=person_data.get('birth_year'),
                             death_year=person_data.get('death_year'),
                             birth_place=person_data.get('birth_place'),

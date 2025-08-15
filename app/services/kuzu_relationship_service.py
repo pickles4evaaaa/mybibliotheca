@@ -173,12 +173,13 @@ class KuzuRelationshipService:
         self._load_contributors_for_book(book)
         
         # Add user-specific attributes dynamically using setattr
-        combined = {}
+        combined: Dict[str, Any] = {}
+        # Legacy OWNS data (reading_status, ownership_status, user_rating, etc.)
         combined.update(relationship_data or {})
         # Personal metadata (HAS_PERSONAL_METADATA) stores json blob in personal_custom_fields; flatten known fields
         if personal_meta:
             # Accept direct fields if present
-            for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status']:
+            for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
                 if key in personal_meta and personal_meta[key] not in (None, ''):
                     combined[key] = personal_meta[key]
             # Extract from personal_custom_fields JSON if exists
@@ -189,10 +190,22 @@ class KuzuRelationshipService:
                     if isinstance(custom_blob, str):
                         custom_blob = json.loads(custom_blob)
                     for k, v in custom_blob.items():
-                        if k in ['personal_notes', 'user_review'] and v:
+                        # Promote known keys; keep others as custom_*
+                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date'] and v not in (None, ''):
                             combined[k] = v
                 except Exception:
                     pass
+        # If key personal fields still missing, consult personal_metadata_service directly (ensures coverage when OWNS absent and pm not returned)
+        try:
+            if not any(k in combined for k in ('personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date')):
+                from .personal_metadata_service import personal_metadata_service
+                pm = personal_metadata_service.get_personal_metadata(self.user_id, str(getattr(book, 'id', '')))
+                for k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date']:
+                    v = pm.get(k)
+                    if v not in (None, ''):
+                        combined[k] = v
+        except Exception:
+            pass
         setattr(book, 'reading_status', combined.get('reading_status', 'plan_to_read'))
         setattr(book, 'ownership_status', combined.get('ownership_status', 'owned'))
         setattr(book, 'start_date', combined.get('start_date'))
@@ -391,67 +404,97 @@ class KuzuRelationshipService:
         return True  # Always return success to avoid breaking existing code
     
     async def update_user_book_relationship(self, user_id: str, book_id: str, updates: Dict[str, Any]) -> bool:
-        """Persist personal (user-specific) fields.
+        """Persist personal (user-specific) fields using HAS_PERSONAL_METADATA.
 
-        Even in "universal library" mode we still allow a single user overlay
-        using the OWNS relationship so that personal notes & reviews persist.
-        If OWNS does not yet exist it will be created.
+        Fully replaces legacy OWNS usage. Accepts legacy field names (review -> user_review)
+        and stores everything via personal_metadata_service.
         """
         try:
-            print(f"🔍 [DEBUG] update_user_book_relationship called: user_id={user_id}, book_id={book_id}, updates={updates}")
             if not updates:
                 return True
-            # Map review key to user_review for storage
-            storage_updates = {}
+            from .personal_metadata_service import personal_metadata_service
+
+            # Map legacy keys
+            mapped: Dict[str, Any] = {}
             for k, v in updates.items():
                 if k == 'review':
-                    storage_updates['user_review'] = v
+                    mapped['user_review'] = v
                 else:
-                    storage_updates[k] = v
-            # Always bump updated_at
-            storage_updates['updated_at'] = datetime.now(timezone.utc)
-            # Prepare SET clauses
-            set_parts = []
-            # Provide a creation timestamp param for ON CREATE to avoid unsupported DB functions
-            params = {'user_id': user_id, 'book_id': book_id}
-            for key, value in storage_updates.items():
-                # Do not persist date_added on OWNS in universal library mode
-                if key == 'date_added':
-                    continue
-                set_parts.append(f"owns.{key} = ${key}")
-                params[key] = value
-            set_clause = ", ".join(set_parts)
-            query = f"""
-            MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
-            MERGE (u)-[owns:OWNS]->(b)
-            SET {set_clause}
-            RETURN owns
-            """
-            safe_execute_kuzu_query(query, params)
+                    mapped[k] = v
+
+            # Extract standard fields we persist explicitly (others go into personal_custom_fields JSON)
+            direct_fields = {k: mapped.pop(k) for k in list(mapped.keys()) if k in {
+                'personal_notes', 'user_review', 'start_date', 'finish_date'
+            }}
+
+            # Convert date strings to datetime if needed
+            def _parse_date(val):
+                if isinstance(val, datetime):
+                    return val
+                if isinstance(val, date):
+                    return datetime(val.year, val.month, val.day)
+                if isinstance(val, str):
+                    try:
+                        return datetime.fromisoformat(val)
+                    except Exception:
+                        return None
+                return None
+
+            start_dt = _parse_date(direct_fields.get('start_date')) if 'start_date' in direct_fields else None
+            finish_dt = _parse_date(direct_fields.get('finish_date')) if 'finish_date' in direct_fields else None
+            if 'start_date' in direct_fields:
+                direct_fields.pop('start_date', None)
+            if 'finish_date' in direct_fields:
+                direct_fields.pop('finish_date', None)
+
+            # Remaining mapped keys (reading_status, ownership_status, user_rating, etc.) -> custom blob
+            custom_updates = mapped.copy()
+
+            # Merge any additional custom fields (if user supplied arbitrary keys)
+            existing = personal_metadata_service.get_personal_metadata(user_id, book_id)
+            existing_blob = {}
+            # existing already returns flattened; build blob excluding core fields
+            for k, v in existing.items():
+                if k not in ('personal_notes', 'user_review', 'start_date', 'finish_date'):
+                    existing_blob[k] = v
+            existing_blob.update(custom_updates)
+            custom_updates = existing_blob
+
+            personal_metadata_service.update_personal_metadata(
+                user_id,
+                book_id,
+                personal_notes=direct_fields.get('personal_notes'),
+                user_review=direct_fields.get('user_review'),
+                start_date=start_dt,
+                finish_date=finish_dt,
+                custom_updates=custom_updates,
+                merge=True,
+            )
             return True
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
             return False
     
     async def remove_book_from_user_library(self, user_id: str, book_id: str) -> bool:
-        """Remove a book from user's library (delete OWNS relationship)."""
+        """Remove user-specific metadata for a book (OWNS deprecated).
+
+        In universal library mode we generally keep the book; this becomes a metadata clear.
+        """
         try:
-            print(f"🗑️ [REMOVE_FROM_LIBRARY] Removing book {book_id} from user {user_id} library")
-            
-            # Delete user-book relationship using Kuzu query
-            delete_rel_query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
-            DELETE owns
-            """
-            
-            safe_execute_kuzu_query(delete_rel_query, {
-                "user_id": user_id,
-                "book_id": book_id
-            })
-            
+            from .personal_metadata_service import personal_metadata_service
+            # Overwrite with empty metadata (could also delete relationship)
+            safe_execute_kuzu_query(
+                f"""
+                MATCH (u:User {{id: $user_id}})-[r:HAS_PERSONAL_METADATA]->(b:Book {{id: $book_id}})
+                DELETE r
+                """ , {"user_id": user_id, "book_id": book_id})
+            # Optionally also drop legacy OWNS if still present (cleanup phase)
+            try:
+                safe_execute_kuzu_query("MATCH (u:User {id: $uid})-[o:OWNS]->(b:Book {id: $bid}) DELETE o", {"uid": user_id, "bid": book_id})
+            except Exception:
+                pass
             return True
-            
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
             return False
     
@@ -459,15 +502,13 @@ class KuzuRelationshipService:
         """Get all books with user-specific overlay data (universal library model)."""
         try:
             # Universal library base: get ALL books with their STORED_AT locations
-            # Enhance with optional user overlay: OWNS relationship and personal metadata if present
+            # Enhance with user overlay: personal metadata (OWNS fully deprecated)
             query = """
             MATCH (b:Book)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-            OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
-            OPTIONAL MATCH (u)-[pm:HAS_PERSONAL_METADATA]->(b)
+            OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
             RETURN b,
                    COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations,
-                   owns,
                    pm
             """
 
@@ -486,8 +527,9 @@ class KuzuRelationshipService:
 
                     book_data = result_row['col_0']
                     locations_data = result_row.get('col_1', []) or []
-                    relationship_data = result_row.get('col_2') or {}
-                    personal_meta = result_row.get('col_3') or {}
+                    # No legacy relationship data anymore
+                    relationship_data = {}
+                    personal_meta = result_row.get('col_2') or {}
 
                     # Create enriched book object (filters locations internally)
                     book = self._create_enriched_book(book_data, relationship_data, locations_data, personal_meta)
@@ -513,7 +555,7 @@ class KuzuRelationshipService:
                     logger.error(f"[RELATIONSHIP_SERVICE] Error processing book {i}: {e}")
                     continue
 
-            logger.info(f"[RELATIONSHIP_SERVICE] Successfully processed {len(book_dicts)} books with optional user overlay")
+            logger.info(f"[RELATIONSHIP_SERVICE] Successfully processed {len(book_dicts)} books with personal metadata overlay")
             return book_dicts
             
         except Exception as e:
@@ -531,13 +573,11 @@ class KuzuRelationshipService:
         query = """
         MATCH (b:Book {id: $book_id})
         OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
-        OPTIONAL MATCH (u:User {id: $user_id})-[owns:OWNS]->(b)
-        OPTIONAL MATCH (u)-[pm:HAS_PERSONAL_METADATA]->(b)
+        OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
         RETURN b,
                COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations,
-               owns, pm
+               pm
         """
-
         raw = safe_execute_kuzu_query(query, {"book_id": uid, "user_id": user_id})
         results = _convert_query_result_to_list(raw)
         if not results:
@@ -547,8 +587,8 @@ class KuzuRelationshipService:
             return None
         book_data = row['col_0']
         locations_data = row.get('col_1', []) or []
-        relationship_data = row.get('col_2') or {}
-        personal_meta = row.get('col_3') or {}
+        relationship_data = {}
+        personal_meta = row.get('col_2') or {}
         valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
         debug_log(f"Book {uid} locations from STORED_AT: {valid_locations}", "RELATIONSHIP")
         book = self._create_enriched_book(book_data, relationship_data, valid_locations, personal_meta)

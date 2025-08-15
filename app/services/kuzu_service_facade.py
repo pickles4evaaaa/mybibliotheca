@@ -111,63 +111,63 @@ class KuzuServiceFacade:
         """Update a book with filtering for relationship-specific updates."""
         
         # Separate different types of updates based on correct architecture:
-        # 1. Book metadata (global) - goes to Book table
-        # 2. Personal standard fields (personal) - goes to OWNS relationship
-        # 3. Custom metadata (custom) - goes to custom metadata system
-        
-        # Personal standard fields that go to OWNS relationship
-        owns_relationship_fields = {'reading_status', 'ownership_status', 'user_rating', 
-                                   'personal_notes', 'review', 'start_date', 'finish_date', 'media_type'}
-        
+        # 1. Book metadata (global) - Book table
+        # 2. Personal standard fields (personal) - HAS_PERSONAL_METADATA relationship (replaces legacy OWNS)
+        # 3. Custom metadata (custom) - custom metadata system
+
+        # Personal standard fields stored per-user
+        personal_relationship_fields = {
+            'reading_status', 'ownership_status', 'user_rating',
+            'personal_notes', 'review', 'start_date', 'finish_date', 'media_type'
+        }
+
         # Custom metadata fields
         custom_metadata_fields = {'custom_metadata'}
-        
+
         # Location fields (handled separately)
         location_fields = {'location_id', 'primary_location_id', 'locations'}
-        
+
         # Contributor fields (handled separately)
         contributor_fields = {'contributors'}
-        
+
         # Category fields (handled separately)
         category_fields = {'raw_categories', 'categories'}
-        
+
         # Split the updates
-        book_updates = {k: v for k, v in kwargs.items() 
-                       if k not in owns_relationship_fields and k not in custom_metadata_fields and k not in location_fields and k not in contributor_fields and k not in category_fields}
-        owns_updates = {k: v for k, v in kwargs.items() 
-                       if k in owns_relationship_fields}
-        custom_metadata_updates = {k: v for k, v in kwargs.items() 
-                                 if k in custom_metadata_fields}
-        location_updates = {k: v for k, v in kwargs.items() 
-                           if k in location_fields}
-        contributor_updates = {k: v for k, v in kwargs.items() 
-                             if k in contributor_fields}
-        category_updates = {k: v for k, v in kwargs.items() 
-                          if k in category_fields}
+        book_updates = {k: v for k, v in kwargs.items()
+                        if k not in personal_relationship_fields and k not in custom_metadata_fields
+                        and k not in location_fields and k not in contributor_fields and k not in category_fields}
+        personal_updates = {k: v for k, v in kwargs.items() if k in personal_relationship_fields}
+        custom_metadata_updates = {k: v for k, v in kwargs.items() if k in custom_metadata_fields}
+        location_updates = {k: v for k, v in kwargs.items() if k in location_fields}
+        contributor_updates = {k: v for k, v in kwargs.items() if k in contributor_fields}
+        category_updates = {k: v for k, v in kwargs.items() if k in category_fields}
         
         # Update book metadata (global fields)
         updated_book = None
         if book_updates:
             updated_book = self.book_service.update_book_sync(book_id, book_updates)
         
-        # Update OWNS relationship for personal standard fields
-        if owns_updates:
-            print(f"🔍 [DEBUG] Processing OWNS updates: {owns_updates}")
-            # Map 'review' to 'user_review' for database compatibility
-            owns_db_updates = {}
-            for k, v in owns_updates.items():
+        # Update personal metadata (replacing OWNS usage)
+        if personal_updates:
+            from .personal_metadata_service import personal_metadata_service
+            personal_kwargs = {}
+            custom_updates = {}
+            # Map fields to personal metadata storage
+            for k, v in personal_updates.items():
                 if k == 'review':
-                    owns_db_updates['user_review'] = v
+                    personal_kwargs['user_review'] = v
+                elif k in ('personal_notes', 'start_date', 'finish_date'):
+                    personal_kwargs[k] = v
                 else:
-                    owns_db_updates[k] = v
-            
-            success = self.relationship_service.update_user_book_relationship_sync(
-                user_id, book_id, owns_db_updates
-            )
-            if success:
-                pass  # Success logged elsewhere
-            else:
-                print(f"Failed to update relationship for book {book_id}")
+                    # Other fields like reading_status, ownership_status, user_rating, media_type -> store as custom keys
+                    custom_updates[k] = v
+            if custom_updates:
+                personal_kwargs['custom_updates'] = custom_updates
+            try:
+                personal_metadata_service.update_personal_metadata(user_id, book_id, **personal_kwargs)
+            except Exception as e:
+                print(f"Failed to update personal metadata for book {book_id}: {e}")
         
         # Update custom metadata (only true custom fields)
         if custom_metadata_updates:
@@ -214,62 +214,25 @@ class KuzuServiceFacade:
         # Return the updated book or fetch it fresh if only metadata was updated
         if updated_book:
             return updated_book
-        elif owns_updates or custom_metadata_updates or location_updates or contributor_updates or category_updates:
+        elif personal_updates or custom_metadata_updates or location_updates or contributor_updates or category_updates:
             return self.get_book_by_uid_sync(book_id, user_id)
         else:
             return self.get_book_by_id_sync(book_id)
     
     def delete_book_sync(self, book_id: str, user_id: str) -> bool:
-        """Delete a book from user's library."""
+        """Delete a book (universal library mode: remove personal metadata then book)."""
         try:
-            # Remove from user's library first
-            success = self.relationship_service.remove_book_from_user_library_sync(user_id, book_id)
-            
-            if success:
-                # Check if any other users have this book
-                query = """
-                MATCH (u:User)-[owns:OWNS]->(b:Book {id: $book_id})
-                RETURN count(u) as owner_count
-                """
-                
-                result = safe_execute_kuzu_query(query, {"book_id": book_id})
-                results = _convert_query_result_to_list(result)
-                owner_count = 0
-                if results:
-                    # Use proper result key based on query structure
-                    result = results[0]
-                    if 'owner_count' in result:
-                        owner_count = result['owner_count']
-                    elif 'col_0' in result:
-                        owner_count = result['col_0'] 
-                    else:
-                        # Fallback: check all possible result keys
-                        for key, value in result.items():
-                            if isinstance(value, int):
-                                owner_count = value
-                                break
-                
-                
-                if owner_count == 0:
-                    # No other users own this book, safe to delete the book node entirely
-                    book_delete_success = self.book_service.delete_book_sync(book_id)
-                    if book_delete_success:
-                        # Clean up any orphaned OWNS relationships that might reference this book
-                        cleanup_query = """
-                        MATCH ()-[owns:OWNS]->(:Book {id: $book_id})
-                        DELETE owns
-                        """
-                        try:
-                            safe_execute_kuzu_query(cleanup_query, {"book_id": book_id})
-                        except Exception as cleanup_error:
-                            pass  # Cleanup errors are not critical
-                else:
-                    pass  # Other users still own this book, keeping book node
-                
-            
-            return success
-            
-        except Exception as e:
+            self.relationship_service.remove_book_from_user_library_sync(user_id, book_id)
+            # Directly delete book node (no multi-owner semantics now)
+            if self.book_service.delete_book_sync(book_id):
+                # Best-effort cleanup of any lingering OWNS
+                try:
+                    safe_execute_kuzu_query("MATCH ()-[o:OWNS]->(b:Book {id: $book_id}) DELETE o", {"book_id": book_id})
+                except Exception:
+                    pass
+                return True
+            return False
+        except Exception:
             traceback.print_exc()
             return False
     

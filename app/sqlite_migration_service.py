@@ -482,41 +482,21 @@ class SQLiteMigrationService:
             from app.services.kuzu_async_helper import run_async
             run_async(user_book_repo.update_reading_status(user_id, book_id, reading_status.value))
             
-            # Update the OWNS relationship with additional personal data using SafeKuzuManager
-            safe_manager = get_safe_kuzu_manager()
-            
-            # Build update properties
-            update_props = {
-                'personal_notes': personal_notes
-            }
-            
-            # Add dates if available
-            if book_data.date_read:
-                update_props['date_read'] = book_data.date_read
-            if book_data.date_started:
-                update_props['date_started'] = book_data.date_started
-            if book_data.date_added:
-                update_props['date_added'] = book_data.date_added
-            
-            # Update the OWNS relationship with personal information
-            set_clauses = []
-            for key, value in update_props.items():
-                set_clauses.append(f"owns.{key} = ${key}")
-            
-            if set_clauses:
-                query = f"""
-                MATCH (u:User {{id: $user_id}})-[owns:OWNS]->(b:Book {{id: $book_id}})
-                SET {', '.join(set_clauses)}
-                RETURN owns
-                """
-                
-                params = {
-                    'user_id': user_id,
-                    'book_id': book_id,
-                    **update_props
-                }
-                
-                safe_manager.execute_query(query, params)
+            # Update personal metadata instead of OWNS
+            try:
+                from app.services.personal_metadata_service import personal_metadata_service
+                custom_updates = {}
+                if book_data.date_read:
+                    custom_updates['finish_date'] = book_data.date_read
+                if book_data.date_started:
+                    custom_updates['start_date'] = book_data.date_started
+                if book_data.date_added:
+                    custom_updates['date_added'] = book_data.date_added
+                personal_metadata_service.update_personal_metadata(
+                    user_id, book_id, personal_notes=personal_notes, custom_updates=custom_updates or None, merge=True
+                )
+            except Exception as _pm_err:  # pragma: no cover
+                print(f"⚠️ [MIGRATION] Personal metadata update fallback failed: {_pm_err}")
                 
         except Exception as e:
             print(f"❌ [MIGRATION] Error updating personal information: {e}")

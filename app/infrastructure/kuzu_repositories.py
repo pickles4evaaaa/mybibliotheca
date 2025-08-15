@@ -1596,90 +1596,73 @@ class KuzuUserBookRepository:
                                  media_type: str = "physical",
                                  notes: str = "",
                                  location_id: Optional[str] = None) -> bool:
-        """Add a book to user's library."""
+        """Add a book to user's library (universal library mode -> create personal metadata overlay).
+
+        In universal mode we no longer create OWNS relationships; instead we ensure a
+        HAS_PERSONAL_METADATA relationship exists and store initial fields in its JSON blob.
+        """
         try:
-            # Ensure all properties are strings except date_added which should be TIMESTAMP
-            owns_props = {
+            from app.services.personal_metadata_service import personal_metadata_service
+            custom_updates = {
                 'reading_status': str(reading_status),
                 'ownership_status': str(ownership_status),
                 'media_type': str(media_type),
-                'date_added': datetime.now(timezone.utc).isoformat(),  # Always use current time as ISO string
-                'source': str('manual'),
-                'personal_notes': str(notes or ''),
-                'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
+                'source': 'manual'
             }
-            
-            success = self.db.create_relationship(
-                'User', user_id, 'OWNS', 'Book', book_id, owns_props
+            if location_id:
+                # Location is now handled via STORED_AT edges; retain for backward compatibility in metadata
+                custom_updates['legacy_location_id'] = str(location_id)
+            personal_metadata_service.update_personal_metadata(
+                user_id,
+                book_id,
+                personal_notes=notes or None,
+                custom_updates=custom_updates,
+                merge=True,
             )
-            
-            if success:
-                logger.info(f"✅ Added book {book_id} to user {user_id} library")
-                return True
-            return False
-            
+            logger.info(f"✅ Added (personal overlay) book {book_id} for user {user_id}")
+            return True
         except Exception as e:
-            logger.error(f"❌ Failed to add book to library: {e}")
+            logger.error(f"❌ Failed to add book to library (personal metadata path): {e}")
             return False
     
     async def get_user_books(self, user_id: str, reading_status: Optional[str] = None, 
                            limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get all books in user's library, optionally filtered by reading status."""
+        """Get books for user based on personal metadata (OWNS deprecated).
+
+        Strategy: pull all books and overlay personal metadata in Python, then filter.
+        Acceptable for moderate dataset sizes; optimize later by extending HAS_PERSONAL_METADATA schema.
+        """
         try:
-            if reading_status:
-                query = """
-                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-                WHERE owns.reading_status = $reading_status
-                RETURN b, owns
-                SKIP $offset LIMIT $limit
-                """
-                params = {"user_id": user_id, "reading_status": reading_status, "offset": offset, "limit": limit}
-            else:
-                query = """
-                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-                RETURN b, owns
-                SKIP $offset LIMIT $limit
-                """
-                params = {"user_id": user_id, "offset": offset, "limit": limit}
-            
-            results = self.db.query(query, params)
-            
-            books = []
+            from app.services.personal_metadata_service import personal_metadata_service
+            # Fetch all books (limit applied post-filter)
+            query = """
+            MATCH (b:Book)
+            RETURN b
+            SKIP $offset LIMIT $limit
+            """
+            results = self.db.query(query, {"offset": offset, "limit": limit})
+            books: List[Dict[str, Any]] = []
             for result in results:
-                if 'col_0' in result and 'col_1' in result:
-                    book_data = dict(result['col_0'])
-                    owns_data = dict(result['col_1'])
-                    
-                    books.append({
-                        'book': book_data,
-                        'ownership': owns_data
-                    })
-            
+                if 'col_0' not in result:
+                    continue
+                book_node = dict(result['col_0'])
+                pm = personal_metadata_service.get_personal_metadata(user_id, book_node.get('id', ''))
+                if reading_status and pm.get('reading_status') != reading_status:
+                    continue
+                books.append({'book': book_node, 'personal': pm})
             return books
-            
         except Exception as e:
-            logger.error(f"❌ Failed to get user books: {e}")
+            logger.error(f"❌ Failed to get user books (personal metadata path): {e}")
             return []
     
     async def update_reading_status(self, user_id: str, book_id: str, new_status: str) -> bool:
-        """Update the reading status of a book."""
+        """Update reading status via personal metadata service (OWNS deprecated)."""
         try:
-            query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book {id: $book_id})
-            SET owns.reading_status = $new_status
-            RETURN owns
-            """
-            
-            results = self.db.query(query, {
-                "user_id": user_id,
-                "book_id": book_id,
-                "new_status": new_status
-            })
-            
-            return len(results) > 0
-            
+            from app.services.personal_metadata_service import personal_metadata_service
+            personal_metadata_service.update_personal_metadata(user_id, book_id, custom_updates={'reading_status': new_status})
+            return True
         except Exception as e:
-            logger.error(f"❌ Failed to update reading status: {e}")
+            logger.error(f"❌ Failed to update reading status (personal metadata): {e}")
             return False
 
     async def create_ownership(self, user_id: str, book_id: str, 
@@ -1687,219 +1670,180 @@ class KuzuUserBookRepository:
                              location_id: Optional[str] = None, source: str = "manual",
                              notes: str = "", date_added = None, 
                              custom_metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """Create an ownership relationship between user and book."""
+        """Deprecated: create ownership now maps to creating personal metadata overlay.
+
+        Kept for backward compatibility. Ignores date_added (book global creation time used) and
+        stores all fields in HAS_PERSONAL_METADATA JSON blob.
+        """
         try:
-            # Import here to avoid circular imports
-            from app.domain.models import ReadingStatus, OwnershipStatus, MediaType
-            
-            # Convert enum values to strings
-            reading_status_str = reading_status.value if hasattr(reading_status, 'value') else str(reading_status)
-            ownership_status_str = ownership_status.value if hasattr(ownership_status, 'value') else str(ownership_status)
-            media_type_str = media_type.value if hasattr(media_type, 'value') else str(media_type)
-            
-            # Ensure date_added is a proper datetime object
-            if date_added is None:
-                final_date_added = datetime.now(timezone.utc)
-            elif isinstance(date_added, datetime):
-                final_date_added = date_added
-            elif isinstance(date_added, str):
-                try:
-                    # Try to parse ISO format string
-                    final_date_added = datetime.fromisoformat(date_added.replace('Z', '+00:00'))
-                except ValueError:
-                    final_date_added = datetime.now(timezone.utc)
-            elif isinstance(date_added, (int, float)):
-                try:
-                    # Try to parse as timestamp
-                    final_date_added = datetime.fromtimestamp(date_added)
-                except (ValueError, OSError):
-                    final_date_added = datetime.now(timezone.utc)
-            else:
-                # Fallback to current time for any other type
-                final_date_added = datetime.now(timezone.utc)
-            
-            # Ensure all properties are the correct types
-            owns_props = {
-                'reading_status': str(reading_status_str),
-                'ownership_status': str(ownership_status_str),
-                'media_type': str(media_type_str),
-                'date_added': final_date_added,  # Now guaranteed to be datetime
-                'source': str(source),
-                'personal_notes': str(notes or ''),
-                'location_id': str(location_id or '')  # Changed from primary_location_id to location_id
+            from app.services.personal_metadata_service import personal_metadata_service
+            # Accept enums or raw values
+            reading_status_str = getattr(reading_status, 'value', str(reading_status))
+            ownership_status_str = getattr(ownership_status, 'value', str(ownership_status))
+            media_type_str = getattr(media_type, 'value', str(media_type))
+            custom_updates = {
+                'reading_status': reading_status_str,
+                'ownership_status': ownership_status_str,
+                'media_type': media_type_str,
+                'source': source or 'manual'
             }
-            
-            # Handle custom metadata if provided
-            if custom_metadata:
-                import json
-                owns_props['custom_metadata'] = json.dumps(custom_metadata)
-            
-            success = self.db.create_relationship(
-                'User', user_id, 'OWNS', 'Book', book_id, owns_props
+            if location_id:
+                custom_updates['legacy_location_id'] = str(location_id)
+            if custom_metadata and isinstance(custom_metadata, dict):
+                for k, v in custom_metadata.items():
+                    custom_updates[k] = v
+            personal_metadata_service.update_personal_metadata(
+                user_id,
+                book_id,
+                personal_notes=notes or None,
+                custom_updates=custom_updates,
+                merge=True,
             )
-            
-            if success and custom_metadata:
-                # Also store individual custom field relationships for tracking
-                for field_name, field_value in custom_metadata.items():
-                    try:
-                        # Use the adapter to store custom metadata through SafeKuzuManager
-                        custom_field_query = """
-                        MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book {id: $book_id})
-                        MERGE (cf:CustomField {name: $field_name})
-                        MERGE (u)-[:HAS_CUSTOM_FIELD {value: $field_value}]->(cf)
-                        """
-                        self.db.query(custom_field_query, {
-                            "user_id": user_id,
-                            "book_id": book_id,
-                            "field_name": field_name,
-                            "field_value": str(field_value)
-                        })
-                    except Exception as e:
-                        pass  # Log custom metadata storage error but continue
-            
-            if success:
-                logger.info(f"✅ Created ownership relationship: user {user_id} owns book {book_id}")
-                return True
-            return False
-            
+            logger.info(f"✅ (Deprecated OWNS) stored personal metadata for user {user_id} book {book_id}")
+            return True
         except Exception as e:
-            logger.error(f"❌ Failed to create ownership: {e}")
+            logger.error(f"❌ Failed legacy create_ownership (personal path): {e}")
             return False
     
     async def remove_ownership(self, user_id: str, book_id: str) -> bool:
-        """Remove an ownership relationship between user and book."""
+        """Remove personal metadata relationship (legacy ownership removal)."""
         try:
-            # Execute Cypher query to delete the OWNS relationship
             query = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book {id: $book_id})
             DELETE r
-            RETURN COUNT(r) as deleted_count
+            RETURN 1 as deleted
             """
-            
             result = self.db.query(query, {"user_id": user_id, "book_id": book_id})
-            
-            if result and len(result) > 0:
-                deleted_count = result[0].get('col_0', 0)  # Access the first column
-                if deleted_count > 0:
-                    logger.info(f"✅ Removed ownership relationship: user {user_id} no longer owns book {book_id}")
-                    return True
-                else:
-                    logger.warning(f"⚠️ No ownership relationship found between user {user_id} and book {book_id}")
-                    return False
-            else:
-                logger.warning(f"⚠️ Query returned no results for removing ownership: user {user_id}, book {book_id}")
-                return False
-            
+            if result:
+                logger.info(f"✅ Removed personal metadata (legacy ownership) for user {user_id} book {book_id}")
+                return True
+            logger.warning(f"⚠️ No personal metadata to remove for user {user_id} book {book_id}")
+            return False
         except Exception as e:
-            logger.error(f"❌ Failed to remove ownership: {e}")
+            logger.error(f"❌ Failed to remove personal metadata (legacy ownership): {e}")
             return False
     
     async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
-        """Get comprehensive user library statistics."""
+        """Get user statistics based on HAS_PERSONAL_METADATA (OWNS deprecated).
+
+        Aggregates counts from the personal metadata JSON blob.
+        """
         try:
-            stats = {}
-            
-            # Get total books count
+            from app.services.personal_metadata_service import personal_metadata_service
+            stats: Dict[str, Any] = {
+                'total_books': 0,
+                'plan_to_read': 0,
+                'currently_reading': 0,
+                'completed': 0,
+                'on_hold': 0,
+                'dropped': 0,
+                'owned': 0,
+                'wishlist': 0,
+                'borrowed': 0,
+                'loaned': 0,
+                'physical': 0,
+                'ebook': 0,
+                'audiobook': 0,
+            }
+            # Query only books that have personal metadata for this user
             query = """
-            MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book)
-            RETURN COUNT(b) as total_books
+            MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book)
+            RETURN b.id, r.personal_custom_fields, r.personal_notes
             """
-            result = self.db.query(query, {"user_id": user_id})
-            stats['total_books'] = result[0].get('col_0', 0) if result else 0
-            
-            # Get counts by reading status
-            status_queries = {
-                'plan_to_read': 'plan_to_read',
-                'currently_reading': 'currently_reading',
-                'completed': 'completed',
-                'on_hold': 'on_hold',
-                'dropped': 'dropped'
-            }
-            
-            for status_key, status_value in status_queries.items():
-                query = """
-                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-                WHERE owns.reading_status = $status
-                RETURN COUNT(b) as count
-                """
-                result = self.db.query(query, {"user_id": user_id, "status": status_value})
-                stats[status_key] = result[0].get('col_0', 0) if result else 0
-            
-            # Get counts by ownership status
-            ownership_queries = {
-                'owned': 'owned',
-                'wishlist': 'wishlist',
-                'borrowed': 'borrowed',
-                'loaned': 'loaned'
-            }
-            
-            for ownership_key, ownership_value in ownership_queries.items():
-                query = """
-                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-                WHERE owns.ownership_status = $status
-                RETURN COUNT(b) as count
-                """
-                result = self.db.query(query, {"user_id": user_id, "status": ownership_value})
-                stats[ownership_key] = result[0].get('col_0', 0) if result else 0
-            
-            # Get counts by media type
-            media_queries = {
-                'physical': 'physical',
-                'ebook': 'ebook',
-                'audiobook': 'audiobook'
-            }
-            
-            for media_key, media_value in media_queries.items():
-                query = """
-                MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-                WHERE owns.media_type = $media_type
-                RETURN COUNT(b) as count
-                """
-                result = self.db.query(query, {"user_id": user_id, "media_type": media_value})
-                stats[media_key] = result[0].get('col_0', 0) if result else 0
-            
+            results = self.db.query(query, {"user_id": user_id})
+            if not results:
+                return stats
+            for row in results:
+                # row may be dict with col_0 etc.
+                if isinstance(row, dict):
+                    book_id = row.get('col_0') or row.get('b.id') or row.get('book_id')
+                    blob_raw = row.get('col_1') or row.get('personal_custom_fields')
+                else:
+                    # unsupported structure
+                    continue
+                if not book_id:
+                    continue
+                stats['total_books'] += 1
+                meta = {}
+                if blob_raw:
+                    try:
+                        import json
+                        meta = json.loads(blob_raw) if isinstance(blob_raw, str) else {}
+                    except Exception:
+                        meta = {}
+                # reading_status
+                rs = meta.get('reading_status')
+                if rs in stats:
+                    stats[rs] += 1
+                # ownership_status
+                os_val = meta.get('ownership_status')
+                if os_val in stats:
+                    stats[os_val] += 1
+                # media_type
+                mt = meta.get('media_type')
+                if mt in stats:
+                    stats[mt] += 1
             return stats
-            
         except Exception as e:
-            logger.error(f"❌ Failed to get user statistics: {e}")
+            logger.error(f"❌ Failed to get user statistics (personal metadata): {e}")
             return {}
     
     async def get_reading_timeline(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get user's reading timeline - recent activity and books."""
+        """Get user's reading timeline based on personal metadata updates."""
         try:
-            # Get recent books added to library, ordered by book creation time
             query = """
-            MATCH (u:User {id: $user_id})-[owns:OWNS]->(b:Book)
-            RETURN b, owns
-            ORDER BY b.created_at DESC
+            MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book)
+            RETURN b, r
+            ORDER BY COALESCE(r.updated_at, b.created_at) DESC
             LIMIT $limit
             """
-            
             results = self.db.query(query, {"user_id": user_id, "limit": limit})
-            
-            timeline = []
-            for result in results:
-                if 'col_0' in result and 'col_1' in result:
-                    book_data = dict(result['col_0'])
-                    owns_data = dict(result['col_1'])
-                    
-                    # Create timeline entry
-                    timeline_entry = {
-                        'book': book_data,
-                        'activity_type': 'added_to_library',
-                        # In universal library, treat book.created_at as the global 'date added'
-                        'activity_date': book_data.get('created_at'),
-                        'reading_status': owns_data.get('reading_status'),
-                        'ownership_status': owns_data.get('ownership_status'),
-                        'media_type': owns_data.get('media_type'),
-                        'notes': owns_data.get('personal_notes', '')
-                    }
-                    timeline.append(timeline_entry)
-            
+            timeline: List[Dict[str, Any]] = []
+            if not results:
+                return timeline
+            for row in results:
+                if not isinstance(row, dict):
+                    continue
+                book_node = row.get('col_0') or row.get('b')
+                rel_data = row.get('col_1') or row.get('r')
+                if not book_node:
+                    continue
+                # Convert nodes/relationships (which may expose items()) into plain dicts
+                def _to_plain(obj):
+                    try:
+                        if obj and hasattr(obj, 'items'):
+                            return {str(k): v for k, v in obj.items()}  # type: ignore[attr-defined]
+                    except Exception:
+                        return {}
+                    return {}
+                book_data = _to_plain(book_node)
+                rel_dict = _to_plain(rel_data)
+                # Parse JSON blob (may be bytes)
+                blob_raw = rel_dict.get('personal_custom_fields') if isinstance(rel_dict, dict) else None
+                if isinstance(blob_raw, (bytes, bytearray, memoryview)):
+                    try:
+                        blob_raw = bytes(blob_raw).decode('utf-8', errors='ignore')
+                    except Exception:
+                        blob_raw = None
+                meta = {}
+                if blob_raw and isinstance(blob_raw, str):
+                    try:
+                        import json
+                        meta = json.loads(blob_raw)
+                    except Exception:
+                        meta = {}
+                timeline.append({
+                    'book': book_data,
+                    'activity_type': 'personal_update',
+                    'activity_date': rel_dict.get('updated_at') if isinstance(rel_dict, dict) else None or book_data.get('created_at'),
+                    'reading_status': meta.get('reading_status'),
+                    'ownership_status': meta.get('ownership_status'),
+                    'media_type': meta.get('media_type'),
+                    'notes': (rel_dict.get('personal_notes') if isinstance(rel_dict, dict) else None) or meta.get('personal_notes') or ''
+                })
             return timeline
-            
         except Exception as e:
-            logger.error(f"❌ Failed to get reading timeline: {e}")
+            logger.error(f"❌ Failed to get reading timeline (personal metadata): {e}")
             return []
 
 
@@ -2264,7 +2208,8 @@ class KuzuCustomFieldRepository:
                 'field_type': getattr(field_def, 'field_type', ''),
                 'description': getattr(field_def, 'description', ''),
                 'created_by_user_id': getattr(field_def, 'created_by_user_id', ''),
-                'is_shareable': getattr(field_def, 'is_shareable', False),
+                # Shareable concept removed; retained field for backward compatibility default False
+                'is_shareable': False,
                 'is_global': getattr(field_def, 'is_global', False),
                 'default_value': getattr(field_def, 'default_value', ''),
                 'usage_count': getattr(field_def, 'usage_count', 0),
@@ -2327,7 +2272,7 @@ class KuzuCustomFieldRepository:
                 'name': getattr(field_def, 'name', ''),
                 'display_name': getattr(field_def, 'display_name', ''),
                 'description': getattr(field_def, 'description', ''),
-                'is_shareable': getattr(field_def, 'is_shareable', False),
+                'is_shareable': False,
                 'updated_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -2349,7 +2294,8 @@ class KuzuCustomFieldRepository:
     async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[Any]:
         """Get all shareable custom field definitions."""
         try:
-            query_conditions = ["cf.is_shareable = true"]
+            # Shareable filter removed; return all definitions
+            query_conditions = ["1=1"]
             params = {}
             
             if exclude_user_id:
@@ -2384,10 +2330,10 @@ class KuzuCustomFieldRepository:
             query_conditions.append("(cf.name CONTAINS $search_query OR cf.description CONTAINS $search_query)")
             
             if user_id:
-                query_conditions.append("(cf.created_by_user_id = $user_id OR cf.is_shareable = true)")
+                query_conditions.append("(cf.created_by_user_id = $user_id OR cf.is_global = true)")
                 params['user_id'] = user_id
             else:
-                query_conditions.append("cf.is_shareable = true")
+                query_conditions.append("cf.is_global = true")
             
             where_clause = " AND ".join(query_conditions)
             cypher_query = f"""
@@ -2426,7 +2372,7 @@ class KuzuCustomFieldRepository:
         try:
             query = """
             MATCH (cf:CustomField)
-            WHERE cf.is_shareable = true
+            WHERE cf.is_global = true
             RETURN cf
             ORDER BY COALESCE(cf.usage_count, 0) DESC
             LIMIT $limit

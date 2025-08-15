@@ -1366,6 +1366,22 @@ class SimplifiedBookService:
                 except Exception as e:
                     print(f"❌ [DEFAULT_LOCATION] Exception assigning book to default location: {e}")
             
+            # Step 4: Persist personal custom metadata (if any) AFTER book creation & location assignment
+            try:
+                if getattr(book_data, 'personal_custom_metadata', None):
+                    pcm = book_data.personal_custom_metadata
+                    if pcm:
+                        print(f"📝 [UNIVERSAL_LIBRARY] Saving {len(pcm)} personal custom fields for user {user_id}")
+                        fields_ensured = self.custom_field_service.ensure_custom_fields_exist(user_id, {}, pcm)
+                        if fields_ensured:
+                            saved = self.custom_field_service.save_custom_metadata_sync(book_id, user_id, pcm)
+                            if not saved:
+                                print(f"⚠️ [UNIVERSAL_LIBRARY] Failed to save personal custom metadata for user {user_id}")
+                        else:
+                            print(f"⚠️ [UNIVERSAL_LIBRARY] Could not ensure personal custom field defs for user {user_id}")
+            except Exception as e:
+                print(f"❌ [UNIVERSAL_LIBRARY] Error saving personal custom metadata: {e}")
+            
             return True
             
         except BookAlreadyExistsError:

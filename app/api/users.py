@@ -195,13 +195,13 @@ def get_user_library(user_id):
     
     Returns comprehensive book data including:
     - Universal book fields (title, authors, isbn, etc.)
-    - User-specific fields from OWNS relationship (reading_status, ownership_status, etc.)
-    - Custom metadata (both global and personal)
+    - User-specific personal metadata overlay (reading_status, ownership_status, etc.)
+    - Custom metadata (global + personal)
     
     Field mapping aligns with COMPREHENSIVE_FIELD_DOCUMENTATION.md:
     - Book Table: Universal book metadata (title, isbn, description, etc.)
-    - OWNS Relationship: User-specific data (reading_status, ownership_status, user_rating, etc.)
-    - Custom fields: Both global and personal custom metadata
+    - Personal Metadata (HAS_PERSONAL_METADATA): user-specific data (reading_status, ownership_status, user_rating, etc.)
+    - Custom fields: global + personal custom metadata
     """
     try:
         # Get user from service
@@ -220,7 +220,7 @@ def get_user_library(user_id):
             }), 403
         
         # Get user's books using service layer
-        # This returns books with user overlay data from OWNS relationships
+    # Returns books with user overlay data from personal metadata relationships
         from ..services import book_service
         domain_books = book_service.get_all_books_with_user_overlay_sync(str(user_id))
         
@@ -276,9 +276,9 @@ def serialize_book_for_api(book: Union[Dict[str, Any], Any]) -> Dict[str, Any]:
     Convert book object to API response format.
     
     Handles both dict and object types from service layer.
-    Aligns with comprehensive field documentation by including:
-    - Universal book fields from Book table
-    - User-specific fields from OWNS relationship  
+    Aligns with comprehensive field documentation:
+    - Universal book fields (Book)
+    - Personal overlay fields (HAS_PERSONAL_METADATA)
     - Custom metadata fields
     """
     if isinstance(book, dict):
@@ -308,7 +308,7 @@ def _serialize_book_dict(book: Dict[str, Any]) -> Dict[str, Any]:
         'series_volume': book.get('series_volume'),
         'created_at': _format_datetime(book.get('created_at')),
         
-        # User-specific fields (OWNS relationship)
+    # User-specific fields (personal metadata overlay)
         'reading_status': book.get('reading_status'),
         'ownership_status': book.get('ownership_status'),
         'media_type': book.get('media_type'),
@@ -344,7 +344,7 @@ def _serialize_book_object(book: Any) -> Dict[str, Any]:
         'series_volume': getattr(book, 'series_volume', None),
         'created_at': _format_datetime(getattr(book, 'created_at', None)),
         
-        # User-specific fields (OWNS relationship)
+    # User-specific fields (personal metadata overlay)
         'reading_status': getattr(book, 'reading_status', None),
         'ownership_status': getattr(book, 'ownership_status', None),
         'media_type': getattr(book, 'media_type', None),

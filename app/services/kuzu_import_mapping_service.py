@@ -94,7 +94,8 @@ class KuzuImportMappingService:
     
     def get_template_by_id_sync(self, template_id: str) -> Optional[ImportMappingTemplate]:
         """Get an import mapping template by ID."""
-        print(f"📋 [IMPORT_MAPPING] Getting template by ID: {template_id}")
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(f"📋 [IMPORT_MAPPING] Getting template by ID: {template_id}")
         
         try:
             query = "MATCH (t:ImportMappingTemplate) WHERE t.id = $template_id RETURN t"
@@ -111,10 +112,12 @@ class KuzuImportMappingService:
     
     def create_template_sync(self, template: ImportMappingTemplate) -> Optional[ImportMappingTemplate]:
         """Create a new import mapping template."""
-        print(f"📋 [IMPORT_MAPPING] Creating template: {template.name}")
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(f"📋 [IMPORT_MAPPING] Creating template: {template.name}")
         
         try:
-            print(f"📋 [IMPORT_MAPPING] Step 1: Checking if template already exists")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("📋 [IMPORT_MAPPING] Step 1: Checking if template already exists")
             
             # Check if template already exists first
             existing_query = """
@@ -122,16 +125,20 @@ class KuzuImportMappingService:
             RETURN t
             """
             
-            print(f"📋 [IMPORT_MAPPING] Step 2: Executing existing template query")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("📋 [IMPORT_MAPPING] Step 2: Executing existing template query")
             existing_result = safe_execute_kuzu_query(existing_query, {"id": template.id})
             existing_results = _convert_query_result_to_list(existing_result)
-            print(f"📋 [IMPORT_MAPPING] Step 3: Existing results: {existing_results}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"📋 [IMPORT_MAPPING] Step 3: Existing results: {existing_results}")
             
             if existing_results and len(existing_results) > 0:
-                print(f"📋 [IMPORT_MAPPING] Template already exists: {template.name}")
+                if logger.isEnabledFor(logging.INFO):
+                    logger.info(f"📋 [IMPORT_MAPPING] Template already exists: {template.name}")
                 return self._dict_to_template(existing_results[0].get('col_0', {}))
             
-            print(f"📋 [IMPORT_MAPPING] Step 4: Setting IDs and timestamps")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("📋 [IMPORT_MAPPING] Step 4: Setting IDs and timestamps")
             # Generate ID if not provided
             if not template.id:
                 template.id = f"template_{datetime.now(timezone.utc).timestamp()}"
@@ -140,24 +147,27 @@ class KuzuImportMappingService:
             template.created_at = datetime.now(timezone.utc)
             template.updated_at = datetime.now(timezone.utc)
             
-            print(f"📋 [IMPORT_MAPPING] Step 5: Template data before insertion:")
-            print(f"📋 [IMPORT_MAPPING]   ID: {template.id}")
-            print(f"📋 [IMPORT_MAPPING]   User ID: {template.user_id}")
-            print(f"📋 [IMPORT_MAPPING]   Name: {template.name}")
-            print(f"📋 [IMPORT_MAPPING]   Description: {template.description}")
-            print(f"📋 [IMPORT_MAPPING]   Source Type: {template.source_type}")
-            print(f"📋 [IMPORT_MAPPING]   Sample Headers Type: {type(template.sample_headers)}, Length: {len(template.sample_headers) if template.sample_headers else 0}")
-            print(f"📋 [IMPORT_MAPPING]   Field Mappings Type: {type(template.field_mappings)}, Keys: {list(template.field_mappings.keys()) if template.field_mappings else []}")
-            print(f"📋 [IMPORT_MAPPING]   Times Used: {template.times_used}")
-            print(f"📋 [IMPORT_MAPPING]   Last Used: {template.last_used}")
-            print(f"📋 [IMPORT_MAPPING]   Created At: {template.created_at}")
-            print(f"📋 [IMPORT_MAPPING]   Updated At: {template.updated_at}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("📋 [IMPORT_MAPPING] Step 5: Template data before insertion:")
+                logger.debug(f"📋 [IMPORT_MAPPING]   ID: {template.id}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   User ID: {template.user_id}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Name: {template.name}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Description: {template.description}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Source Type: {template.source_type}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Sample Headers Type: {type(template.sample_headers)}, Length: {len(template.sample_headers) if template.sample_headers else 0}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Field Mappings Type: {type(template.field_mappings)}, Keys: {list(template.field_mappings.keys()) if template.field_mappings else []}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Times Used: {template.times_used}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Last Used: {template.last_used}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Created At: {template.created_at}")
+                logger.debug(f"📋 [IMPORT_MAPPING]   Updated At: {template.updated_at}")
             
-            print(f"📋 [IMPORT_MAPPING] Step 6: Serializing JSON fields")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("📋 [IMPORT_MAPPING] Step 6: Serializing JSON fields")
             # Serialize JSON fields safely
             try:
                 sample_headers_json = json.dumps(template.sample_headers)
-                print(f"📋 [IMPORT_MAPPING] Serialized sample_headers successfully (length: {len(sample_headers_json)})")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"📋 [IMPORT_MAPPING] Serialized sample_headers successfully (length: {len(sample_headers_json)})")
             except Exception as e:
                 sample_headers_json = "[]"
             

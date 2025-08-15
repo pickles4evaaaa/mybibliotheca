@@ -485,7 +485,7 @@ def create_app():
                 try:
                     user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
                     book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
-                    owns_result = safe_execute_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r) AS count", {})
+                    # OWNS deprecated: omit counting legacy ownership edges (migration handles any residual)
                     
                     user_count = 0
                     if user_result and user_result.has_next():
@@ -497,13 +497,8 @@ def create_app():
                         row = book_result.get_next()
                         book_count = row[0] if row else 0
                     
-                    owns_count = 0
-                    if owns_result and owns_result.has_next():
-                        row = owns_result.get_next()
-                        owns_count = row[0] if row else 0
-                        
                     if verbose_init:
-                        print(f"📊 Database state: Users: {user_count}, Books: {book_count}, Ownership relationships: {owns_count}")
+                        print(f"📊 Database state: Users: {user_count}, Books: {book_count}")
                 except Exception as count_e:
                     if verbose_init:
                         print(f"Error counting nodes: {count_e}")
@@ -894,24 +889,26 @@ def create_app():
             print(f"🛑 [APP_SHUTDOWN] Process ID: {os.getpid()}")
             print(f"🛑 [APP_SHUTDOWN] Shutdown time: {datetime.now()}")
             
-            # Try to get final database state using safe methods
-            from .utils.kuzu_migration_helper import safe_execute_query
-            
+            # Try to get final database state only if manager was initialized earlier
             try:
-                user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
-                book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
-                owns_result = safe_execute_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r) AS count", {})
-                
-                user_count = user_result[0].get('count', 0) if user_result else 0
-                book_count = book_result[0].get('count', 0) if book_result else 0
-                owns_count = owns_result[0].get('count', 0) if owns_result else 0
+                from .utils.safe_kuzu_manager import is_safe_kuzu_initialized
+                if is_safe_kuzu_initialized():
+                    from .utils.kuzu_migration_helper import safe_execute_query
+                    try:
+                        user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
+                        book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
+                        user_count = user_result[0].get('count', 0) if user_result else 0
+                        book_count = book_result[0].get('count', 0) if book_result else 0
+                    except Exception:
+                        user_count = book_count = "unknown"
+                else:
+                    user_count = book_count = "skipped"
             except Exception:
-                user_count = book_count = owns_count = "unknown"
+                user_count = book_count = "unknown"
             
             print(f"🛑 [APP_SHUTDOWN] Final database state:")
             print(f"🛑 [APP_SHUTDOWN]   - Users: {user_count}")
             print(f"🛑 [APP_SHUTDOWN]   - Books: {book_count}")
-            print(f"🛑 [APP_SHUTDOWN]   - OWNS relationships: {owns_count}")
             
             # Check database files
             db_path = Path(os.getenv('KUZU_DB_PATH', '/app/data/kuzu'))
@@ -922,10 +919,16 @@ def create_app():
             
             # 🔥 CRITICAL FIX: Close KuzuDB connections properly
             print(f"🛑 [APP_SHUTDOWN] Closing KuzuDB connections to ensure data persistence...")
-            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
-            manager = get_safe_kuzu_manager()
-            stale_count = manager.cleanup_stale_connections(max_age_minutes=0)  # Clean up all
-            print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connections closed ({stale_count} cleaned up)")
+            try:
+                from .utils.safe_kuzu_manager import get_safe_kuzu_manager, is_safe_kuzu_initialized
+                if is_safe_kuzu_initialized():
+                    manager = get_safe_kuzu_manager()
+                    stale_count = manager.cleanup_stale_connections(max_age_minutes=0)  # Clean up all
+                    print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connections closed ({stale_count} cleaned up)")
+                else:
+                    print("🛑 [APP_SHUTDOWN] Kuzu manager not initialized earlier; skipping connection cleanup")
+            except Exception as _c_err:
+                print(f"🛑 [APP_SHUTDOWN] Skipped connection cleanup: {_c_err}")
             
         except Exception as e:
             print(f"🛑 [APP_SHUTDOWN] Error during shutdown logging: {e}")

@@ -1060,17 +1060,12 @@ def api_import_progress(task_id):
     unmatched_titles = []
     try:
         if job.get('import_type') == 'reading_history':
-            # For reading history we enumerate log entries with date + status if available.
-            # Job may not store per-entry status; approximate: matched/created entries counted as success,
-            # skipped as skipped, errors as errors. We derive representative strings including first/last date.
             books_for_matching = job.get('books_for_matching') or []
-            # Each item expected to have csv_name, entries list (each entry may have date/started_at/finished_at)
             for b in books_for_matching:
                 try:
                     entries = b.get('entries') or []
                     if not isinstance(entries, list):
                         continue
-                    # Collect dates
                     dates = []
                     for e in entries:
                         d = e.get('date') or e.get('finished_at') or e.get('started_at') or ''
@@ -1085,24 +1080,21 @@ def api_import_progress(task_id):
                     label = b.get('csv_name') or b.get('matched_title') or b.get('title') or 'Unknown'
                     if date_span:
                         label = f"{label} ({date_span})"
-                    # Determine bucket: if user resolution stored? fallback heuristics
                     status = (b.get('status') or '').lower()
                     if status in ('success','matched','created'):
                         success_titles.append(label)
-                    elif status in ('skipped', 'ignored'):
+                    elif status in ('skipped','ignored'):
                         skipped_titles.append(label)
                     elif status in ('unmatched','needs_match'):
                         unmatched_titles.append(label)
                 except Exception:
                     continue
-            # Errors specific to reading logs
             for err in job.get('reading_log_error_messages') or []:
                 if isinstance(err, dict):
                     t = err.get('title') or err.get('csv_name') or err.get('book') or ''
                     if t:
                         error_titles.append(t)
         else:
-            # Regular book import handling
             books = job.get('processed_books') or job.get('books') or []
             for b in books:
                 try:
@@ -1753,144 +1745,114 @@ async def process_simple_import(import_config):
     simplified_service = SimplifiedBookService()
     
     # Initialize counters
-    processed_count = 0
-    success_count = 0
-    error_count = 0
-    skipped_count = 0
-    
+    processed_count = success_count = error_count = skipped_count = 0
     try:
-        # STEP 1: Pre-analyze and create custom fields BEFORE processing any books
+        # STEP 1: Pre-create any custom fields
         try:
             custom_fields_success, created_custom_fields = await pre_analyze_and_create_custom_fields(
                 csv_file_path, mappings, user_id
             )
-            
-            if not custom_fields_success:
-                created_custom_fields = {}
-            else:
+            if custom_fields_success:
                 print(f"🔧 [PROCESS_SIMPLE] Created {len(created_custom_fields)} custom fields")
-        except Exception as e:
-            print(f"Warning: Could not create custom fields: {e}")
-            created_custom_fields = {}
-            
-        
-        # STEP 2: Read and process CSV
+        except Exception as ce:
+            print(f"⚠️ [PROCESS_SIMPLE] Custom field pre-analysis failed: {ce}")
+
+        # STEP 2: Read CSV
         with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             rows_list = list(reader)
-            
-            print(f"📋 [PROCESS_SIMPLE] Found {len(rows_list)} rows to process")
-            
-            # Collect ISBNs for batch API enrichment if enabled
+        print(f"📋 [PROCESS_SIMPLE] Found {len(rows_list)} rows to process")
+
+        # STEP 3: Collect ISBNs for enrichment
+        book_metadata = {}
+        if enable_api_enrichment:
             isbns_to_enrich = []
-            if enable_api_enrichment:
-                print(f"🔍 [PROCESS_SIMPLE] Scanning {len(rows_list)} rows for ISBNs...")
-                for row_idx, row in enumerate(rows_list):
-                    isbn = (
-                        row.get('ISBN')
-                        or row.get('ISBN13')
-                        or row.get('ISBN/UID')  # StoryGraph alternate header
-                        or row.get('isbn')
-                        or row.get('isbn13')
-                    )
-                    if isbn:
-                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Found ISBN '{isbn}'")
-                        # Clean ISBN (handle Goodreads formatting)
-                        isbn_clean = normalize_goodreads_value(isbn, 'isbn')
-                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Cleaned ISBN '{isbn_clean}' (length: {len(isbn_clean) if isbn_clean else 0})")
-                        if isbn_clean and isinstance(isbn_clean, str) and len(isbn_clean) >= 10:
-                            isbns_to_enrich.append(isbn_clean)
-                            print(f"✅ [PROCESS_SIMPLE] Row {row_idx+1}: Added ISBN to enrichment list")
-                        else:
-                            print(f"❌ [PROCESS_SIMPLE] Row {row_idx+1}: ISBN doesn't meet criteria")
-                    else:
-                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: No ISBN found in row keys: {list(row.keys())}")
-                
-                print(f"🌐 [PROCESS_SIMPLE] Will enrich {len(isbns_to_enrich)} books with API data")
-                print(f"🌐 [PROCESS_SIMPLE] ISBNs to enrich: {isbns_to_enrich[:5]}{'...' if len(isbns_to_enrich) > 5 else ''}")
-                
-                if isbns_to_enrich:
-                    # Batch fetch metadata
-                    print(f"🚀 [PROCESS_SIMPLE] Starting API enrichment for {len(isbns_to_enrich)} ISBNs...")
-                    book_metadata = batch_fetch_book_metadata(isbns_to_enrich[:50])  # Limit to first 50 to avoid rate limits
-                    print(f"🌐 [PROCESS_SIMPLE] Retrieved metadata for {len(book_metadata)} books")
-                else:
-                    print(f"⚠️ [PROCESS_SIMPLE] No valid ISBNs found - skipping API enrichment")
-                    book_metadata = {}
-            else:
-                print(f"⚠️ [PROCESS_SIMPLE] API enrichment disabled")
-                book_metadata = {}
-            
-            # Process each row
-            for row_num, row in enumerate(rows_list, 1):
-                try:
-                    # Processing row (reduced logging for performance)
-                    
-                    # Build book data using mappings
-                    simplified_book = simplified_service.build_book_data_from_row(row, mappings)
-                    
-                    if not simplified_book:
-                        processed_count += 1
-                        skipped_count += 1
-                        continue
-                    
-                    # Apply API enrichment if enabled BEFORE validation
-                    if enable_api_enrichment and book_metadata:
-                        simplified_book = merge_api_data_into_simplified_book(
-                            simplified_book, book_metadata, {}
-                        )
-                    
-                    # Now check if we have enough data after API enrichment
-                    if not simplified_book.title:
-                        print(f"⚠️ [PROCESS_SIMPLE] Skipping row {row_num}: No title found even after API enrichment")
-                        processed_count += 1
-                        skipped_count += 1
-                        continue
-                    
-                    # Set default reading status if not provided
-                    if not simplified_book.reading_status:
-                        simplified_book.reading_status = import_config.get('default_reading_status', 'plan_to_read')
-                    
-                    # Add book to user's library
-                    result = await simplified_service.add_book_to_user_library(
-                        book_data=simplified_book,
-                        user_id=user_id,
-                        reading_status=simplified_book.reading_status,
-                        ownership_status='owned',
-                        media_type='physical',
-                        custom_metadata=simplified_book.personal_custom_metadata if hasattr(simplified_book, 'personal_custom_metadata') else None
-                    )
-                    
-                    processed_count += 1
-                    if result:
-                        success_count += 1
-                    else:
-                        error_count += 1
-                    
-                    # Update progress after each book for real-time feedback
-                    progress_update = {
-                        'processed': processed_count,
-                        'success': success_count,
-                        'errors': error_count,
-                        'skipped': skipped_count,
-                        'current_book': simplified_book.title
-                    }
-                    # Update safely with user isolation
-                    safe_update_import_job(user_id, task_id, progress_update)
-                    
-                    # Update in Kuzu less frequently to avoid performance issues
-                    if processed_count % 5 == 0:
-                        update_job_in_kuzu(task_id, progress_update)
-                    
-                    # Small delay to prevent overwhelming the system
-                    await asyncio.sleep(0.05)
-                    
-                except Exception as row_error:
-                    processed_count += 1
-                    error_count += 1
+            for row_idx, row in enumerate(rows_list):
+                isbn = (row.get('ISBN') or row.get('ISBN13') or row.get('ISBN/UID') or row.get('isbn') or row.get('isbn13'))
+                if not isbn:
                     continue
-        
-        # Mark as completed
+                isbn_clean = normalize_goodreads_value(isbn, 'isbn')
+                if isbn_clean and isinstance(isbn_clean, str) and len(isbn_clean) >= 10:
+                    isbns_to_enrich.append(isbn_clean)
+            if isbns_to_enrich:
+                print(f"🌐 [PROCESS_SIMPLE] Enriching {len(isbns_to_enrich)} ISBNs")
+                book_metadata = batch_fetch_book_metadata(isbns_to_enrich[:50])
+        else:
+            print("⚠️ [PROCESS_SIMPLE] API enrichment disabled")
+
+        # STEP 4: Process rows
+        for row_num, row in enumerate(rows_list, 1):
+            try:
+                simplified_book = simplified_service.build_book_data_from_row(row, mappings)
+                if not simplified_book:
+                    processed_count += 1
+                    skipped_count += 1
+                    raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                    job_snapshot = safe_get_import_job(user_id, task_id) or {}
+                    pb = job_snapshot.get('processed_books', [])
+                    pb.append({'title': raw_title, 'status': 'skipped'})
+                    safe_update_import_job(user_id, task_id, {'processed_books': pb})
+                    continue
+
+                if enable_api_enrichment and book_metadata:
+                    simplified_book = merge_api_data_into_simplified_book(simplified_book, book_metadata, {})
+
+                if not simplified_book.title:
+                    processed_count += 1
+                    skipped_count += 1
+                    raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                    job_snapshot = safe_get_import_job(user_id, task_id) or {}
+                    pb = job_snapshot.get('processed_books', [])
+                    pb.append({'title': raw_title, 'status': 'skipped'})
+                    safe_update_import_job(user_id, task_id, {'processed_books': pb})
+                    continue
+
+                if not simplified_book.reading_status:
+                    simplified_book.reading_status = import_config.get('default_reading_status', 'plan_to_read')
+
+                result = await simplified_service.add_book_to_user_library(
+                    book_data=simplified_book,
+                    user_id=user_id,
+                    reading_status=simplified_book.reading_status,
+                    ownership_status='owned',
+                    media_type='physical',
+                    custom_metadata=simplified_book.personal_custom_metadata if hasattr(simplified_book, 'personal_custom_metadata') else None
+                )
+
+                processed_count += 1
+                if result:
+                    success_count += 1
+                    status_value = 'success'
+                else:
+                    error_count += 1
+                    status_value = 'error'
+
+                job_snapshot = safe_get_import_job(user_id, task_id) or {}
+                pb = job_snapshot.get('processed_books', [])
+                pb.append({'title': simplified_book.title or 'Untitled', 'status': status_value})
+
+                progress_update = {
+                    'processed': processed_count,
+                    'success': success_count,
+                    'errors': error_count,
+                    'skipped': skipped_count,
+                    'current_book': simplified_book.title,
+                    'processed_books': pb
+                }
+                safe_update_import_job(user_id, task_id, progress_update)
+                if processed_count % 5 == 0:
+                    update_job_in_kuzu(task_id, progress_update)
+                await asyncio.sleep(0.02)
+            except Exception:
+                processed_count += 1
+                error_count += 1
+                raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                job_snapshot = safe_get_import_job(user_id, task_id) or {}
+                pb = job_snapshot.get('processed_books', [])
+                pb.append({'title': raw_title, 'status': 'error'})
+                safe_update_import_job(user_id, task_id, {'processed': processed_count, 'errors': error_count, 'processed_books': pb, 'current_book': raw_title})
+                continue
+
         completion_data = {
             'status': 'completed',
             'processed': processed_count,
@@ -1900,13 +1862,14 @@ async def process_simple_import(import_config):
             'current_book': None,
             'recent_activity': [f"Import completed! {success_count} books imported, {error_count} errors, {skipped_count} skipped"]
         }
+        job_snapshot = safe_get_import_job(user_id, task_id) or {}
+        if 'processed_books' in job_snapshot:
+            completion_data['processed_books'] = job_snapshot['processed_books']
         update_job_in_kuzu(task_id, completion_data)
-        # Update safely with user isolation
         safe_update_import_job(user_id, task_id, completion_data)
 
-        # Post-import automatic backup (fire and forget thread)
-        try:
-            if success_count > 0:
+        if success_count > 0:
+            try:
                 def _run_backup():
                     try:
                         from app.services.simple_backup_service import get_simple_backup_service
@@ -1914,27 +1877,16 @@ async def process_simple_import(import_config):
                         svc.create_backup(description=f'Post-import backup: {success_count} books added', reason='post_import_books')
                     except Exception as be:
                         current_app.logger.warning(f"Post-import backup failed: {be}")
-                t = threading.Thread(target=_run_backup, daemon=True)
-                t.start()
-        except Exception as outer_be:
-            current_app.logger.warning(f"Failed launching post-import backup thread: {outer_be}")
-        
+                threading.Thread(target=_run_backup, daemon=True).start()
+            except Exception as outer_be:
+                current_app.logger.warning(f"Failed launching post-import backup thread: {outer_be}")
         print(f"🎉 [PROCESS_SIMPLE] Import completed! {success_count} success, {error_count} errors, {skipped_count} skipped")
-        
     except Exception as e:
         traceback.print_exc()
-        
-        # Mark as failed
-        error_data = {
-            'status': 'failed',
-            'error_messages': [str(e)]
-        }
+        error_data = {'status': 'failed', 'error_messages': [str(e)]}
         update_job_in_kuzu(task_id, error_data)
-        # Update safely with user isolation
         safe_update_import_job(user_id, task_id, error_data)
-    
     finally:
-        # Clean up temp file
         try:
             if os.path.exists(csv_file_path):
                 os.unlink(csv_file_path)

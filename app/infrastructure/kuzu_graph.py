@@ -70,10 +70,11 @@ class KuzuGraphDB:
         """Establish connection and initialize schema."""
         with self._lock:  # Thread-safe connection establishment
             if self._connection is None:
+                # Establish path reference early (used by recovery logic)
+                db_path = Path(self.database_path)
                 try:
                     
                     # Check if database path exists and log file info
-                    db_path = Path(self.database_path)
                     
                     if db_path.exists():
                         files = list(db_path.glob("*"))
@@ -99,68 +100,38 @@ class KuzuGraphDB:
                         
                 except Exception as e:
                     logger.error(f"Failed to connect to Kuzu: {e}")
-                    import traceback
+                    import traceback, shutil
                     traceback.print_exc()
-                    
-                    # Check if this is a database recovery error
-                    if "std::bad_alloc" in str(e) or "Error during recovery" in str(e):
-                        logger.error("Database recovery failed - this usually indicates corrupted or incomplete database files")
-                        
-                        # Do NOT clear the database by default. Require explicit opt-in.
-                        allow_clear = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() == 'true'
-                        if not allow_clear:
-                            logger.error("Safety lock engaged: KUZU_AUTO_RECOVER_CLEAR is not true. Skipping destructive recovery to protect data.")
-                            logger.error("To force a rebuild, set KUZU_AUTO_RECOVER_CLEAR=true (optional: KUZU_DEBUG=true) and restart. Back up /app/data/kuzu first.")
-                            raise
-
-                        logger.warning("Attempting destructive recovery by clearing database path (opt-in enabled)...")
+                    # Optional recovery path (opt-in)
+                    if ("std::bad_alloc" in str(e) or "Error during recovery" in str(e)) and os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() == 'true':
                         try:
-                            db_path = Path(self.database_path)
+                            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                            backup_dir = Path(self.database_path).parent / 'corrupt_backups'
+                            backup_dir.mkdir(parents=True, exist_ok=True)
+                            backup_target = backup_dir / f'kuzu_backup_{timestamp}'
                             if db_path.exists():
-                                # Back up existing DB path first (file or directory)
-                                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                                backup_dir = Path(os.getenv('KUZU_BACKUP_DIR', '/app/data/backups'))
-                                backup_dir.mkdir(parents=True, exist_ok=True)
-                                backup_target = backup_dir / f"kuzu_backup_{ts}"
-                                try:
-                                    import shutil
-                                    if db_path.is_dir():
-                                        shutil.make_archive(str(backup_target), 'gztar', root_dir=db_path)
-                                    else:
-                                        # Single-file DB: copy to backups with timestamp
-                                        shutil.copy2(str(db_path), str(backup_target.with_suffix('.db')))
-                                    logger.info(f"📦 Backed up Kuzu DB to {backup_target}")
-                                except Exception as be:
-                                    logger.warning(f"Backup before recovery failed: {be}")
-
-                                # Now clear the path
-                                try:
-                                    import shutil
-                                    if db_path.is_dir():
-                                        shutil.rmtree(db_path, ignore_errors=True)
-                                    else:
-                                        db_path.unlink(missing_ok=True)  # type: ignore
-                                    logger.info("Database path cleared, creating fresh database...")
-                                except Exception as de:
-                                    logger.error(f"Failed to clear database path: {de}")
-                                    raise
-
-                            # Create parent and reinitialize
+                                if db_path.is_dir():
+                                    shutil.copytree(db_path, backup_target)
+                                else:
+                                    shutil.copy2(str(db_path), str(backup_target.with_suffix('.db')))
+                                logger.info(f"📦 Backed up corrupt DB to {backup_target}")
+                            # Clear and reinitialize
+                            if db_path.is_dir():
+                                shutil.rmtree(db_path, ignore_errors=True)
+                            else:
+                                db_path.unlink(missing_ok=True)  # type: ignore
                             Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
                             self._database = kuzu.Database(self.database_path)
                             self._connection = kuzu.Connection(self._database)
-                            logger.info("Database connection established, initializing schema...")
                             self._initialize_schema()
                             logger.info(f"Kuzu connected at {self.database_path} (recovered)")
-                        except Exception as recovery_error:
-                            logger.error(f"Database recovery failed: {recovery_error}")
-                            print("🔧 Make sure KuzuDB is running and accessible")
-                            print("💡 If this is a fresh deployment, the database will be created automatically")
-                            print("⚠️  If this persists, check that the data directory has proper permissions")
-                            raise recovery_error
+                        except Exception as rec_err:
+                            logger.error(f"Database recovery failed: {rec_err}")
+                            raise
                     else:
-                        print("🔧 Make sure KuzuDB is running and accessible")
                         raise
+            if self._connection is None:
+                raise RuntimeError("Kuzu connection could not be established")
             return self._connection
     
     def _initialize_schema(self):
@@ -198,10 +169,15 @@ class KuzuGraphDB:
                             user_count = _vals[0] if _vals else 0
                         except Exception:
                             user_count = 0
-                        if user_count > 0:
+                        # Cast to int defensively (result may be bytes/str)
+                        try:
+                            _uc_int = int(user_count)
+                        except Exception:
+                            _uc_int = 0
+                        if _uc_int > 0:
                             # Database has existing users - ensure all tables exist but preserve data
                             has_existing_users = True
-                            logger.info(f"Database contains {user_count} users - will ensure all tables exist")
+                            logger.info(f"Database contains {_uc_int} users - will ensure all tables exist")
                             
                             # Check for books too
                             try:
@@ -289,6 +265,30 @@ class KuzuGraphDB:
                         except Exception as alter_e:
                             print(f"Note: Could not add updated_at to ReadingLog table: {alter_e}")
                 # Note: ReadingLog table migration completed
+
+                # Ensure HAS_PERSONAL_METADATA relationship exists (upgrade path from versions before personal metadata)
+                try:
+                    self._execute_query("MATCH ()-[r:HAS_PERSONAL_METADATA]->() RETURN COUNT(r) as count LIMIT 1")
+                except Exception as e:
+                    err_str = str(e)
+                    if "HAS_PERSONAL_METADATA" in err_str and any(tok in err_str.lower() for tok in ["does not exist", "cannot find", "unknown table", "binder exception"]):
+                        logger.info("Adding missing HAS_PERSONAL_METADATA relationship table (upgrade path)")
+                        try:
+                            create_rel = """
+                            CREATE REL TABLE HAS_PERSONAL_METADATA(
+                                FROM User TO Book,
+                                personal_notes STRING,
+                                personal_custom_fields STRING,
+                                created_at TIMESTAMP,
+                                updated_at TIMESTAMP
+                            )
+                            """
+                            self._execute_query(create_rel)
+                            logger.info("Created HAS_PERSONAL_METADATA relationship table")
+                        except Exception as ce:
+                            logger.warning(f"Failed creating HAS_PERSONAL_METADATA relationship table: {ce}")
+                    else:
+                        logger.debug("HAS_PERSONAL_METADATA relationship already present or different error encountered")
                         
             else:
                 logger.info("🔧 Creating new database schema...")
@@ -573,37 +573,53 @@ class KuzuGraphDB:
             ]
             
             # Create relationship tables
-            relationship_queries = [
+            relationship_queries = []
+            # OWNS deprecated: Only create if explicitly enabled for legacy migration
+            import os as _os_dep_owns
+            if _os_dep_owns.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes'):  # pragma: no cover
+                relationship_queries.append(
+                    """
+                    CREATE REL TABLE OWNS(
+                        FROM User TO Book,
+                        reading_status STRING,
+                        date_added TIMESTAMP,
+                        start_date TIMESTAMP,
+                        finish_date TIMESTAMP,
+                        current_page INT64,
+                        total_pages INT64,
+                        ownership_status STRING,
+                        media_type STRING,
+                        borrowed_from STRING,
+                        borrowed_from_user_id STRING,
+                        borrowed_date TIMESTAMP,
+                        borrowed_due_date TIMESTAMP,
+                        loaned_to STRING,
+                        loaned_to_user_id STRING,
+                        loaned_date TIMESTAMP,
+                        loaned_due_date TIMESTAMP,
+                        location_id STRING,
+                        user_rating DOUBLE,
+                        rating_date TIMESTAMP,
+                        user_review STRING,
+                        review_date TIMESTAMP,
+                        is_review_spoiler BOOLEAN,
+                        personal_notes STRING,
+                        pace STRING,
+                        character_driven BOOLEAN,
+                        source STRING,
+                        custom_metadata STRING,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            
+            relationship_queries += [
                 """
-                CREATE REL TABLE OWNS(
+                CREATE REL TABLE HAS_PERSONAL_METADATA(
                     FROM User TO Book,
-                    reading_status STRING,
-                    date_added TIMESTAMP,
-                    start_date TIMESTAMP,
-                    finish_date TIMESTAMP,
-                    current_page INT64,
-                    total_pages INT64,
-                    ownership_status STRING,
-                    media_type STRING,
-                    borrowed_from STRING,
-                    borrowed_from_user_id STRING,
-                    borrowed_date TIMESTAMP,
-                    borrowed_due_date TIMESTAMP,
-                    loaned_to STRING,
-                    loaned_to_user_id STRING,
-                    loaned_date TIMESTAMP,
-                    loaned_due_date TIMESTAMP,
-                    location_id STRING,
-                    user_rating DOUBLE,
-                    rating_date TIMESTAMP,
-                    user_review STRING,
-                    review_date TIMESTAMP,
-                    is_review_spoiler BOOLEAN,
                     personal_notes STRING,
-                    pace STRING,
-                    character_driven BOOLEAN,
-                    source STRING,
-                    custom_metadata STRING,
+                    personal_custom_fields STRING,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -1454,12 +1470,12 @@ class KuzuGraphStorage:
     
     def store_custom_metadata(self, user_id: str, book_id: str, field_name: str, field_value: str, field_type: Optional[str] = None) -> bool:
         """
-        Store custom metadata for a user-book relationship.
-        
-        This method handles the dual storage system:
-        1. Updates OWNS relationship custom_metadata JSON for display
-        2. Creates HAS_CUSTOM_FIELD relationships for usage tracking  
-        3. Increments usage count on CustomField definitions
+    Store custom metadata for a user-book relationship (OWNS deprecated).
+
+    Strategy (universal library mode):
+    1. Update HAS_PERSONAL_METADATA JSON blob via PersonalMetadataService
+    2. Create/Update HAS_CUSTOM_FIELD relationship for usage tracking
+    3. Increment CustomField usage_count
         
         Args:
             user_id: The user ID
@@ -1472,42 +1488,14 @@ class KuzuGraphStorage:
             True if successful, False otherwise
         """
         try:
-            
-            # Step 1: Update the OWNS relationship custom_metadata
-            # First get the current OWNS relationship
-            query_get_owns = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-            RETURN r.custom_metadata as current_metadata
-            """
-            
-            result = self._execute_query(query_get_owns, {"user_id": user_id, "book_id": book_id})
-            current_metadata = {}
-            
-            if result and result.has_next():
-                _row = result.get_next()
-                _vals = self._row_values(_row)
-                metadata_json = _vals[0] if _vals else None
-                if metadata_json:
-                    try:
-                        current_metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
-                    except (json.JSONDecodeError, TypeError):
-                        current_metadata = {}
-            
-            # Update the metadata
-            current_metadata[field_name] = field_value
-            metadata_json_str = json.dumps(current_metadata)
-            
-            # Update the OWNS relationship with new metadata
-            query_update_owns = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-            SET r.custom_metadata = $metadata_json
-            """
-            
-            self.kuzu_conn.execute(query_update_owns, {
-                "user_id": user_id, 
-                "book_id": book_id, 
-                "metadata_json": metadata_json_str
-            })
+            # Step 1: Update personal metadata JSON blob
+            try:
+                from app.services.personal_metadata_service import personal_metadata_service
+                personal_metadata_service.update_personal_metadata(
+                    user_id, book_id, custom_updates={field_name: field_value}, merge=True
+                )
+            except Exception as e:  # pragma: no cover - safety net
+                logger.warning(f"Failed updating personal metadata for custom field {field_name}: {e}")
             
             
             # Step 2: Look for existing CustomField definition by name
@@ -1592,7 +1580,7 @@ class KuzuGraphStorage:
                     })
                     
             else:
-                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - metadata stored in OWNS only")
+                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - stored only in personal metadata")
             
             return True
             
