@@ -12,31 +12,34 @@ ENV OPENSSL_ENABLE_SHA1_SIGNATURES=1
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies required for psutil, cryptographic packages, and OCR
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    python3-dev \
-    openssl \
-    ca-certificates \
-    libssl-dev \
-    libffi-dev \
-    build-essential \
-    pkg-config \
-    # OCR and image processing dependencies \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libzbar0 \
-    libzbar-dev \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgtk-3-0 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Install system dependencies required for psutil, cryptographic packages, OCR, and imaging
+RUN set -eux; \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            gcc \
+            g++ \
+            python3-dev \
+            openssl \
+            ca-certificates \
+            libssl-dev \
+            libffi-dev \
+            build-essential \
+            pkg-config \
+            tesseract-ocr \
+            tesseract-ocr-eng \
+            libtesseract-dev \
+            libzbar0 \
+            libzbar-dev \
+            libgl1 \
+            libglib2.0-0 \
+            libsm6 \
+            libxext6 \
+            libxrender1 \
+            libgomp1 \
+            libgtk-3-0 \
+        ; \
+        # Clean up apt cache to keep image small (keep runtime libs installed)
+        rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Configure OpenSSL to support legacy algorithms for compatibility
 ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
