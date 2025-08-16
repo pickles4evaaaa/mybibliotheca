@@ -848,6 +848,23 @@ def refresh_person_metadata(person_id):
             if author_data:
                 # Update person with fresh metadata using comprehensive parser
                 updates = parse_comprehensive_openlibrary_data(author_data)
+                # Apply field policy filtering (people entity)
+                try:
+                    from app.utils.metadata_settings import get_field_policy
+                    filtered = {}
+                    for field, value in updates.items():
+                        pol = get_field_policy('people', field)
+                        mode = pol.get('mode','both')
+                        if mode == 'none':
+                            continue  # skip field entirely
+                        if mode == 'google':
+                            # no google people provider implemented yet; skip to avoid overwrite
+                            continue
+                        # openlibrary or both -> retain value
+                        filtered[field] = value
+                    updates = filtered
+                except Exception:
+                    pass
                 
                 current_app.logger.info(f"Updating person {person_id} with comprehensive data: {updates}")
                 updated_person = person_service.update_person_sync(person_id, updates)
@@ -881,6 +898,21 @@ def refresh_person_metadata(person_id):
                         updates = parse_comprehensive_openlibrary_data(author_data)
                         # Set the OpenLibrary ID
                         updates['openlibrary_id'] = author_id
+                        # Apply field policy filtering
+                        try:
+                            from app.utils.metadata_settings import get_field_policy
+                            filtered = {}
+                            for field, value in updates.items():
+                                pol = get_field_policy('people', field)
+                                mode = pol.get('mode','both')
+                                if mode == 'none':
+                                    continue
+                                if mode == 'google':
+                                    continue
+                                filtered[field] = value
+                            updates = filtered
+                        except Exception:
+                            pass
                         
                         current_app.logger.info(f"Updating person {person_id} with comprehensive data: {updates}")
                         updated_person = person_service.update_person_sync(person_id, updates)

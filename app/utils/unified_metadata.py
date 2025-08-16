@@ -478,6 +478,17 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	"""Merge two metadata dicts with sensible precedence rules."""
 	merged: Dict[str, Any] = {}
 
+	# Lazy import for policies to avoid import cycles when app not fully initialized.
+	# Provide a consistent function signature to keep type checkers happy.
+	try:  # pragma: no cover - simple import guard
+		from app.utils.metadata_settings import apply_field_policy as _real_apply_field_policy  # type: ignore
+	except Exception:  # pragma: no cover
+		def _real_apply_field_policy(entity: str, field: str, google_val, openlib_val, merged_val):  # type: ignore
+			return merged_val
+
+	def apply_field_policy(entity: str, field: str, google_val, openlib_val, merged_val):  # type: ignore
+		return _real_apply_field_policy(entity, field, google_val, openlib_val, merged_val)
+
 	# Simple text fields: choose the more complete (longer) text when both present; prefer Google on exact ties
 	for key in ['title', 'subtitle', 'publisher']:
 		g_val = google.get(key)
@@ -601,6 +612,15 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	merged['isbn10'] = _norm_isbn(google.get('isbn10')) or _norm_isbn(openlib.get('isbn10'))
 	merged['isbn13'] = _norm_isbn(google.get('isbn13')) or _norm_isbn(openlib.get('isbn13'))
 
+	# Apply field policies (books entity)
+	for field, value in list(merged.items()):
+		try:
+			merged[field] = apply_field_policy('books', field, google.get(field), openlib.get(field), value)
+		except Exception:
+			pass
+	# Cover source fix if cover removed
+	if not merged.get('cover_url'):
+		merged.pop('cover_source', None)
 	return merged
 
 

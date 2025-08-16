@@ -18,121 +18,35 @@ from pathlib import Path
 auth = Blueprint('auth', __name__)
 
 def _safe_get_row_value(row: Any, index: int) -> Any:
-    """Safely extract a value from a KuzuDB row at the given index."""
-    if isinstance(row, list):
-        return row[index] if index < len(row) else None
-    elif isinstance(row, dict):
-        keys = list(row.keys())
-        return row[keys[index]] if index < len(keys) else None
-    else:
-        try:
-            return row[index]  # type: ignore
-        except (IndexError, KeyError, TypeError):
-            return None
+    """Safely extract a value from a Kuzu row that may be dict-like or sequence-like."""
+    try:
+        if hasattr(row, 'keys'):
+            keys = list(row.keys())  # type: ignore[attr-defined]
+            return row[keys[index]] if index < len(keys) else None  # type: ignore[index]
+        else:
+            return row[index]  # type: ignore[index]
+    except Exception:
+        return None
 
 @auth.route('/setup', methods=['GET', 'POST'])
 @debug_route('SETUP')
 def setup():
-    """Initial setup route - redirects to new onboarding system"""
-    debug_auth("="*60)
-    debug_auth(f"Setup route accessed - Method: {request.method}")
+    """Initial setup route - redirects to new onboarding system."""
+    debug_auth("=" * 60)
     debug_auth("Redirecting to new onboarding system")
-    
-    # Check if any users already exist using Kuzu service
     try:
         user_count = cast(int, user_service.get_user_count_sync())
-        debug_auth(f"Current user count in database: {user_count}")
         if user_count and user_count > 0:
-            debug_auth("Users already exist, redirecting to login")
             flash('Setup has already been completed.', 'info')
             return redirect(url_for('auth.login'))
-    except Exception as e:
-        debug_auth(f"Error checking user count: {e}")
-        # If we can't check, assume no users exist and continue with setup
-    
-    # Handle POST request for simple setup form
-    if request.method == 'POST':
-        debug_auth("Processing simple setup form submission")
-        username = request.form.get('username')
-        email = request.form.get('email')
-        password = request.form.get('password')
-        confirm_password = request.form.get('confirm_password')
-        
-        # Basic validation
-        if not all([username, email, password, confirm_password]):
-            flash('All fields are required.', 'error')
-            return render_template('auth/simple_setup.html')
-        
-        if password != confirm_password:
-            flash('Passwords do not match.', 'error')
-            return render_template('auth/simple_setup.html')
-        
-        # Ensure we have non-None values after validation
-        assert username is not None
-        assert email is not None
-        assert password is not None
-        
-        try:
-            # Create the admin user
-            from werkzeug.security import generate_password_hash
-            import uuid
-            from datetime import datetime, timezone
-            
-            admin_user = User(
-                id=str(uuid.uuid4()),
-                username=username,
-                email=email,
-                password_hash=generate_password_hash(password),
-                is_admin=True,
-                is_active=True,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
-            )
-            
-            # Save the user
-            created_user = user_service.create_user_sync(
-                username=admin_user.username,
-                email=admin_user.email,
-                password_hash=admin_user.password_hash,
-                is_admin=admin_user.is_admin
-            )
-            if created_user:
-                flash('Admin account created successfully! You can now log in.', 'success')
-                return redirect(url_for('auth.login'))
-            else:
-                flash('Failed to create admin account. Please try again.', 'error')
-                return render_template('auth/simple_setup.html')
-                
-        except Exception as e:
-            debug_auth(f"Error creating admin user: {e}")
-            flash('An error occurred while creating the admin account. Please try again.', 'error')
-            return render_template('auth/simple_setup.html')
-    
-    # Handle GET request - check if setup is actually needed
-    try:
-        user_count = cast(int, user_service.get_user_count_sync())
-        debug_auth(f"Setup route GET: User count is {user_count}")
-        
-        if user_count and user_count > 0:
-            debug_auth("Setup already completed, redirecting to login")
-            flash('Setup has already been completed.', 'info')
-            return redirect(url_for('auth.login'))
-        
-        # No users exist, proceed with onboarding
-        debug_auth("No users found, starting onboarding")
+        # No users: begin onboarding
         flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
         return redirect(url_for('onboarding.start'))
-        
     except Exception as e:
-        debug_auth(f"Error checking user count in setup route: {e}")
-        # If we can't check user count, try onboarding, fall back to simple setup
+        debug_auth(f"Setup redirect error: {e}")
         flash('Welcome to Bibliotheca! Let\'s set up your library.', 'info')
-        try:
-            return redirect(url_for('onboarding.start'))
-        except Exception:
-            # Fallback: show simple setup form if onboarding system is not available
-            debug_auth("Onboarding system not available, showing simple setup form")
-            return render_template('auth/simple_setup.html')
+        # Fallback: simple setup form
+        return render_template('auth/simple_setup.html')
 
 @auth.route('/setup/status')
 def setup_status():
@@ -1040,7 +954,56 @@ def settings_server_partial(panel: str):
         ctx['ai_config'] = load_ai_config()
         return render_template('settings/partials/server_ai.html', **ctx)
     if panel == 'metadata':
-        return '<div class="card p-3"><h5 class="mb-2">Metadata Providers</h5><p class="small text-muted mb-3">Configuration UI coming soon. This will manage external book/cover/search provider API keys and priorities.</p><div class="alert alert-info small mb-0">Placeholder panel.</div></div>'
+        from app.utils.metadata_settings import get_metadata_settings, save_metadata_settings
+        if request.method == 'POST':
+            data = {}
+            try:
+                current_app.logger.error('[METADATA_SAVE][BEGIN] ct=%s is_json=%s content_length=%s', request.content_type, request.is_json, request.content_length)
+                # IMPORTANT: use cache=True so we can read body and still parse
+                raw_body = request.get_data(cache=True, as_text=True)
+                current_app.logger.error('[METADATA_SAVE][RAW_BODY]%s', (raw_body or '')[:2000])
+                import json as _json
+                if request.content_type and 'application/json' in request.content_type.lower():
+                    try:
+                        data = _json.loads(raw_body or '{}')
+                    except Exception as je:
+                        current_app.logger.error(f'[METADATA_SAVE][JSON_DECODE_ERR] {je}')
+                        data = {}
+                else:
+                    raw = request.form.get('data')
+                    if raw:
+                        try:
+                            data = _json.loads(raw)
+                        except Exception as fe:
+                            current_app.logger.error(f'[METADATA_SAVE][FORM_JSON_ERR] {fe}')
+                    # fallback attempt if still empty and raw body looks like JSON
+                    if not data and raw_body and raw_body.strip().startswith('{'):
+                        try:
+                            data = _json.loads(raw_body)
+                            current_app.logger.error('[METADATA_SAVE][FALLBACK_PARSE_OK]')
+                        except Exception as fe2:
+                            current_app.logger.error(f'[METADATA_SAVE][FALLBACK_PARSE_ERR] {fe2}')
+                has_books = isinstance(data.get('books'), dict)
+                has_people = isinstance(data.get('people'), dict)
+                current_app.logger.error('[METADATA_SAVE][PARSED_KEYS] keys=%s books=%s people=%s', list(data.keys())[:8], has_books, has_people)
+                if not (has_books or has_people):
+                    current_app.logger.error('[METADATA_SAVE][WARN] No valid books/people objects found in payload; aborting save.')
+                    return jsonify({'ok': False, 'error': 'no_valid_payload'}), 400
+                # sanity: ensure payload not unexpectedly huge
+                if len(str(data)) > 20000:
+                    current_app.logger.error('[METADATA_SAVE][WARN] Payload unusually large size=%s', len(str(data)))
+                ok = save_metadata_settings(data)
+                current_app.logger.error('[METADATA_SAVE][RESULT] ok=%s', ok)
+                if not ok:
+                    return jsonify({'ok': False, 'error': 'save_returned_false', 'received_keys': list(data.keys())}), 400
+                return jsonify({'ok': True, 'metadata_settings': get_metadata_settings()})
+            except Exception as e:
+                current_app.logger.error(f"Metadata settings save failed: {e}")
+                import traceback, sys
+                traceback.print_exc(file=sys.stderr)
+                return jsonify({'ok': False, 'error': 'save_failed'}), 400
+        metadata_settings = get_metadata_settings()
+        return render_template('settings/partials/server_metadata.html', metadata_settings=metadata_settings)
     # 'system' panel removed; info moved to overview section
     return '<div class="text-danger small">Unknown panel.</div>'
 
