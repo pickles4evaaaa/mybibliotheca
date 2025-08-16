@@ -6,6 +6,7 @@ with minimal complexity and maximum reliability.
 """
 
 import os
+import contextlib
 import shutil
 import zipfile
 import tempfile
@@ -262,43 +263,54 @@ class SimpleBackupService:
                 'reason': reason
             }
             
-            # Create the backup ZIP file
-            with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # Add metadata file
-                zipf.writestr('backup_metadata.json', json.dumps(metadata, indent=2))
-                
-                # Add the entire KuzuDB directory (it should always be a directory)
-                db_files_count = 0
-                for file_path in self.kuzu_db_path.rglob('*'):
-                    if file_path.is_file():
-                        relative_path = file_path.relative_to(self.kuzu_db_path)
-                        zipf.write(file_path, f"kuzu/{relative_path}")
-                        db_files_count += 1
-                        logger.debug(f"Added to backup: kuzu/{relative_path}")
-                
-                logger.info(f"Backed up KuzuDB directory with {db_files_count} files")
-                
-                # Add cover images
-                covers_count = 0
-                if self.covers_dir.exists():
-                    for file_path in self.covers_dir.rglob('*'):
-                        if file_path.is_file():
-                            relative_path = file_path.relative_to(self.covers_dir)
-                            zipf.write(file_path, f"data/covers/{relative_path}")
-                            covers_count += 1
-                            logger.debug(f"Added cover to backup: data/covers/{relative_path}")
+            # Optionally quiesce writes for consistent snapshot
+            quiesce_enabled = os.getenv('KUZU_BACKUP_QUIESCE', 'false').lower() in ('1','true','yes')
+            manager = None
+            if quiesce_enabled:
+                try:
+                    from app.utils.safe_kuzu_manager import get_safe_kuzu_manager as _gskm
+                    manager = _gskm()
+                except Exception:
+                    manager = None
+
+            quiesce_ctx = manager.quiesce_for_backup(reason='simple_backup') if manager and quiesce_enabled else contextlib.nullcontext()
+            with quiesce_ctx:
+                with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    # Add metadata file
+                    zipf.writestr('backup_metadata.json', json.dumps(metadata, indent=2))
                     
-                    logger.info(f"Backed up {covers_count} cover images")
-                
-                # Add upload files if they exist
-                uploads_count = 0
-                if self.uploads_dir.exists():
-                    for file_path in self.uploads_dir.rglob('*'):
+                    # Add the entire KuzuDB directory (it should always be a directory)
+                    db_files_count = 0
+                    for file_path in self.kuzu_db_path.rglob('*'):
                         if file_path.is_file():
-                            relative_path = file_path.relative_to(self.uploads_dir)
-                            zipf.write(file_path, f"data/uploads/{relative_path}")
-                            uploads_count += 1
-                            logger.debug(f"Added upload to backup: data/uploads/{relative_path}")
+                            relative_path = file_path.relative_to(self.kuzu_db_path)
+                            zipf.write(file_path, f"kuzu/{relative_path}")
+                            db_files_count += 1
+                            logger.debug(f"Added to backup: kuzu/{relative_path}")
+                    
+                    logger.info(f"Backed up KuzuDB directory with {db_files_count} files")
+                    
+                    # Add cover images
+                    covers_count = 0
+                    if self.covers_dir.exists():
+                        for file_path in self.covers_dir.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(self.covers_dir)
+                                zipf.write(file_path, f"data/covers/{relative_path}")
+                                covers_count += 1
+                                logger.debug(f"Added cover to backup: data/covers/{relative_path}")
+                        
+                        logger.info(f"Backed up {covers_count} cover images")
+                    
+                    # Add upload files if they exist
+                    uploads_count = 0
+                    if self.uploads_dir.exists():
+                        for file_path in self.uploads_dir.rglob('*'):
+                            if file_path.is_file():
+                                relp = file_path.relative_to(self.uploads_dir)
+                                zipf.write(file_path, f"data/uploads/{relp}")
+                                uploads_count += 1
+                                logger.debug(f"Added upload to backup: data/uploads/{relp}")
                     
                     logger.info(f"Backed up {uploads_count} uploaded files")
 

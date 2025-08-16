@@ -551,11 +551,17 @@ def normalize_goodreads_value(value, field_type='text'):
     
     # Additional cleaning for ISBN fields
     if field_type == 'isbn':
-        # Remove any remaining quotes, equals, or whitespace
+        # Remove any remaining quotes, equals, whitespace
         value = value.replace('"', '').replace('=', '').strip()
-        # Validate that it looks like an ISBN (digits, X, hyphens only)
-        if value and not all(c.isdigit() or c in 'X-' for c in value):
-            # If it doesn't look like an ISBN, it might be corrupted
+        # Strip all non ISBN chars (keep digits and X/x)
+        import re as _re
+        raw_before = value
+        value = _re.sub(r'[^0-9Xx]', '', value)
+        # Warn if after cleaning the length isn't 10 or 13 (still accept, but flag)
+        if value and len(value) not in (10, 13):
+            print(f"WARNING: Unexpected ISBN length after cleaning '{raw_before}' -> '{value}'")
+        # Validate allowed chars
+        if value and not all(c.isdigit() or c in 'Xx' for c in value):
             print(f"WARNING: Potentially corrupted ISBN value: '{value}'")
     
     return value.strip()

@@ -14,8 +14,10 @@ import kuzu  # type: ignore
 import os
 import time
 import json
+import re
+import atexit
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Generator
+from typing import Optional, Dict, Any, List, Generator, Iterable
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -73,6 +75,217 @@ class SafeKuzuManager:
             self._creator_pid = _os.getpid()
         except Exception:
             self._creator_pid = None
+
+        # Corruption prevention / integrity monitoring
+        self._integrity_thread: Optional[threading.Thread] = None
+        self._integrity_stop = threading.Event()
+        self._integrity_interval_sec = self._load_probe_interval()
+        self._last_integrity_probe: Optional[datetime] = None
+
+        # Quiesce (write pause) controls for backups
+        self._quiesce_condition = threading.Condition(self._lock)
+        self._writes_quiesced = False
+        self._pending_quiesce_reason: Optional[str] = None
+
+        # Shutdown marker path (directory containing DB)
+        self._db_dir = Path(self.database_path).parent if Path(self.database_path).suffix else Path(self.database_path)
+        self._shutdown_marker = self._db_dir / '.clean_shutdown'
+
+        # Register clean shutdown marker writer
+        try:
+            atexit.register(self._write_clean_shutdown_marker)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Configuration helpers
+    # ------------------------------------------------------------------
+    def _load_probe_interval(self) -> int:
+        try:
+            return int(os.getenv('KUZU_INTEGRITY_PROBE_INTERVAL_SEC', '0') or '0')
+        except Exception:
+            return 0
+
+    def _get_recovery_mode(self) -> str:
+        """Return normalized recovery mode.
+
+        Modes:
+          FAIL_FAST (default) - raise and stop on corruption
+          SOFT_RENAME         - rename suspected corrupt DB then recreate
+          CLEAR_REBUILD       - destructive fresh DB after backup copy
+        Backwards compatibility: map legacy env flags to new enum if present.
+        """
+        mode = (os.getenv('KUZU_RECOVERY_MODE') or '').strip().upper()
+        if not mode:
+            # Legacy mapping
+            if os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() in ('1','true','yes'):
+                mode = 'CLEAR_REBUILD'
+            elif os.getenv('KUZU_ENABLE_AUTO_RENAME_CORRUPT', 'false').lower() in ('1','true','yes'):
+                mode = 'SOFT_RENAME'
+            else:
+                mode = 'FAIL_FAST'
+        if mode not in {'FAIL_FAST','SOFT_RENAME','CLEAR_REBUILD'}:
+            mode = 'FAIL_FAST'
+        return mode
+
+    # ------------------------------------------------------------------
+    # Shutdown marker handling
+    # ------------------------------------------------------------------
+    def _write_clean_shutdown_marker(self):
+        """Write a marker indicating a clean shutdown completed."""
+        try:
+            self._db_dir.mkdir(parents=True, exist_ok=True)
+            self._shutdown_marker.write_text(datetime.now(timezone.utc).isoformat())
+        except Exception:
+            pass
+
+    def _consume_shutdown_marker(self) -> Dict[str, Any]:
+        """Check for previous clean shutdown marker at startup.
+
+        Returns a dict with status info used for logging / anomaly decisions.
+        """
+        info = {
+            'previous_clean_shutdown': False,
+            'marker_age_seconds': None
+        }
+        try:
+            if self._shutdown_marker.exists():
+                ts_text = self._shutdown_marker.read_text().strip()
+                try:
+                    ts = datetime.fromisoformat(ts_text)
+                    info['marker_age_seconds'] = (datetime.now(timezone.utc) - ts).total_seconds()
+                except Exception:
+                    pass
+                self._shutdown_marker.unlink(missing_ok=True)  # type: ignore[arg-type]
+                info['previous_clean_shutdown'] = True
+            return info
+        except Exception:
+            return info
+
+    # ------------------------------------------------------------------
+    # Integrity probe scheduler
+    # ------------------------------------------------------------------
+    def _start_integrity_probe_thread(self):
+        if self._integrity_interval_sec <= 0:
+            return
+        if self._integrity_thread and self._integrity_thread.is_alive():
+            return
+
+        def _loop():
+            logger.info(f"[KUZU] Integrity probe thread started (interval={self._integrity_interval_sec}s)")
+            while not self._integrity_stop.is_set():
+                try:
+                    self._run_integrity_probe()
+                except Exception as e:
+                    logger.warning(f"[KUZU] Integrity probe failed: {e}")
+                # Sleep with interrupt
+                self._integrity_stop.wait(self._integrity_interval_sec)
+            logger.info("[KUZU] Integrity probe thread exiting")
+
+        self._integrity_thread = threading.Thread(target=_loop, daemon=True, name='kuzu-integrity-probe')
+        self._integrity_thread.start()
+
+    def _run_integrity_probe(self):
+        """Perform lightweight counts on core node types and log anomalies."""
+        core_nodes: Iterable[str] = ('User','Book','Person')
+        now = datetime.now(timezone.utc)
+        with self.get_connection(operation='integrity_probe') as conn:
+            anomalies = []
+            totals = {}
+            for label in core_nodes:
+                try:
+                    _res = conn.execute(f"MATCH (n:{label}) RETURN COUNT(n) AS c")
+                    if isinstance(_res, list) and _res:
+                        _res = _res[0]
+                    c = 0
+                    if _res and hasattr(_res, 'has_next') and _res.has_next():  # type: ignore[attr-defined]
+                        row = _res.get_next()  # type: ignore[attr-defined]
+                        try:
+                            c = int(row[0])  # type: ignore[index]
+                        except Exception:
+                            c = 0
+                    totals[label] = c
+                    if c < 0:
+                        anomalies.append({'label': label, 'count': c, 'reason': 'negative_count'})
+                except Exception as e:
+                    anomalies.append({'label': label, 'error': str(e)})
+        self._last_integrity_probe = now
+        if anomalies:
+            logger.warning(f"[KUZU] Integrity anomalies: {anomalies}")
+            self._log_corruption_event({'type':'INTEGRITY_ANOMALY','anomalies':anomalies,'totals':totals})
+        else:
+            logger.debug(f"[KUZU] Integrity probe OK {totals}")
+
+    # ------------------------------------------------------------------
+    # Quiesce (write pause) logic
+    # ------------------------------------------------------------------
+    @contextmanager
+    def quiesce_for_backup(self, reason: str = 'backup'):
+        """Pause new connections to allow a consistent filesystem copy.
+
+        Waits until active connections drain then yields.
+        """
+        with self._lock:
+            # Signal quiesce
+            self._writes_quiesced = True
+            self._pending_quiesce_reason = reason
+            # Wait for active connections to finish
+            wait_start = time.time()
+            while self._connection_count > 0:
+                self._quiesce_condition.wait(timeout=1.0)
+                if time.time() - wait_start > 30:
+                    logger.warning("[KUZU] Quiesce wait exceeded 30s; proceeding anyway")
+                    break
+            logger.info(f"[KUZU] Writes quiesced for {reason}")
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._writes_quiesced = False
+                self._pending_quiesce_reason = None
+                self._quiesce_condition.notify_all()
+                logger.info("[KUZU] Writes unquiesced")
+
+    # ------------------------------------------------------------------
+    # Corruption / anomaly logging
+    # ------------------------------------------------------------------
+    def _log_corruption_event(self, payload: Dict[str, Any]):
+        try:
+            logs_dir = Path('logs')
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            payload = {**payload, 'timestamp': datetime.now(timezone.utc).isoformat()}
+            with (logs_dir / 'corruption_events.log').open('a') as f:
+                f.write(json.dumps(payload, separators=(',',':')) + '\n')
+        except Exception:
+            pass
+
+    def _analyze_open_error(self, err: Exception) -> None:
+        """Attempt to parse open error for out-of-range offsets and log structured event."""
+        err_str = str(err)
+        position_match = re.search(r'position:\s*(\d+)', err_str)
+        if not position_match:
+            return
+        suspected_offset = int(position_match.group(1))
+        # Determine file/dir size
+        db_path = Path(self.database_path)
+        size_bytes = 0
+        if db_path.exists():
+            try:
+                if db_path.is_file():
+                    size_bytes = db_path.stat().st_size
+                else:
+                    size_bytes = sum(f.stat().st_size for f in db_path.glob('**/*') if f.is_file())
+            except Exception:
+                size_bytes = 0
+        if size_bytes > 0 and suspected_offset > size_bytes * 2:
+            logger.error(f"[KUZU_CORRUPTION_DETECTED] Out-of-range read offset {suspected_offset} (size={size_bytes})")
+            self._log_corruption_event({
+                'code':'KUZU_CORRUPTION_DETECTED',
+                'suspected_offset': suspected_offset,
+                'size_bytes': size_bytes,
+                'recovery_mode': self._get_recovery_mode(),
+                'error_excerpt': err_str[:400]
+            })
     
     def _get_thread_info(self) -> Dict[str, Any]:
         """Get current thread information for tracking."""
@@ -136,6 +349,7 @@ class SafeKuzuManager:
             os.makedirs(os.path.dirname(self.database_path), exist_ok=True)
             
             # Create database instance with corruption/IO recovery guard
+            startup_marker_info = self._consume_shutdown_marker()
             try:
                 self._database = kuzu.Database(self.database_path)
             except Exception as open_err:
@@ -146,74 +360,66 @@ class SafeKuzuManager:
                     'bad_alloc' in err_str or
                     'Error during recovery' in err_str
                 )
-                auto_recover_clear = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() in ('1', 'true', 'yes')
-                # New opt-in flag (replaces old implicit behaviour). Default: DO NOT rename silently.
-                auto_rename_enabled = os.getenv('KUZU_ENABLE_AUTO_RENAME_CORRUPT', 'false').lower() in ('1','true','yes')
-                legacy_disable_rename = os.getenv('KUZU_DISABLE_AUTO_RENAME_CORRUPT', 'false').lower() in ('1','true','yes')
-                no_auto_recover = os.getenv('KUZU_NO_AUTO_RECOVER', 'false').lower() in ('1','true','yes')
-
+                recovery_mode = self._get_recovery_mode()
                 if is_io_corruption:
+                    # Parse and log anomaly early
+                    self._analyze_open_error(open_err)
                     db_path = Path(self.database_path)
-                    # STRICT MODE: if not explicitly opted in, raise immediately so operator can see & act.
-                    if no_auto_recover or (not auto_recover_clear and not auto_rename_enabled) or legacy_disable_rename:
-                        logger.error(
-                            "[KUZU] ❌ Detected potential IO corruption during open. "
-                            "No automatic recovery performed (set KUZU_AUTO_RECOVER_CLEAR=1 for destructive fresh DB, "
-                            "or KUZU_ENABLE_AUTO_RENAME_CORRUPT=1 for soft rename). Original error: %s", err_str
-                        )
-                        # Re-raise original exception to make failure visible
+                    if recovery_mode == 'FAIL_FAST':
+                        logger.error("[KUZU] ❌ Corruption suspected (mode=FAIL_FAST). Aborting startup. Error: %s", err_str)
                         raise open_err
-
-                    if auto_recover_clear:
-                        try:
-                            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-                            backup_dir = db_path.parent / 'corrupt_backups'
-                            backup_dir.mkdir(parents=True, exist_ok=True)
-                            if db_path.exists():
-                                if db_path.is_dir():
-                                    target = backup_dir / f'kuzu_backup_{ts}'
-                                    import shutil
-                                    shutil.copytree(db_path, target)
-                                    shutil.rmtree(db_path, ignore_errors=True)
-                                else:
-                                    target = backup_dir / f'kuzu_backup_{ts}.db'
-                                    import shutil
-                                    shutil.copy2(str(db_path), str(target))
-                                    db_path.unlink(missing_ok=True)  # type: ignore[arg-type]
-                                logger.warning(f"[KUZU] 📦 Backed up suspected corrupt DB to {target}")
-                            self._database = kuzu.Database(self.database_path)
-                            logger.warning("[KUZU] ✅ Auto-recovery (CLEAR) created fresh database after IO error (env-driven)")
-                        except Exception as rec_err:  # pragma: no cover
-                            logger.error(f"[KUZU] ❌ Auto-recovery (CLEAR) failed: {rec_err}")
-                            raise open_err
-                    elif auto_rename_enabled:
-                        try:
-                            original_size = 0
-                            try:
-                                if db_path.exists():
-                                    if db_path.is_file():
-                                        original_size = db_path.stat().st_size
-                                    else:
-                                        # Directory size estimation
-                                        original_size = sum(f.stat().st_size for f in db_path.glob('**/*') if f.is_file())
-                            except Exception:
-                                pass
+                    try:
+                        ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                        backup_dir = db_path.parent / 'corrupt_backups'
+                        backup_dir.mkdir(parents=True, exist_ok=True)
+                        # Copy existing before destructive action
+                        if db_path.exists():
+                            import shutil
+                            if db_path.is_dir():
+                                target = backup_dir / f'kuzu_backup_{ts}'
+                                shutil.copytree(db_path, target)
+                                logger.warning(f"[KUZU] 📦 Copied suspected corrupt DB directory to {target}")
+                            else:
+                                target = backup_dir / f'bibliotheca_{ts}.db'
+                                shutil.copy2(str(db_path), str(target))
+                                logger.warning(f"[KUZU] 📦 Copied suspected corrupt DB file to {target}")
+                        if recovery_mode == 'SOFT_RENAME':
                             if db_path.exists() and db_path.is_file():
-                                ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
                                 renamed = db_path.parent / f"bibliotheca.db.corrupt.{ts}"
                                 db_path.rename(renamed)
-                                logger.warning(
-                                    f"[KUZU] 📛 Detected IO corruption (size={original_size} bytes). Renamed original DB to {renamed.name}. "
-                                    f"(Explicit opt-in via KUZU_ENABLE_AUTO_RENAME_CORRUPT=1)."
-                                )
-                            self._database = kuzu.Database(self.database_path)
-                            logger.warning("[KUZU] ✅ Created fresh database after soft rename (opt-in mode)")
-                        except Exception as soft_err:
-                            logger.error(f"[KUZU] ❌ Soft rename recovery failed: {soft_err}")
-                            raise open_err
+                                logger.warning(f"[KUZU] 📛 Soft-renamed corrupt DB to {renamed.name}")
+                            elif db_path.exists() and db_path.is_dir():
+                                renamed = db_path.parent / f"bibliotheca.db.corrupt.{ts}"
+                                db_path.rename(renamed)
+                                logger.warning(f"[KUZU] 📛 Soft-renamed corrupt DB directory to {renamed.name}")
+                        elif recovery_mode == 'CLEAR_REBUILD':
+                            # Remove entirely after backup
+                            if db_path.exists():
+                                import shutil
+                                if db_path.is_dir():
+                                    shutil.rmtree(db_path, ignore_errors=True)
+                                else:
+                                    db_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                                logger.warning("[KUZU] 🧹 Cleared suspected corrupt DB (CLEAR_REBUILD)")
+                        # Recreate fresh DB
+                        self._database = kuzu.Database(self.database_path)
+                        logger.warning(f"[KUZU] ✅ Recreated database (mode={recovery_mode})")
+                    except Exception as rec_err:
+                        logger.error(f"[KUZU] ❌ Recovery mode {recovery_mode} failed: {rec_err}")
+                        raise open_err
                 else:
-                    # Not a recognised corruption pattern: re-raise
+                    # Not recognised corruption pattern, re-raise
                     raise
+
+            # Additional startup verification if previous shutdown not clean
+            if not startup_marker_info.get('previous_clean_shutdown'):
+                try:
+                    # Simple pre-schema count probe (will succeed only if schema present)
+                    pass  # placeholder for potential future deep verification
+                    if _VERBOSE_INIT:
+                        print('[KUZU] ⚠️ Previous run ended uncleanly (no clean shutdown marker) – continuing with caution')
+                except Exception:
+                    pass
 
             # CRITICAL FIX: Initialize the database schema (may still raise)
             logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
@@ -227,6 +433,9 @@ class SafeKuzuManager:
 
             self._is_initialized = True
             self._initialization_time = datetime.now(timezone.utc)
+
+            # Start integrity probe thread if configured
+            self._start_integrity_probe_thread()
 
             initialization_duration = time.time() - start_time
             logger.info(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
@@ -305,6 +514,12 @@ class SafeKuzuManager:
             if self._database is None:
                 raise RuntimeError("KuzuDB database not properly initialized")
             
+            # Respect quiesce state (wait until unquiesced)
+            while self._writes_quiesced:
+                # Allow integrity probe to still function (it calls get_connection too but shouldn't when quiesced for backup)
+                logger.debug(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] Waiting for quiesce release (reason={self._pending_quiesce_reason})")
+                self._quiesce_condition.wait(timeout=1.0)
+
             # Create connection
             try:
                 connection = kuzu.Connection(self._database)
@@ -364,6 +579,8 @@ class SafeKuzuManager:
                     if connection:
                         connection.close()
                     self._connection_count -= 1
+                    # Notify potential quiesce waiters
+                    self._quiesce_condition.notify_all()
                     
                     # Remove from active connections tracking
                     if thread_info['thread_id'] in self._active_connections:

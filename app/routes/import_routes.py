@@ -21,6 +21,9 @@ import json
 import os as _os_for_import_verbosity
 import requests  # Add requests import
 
+# Metadata debug flag (shared with unified metadata module)
+_META_DEBUG_FLAG = (os.getenv('METADATA_DEBUG','0').lower() in ('1','true','yes','on'))
+
 # Set up import-specific logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -1572,7 +1575,8 @@ async def process_simple_import(import_config):
     if format_type in ['goodreads', 'storygraph']:
         enable_api_enrichment = True
 
-    print(f"🔄 [PROCESS_SIMPLE] Task {task_id} start (format={format_type}, enrich={enable_api_enrichment})")
+    if _META_DEBUG_FLAG:
+        logger.debug(f"[IMPORT][PROCESS_START] task={task_id} format={format_type} enrich={enable_api_enrichment} mappings={mappings}")
     simplified_service = SimplifiedBookService()
 
     processed_count = success_count = error_count = skipped_count = merged_count = 0
@@ -1594,15 +1598,29 @@ async def process_simple_import(import_config):
         book_metadata = {}
         if enable_api_enrichment:
             isbns = []
-            for r in rows_list:
-                raw_isbn = r.get('ISBN') or r.get('ISBN13') or r.get('ISBN/UID') or r.get('isbn') or r.get('isbn13')
+            for idx, r in enumerate(rows_list, 1):
+                raw_isbn = r.get('ISBN13') or r.get('isbn13') or r.get('ISBN') or r.get('ISBN/UID') or r.get('isbn')
                 if not raw_isbn:
                     continue
                 cleaned = normalize_goodreads_value(raw_isbn, 'isbn')
                 if cleaned and isinstance(cleaned, str) and len(cleaned) >= 10:
                     isbns.append(cleaned)
-            if isbns:
-                book_metadata = batch_fetch_book_metadata(isbns[:50])
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][ISBN_COLLECT] row={idx} raw={raw_isbn!r} cleaned={cleaned!r}")
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][ISBN_COLLECT] collected={len(isbns)} values={isbns}")
+            # Deduplicate while preserving order
+            seen = set()
+            uniq = []
+            for v in isbns:
+                if v not in seen:
+                    seen.add(v); uniq.append(v)
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][ISBN_COLLECT] dedup_size={len(uniq)} values={uniq}")
+            if uniq:
+                book_metadata = batch_fetch_book_metadata(uniq[:50])
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][POST_BATCH] metadata_keys={list(book_metadata.keys())}")
 
         source_filename = os.path.basename(csv_file_path)
         for row_num, row in enumerate(rows_list, 1):
@@ -1621,14 +1639,23 @@ async def process_simple_import(import_config):
 
                 if enable_api_enrichment and book_metadata:
                     simplified_book = merge_api_data_into_simplified_book(simplified_book, book_metadata, {})
+                    if _META_DEBUG_FLAG:
+                        logger.debug(f"[IMPORT][ROW_ENRICHED] row={row_num} isbn13={simplified_book.isbn13} isbn10={simplified_book.isbn10} title={simplified_book.title!r}")
 
                 # After enrichment, if this was an ISBN-only row and we failed to retrieve metadata (no real title), record error instead of creating placeholder book
                 isbn_key = simplified_book.isbn13 or simplified_book.isbn10
                 if isbn_key and enable_api_enrichment:
-                    # Determine if lookup attempted (metadata dict populated) and failed (isbn missing OR still no meaningful title)
-                    lookup_failed = (isbn_key not in book_metadata) or (not simplified_book.title or simplified_book.title.strip() == '' or simplified_book.title == isbn_key)
+                    # Consider presence of either ISBN form in metadata map
+                    in_meta = isbn_key in book_metadata or (simplified_book.isbn13 and simplified_book.isbn13 in book_metadata) or (simplified_book.isbn10 and simplified_book.isbn10 in book_metadata)
+                    # Failed if not in metadata OR title is still placeholder (exactly equals any isbn form)
+                    placeholder_title = not simplified_book.title or simplified_book.title.strip() == '' or simplified_book.title in {simplified_book.isbn13, simplified_book.isbn10}
+                    lookup_failed = (not in_meta) or placeholder_title
                     # If original CSV provided no title (row mapping produced empty title) and lookup failed, treat as error
                     if lookup_failed and (not row.get(mappings.get('title',''))):
+                        try:
+                            logger.error(f"[IMPORT][LOOKUP_FAIL] row={row_num} isbn={isbn_key} in_metadata={isbn_key in book_metadata} title_after={simplified_book.title!r}")
+                        except Exception:
+                            pass
                         processed_count += 1
                         error_count += 1
                         snap = safe_get_import_job(user_id, task_id) or {}
@@ -2162,11 +2189,15 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
     return task_id
 
 def batch_fetch_book_metadata(isbns):
-    """Batch fetch metadata using the unified aggregator for a list of ISBNs."""
-    print(f"🌐 [UNIFIED_API] ===== STARTING BATCH FETCH =====")
-    print(f"🌐 [UNIFIED_API] Fetching metadata for {len(isbns)} ISBNs: {isbns}")
+    """Batch fetch metadata using the unified aggregator for a list of ISBNs.
 
-    from app.utils.unified_metadata import fetch_unified_by_isbn
+    Noise reduction: only warnings for empty results, errors for exceptions/batch failures.
+    Enable METADATA_DEBUG=1 for detailed per-ISBN diagnostics.
+    """
+    if _META_DEBUG_FLAG:
+        logger.debug(f"[IMPORT][METADATA][BATCH_START] size={len(isbns)} isbns={isbns}")
+
+    from app.utils.unified_metadata import fetch_unified_by_isbn, fetch_unified_by_isbn_detailed
     import time
     import random
 
@@ -2176,32 +2207,62 @@ def batch_fetch_book_metadata(isbns):
     for i, isbn in enumerate(isbns):
         if not isbn:
             continue
-
-        print(f"🌐 [UNIFIED_API] Processing {i+1}/{len(isbns)}: {isbn}")
+        if _META_DEBUG_FLAG:
+            logger.debug(f"[IMPORT][METADATA][FETCH_START] idx={i} isbn={isbn}")
         try:
             # Gentle delay to avoid API rate limits
             if i > 0:
                 time.sleep(random.uniform(0.25, 0.6))
 
-            data = fetch_unified_by_isbn(isbn)
+            # Perform detailed fetch first so we always have provider diagnostics
+            data, provider_errors = fetch_unified_by_isbn_detailed(isbn)
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][METADATA][PROVIDERS] isbn={isbn} providers={provider_errors}")
             if data:
                 metadata[isbn] = {
                     'data': data,
-                    'source': 'unified'
+                    'source': 'unified',
+                    'provider_errors': provider_errors
                 }
-                if data.get('categories'):
-                    print(f"🏷️ [UNIFIED_API] {isbn} categories: {len(data['categories'])}")
+                # Canonicalize: if provider returned a distinct ISBN13, promote it as primary key
+                try:
+                    alt13 = data.get('isbn13')
+                    alt10 = data.get('isbn10')
+                    if alt13 and alt13 != isbn:
+                        # Promote alt13 entry (keep original as alias for safety)
+                        if alt13 not in metadata:
+                            metadata[alt13] = metadata[isbn]
+                        if _META_DEBUG_FLAG:
+                            logger.debug(f"[IMPORT][METADATA][CANON] promoted_isbn13={alt13} original_query={isbn}")
+                    # Index 10-digit alias if not present
+                    for alt in [alt10]:
+                        if alt and alt not in metadata:
+                            metadata[alt] = metadata[isbn]
+                    if alt13 and alt10 and alt13 != alt10:
+                        if _META_DEBUG_FLAG:
+                            logger.debug(f"[IMPORT][METADATA][ALT_INDEX] isbn_query={isbn} alt13={alt13} alt10={alt10}")
+                except Exception:
+                    pass
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][METADATA][FETCH_OK] isbn={isbn} title={data.get('title')}")
             else:
+                logger.warning(f"[IMPORT][METADATA] No metadata for ISBN {isbn}")
                 failed_isbns.append(isbn)
         except Exception as e:
-            print(f"⚠️ [UNIFIED_API] Failed for {isbn}: {e}")
+            # Structured error log with stack trace
+            logger.error(f"[IMPORT][METADATA] Exception fetching ISBN {isbn}: {e}", exc_info=True)
             failed_isbns.append(isbn)
             continue
 
-    success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
-    print(f"🎉 [UNIFIED_API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs ({success_rate:.1f}% success rate)")
+    if _META_DEBUG_FLAG:
+        success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
+        logger.debug(f"[IMPORT][METADATA][BATCH_COMPLETE] success={len(metadata)} failed={len(failed_isbns)} rate={success_rate:.1f}% keys={list(metadata.keys())}")
     if failed_isbns:
         print(f"⚠️ [UNIFIED_API] Failed to fetch: {failed_isbns}")
+        logger.error(f"[IMPORT][METADATA] Batch fetch failures ({len(failed_isbns)}): {failed_isbns}")
+    else:
+        # Downgrade zero-failure message to debug (avoid misleading error spam)
+        logger.debug("[IMPORT][METADATA] Batch fetch completed with zero failures")
     return metadata
 
 def store_job_in_kuzu(task_id, job_data):

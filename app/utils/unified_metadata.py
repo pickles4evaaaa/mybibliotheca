@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import requests
+import os
+import logging
+
+_META_LOG = logging.getLogger(__name__)
+_META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
 
 
 def _normalize_date(val: Optional[str]) -> Optional[str]:
@@ -124,11 +129,14 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	"""
 	url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
 	try:
-		resp = requests.get(url, timeout=15)
+		resp = requests.get(url, timeout=15, headers={
+			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
 		resp.raise_for_status()
 		data = resp.json()
 		items = data.get('items') or []
 		if not items:
+			if _META_DEBUG:
+				_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EMPTY] isbn={isbn} status={resp.status_code} len=0 url={url}")
 			return {}
 
 		# Normalize target ISBN (strip non-digits/X)
@@ -276,7 +284,10 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 			'google_books_id': item.get('id'),
 			'series': series_value,
 		}
-	except Exception:
+	except Exception as e:
+		# Suppress but record when debugging; callers still treat empty dict as failure.
+		if _META_DEBUG:
+			_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EXC] isbn={isbn} err={e}")
 		return {}
 
 
@@ -285,7 +296,8 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 	bibkey = f"ISBN:{isbn}"
 	url = f"https://openlibrary.org/api/books?bibkeys={bibkey}&format=json&jscmd=data"
 	try:
-		resp = requests.get(url, timeout=15)
+		resp = requests.get(url, timeout=15, headers={
+			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
 		resp.raise_for_status()
 		data = resp.json() or {}
 		ol = data.get(bibkey) or {}
@@ -450,7 +462,9 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 			'isbn10': isbn10,
 			'isbn13': isbn13,
 		}
-	except Exception:
+	except Exception as e:
+		if _META_DEBUG:
+			_META_LOG.warning(f"[UNIFIED_METADATA][OPENLIB][EXC] isbn={isbn} err={e}")
 		return {}
 
 
@@ -590,34 +604,57 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
 	return merged
 
 
-def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
-	"""Fetch and merge Google Books and OpenLibrary metadata for an ISBN (parallel IO)."""
-	isbn = (isbn or '').strip()
-	if not isbn:
-		return {}
+def _unified_fetch_pair(isbn: str):
+	"""Internal: concurrently fetch provider raw dicts and gather error states.
 
-	google = {}
-	openlib = {}
+	Returns (google_dict, openlib_dict, errors_dict).
+	Errors dict entries are provider -> description ('empty' if empty successful response).
+	"""
+	import re as _re_norm
+	isbn_clean = (isbn or '').strip()
+	isbn_clean = _re_norm.sub(r'[^0-9Xx]', '', isbn_clean)
+	if not isbn_clean:
+		return {}, {}, {'input': 'empty'}
+	google: Dict[str, Any] = {}
+	openlib: Dict[str, Any] = {}
+	_errors: Dict[str, str] = {}
 	with ThreadPoolExecutor(max_workers=2) as ex:
 		future_map = {
-			ex.submit(_fetch_google_by_isbn, isbn): 'google',
-			ex.submit(_fetch_openlibrary_by_isbn, isbn): 'openlib'
+			ex.submit(_fetch_google_by_isbn, isbn_clean): 'google',
+			ex.submit(_fetch_openlibrary_by_isbn, isbn_clean): 'openlib'
 		}
 		for fut in as_completed(future_map):
 			kind = future_map[fut]
 			try:
 				data = fut.result() or {}
-			except Exception:
+			except Exception as ex_var:  # defensive; provider funcs should swallow
 				data = {}
+				_errors[kind] = f"exception:{ex_var}"
 			if kind == 'google':
 				google = data
 			else:
 				openlib = data
 
-	if not google and not openlib:
-		return {}
+	# Record empty provider results explicitly for diagnostics
+	if not google and 'google' not in _errors:
+		_errors['google'] = 'empty'
+	if not openlib and 'openlib' not in _errors:
+		_errors['openlib'] = 'empty'
+	return google, openlib, _errors
 
-	# Ensure dates are normalized (already normalized in fetchers, but keep for safety)
+
+def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str, str]]:
+	"""Public detailed fetch returning (merged_metadata, provider_errors).
+
+	If both providers empty, merged_metadata is {} and errors indicate causes.
+	"""
+	google, openlib, _errors = _unified_fetch_pair(isbn)
+	if not google and not openlib:
+		level = _META_LOG.error if any(v != 'empty' for v in _errors.values()) else _META_LOG.warning
+		level(f"[UNIFIED_METADATA][EMPTY] isbn={isbn} errors={_errors}")
+		return {}, _errors
+
+	# Ensure dates normalization
 	if google.get('published_date'):
 		google['published_date'] = _normalize_date(google['published_date'])
 	if openlib.get('published_date'):
@@ -625,15 +662,13 @@ def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
 
 	merged = _merge_dicts(google, openlib)
 
-	# Ensure raw_category_paths present for frontend hierarchical handling
 	if 'raw_category_paths' not in merged:
 		cats = merged.get('categories') or []
 		merged['raw_category_paths'] = list(cats)
 
-	# Ensure we propagate the queried ISBN when providers omit identifiers
 	try:
 		import re as _re
-		raw = _re.sub(r"[^0-9Xx]", "", isbn)
+		raw = _re.sub(r"[^0-9Xx]", "", (isbn or ''))
 		if raw:
 			if not merged.get('isbn13') and len(raw) == 13:
 				merged['isbn13'] = raw
@@ -642,7 +677,17 @@ def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
 	except Exception:
 		pass
 
-	return merged
+	return merged, _errors
+
+
+def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
+	"""Fetch and merge Google Books and OpenLibrary metadata for an ISBN (parallel IO).
+
+	Now aggressively normalizes the ISBN (strip non-digit/X) so that upstream
+	sources receive canonical forms regardless of CSV formatting or hyphens.
+	"""
+	data, _ = fetch_unified_by_isbn_detailed(isbn)
+	return data
 
 
 def fetch_unified_by_title(title: str, max_results: int = 10, author: Optional[str] = None) -> List[Dict[str, Any]]:
