@@ -1,0 +1,108 @@
+{# Partial: Server Configuration form reused in unified settings #}
+<form method="POST" action="{{ url_for('admin.settings') }}" enctype="multipart/form-data" class="mb-4" onsubmit="return saveServerConfig(this);">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label">Site Name</label>
+      <input name="site_name" class="form-control" value="{{ site_name }}" placeholder="MyBibliotheca" />
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Server Timezone</label>
+      <select name="server_timezone" class="form-select">
+        {% for tz in common_timezones %}
+        <option value="{{ tz }}" {% if tz==server_timezone %}selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">{{ get_genre_term() }} Terminology</label>
+      <select name="terminology_preference" class="form-select">
+        <option value="genre" {% if terminology_preference=='genre' %}selected{% endif %}>Genres</option>
+        <option value="category" {% if terminology_preference=='category' %}selected{% endif %}>Categories</option>
+      </select>
+    </div>
+  </div>
+  <div class="mt-4">
+    <h6 class="fw-semibold">Background</h6>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Type</label>
+        <select name="background_type" id="bgType" class="form-select">
+          <option value="default" {% if background_config.type=='default' %}selected{% endif %}>Default</option>
+          <option value="solid" {% if background_config.type=='solid' %}selected{% endif %}>Solid</option>
+          <option value="gradient" {% if background_config.type=='gradient' %}selected{% endif %}>Gradient</option>
+          <option value="image" {% if background_config.type=='image' %}selected{% endif %}>Image</option>
+        </select>
+      </div>
+      <div class="col-md-3" data-bg="solid">
+        <label class="form-label">Solid Color</label>
+        <input type="color" name="solid_color" class="form-control form-control-color" value="{{ background_config.solid_color }}" />
+      </div>
+      <div class="col-md-6 row g-2" data-bg="gradient">
+        <div class="col-4">
+          <label class="form-label">Start</label>
+          <input type="color" name="gradient_start" class="form-control form-control-color" value="{{ background_config.gradient_start }}" />
+        </div>
+        <div class="col-4">
+          <label class="form-label">End</label>
+          <input type="color" name="gradient_end" class="form-control form-control-color" value="{{ background_config.gradient_end }}" />
+        </div>
+        <div class="col-4">
+          <label class="form-label">Dir</label>
+            <select name="gradient_direction" class="form-select">
+              <option value="135deg" {% if background_config.gradient_direction=='135deg' %}selected{% endif %}>135°</option>
+              <option value="90deg" {% if background_config.gradient_direction=='90deg' %}selected{% endif %}>90°</option>
+              <option value="0deg" {% if background_config.gradient_direction=='0deg' %}selected{% endif %}>0°</option>
+            </select>
+        </div>
+      </div>
+      <div class="col-md-6" data-bg="image">
+        <label class="form-label">Image URL</label>
+        <input type="url" name="background_image_url" class="form-control" value="{{ background_config.image_url }}" placeholder="https://..." />
+        <div class="mt-2">
+          <input type="file" name="background_image_file" accept="image/*" class="form-control" />
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mt-4">
+    <button class="btn btn-primary"><i class="bi bi-check2 me-1"></i>Save</button>
+  </div>
+</form>
+<script>
+(function(){
+  const typeSel = document.getElementById('bgType');
+  function sync(){
+    const type = typeSel.value;
+    document.querySelectorAll('[data-bg]').forEach(el=>{
+      el.style.display = el.getAttribute('data-bg')===type ? '' : 'none';
+      if(type==='gradient' && el.getAttribute('data-bg')==='gradient'){ el.style.display='flex'; }
+    });
+  }
+  typeSel && typeSel.addEventListener('change',sync); sync();
+})();
+async function saveServerConfig(form){
+  const unifiedContainer = document.getElementById('serverDynamicContainer');
+  const inUnified = !!unifiedContainer; // if unified settings page present
+  if(!inUnified){
+    // Let normal POST/redirect happen to legacy admin.settings
+    return true;
+  }
+  const fd = new FormData(form);
+  fd.append('inline','1');
+  const btn = form.querySelector('button[type="submit"], button:not([type])');
+  if(btn){ btn.disabled=true; btn.dataset.original=btn.innerHTML; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...'; }
+  try {
+    // Force request to unified partial endpoint instead of admin redirect
+    const endpoint = "{{ url_for('auth.settings_server_partial', panel='config') }}";
+    const resp = await fetch(endpoint, {method:'POST', body: fd, headers:{'X-Requested-With':'XMLHttpRequest'}});
+    const html = await resp.text();
+    unifiedContainer.innerHTML = html;
+    if(!unifiedContainer.querySelector('.alert-inline-save-success')){
+      const alert=document.createElement('div'); alert.className='alert alert-success py-2 mb-3 alert-inline-save-success'; alert.textContent='Configuration saved.'; unifiedContainer.prepend(alert); setTimeout(()=>alert.remove(),3000);
+    }
+  } catch(e){ alert('Failed to save configuration.'); }
+  finally { if(btn){ btn.disabled=false; btn.innerHTML=btn.dataset.original; } }
+  return false;
+}
+</script>

@@ -3,6 +3,8 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from app.domain.models import User
 from app.services import user_service, book_service, reading_log_service
+from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+from app.services.kuzu_service_facade import _convert_query_result_to_list  # Reuse helper for query results
 from wtforms import IntegerField, SubmitField
 from wtforms.validators import Optional, NumberRange
 from flask_wtf import FlaskForm
@@ -11,6 +13,7 @@ from .forms import (LoginForm, RegistrationForm, UserProfileForm, ChangePassword
 from .debug_utils import debug_route, debug_auth, debug_csrf, debug_session
 from datetime import datetime, timezone
 from typing import cast, Any
+from pathlib import Path
 
 auth = Blueprint('auth', __name__)
 
@@ -472,18 +475,574 @@ def debug_info():
 @login_required
 def settings():
     """Main user settings page."""
-    # Get site name for admin users
-    site_name = None
-    if current_user.is_admin:
-        # For Kuzu version, site name is managed via environment variables
+    # Resolve site name from persisted system config (fallback to env/default)
+    try:
+        from app.admin import load_system_config
+        cfg = load_system_config() or {}
+        site_name = cfg.get('site_name') or 'MyBibliotheca'
+    except Exception:
         import os
         site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
+    # Collect lightweight aggregate stats for overview tiles
+    stats = {
+        'books': 0,
+        'people': 0,
+        'reading_logs': 0,
+        'users': 0,
+        'active_users': 0,
+        'admins': 0,
+        'avg_books_per_user': 0.0,
+        'app_version': 'unknown',
+        'utc_time': datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC'),
+    }
+    try:
+        # Users counts (service methods already exist)
+        stats['users'] = user_service.get_user_count_sync() if hasattr(user_service, 'get_user_count_sync') else 0  # type: ignore
+        stats['active_users'] = user_service.get_active_user_count_sync() if hasattr(user_service, 'get_active_user_count_sync') else 0  # type: ignore
+        stats['admins'] = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 0  # type: ignore
+    except Exception as e:
+        current_app.logger.warning(f"Settings stats user counts failed: {e}")
+    # Generic helper to run count queries
+    def _simple_count(cypher: str, key: str):
+        try:
+            result = safe_execute_kuzu_query(cypher)
+            rows = _convert_query_result_to_list(result)
+            if rows:
+                # Row structure may be {'col_0': value} or {'result': value}
+                first = rows[0]
+                val = first.get('col_0') or first.get('result') or 0
+                stats[key] = int(val) if isinstance(val, (int, float)) else 0
+        except Exception as e:
+            current_app.logger.debug(f"Count query for {key} failed: {e}")
+    _simple_count("MATCH (b:Book) RETURN COUNT(b)", 'books')
+    _simple_count("MATCH (p:Person) RETURN COUNT(p)", 'people')
+    _simple_count("MATCH (rl:ReadingLog) RETURN COUNT(rl)", 'reading_logs')
+    # Fallbacks if user-related counts are zero (sync helpers missing or returned 0)
+    if stats['users'] == 0:
+        _simple_count("MATCH (u:User) RETURN COUNT(u)", 'users')
+    if stats['admins'] == 0:
+        _simple_count("MATCH (u:User) WHERE u.is_admin = true RETURN COUNT(u)", 'admins')
+    if stats['active_users'] == 0:
+        # Assume is_active flag; default to treating missing flag as active
+        _simple_count("MATCH (u:User) WHERE coalesce(u.is_active, true) = true RETURN COUNT(u)", 'active_users')
+    try:
+        if stats['users']:
+            stats['avg_books_per_user'] = round(stats['books'] / stats['users'], 2)
+    except Exception:
+        pass
+    # Try to read version from pyproject once (could cache later)
+    try:
+        import tomllib, os
+        pyproject_path = os.path.join(current_app.root_path, '..', 'pyproject.toml')
+        if os.path.exists(pyproject_path):
+            with open(pyproject_path, 'rb') as f:
+                data = tomllib.load(f)
+                stats['app_version'] = data.get('project', {}).get('version', stats['app_version'])
+    except Exception as e:
+        current_app.logger.debug(f"Version load failed: {e}")
+    return render_template('settings.html', title='Settings', site_name=site_name, stats=stats)
+
+# ---------------- Inline Settings Partials (AJAX) -----------------
+@auth.route('/settings/partial/profile', methods=['GET', 'POST'])
+@login_required
+def settings_profile_partial():
+    form = UserProfileForm(current_user.username, current_user.email)
+    if form.validate_on_submit():
+        try:
+            current_user.username = form.username.data  # type: ignore
+            current_user.email = form.email.data  # type: ignore
+            user_service.update_user_sync(current_user)
+            flash('Profile updated successfully!', 'success')
+            # Stay on panel if HTMX / AJAX request
+            if request.headers.get('HX-Request') or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return render_template('settings/partials/profile_form.html', form=form)
+            return redirect(url_for('auth.settings'))
+        except Exception as e:
+            current_app.logger.error(f"Inline profile update failed: {e}")
+            flash('Error updating profile.', 'error')
+    elif request.method == 'GET':
+        # Ensure fields are pre-populated with current values when first loaded
+        try:
+            form.username.data = getattr(current_user, 'username', '')  # type: ignore
+            form.email.data = getattr(current_user, 'email', '')  # type: ignore
+        except Exception:
+            pass
+    return render_template('settings/partials/profile_form.html', form=form)
+
+@auth.route('/settings/partial/password', methods=['GET'])
+@login_required
+def settings_password_partial():
+    form = ChangePasswordForm()
+    return render_template('settings/partials/password_form.html', form=form)
+
+@auth.route('/settings/partial/password', methods=['POST'])
+@login_required
+def settings_password_submit():
+    form = ChangePasswordForm()
+    if form.validate_on_submit():
+        try:
+            # Validate current password
+            if not current_user.check_password(form.current_password.data):  # type: ignore
+                flash('Current password is incorrect.', 'error')
+            else:
+                current_user.set_password(form.new_password.data)  # type: ignore
+                user_service.update_user_sync(current_user)
+                flash('Password updated successfully!', 'success')
+                if request.headers.get('HX-Request') or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return render_template('settings/partials/password_form.html', form=form)
+                return redirect(url_for('auth.settings'))
+        except Exception as e:
+            current_app.logger.error(f"Error updating password inline: {e}")
+            flash('Error updating password.', 'error')
+    return render_template('settings/partials/password_form.html', form=form)
+
+@auth.route('/settings/partial/privacy', methods=['GET', 'POST'])
+@login_required
+def settings_privacy_partial():
+    from app.forms import PrivacySettingsForm, ReadingStreakForm
+    p_form = PrivacySettingsForm()
+    streak_form = ReadingStreakForm()
+    # Populate timezone choices as in privacy_settings route
+    try:
+        import pytz
+        common_timezones = [
+            'UTC','US/Eastern','US/Central','US/Mountain','US/Pacific',
+            'Europe/London','Europe/Paris','Europe/Berlin','Europe/Rome',
+            'Asia/Tokyo','Asia/Shanghai','Asia/Kolkata',
+            'Australia/Sydney','Australia/Melbourne'
+        ]
+        p_form.timezone.choices = [(tz, tz) for tz in common_timezones]
+    except Exception:
+        p_form.timezone.choices = [('UTC','UTC')]
+    if p_form.validate_on_submit():
+        try:
+            # Always fetch a fresh User domain object from service to avoid dict-like proxy issues
+            user_obj = None
+            try:
+                user_obj = user_service.get_user_by_id_sync(getattr(current_user, 'id', None))
+            except Exception as fe:
+                current_app.logger.warning(f"Failed to refetch user for privacy update, falling back to current_user: {fe}")
+            if user_obj is None:
+                # Fallback: mutate current_user if it quacks like domain object
+                user_obj = current_user  # type: ignore
+            # Apply changes
+            setattr(user_obj, 'share_current_reading', p_form.share_current_reading.data)
+            setattr(user_obj, 'share_reading_activity', p_form.share_reading_activity.data)
+            updated = user_service.update_user_sync(user_obj)  # type: ignore
+            if updated:
+                # Mirror onto session's current_user for immediate reflection
+                try:
+                    current_user.share_current_reading = updated.share_current_reading  # type: ignore
+                    current_user.share_reading_activity = updated.share_reading_activity  # type: ignore
+                except Exception:
+                    pass
+                flash('Privacy settings updated.', 'success')
+            else:
+                flash('Failed to persist privacy settings.', 'error')
+            if request.headers.get('HX-Request') or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return render_template('settings/partials/privacy_form.html', form=p_form, streak_form=streak_form)
+            return redirect(url_for('auth.settings'))
+        except Exception as e:
+            current_app.logger.error(f"Privacy inline update failed: {e}")
+            flash('Error updating privacy settings.', 'error')
     else:
-        site_name = 'MyBibliotheca'
-    
-    return render_template('settings.html', 
-                         title='Settings', 
-                         site_name=site_name)
+        try:
+            p_form.share_current_reading.data = getattr(current_user, 'share_current_reading', False)
+            p_form.share_reading_activity.data = getattr(current_user, 'share_reading_activity', False)
+        except Exception:
+            pass
+    return render_template('settings/partials/privacy_form.html', form=p_form, streak_form=streak_form)
+
+@auth.route('/settings/partial/data/<string:panel>')
+@login_required
+def settings_data_partial(panel: str):
+    if panel not in {'import_books','import_reading','backup','export_logs'}:
+        return '<div class="text-danger small">Unknown panel.</div>'
+    if panel == 'import_books':
+        return render_template('settings/partials/data_import_books.html')
+    if panel == 'import_reading':
+        return render_template('settings/partials/data_import_reading.html')
+    if panel == 'backup':
+        if not current_user.is_admin:
+            return '<div class="text-danger small">Not authorized.</div>'
+        # Inline backup manager: replicate logic from simple_backup.index
+        try:
+            from app.services.simple_backup_service import get_simple_backup_service
+            svc = get_simple_backup_service()
+            backups = svc.list_backups()
+            backups.sort(key=lambda b: b.created_at, reverse=True)
+            enhanced = []
+            from datetime import datetime as _dt
+            from pathlib import Path as _Path
+            for b in backups:
+                age_delta = _dt.now() - b.created_at
+                if age_delta.days > 0:
+                    age = f"{age_delta.days} day{'s' if age_delta.days != 1 else ''} ago"
+                elif age_delta.seconds > 3600:
+                    hrs = age_delta.seconds // 3600
+                    age = f"{hrs} hour{'s' if hrs != 1 else ''} ago"
+                elif age_delta.seconds > 60:
+                    mins = age_delta.seconds // 60
+                    age = f"{mins} minute{'s' if mins != 1 else ''} ago"
+                else:
+                    age = 'Just now'
+                size_mb = b.file_size / (1024 * 1024)
+                size_formatted = f"{size_mb:.1f} MB"
+                if b.metadata and 'original_size' in b.metadata:
+                    db_sz = b.metadata['original_size']
+                    db_fmt = f"{db_sz / (1024 * 1024):.1f} MB"
+                else:
+                    db_fmt = 'Unknown'
+                enhanced.append({
+                    'id': b.id,
+                    'name': b.name,
+                    'description': b.description,
+                    'created_at': b.created_at,
+                    'file_path': b.file_path,
+                    'file_size': b.file_size,
+                    'age': age,
+                    'size_formatted': size_formatted,
+                    'database_size_formatted': db_fmt,
+                    'valid': _Path(b.file_path).exists()
+                })
+            stats = svc.get_backup_stats()
+            try:
+                backup_settings = {
+                    'enabled': svc._settings.get('enabled', True),
+                    'frequency': svc._settings.get('frequency', 'daily'),
+                    'retention_days': svc._settings.get('retention_days', 14),
+                    'last_run': svc._settings.get('last_run'),
+                    'scheduled_hour': svc._settings.get('scheduled_hour', 2),
+                    'scheduled_minute': svc._settings.get('scheduled_minute', 30)
+                }
+            except Exception:
+                backup_settings = {
+                    'enabled': True,
+                    'frequency': 'daily',
+                    'retention_days': 14,
+                    'last_run': None,
+                    'scheduled_hour': 2,
+                    'scheduled_minute': 30
+                }
+            return render_template('settings/partials/data_backup_manager.html', backups=enhanced, backup_stats=stats, backup_settings=backup_settings)
+        except Exception as e:
+            current_app.logger.error(f"Inline backup manager load failed: {e}")
+            return '<div class="text-danger small">Failed to load backup manager.</div>'
+    if panel == 'export_logs':
+        return '<div class="card p-3"><h5 class="mb-2">Export Reading Logs</h5><p class="text-muted small mb-2">Download your reading activity as CSV.</p><a class="btn btn-sm btn-outline-secondary" href="' + url_for('reading_logs.export_my_logs') + '">Export</a></div>'
+    return render_template('settings/partials/data_backup.html')
+
+@auth.route('/settings/ai/ollama/models', methods=['POST'])
+@login_required
+def settings_ai_ollama_models():
+    """Inline unified settings endpoint to fetch available Ollama models."""
+    if not current_user.is_admin:
+        return jsonify({'ok': False, 'error': 'Not authorized'}), 403
+    base_url = (request.form.get('base_url') or '').strip()
+    if not base_url:
+        return jsonify({'ok': False, 'error': 'Missing base_url'}), 400
+    if base_url.endswith('/v1'):
+        base_url = base_url[:-3]
+    base_url = base_url.rstrip('/')
+    tags_url = base_url + '/api/tags'
+    try:
+        import requests  # type: ignore
+        r = requests.get(tags_url, timeout=5)
+        r.raise_for_status()
+        data = r.json() if r.content else {}
+        models = []
+        for m in data.get('models', []):
+            name = m.get('name') or m.get('model')
+            if name and name not in models:
+                models.append(name)
+        return jsonify({'ok': True, 'models': models})
+    except Exception as e:
+        current_app.logger.error(f"Ollama models fetch failed: {e}")
+        return jsonify({'ok': False, 'error': 'Failed to fetch models'}), 400
+
+@auth.route('/settings/partial/server/<string:panel>', methods=['GET','POST'])
+@login_required
+def settings_server_partial(panel: str):
+    if not current_user.is_admin:
+        return '<div class="text-danger small">Not authorized.</div>'
+    if panel == 'users':
+        # Recreate admin.users view inline (no pagination controls yet)
+        search = request.args.get('search', '', type=str)
+        from app.services.kuzu_async_helper import run_async
+        from app.domain.models import User as DomainUser
+        from datetime import datetime, timezone as _tz
+        def _now():
+            try:
+                from app.domain.models import now_utc
+                return now_utc()
+            except Exception:
+                return datetime.now(_tz.utc)
+        users_render = []
+        try:
+            repo = getattr(user_service, 'user_repo', None)
+            if repo and hasattr(repo, 'get_all'):
+                raw_list = run_async(repo.get_all(limit=2000))  # type: ignore
+                for row in raw_list:
+                    try:
+                        # row may be dict-like
+                        uid = row.get('id') if isinstance(row, dict) else getattr(row, 'id', None)
+                        if not uid:
+                            continue
+                        username_val = (row.get('username') if isinstance(row, dict) else getattr(row,'username','')) or ''
+                        email_val = (row.get('email') if isinstance(row, dict) else getattr(row,'email','')) or ''
+                        user_obj = DomainUser(
+                            id=uid,
+                            username=str(username_val),
+                            email=str(email_val),
+                            is_admin=bool(row.get('is_admin', False) if isinstance(row, dict) else getattr(row,'is_admin', False)),
+                            is_active=bool(row.get('is_active', True) if isinstance(row, dict) else getattr(row,'is_active', True)),
+                            password_hash=(row.get('password_hash','') if isinstance(row, dict) else getattr(row,'password_hash','')) or '',
+                        )
+                        # created_at may be timestamp or string
+                        if isinstance(row, dict) and 'created_at' in row and row['created_at']:
+                            try:
+                                # If numeric timestamp, convert; else parse iso
+                                ca = row['created_at']
+                                from datetime import datetime
+                                if isinstance(ca, (int,float)):
+                                    user_obj.created_at = datetime.fromtimestamp(ca/1000, _tz.utc)
+                                elif isinstance(ca, str):
+                                    user_obj.created_at = datetime.fromisoformat(ca.replace('Z',''))
+                            except Exception:
+                                pass
+                        users_render.append(user_obj)
+                    except Exception as ie:
+                        current_app.logger.warning(f"User row build failed: {ie}")
+        except Exception as e:
+            current_app.logger.error(f"Inline users load error (repo path): {e}")
+        if search:
+            s = search.lower()
+            users_render = [u for u in users_render if s in (u.username or '').lower() or s in (u.email or '').lower()]
+        # Sort by created_at desc for consistency
+        try:
+            users_render.sort(key=lambda u: getattr(u,'created_at', _now()), reverse=True)
+        except Exception:
+            pass
+        return render_template('settings/partials/server_users_full.html', users=users_render, search=search)
+    if panel == 'user_edit':
+        user_id = request.args.get('user_id') or request.form.get('user_id')
+        if not user_id:
+            return '<div class="text-danger small">User ID missing.</div>'
+        target_user = None
+        try:
+            target_user = user_service.get_user_by_id_sync(user_id)
+        except Exception as e:
+            current_app.logger.error(f"User edit load error: {e}")
+            return '<div class="text-danger small">Failed to load user.</div>'
+        if not target_user:
+            return '<div class="text-danger small">User not found.</div>'
+        # Handle POST actions
+        if request.method == 'POST':
+            action = request.form.get('action')
+            # --- TEMP DEBUG LOGGING START (use error level so it appears with LOG_LEVEL=error) ---
+            try:
+                current_app.logger.error(f"[USER_DELETE_DEBUG] POST entry action={action} user_id={user_id} form_keys={list(request.form.keys())} headers={{'HX':request.headers.get('HX-Request'), 'XHR': request.headers.get('X-Requested-With')}}")
+            except Exception:
+                pass
+            from app.services.simple_backup_service import get_simple_backup_service
+            backup_service = get_simple_backup_service()
+            def _trigger_backup(reason: str):
+                try:
+                    backup_service.create_backup(reason=reason)
+                except Exception as be:
+                    current_app.logger.warning(f"Auto-backup failed after user change: {be}")
+            if action == 'update_profile':
+                current_app.logger.error(f"[USER_DELETE_DEBUG] update_profile path entered for {user_id}")
+                new_username = request.form.get('username','').strip()
+                new_email = request.form.get('email','').strip()
+                if new_username and new_email:
+                    target_user.username = new_username  # type: ignore
+                    target_user.email = new_email  # type: ignore
+                    user_service.update_user_sync(target_user)
+                    _trigger_backup('user_profile_update')
+                    flash('User profile updated & backup created.', 'success')
+                else:
+                    flash('Username and email required.', 'error')
+            elif action == 'reset_password':
+                current_app.logger.error(f"[USER_DELETE_DEBUG] reset_password path entered for {user_id}")
+                pwd1 = request.form.get('password','')
+                pwd2 = request.form.get('confirm_password','')
+                if pwd1 and pwd1 == pwd2:
+                    target_user.set_password(pwd1)  # type: ignore
+                    user_service.update_user_sync(target_user)
+                    _trigger_backup('user_password_reset')
+                    flash('Password reset & backup created.', 'success')
+                else:
+                    flash('Passwords must match.', 'error')
+            elif action == 'toggle_active':
+                current_app.logger.error(f"[USER_DELETE_DEBUG] toggle_active path entered for {user_id}")
+                target_user.is_active = not getattr(target_user,'is_active',True)  # type: ignore
+                user_service.update_user_sync(target_user)
+                _trigger_backup('user_status_change')
+                flash('User status toggled & backup created.', 'success')
+            elif action == 'delete_user':
+                current_app.logger.error(f"[USER_DELETE_DEBUG] delete_user path entered for {user_id}")
+                admin_pwd = request.form.get('admin_password','')
+                if current_user.check_password(admin_pwd):  # type: ignore
+                    try:
+                        # Protect against deleting yourself
+                        if target_user.id == current_user.id:  # type: ignore
+                            flash('Cannot delete your own account.', 'error')
+                            current_app.logger.error(f"[USER_DELETE_DEBUG] Attempt to delete self blocked: current_user={current_user.id} target={target_user.id}")
+                        else:
+                            # Prevent deleting last admin
+                            if getattr(target_user, 'is_admin', False):  # type: ignore
+                                admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1  # type: ignore
+                                if admin_count <= 1:
+                                    flash('Cannot delete the last admin user.', 'error')
+                                    current_app.logger.error(f"[USER_DELETE_DEBUG] Last admin delete blocked admin_count={admin_count}")
+                                else:
+                                    deleted = user_service.delete_user_sync(target_user.id)  # type: ignore
+                                    current_app.logger.error(f"[USER_DELETE_DEBUG] delete attempt admin user deleted={deleted}")
+                                    if deleted:
+                                        _trigger_backup('user_deleted')
+                                        flash('User deleted & backup created.', 'success')
+                                    else:
+                                        # Diagnostic: check existence directly
+                                        try:
+                                            repo = getattr(user_service, 'user_repo', None)
+                                            exists_flag = False
+                                            if repo and hasattr(repo, 'safe_manager'):
+                                                check_q = "MATCH (u:User {id: $uid}) RETURN COUNT(u) as c"
+                                                res = repo.safe_manager.execute_query(check_q, {"uid": target_user.id})
+                                                from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
+                                                data = _cvt(res)
+                                                if data and int(data[0].get('c',0))>0:
+                                                    exists_flag = True
+                                            current_app.logger.error(f"[USER_DELETE_DEBUG] delete admin failed exists_flag={exists_flag}")
+                                            flash(f'Delete failed (diagnostic: exists={exists_flag}).', 'error')
+                                        except Exception as de_diag:
+                                            current_app.logger.error(f"[USER_DELETE_DEBUG] diagnostic error admin delete: {de_diag}")
+                                            flash(f'Delete failed (diag error: {de_diag}).', 'error')
+                                        flash('Delete failed.', 'error')
+                            else:
+                                deleted = user_service.delete_user_sync(target_user.id)  # type: ignore
+                                current_app.logger.error(f"[USER_DELETE_DEBUG] delete attempt non-admin deleted={deleted}")
+                                if deleted:
+                                    _trigger_backup('user_deleted')
+                                    flash('User deleted & backup created.', 'success')
+                                else:
+                                    try:
+                                        repo = getattr(user_service, 'user_repo', None)
+                                        exists_flag = False
+                                        if repo and hasattr(repo, 'safe_manager'):
+                                            check_q = "MATCH (u:User {id: $uid}) RETURN COUNT(u) as c"
+                                            res = repo.safe_manager.execute_query(check_q, {"uid": target_user.id})
+                                            from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
+                                            data = _cvt(res)
+                                            if data and int(data[0].get('c',0))>0:
+                                                exists_flag = True
+                                        current_app.logger.error(f"[USER_DELETE_DEBUG] delete non-admin failed exists_flag={exists_flag}")
+                                        flash(f'Delete failed (diagnostic: exists={exists_flag}).', 'error')
+                                    except Exception as de_diag:
+                                        current_app.logger.error(f"[USER_DELETE_DEBUG] diagnostic error non-admin delete: {de_diag}")
+                                        flash(f'Delete failed (diag error: {de_diag}).', 'error')
+                                    flash('Delete failed.', 'error')
+                        # Always refresh users list inline (message shown once)
+                        try:
+                            current_app.logger.error("[USER_DELETE_DEBUG] Fetching updated user list after delete attempt")
+                        except Exception:
+                            pass
+                        updated_users = [u for u in user_service.get_all_users_sync() if u.id != target_user.id]
+                        # Retrieve flashed messages (if any) to embed
+                        from flask import get_flashed_messages
+                        msgs = get_flashed_messages(with_categories=True)
+                        try:
+                            current_app.logger.error(f"[USER_DELETE_DEBUG] Messages after delete attempt: {msgs}")
+                        except Exception:
+                            pass
+                        return render_template('settings/partials/server_users_full.html', users=updated_users, search='', inline_messages=msgs)
+                    except Exception as de:
+                        current_app.logger.error(f"[USER_DELETE_DEBUG] Exception during delete flow: {de}")
+                        flash('Delete failed.', 'error')
+                else:
+                    current_app.logger.error("[USER_DELETE_DEBUG] Admin password incorrect for delete")
+                    flash('Admin password incorrect.', 'error')
+            # reload updated user
+            try:
+                current_app.logger.error(f"[USER_DELETE_DEBUG] Reloading user editor for user_id={user_id}")
+            except Exception:
+                pass
+            target_user = user_service.get_user_by_id_sync(user_id)
+        return render_template('settings/partials/server_user_edit.html', user=target_user)
+    if panel == 'debug':
+        try:
+            return render_template('settings/partials/server_debug.html')
+        except Exception as e:
+            current_app.logger.error(f"Debug panel render error: {e}")
+            return '<div class="text-danger small">Error loading debug tools.</div>'
+    if panel == 'config':
+        # Inline server configuration management (mirrors admin.settings POST logic) without redirect
+        from app.admin import get_admin_settings_context, save_system_config
+        import os, uuid
+        ctx = {}
+        if request.method == 'POST':
+            # Gather form fields
+            site_name = request.form.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
+            server_timezone = request.form.get('server_timezone', 'UTC')
+            terminology_preference = request.form.get('terminology_preference', 'genre')
+            background_config = {
+                'type': request.form.get('background_type', 'default'),
+                'solid_color': request.form.get('solid_color', '#667eea'),
+                'gradient_start': request.form.get('gradient_start', '#667eea'),
+                'gradient_end': request.form.get('gradient_end', '#764ba2'),
+                'gradient_direction': request.form.get('gradient_direction', '135deg'),
+                'image_url': request.form.get('background_image_url', ''),
+                'image_position': request.form.get('image_position', 'cover')
+            }
+            # Handle optional image upload
+            if 'background_image_file' in request.files:
+                file = request.files['background_image_file']
+                if file and file.filename:
+                    allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+                    if '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in allowed_extensions:
+                        try:
+                            file_extension = file.filename.rsplit('.', 1)[1].lower()
+                            unique_filename = f"bg_{uuid.uuid4().hex}.{file_extension}"
+                            data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                            if data_dir:
+                                upload_dir = os.path.join(data_dir, 'uploads', 'backgrounds')
+                            else:
+                                base_dir = Path(current_app.root_path).parent
+                                upload_dir = os.path.join(base_dir, 'data', 'uploads', 'backgrounds')
+                            os.makedirs(upload_dir, exist_ok=True)
+                            upload_path = os.path.join(upload_dir, unique_filename)
+                            file.save(upload_path)
+                            background_config['image_url'] = f"/uploads/backgrounds/{unique_filename}"
+                            background_config['type'] = 'image'
+                            flash(f'Background image uploaded successfully: {file.filename}', 'success')
+                        except Exception as e:
+                            current_app.logger.error(f"Inline background upload error: {e}")
+                            flash('Error uploading background image.', 'error')
+                    else:
+                        flash('Invalid background image type.', 'error')
+            config = {
+                'site_name': site_name,
+                'server_timezone': server_timezone,
+                'terminology_preference': terminology_preference,
+                'background_config': background_config
+            }
+            if save_system_config(config):
+                flash('System settings saved.', 'success')
+            else:
+                flash('Failed to save system settings.', 'error')
+        # Always refresh context after (or for GET)
+        ctx = get_admin_settings_context()
+        return render_template('admin/partials/server_config.html', **ctx)
+    if panel == 'ai':
+        from app.admin import get_admin_settings_context, load_ai_config
+        ctx = get_admin_settings_context()
+        ctx['ai_config'] = load_ai_config()
+        return render_template('settings/partials/server_ai.html', **ctx)
+    if panel == 'metadata':
+        return '<div class="card p-3"><h5 class="mb-2">Metadata Providers</h5><p class="small text-muted mb-3">Configuration UI coming soon. This will manage external book/cover/search provider API keys and priorities.</p><div class="alert alert-info small mb-0">Placeholder panel.</div></div>'
+    # 'system' panel removed; info moved to overview section
+    return '<div class="text-danger small">Unknown panel.</div>'
 
 @auth.route('/privacy_settings', methods=['GET', 'POST'])
 @login_required

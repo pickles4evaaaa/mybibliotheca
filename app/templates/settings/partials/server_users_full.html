@@ -1,0 +1,62 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div class="d-flex align-items-center gap-2"><i class="bi bi-people"></i><strong>User Management</strong></div>
+    <form class="d-flex align-items-center gap-2" onsubmit="event.preventDefault(); loadServerUsersFull(this.search.value);">
+      <input type="text" name="search" class="form-control form-control-sm" placeholder="Search" value="{{ search }}" />
+  <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-search"></i></button>
+  <a href="{{ url_for('auth.register') }}" target="_blank" class="btn btn-sm btn-success"><i class="bi bi-person-plus"></i> New</a>
+    </form>
+  </div>
+  <div class="card-body p-0">
+    {% if inline_messages %}
+      <div class="p-2">
+        {% for category, msg in inline_messages %}
+          <div class="alert alert-{{ 'danger' if category in ['error','danger'] else ('warning' if category=='warning' else 'success') }} py-2 mb-2">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <div class="table-responsive" style="max-height:420px;">
+      <table class="table table-sm mb-0 table-hover align-middle">
+  <thead class="table-dark sticky-top"><tr><th>User</th><th>Email</th><th>Status</th><th>Admin</th><th>Joined</th><th style="width:60px;">Edit</th></tr></thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td><strong>{{ u.username }}</strong>{% if u.id == current_user.id %} <span class="badge bg-primary">You</span>{% endif %}</td>
+            <td class="small text-muted">{{ u.email }}</td>
+            <td>{% if u.is_active %}<span class="badge bg-success">Active</span>{% else %}<span class="badge bg-secondary">Inactive</span>{% endif %}</td>
+            <td>{% if u.is_admin %}<span class="badge bg-danger">Admin</span>{% else %}<span class="badge bg-light text-dark">User</span>{% endif %}</td>
+            <td class="small text-muted">{{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '' }}</td>
+            <td><button class="btn btn-sm btn-outline-secondary" onclick="editUserInline('{{ u.id }}')"><i class="bi bi-pencil"></i></button></td>
+          </tr>
+          {% endfor %}
+          {% if not users %}
+          <tr><td colspan="5" class="text-center py-4 text-muted">No users found.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+function loadServerUsersFull(search){
+  const container = document.getElementById('serverDynamicContainer');
+  if(!container) return;
+  const url = new URL("{{ url_for('auth.settings_server_partial', panel='users') }}", window.location.origin);
+  if(search) url.searchParams.set('search', search);
+  container.innerHTML = '<div class="text-muted small p-3">Loading...</div>';
+  fetch(url.toString())
+    .then(r=>r.text())
+    .then(html=> container.innerHTML = html)
+    .catch(()=> container.innerHTML = '<div class="text-danger small p-3">Failed to load users.</div>');
+}
+function editUserInline(uid){
+  const container = document.getElementById('serverDynamicContainer');
+  if(!container) return;
+  const url = `{{ url_for('auth.settings_server_partial', panel='user_edit') }}?user_id=${encodeURIComponent(uid)}`;
+  container.innerHTML = '<div class="text-muted small p-3">Loading editor...</div>';
+  fetch(url, {credentials:'same-origin'})
+    .then(r=>{ if(!r.ok) throw new Error(r.status); return r.text(); })
+    .then(html=> container.innerHTML = html)
+    .catch(err=> container.innerHTML = '<div class="text-danger small p-3">Failed to load editor ('+err+').</div>');
+}
+</script>

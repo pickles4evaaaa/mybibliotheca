@@ -1,0 +1,18 @@
+{% with msgs = get_flashed_messages(with_categories=True) %}
+  {% if msgs %}
+    <div class="mb-2">
+      {% for c,m in msgs %}<div class="alert alert-{{ 'danger' if c=='error' else c }} py-1 mb-1 small">{{ m }}</div>{% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+<form method="POST" action="{{ url_for('auth.settings_privacy_partial') }}" hx-post="{{ url_for('auth.settings_privacy_partial') }}" hx-target="#personalDynamicContainer" hx-swap="innerHTML" class="mb-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <div class="form-check form-switch mb-2">
+    {{ form.share_current_reading(class='form-check-input') }} {{ form.share_current_reading.label(class='form-check-label') }}
+  </div>
+  <div class="form-check form-switch mb-2">
+    {{ form.share_reading_activity(class='form-check-input') }} {{ form.share_reading_activity.label(class='form-check-label') }}
+  </div>
+  <button class="btn btn-info text-white mb-0"><i class="bi bi-shield-check"></i> Save Privacy</button>
+</form>
+

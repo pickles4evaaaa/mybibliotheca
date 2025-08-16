@@ -44,29 +44,30 @@ class SafeKuzuManager:
     """
     
     def __init__(self, database_path: Optional[str] = None):
+        """Initialize manager state (no heavy I/O)."""
         if database_path:
             self.database_path = database_path
         else:
             kuzu_dir = os.getenv('KUZU_DB_PATH', 'data/kuzu')
             self.database_path = os.path.join(kuzu_dir, 'bibliotheca.db')
-        
+
         # Thread safety controls
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         self._database: Optional[kuzu.Database] = None
         self._is_initialized = False
-        
+        self._fatal_init_error: Optional[Exception] = None  # cached first fatal init error
+
         # Connection tracking for debugging and monitoring
-        self._active_connections: Dict[int, Dict[str, Any]] = {}  # thread_id -> connection_info
+        self._active_connections: Dict[int, Dict[str, Any]] = {}
         self._connection_count = 0
         self._total_connections_created = 0
-        
+
         # Performance and safety metrics
         self._last_access_time = None
         self._initialization_time = None
         self._lock_wait_times: List[float] = []
-        
+
         logger.info(f"SafeKuzuManager initialized for database: {self.database_path}")
-        # Track creating PID to detect forks
         try:
             import os as _os
             self._creator_pid = _os.getpid()
@@ -114,6 +115,9 @@ class SafeKuzuManager:
 
         if self._is_initialized:
             return
+        if self._fatal_init_error is not None:
+            # Don't re-attempt initialization; raise cached error
+            raise self._fatal_init_error
             
         start_time = time.time()
         thread_info = self._get_thread_info()
@@ -142,12 +146,26 @@ class SafeKuzuManager:
                     'bad_alloc' in err_str or
                     'Error during recovery' in err_str
                 )
-                auto_recover = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() in ('1', 'true', 'yes')
+                auto_recover_clear = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() in ('1', 'true', 'yes')
+                # New opt-in flag (replaces old implicit behaviour). Default: DO NOT rename silently.
+                auto_rename_enabled = os.getenv('KUZU_ENABLE_AUTO_RENAME_CORRUPT', 'false').lower() in ('1','true','yes')
+                legacy_disable_rename = os.getenv('KUZU_DISABLE_AUTO_RENAME_CORRUPT', 'false').lower() in ('1','true','yes')
+                no_auto_recover = os.getenv('KUZU_NO_AUTO_RECOVER', 'false').lower() in ('1','true','yes')
+
                 if is_io_corruption:
                     db_path = Path(self.database_path)
-                    if auto_recover:
+                    # STRICT MODE: if not explicitly opted in, raise immediately so operator can see & act.
+                    if no_auto_recover or (not auto_recover_clear and not auto_rename_enabled) or legacy_disable_rename:
+                        logger.error(
+                            "[KUZU] ❌ Detected potential IO corruption during open. "
+                            "No automatic recovery performed (set KUZU_AUTO_RECOVER_CLEAR=1 for destructive fresh DB, "
+                            "or KUZU_ENABLE_AUTO_RENAME_CORRUPT=1 for soft rename). Original error: %s", err_str
+                        )
+                        # Re-raise original exception to make failure visible
+                        raise open_err
+
+                    if auto_recover_clear:
                         try:
-                            # Full backup + wipe strategy
                             ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
                             backup_dir = db_path.parent / 'corrupt_backups'
                             backup_dir.mkdir(parents=True, exist_ok=True)
@@ -164,30 +182,37 @@ class SafeKuzuManager:
                                     db_path.unlink(missing_ok=True)  # type: ignore[arg-type]
                                 logger.warning(f"[KUZU] 📦 Backed up suspected corrupt DB to {target}")
                             self._database = kuzu.Database(self.database_path)
-                            logger.warning("[KUZU] ✅ Auto-recovery created fresh database after IO error (env-driven)")
+                            logger.warning("[KUZU] ✅ Auto-recovery (CLEAR) created fresh database after IO error (env-driven)")
                         except Exception as rec_err:  # pragma: no cover
-                            logger.error(f"[KUZU] ❌ Auto-recovery failed: {rec_err}")
+                            logger.error(f"[KUZU] ❌ Auto-recovery (CLEAR) failed: {rec_err}")
                             raise open_err
-                    else:
-                        # Non-destructive soft fallback: rename corrupt file and create new
-                        if os.getenv('KUZU_DISABLE_AUTO_RENAME_CORRUPT', 'false').lower() not in ('1','true','yes'):
+                    elif auto_rename_enabled:
+                        try:
+                            original_size = 0
                             try:
-                                if db_path.exists() and db_path.is_file():
-                                    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-                                    renamed = db_path.parent / f"bibliotheca.db.corrupt.{ts}"
-                                    db_path.rename(renamed)
-                                    logger.warning(f"[KUZU] 📛 Detected IO corruption. Renamed original DB to {renamed.name} (set KUZU_DISABLE_AUTO_RENAME_CORRUPT=1 to disable)")
-                                # Attempt fresh create
-                                self._database = kuzu.Database(self.database_path)
-                                logger.warning("[KUZU] ✅ Created fresh database after soft rename (enable KUZU_AUTO_RECOVER_CLEAR=1 for full backup+wipe)")
-                            except Exception as soft_err:
-                                logger.error(f"[KUZU] ❌ Soft rename recovery failed: {soft_err}")
-                                raise open_err
-                        else:
-                            logger.error("[KUZU] ❌ IO corruption detected but auto-recovery disabled (set KUZU_AUTO_RECOVER_CLEAR=1 or unset KUZU_DISABLE_AUTO_RENAME_CORRUPT)")
+                                if db_path.exists():
+                                    if db_path.is_file():
+                                        original_size = db_path.stat().st_size
+                                    else:
+                                        # Directory size estimation
+                                        original_size = sum(f.stat().st_size for f in db_path.glob('**/*') if f.is_file())
+                            except Exception:
+                                pass
+                            if db_path.exists() and db_path.is_file():
+                                ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                                renamed = db_path.parent / f"bibliotheca.db.corrupt.{ts}"
+                                db_path.rename(renamed)
+                                logger.warning(
+                                    f"[KUZU] 📛 Detected IO corruption (size={original_size} bytes). Renamed original DB to {renamed.name}. "
+                                    f"(Explicit opt-in via KUZU_ENABLE_AUTO_RENAME_CORRUPT=1)."
+                                )
+                            self._database = kuzu.Database(self.database_path)
+                            logger.warning("[KUZU] ✅ Created fresh database after soft rename (opt-in mode)")
+                        except Exception as soft_err:
+                            logger.error(f"[KUZU] ❌ Soft rename recovery failed: {soft_err}")
                             raise open_err
                 else:
-                    # Reraise original error if not recoverable / not opted in
+                    # Not a recognised corruption pattern: re-raise
                     raise
 
             # CRITICAL FIX: Initialize the database schema (may still raise)
@@ -217,6 +242,8 @@ class SafeKuzuManager:
                         f"Failed to initialize KuzuDB database: {e}")
             self._is_initialized = False
             self._database = None
+            if self._fatal_init_error is None:
+                self._fatal_init_error = e  # cache first fatal error
             if _VERBOSE_INIT:
                 try:
                     print(f"[KUZU] ❌ Initialization error: {e}")
@@ -250,6 +277,10 @@ class SafeKuzuManager:
         lock_start_time = time.time()
         thread_info = self._get_thread_info()
         connection_id = None
+
+        # Fast-path: if previous fatal init error cached, raise immediately without lock contention
+        if self._fatal_init_error is not None:
+            raise self._fatal_init_error
         
         # Track lock waiting time for performance monitoring
         with self._lock:
@@ -268,6 +299,8 @@ class SafeKuzuManager:
             # Initialize database if needed
             if not self._is_initialized:
                 self._initialize_database()
+            if self._fatal_init_error is not None:
+                raise self._fatal_init_error
             
             if self._database is None:
                 raise RuntimeError("KuzuDB database not properly initialized")

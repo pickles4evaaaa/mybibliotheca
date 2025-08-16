@@ -1,0 +1,151 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2"><i class="bi bi-archive"></i><strong>Simple Backup & Restore</strong></div>
+    <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#createBackupModal"><i class="bi bi-plus"></i> Create Backup</button>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-2"><div class="p-2 border rounded text-center"><div class="fw-bold">{{ backup_stats.total_backups }}</div><div class="text-muted small">Total</div></div></div>
+      <div class="col-6 col-md-2"><div class="p-2 border rounded text-center"><div class="fw-bold">{{ backup_stats.database_size_formatted }}</div><div class="text-muted small">DB Size</div></div></div>
+      <div class="col-6 col-md-2"><div class="p-2 border rounded text-center"><div class="fw-bold">{{ backup_stats.covers_count }}</div><div class="text-muted small">Covers</div></div></div>
+      <div class="col-6 col-md-2"><div class="p-2 border rounded text-center"><div class="fw-bold">{{ backup_stats.covers_size_formatted }}</div><div class="text-muted small">Images</div></div></div>
+      <div class="col-6 col-md-2"><div class="p-2 border rounded text-center"><div class="fw-bold">{{ backup_stats.newest_backup_age or 'None' }}</div><div class="text-muted small">Last</div></div></div>
+      <div class="col-6 col-md-2"><div class="p-2 border rounded text-center"><div class="fw-bold">{% if backup_stats.total_backups>0 %}<span class="text-success">Ready</span>{% else %}<span class="text-danger">None</span>{% endif %}</div><div class="text-muted small">Status</div></div></div>
+    </div>
+    <div class="border rounded bg-light p-3 mb-3">
+      <h6 class="mb-2"><i class="bi bi-clock-history me-1"></i> Automatic Backup Settings</h6>
+      <form id="backupSettingsForm" class="row g-2 align-items-end small">
+        <div class="col-6 col-md-2"> <label class="form-label">Enabled</label><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="enabledToggle" {% if backup_settings.enabled %}checked{% endif %}></div></div>
+        <div class="col-6 col-md-2"> <label class="form-label">Retention (days)</label><input type="number" min="1" class="form-control form-control-sm" id="retentionDays" value="{{ backup_settings.retention_days }}"></div>
+        <div class="col-6 col-md-2"> <label class="form-label">Hour</label><input type="number" min="0" max="23" class="form-control form-control-sm" id="scheduledHour" value="{{ backup_settings.scheduled_hour }}"></div>
+        <div class="col-6 col-md-2"> <label class="form-label">Minute</label><input type="number" min="0" max="59" class="form-control form-control-sm" id="scheduledMinute" value="{{ backup_settings.scheduled_minute }}"></div>
+        <div class="col-6 col-md-2"> <label class="form-label">Frequency</label><select id="frequency" class="form-select form-select-sm"><option value="daily" {% if backup_settings.frequency=='daily' %}selected{% endif %}>Daily</option><option value="weekly" {% if backup_settings.frequency=='weekly' %}selected{% endif %}>Weekly</option></select></div>
+        <div class="col-6 col-md-2 d-grid"> <button class="btn btn-primary btn-sm"><i class="bi bi-save"></i> Save</button></div>
+        <div class="col-12"><small class="text-muted">Last run: {{ backup_settings.last_run or 'None' }}</small><div id="settingsFeedback" class="small mt-1"></div></div>
+      </form>
+    </div>
+    {% if backups %}
+    <div class="table-responsive mb-3" style="max-height:360px;">
+      <table class="table table-sm table-hover align-middle">
+        <thead class="table-dark sticky-top"><tr><th>Name</th><th>Created</th><th>Size</th><th>DB Size</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+        <tbody>
+          {% for b in backups %}
+          <tr>
+            <td><strong>{{ b.name }}</strong>{% if b.description %}<br><small class="text-muted">{{ b.description }}</small>{% endif %}</td>
+            <td>{{ b.created_at.strftime('%Y-%m-%d %H:%M:%S') }}<br><small class="text-muted">{{ b.age }}</small></td>
+            <td>{{ b.size_formatted }}</td>
+            <td>{{ b.database_size_formatted }}</td>
+            <td>{% if b.valid %}<span class="badge bg-success">Valid</span>{% else %}<span class="badge bg-danger">Invalid</span>{% endif %}</td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <a href="{{ url_for('simple_backup.download_backup', backup_id=b.id) }}" class="btn btn-outline-primary" title="Download"><i class="bi bi-download"></i></a>
+                <button type="button" class="btn btn-outline-warning" onclick="confirmRestore('{{ b.id }}','{{ b.name }}')" title="Restore"><i class="bi bi-arrow-clockwise"></i></button>
+                <button type="button" class="btn btn-outline-danger" onclick="confirmDelete('{{ b.id }}','{{ b.name }}')" title="Delete"><i class="bi bi-trash"></i></button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-center py-4 text-muted"><i class="bi bi-inbox display-6 d-block mb-2"></i>No backups yet.</div>
+    {% endif %}
+    <div class="d-grid">
+      <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#createBackupModal"><i class="bi bi-plus"></i> New Backup</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Backup Modal -->
+<div class="modal fade" id="createBackupModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <form id="createBackupInlineForm" method="post" action="{{ url_for('simple_backup.create_backup') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <div class="modal-header"><h5 class="modal-title"><i class="bi bi-plus-circle me-1"></i>Create Backup</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">Name</label><input name="custom_name" class="form-control" required /></div>
+        <div class="mb-3"><label class="form-label">Description</label><textarea name="description" class="form-control" rows="2"></textarea></div>
+        <div class="alert alert-info small mb-0"><i class="bi bi-info-circle me-1"></i>Backs up database & cover images.</div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary"><i class="bi bi-plus-circle me-1"></i>Create</button></div>
+    </form>
+  </div></div>
+</div>
+
+<form id="deleteForm" method="post" style="display:none;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+</form>
+<div id="backupInlineMessages" class="mt-2"></div>
+<script>
+function refreshBackupPanel(){
+  const container = document.getElementById('dataDynamicContainer');
+  if(!container) return;
+  fetch("{{ url_for('auth.settings_data_partial', panel='backup') }}")
+    .then(r=>r.text())
+    .then(html=> container.innerHTML = html)
+    .catch(()=>{
+      const m=document.getElementById('backupInlineMessages');
+      if(m) m.innerHTML='<div class="alert alert-danger py-1 mb-2 small">Failed to refresh backups.</div>';
+    });
+}
+function confirmRestore(id,name){
+  if(!confirm('Restore backup "'+name+'"? This replaces all current data.')) return;
+  const form = new FormData();
+  form.append('csrf_token','{{ csrf_token() }}');
+  form.append('confirm','yes');
+  fetch('{{ url_for("simple_backup.restore_backup", backup_id="__ID__") }}'.replace('__ID__',id), {method:'POST', body:form, headers:{'X-Requested-With':'XMLHttpRequest'}})
+    .then(r=>r.text())
+    .then(()=>{ const m=document.getElementById('backupInlineMessages'); if(m) m.innerHTML='<div class="alert alert-warning py-1 mb-2 small">Restore initiated. Page may reload after completion.</div>'; refreshBackupPanel(); })
+    .catch(()=>{ const m=document.getElementById('backupInlineMessages'); if(m) m.innerHTML='<div class="alert alert-danger py-1 mb-2 small">Restore failed.</div>'; });
+}
+function confirmDelete(id,name){
+  if(!confirm('Delete backup "'+name+'"?')) return;
+  const form = new FormData();
+  form.append('csrf_token','{{ csrf_token() }}');
+  fetch('{{ url_for("simple_backup.delete_backup", backup_id="__ID__") }}'.replace('__ID__',id), {method:'POST', body:form, headers:{'X-Requested-With':'XMLHttpRequest'}})
+    .then(r=>r.text())
+    .then(()=>{ const m=document.getElementById('backupInlineMessages'); if(m) m.innerHTML='<div class="alert alert-success py-1 mb-2 small">Backup deleted.</div>'; refreshBackupPanel(); })
+    .catch(()=>{ const m=document.getElementById('backupInlineMessages'); if(m) m.innerHTML='<div class="alert alert-danger py-1 mb-2 small">Delete failed.</div>'; });
+}
+var settingsForm = document.getElementById('backupSettingsForm');
+if(settingsForm){
+  settingsForm.addEventListener('submit', function(e){
+    e.preventDefault();
+    var payload = {
+      enabled: document.getElementById('enabledToggle').checked,
+      retention_days: parseInt(document.getElementById('retentionDays').value,10),
+      scheduled_hour: parseInt(document.getElementById('scheduledHour').value,10),
+      scheduled_minute: parseInt(document.getElementById('scheduledMinute').value,10),
+      frequency: document.getElementById('frequency').value
+    };
+  fetch('{{ url_for("simple_backup.api_backup_settings") }}', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    }).then(r=>r.json()).then(d=>{
+      var fb = document.getElementById('settingsFeedback');
+      if(!fb) return;
+      if(d.status==='ok') fb.innerHTML='<span class="text-success"><i class="bi bi-check-circle me-1"></i>Saved</span>';
+      else fb.innerHTML='<span class="text-danger">'+(d.error||'Failed')+'</span>';
+    }).catch(err=>{
+      var fb = document.getElementById('settingsFeedback');
+      if(fb) fb.innerHTML='<span class="text-danger">Err '+err+'</span>';
+    });
+  });
+}
+// Inline create backup form submission
+const createForm = document.getElementById('createBackupInlineForm');
+if(createForm){
+  createForm.addEventListener('submit', function(e){
+    e.preventDefault();
+    const fd = new FormData(createForm);
+    fetch(createForm.action, {method:'POST', body:fd, headers:{'X-Requested-With':'XMLHttpRequest'}})
+      .then(r=>r.text())
+      .then(()=>{ const m=document.getElementById('backupInlineMessages'); if(m) m.innerHTML='<div class="alert alert-success py-1 mb-2 small">Backup created.</div>'; refreshBackupPanel(); })
+      .catch(()=>{ const m=document.getElementById('backupInlineMessages'); if(m) m.innerHTML='<div class="alert alert-danger py-1 mb-2 small">Create failed.</div>'; });
+    const modalEl=document.getElementById('createBackupModal');
+    if(modalEl){ try { const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl); modal.hide(); } catch(err){} }
+  });
+}
+</script>

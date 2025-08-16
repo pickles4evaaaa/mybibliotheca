@@ -311,6 +311,37 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to get users: {e}")
             return []
 
+    async def delete(self, user_id: str) -> bool:
+        """Delete a user by ID (DETACH DELETE). Returns True only if user existed."""
+        try:
+            # First check existence
+            check_query = "MATCH (u:User {id: $user_id}) RETURN u.id as id"
+            result = self.safe_manager.execute_query(check_query, {"user_id": user_id})
+            data = _convert_query_result_to_list(result)
+            if not data:
+                logger.info(f"[USER_DELETE_DEBUG] Repo.delete user_id={user_id} NOT FOUND (nothing to delete)")
+                return False
+            del_query = "MATCH (u:User {id: $user_id}) DETACH DELETE u"
+            self.safe_manager.execute_query(del_query, {"user_id": user_id})
+            logger.info(f"[USER_DELETE_DEBUG] Repo.delete success user_id={user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[USER_DELETE_DEBUG] Repo.delete exception user_id={user_id} error={e}")
+            return False
+
+    async def count_admins(self) -> int:
+        """Return count of admin users."""
+        try:
+            query = "MATCH (u:User {is_admin: true}) RETURN COUNT(u) as c"
+            result = self.safe_manager.execute_query(query)
+            data = _convert_query_result_to_list(result)
+            if data:
+                return int(data[0].get('c', 0))
+            return 0
+        except Exception as e:
+            logger.error(f"❌ Failed counting admin users: {e}")
+            return 0
+
 
 class KuzuPersonRepository:
     """Clean person repository using simplified Kuzu schema."""

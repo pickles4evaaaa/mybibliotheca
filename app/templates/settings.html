@@ -2,247 +2,541 @@
 {% block title %}Settings - MyBibliotheca{% endblock %}
 {% block content %}
 <style>
-.accordion-item {
-    border: 1px solid rgba(0,0,0,.125);
-    border-radius: 0.375rem;
+.settings-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
 }
-
-.accordion-button {
-    font-weight: 500;
-    border-radius: 0.375rem;
+.settings-tile {
+    position: relative;
+    border-radius: .75rem;
+    padding: 1.1rem 1.1rem 1rem 1.1rem;
+    background: var(--bs-light);
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all .25s ease;
+    box-shadow: 0 4px 10px -4px rgba(0,0,0,.08);
 }
-
-.accordion-button:not(.collapsed) {
-    color: white;
-    box-shadow: none;
-}
-
-.accordion-button.bg-primary:not(.collapsed) {
-    background-color: var(--bs-primary) !important;
-}
-
-.accordion-button.bg-success:not(.collapsed) {
-    background-color: var(--bs-success) !important;
-}
-
-.accordion-button.bg-info:not(.collapsed) {
-    background-color: var(--bs-info) !important;
-}
-
-.accordion-button.bg-warning:not(.collapsed) {
-    background-color: var(--bs-warning) !important;
-}
-
-.accordion-button.bg-secondary:not(.collapsed) {
-    background-color: var(--bs-secondary) !important;
-}
-
-.accordion-button.bg-dark:not(.collapsed) {
-    background-color: var(--bs-dark) !important;
-}
-
-.accordion-button.bg-danger:not(.collapsed) {
-    background-color: var(--bs-danger) !important;
-}
-
-.accordion-button:focus {
-    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
-}
-
-.accordion-body {
-    padding: 1.25rem;
-}
-
-.breadcrumb-item a {
-    text-decoration: none;
-}
-
-/* Smooth transitions for accordion */
-.accordion-collapse {
-    transition: height 0.35s ease;
-}
-
-/* Better spacing between accordion items */
-.accordion-item:not(:last-child) {
-    margin-bottom: 0.5rem;
-}
-
-.btn-lg {
-    padding: 0.75rem 1.5rem;
-    font-size: 1.1rem;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .accordion-body {
-        padding: 1rem;
-    }
-    
-    .col-lg-8 {
-        max-width: 100%;
-    }
-}
-
-/* Dark mode enhancements for Settings */
-[data-theme="dark"] .text-muted {
-    color: #b0b0b0 !important;
-}
-
-[data-theme="dark"] small.text-muted {
-    color: #c0c0c0 !important;
-}
-
-[data-theme="dark"] .accordion-item {
-    background-color: rgba(40, 40, 40, 0.8) !important;
-    border-color: #404040 !important;
-}
-
-[data-theme="dark"] .accordion-body {
-    background-color: rgba(40, 40, 40, 0.8) !important;
-    color: #e0e0e0 !important;
-}
-
-[data-theme="dark"] .accordion-body p {
-    color: #e0e0e0 !important;
-}
+[data-theme="dark"] .settings-tile { background: rgba(40,40,40,.85); }
+.settings-tile:hover { transform: translateY(-3px); box-shadow: 0 8px 18px -6px rgba(0,0,0,.18); }
+.settings-tile.active { border-color: var(--bs-primary); box-shadow: 0 0 0 4px rgba(var(--bs-primary-rgb), .15); background: linear-gradient(135deg,var(--bs-light),#eef5ff); }
+[data-theme="dark"] .settings-tile.active { background: linear-gradient(135deg,#2b2b2b,#1e2533); }
+.settings-tile h3 { font-size: 1.05rem; font-weight:600; margin:0 0 .35rem; display:flex; align-items:center; gap:.5rem; }
+.settings-tile .stat { font-size: .9rem; opacity:.85; }
+.settings-tile small { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; opacity:.6; }
+.settings-section { display:none; animation: fade .35s ease; }
+.settings-section.active { display:block; }
+@keyframes fade { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform: translateY(0);} }
+.section-header { border-bottom:1px solid rgba(0,0,0,.08); margin-bottom:1.25rem; padding-bottom:.5rem; }
+[data-theme="dark"] .section-header { border-color:#333; }
+.quick-links a { text-decoration:none; }
 </style>
 
-<div class="container mt-4">
-    <!-- Page Header -->
+<div class="container mt-4 mb-5" id="settingsRoot">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h2 mb-0">
-            <i class="bi bi-gear-fill me-2"></i>Settings
-        </h1>
-        <div>
-            <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left me-1"></i>Back to Library
-            </a>
-        </div>
+        <h1 class="h2 mb-0"><i class="bi bi-gear-fill me-2"></i>Settings</h1>
+        <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back</a>
     </div>
 
-    <div class="row">
-        <div class="col-lg-8 mx-auto">
-            <!-- Settings Accordion -->
-            <div class="accordion" id="settingsAccordion">
-                
-                <!-- Personal Account -->
-                <div class="accordion-item shadow-sm mb-3">
-                    <h2 class="accordion-header">
-                        <button class="accordion-button bg-primary text-white" type="button" 
-                                data-bs-toggle="collapse" data-bs-target="#collapsePersonal" 
-                                aria-expanded="true" aria-controls="collapsePersonal">
-                            <i class="bi bi-person-circle me-2"></i>Personal Account
-                        </button>
-                    </h2>
-                    <div id="collapsePersonal" class="accordion-collapse collapse show" data-bs-parent="#settingsAccordion">
-                        <div class="accordion-body">
-                            <p class="text-muted mb-3">Manage your profile, password, and privacy preferences.</p>
-                            <div class="row g-3">
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('auth.profile') }}" class="btn btn-primary w-100">
-                                        <i class="bi bi-person me-1"></i>Profile
-                                    </a>
-                                </div>
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('auth.change_password') }}" class="btn btn-warning w-100">
-                                        <i class="bi bi-lock me-1"></i>Change Password
-                                    </a>
-                                </div>
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('auth.privacy_settings') }}" class="btn btn-info w-100">
-                                        <i class="bi bi-shield-check me-1"></i>Privacy
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+    <div class="settings-tiles" id="settingsTiles" role="tablist" aria-label="Settings Sections">
+        <div class="settings-tile active" data-target="overviewSection" role="tab" aria-selected="true" tabindex="0">
+            <h3><i class="bi bi-bar-chart"></i> Overview</h3>
+            <div class="stat mb-1"><strong>{{ stats.books }}</strong> Books • <strong>{{ stats.people }}</strong> People</div>
+            <div class="stat"><strong>{{ stats.reading_logs }}</strong> Reading Logs • <strong>{{ stats.users }}</strong> Users</div>
+            <small>Library Snapshot</small>
+        </div>
+        <div class="settings-tile" data-target="personalSection" role="tab" aria-selected="false" tabindex="0">
+            <h3><i class="bi bi-person-circle"></i> Personal</h3>
+            <div class="stat mb-1">Profile • Password</div>
+            <div class="stat">Privacy & Preferences</div>
+            <small>Your Account</small>
+        </div>
+        <div class="settings-tile" data-target="dataSection" role="tab" aria-selected="false" tabindex="0">
+            <h3><i class="bi bi-database"></i> Data & Import</h3>
+            <div class="stat mb-1">Import • Export</div>
+            <div class="stat">Locations & Backups</div>
+            <small>Library Data</small>
+        </div>
+        {% if current_user.is_admin %}
+        <div class="settings-tile" data-target="serverSection" role="tab" aria-selected="false" tabindex="0">
+            <h3><i class="bi bi-shield-lock"></i> Server</h3>
+            <div class="stat mb-1">Admin, Users</div>
+            <div class="stat">Debug & System</div>
+            <small>Admin Only</small>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Dynamic Sections -->
+    <div id="sectionsContainer">
+        <div class="settings-section active" id="overviewSection">
+            <div class="section-header d-flex align-items-center justify-content-between">
+                <h2 class="h4 mb-0"><i class="bi bi-bar-chart"></i> Library Overview</h2>
+                <span class="text-muted small">Snapshot</span>
+            </div>
+            <div class="row g-4 mb-4">
+                <div class="col-sm-6 col-lg-3">
+                    <div class="p-3 rounded bg-primary text-white h-100 shadow-sm">
+                        <div class="fw-semibold small text-uppercase opacity-75">Books</div>
+                        <div class="display-6 fw-bold">{{ stats.books }}</div>
+                        <div class="small opacity-75">Avg/User: {{ stats.avg_books_per_user }}</div>
                     </div>
                 </div>
-
-                <!-- Library & Data -->
-                <div class="accordion-item shadow-sm mb-3">
-                    <h2 class="accordion-header">
-                        <button class="accordion-button collapsed bg-success text-white" type="button" 
-                                data-bs-toggle="collapse" data-bs-target="#collapseLibrary" 
-                                aria-expanded="false" aria-controls="collapseLibrary">
-                            <i class="bi bi-bookshelf me-2"></i>Library & Data
-                        </button>
-                    </h2>
-                    <div id="collapseLibrary" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
-                        <div class="accordion-body">
-                            <p class="text-muted mb-3">Manage locations, view activity, and backup your data.</p>
-                            <div class="row g-3">
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('locations.manage_locations') }}" class="btn btn-success w-100">
-                                        <i class="bi bi-house me-1"></i>Locations
-                                    </a>
-                                </div>
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('auth.my_activity') }}" class="btn btn-outline-success w-100">
-                                        <i class="bi bi-graph-up me-1"></i>Activity
-                                    </a>
-                                </div>
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('main.download_db') }}" class="btn btn-outline-success w-100">
-                                        <i class="bi bi-database me-1"></i>Backup
-                                    </a>
-                                </div>
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('import.import_reading_history') }}" class="btn btn-info w-100">
-                                        <i class="bi bi-calendar-check me-1"></i>Import Reading History
-                                    </a>
-                                </div>
-                                <div class="col-md-4">
-                                    <a href="{{ url_for('import.import_books') }}" class="btn btn-outline-info w-100">
-                                        <i class="bi bi-book-half me-1"></i>Import Books
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="p-3 rounded bg-success text-white h-100 shadow-sm">
+                        <div class="fw-semibold small text-uppercase opacity-75">People</div>
+                        <div class="display-6 fw-bold">{{ stats.people }}</div>
+                        <div class="small opacity-75">Contributors</div>
                     </div>
                 </div>
-
-                 <!-- Admin Tools (only visible to admins) -->
+                <div class="col-sm-6 col-lg-3">
+                    <div class="p-3 rounded bg-info text-white h-100 shadow-sm">
+                        <div class="fw-semibold small text-uppercase opacity-75">Reading Logs</div>
+                        <div class="display-6 fw-bold">{{ stats.reading_logs }}</div>
+                        <div class="small opacity-75">Entries</div>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="p-3 rounded bg-warning text-dark h-100 shadow-sm">
+                        <div class="fw-semibold small text-uppercase opacity-75">Users</div>
+                        <div class="display-6 fw-bold">{{ stats.users }}</div>
+                        <div class="small opacity-75">Active {{ stats.active_users }} • Admins {{ stats.admins }}</div>
+                    </div>
+                </div>
                 {% if current_user.is_admin %}
-                <div class="accordion-item shadow-sm mb-3">
-                    <h2 class="accordion-header">
-                        <button class="accordion-button collapsed bg-danger text-white" type="button" 
-                                data-bs-toggle="collapse" data-bs-target="#collapseAdmin" 
-                                aria-expanded="false" aria-controls="collapseAdmin">
-                            <i class="bi bi-shield-exclamation me-2"></i>Administrator Tools
-                        </button>
-                    </h2>
-                    <div id="collapseAdmin" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
-                        <div class="accordion-body">
-                            <p class="text-muted mb-3">Access administrative functions and manage the MyBibliotheca instance.</p>
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <a href="{{ url_for('admin.dashboard') }}" class="btn btn-danger w-100">
-                                        <i class="bi bi-speedometer2 me-1"></i>Admin Dashboard
-                                    </a>
-                                </div>
-                                <div class="col-md-6">
-                                    <a href="{{ url_for('admin.users') }}" class="btn btn-outline-danger w-100">
-                                        <i class="bi bi-people me-1"></i>User Management
-                                    </a>
-                                </div>
-                                <div class="col-md-6">
-                                    <a href="{{ url_for('admin.settings') }}" class="btn btn-outline-warning w-100">
-                                        <i class="bi bi-gear-wide-connected me-1"></i>Server Settings
-                                    </a>
-                                </div>
-                                <div class="col-md-6">
-                                    <a href="{{ url_for('debug_admin.debug_dashboard') }}" class="btn btn-outline-info w-100">
-                                        <i class="bi bi-bug me-1"></i>Debug System
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="p-3 rounded bg-secondary text-white h-100 shadow-sm">
+                        <div class="fw-semibold small text-uppercase opacity-75">System</div>
+                        <div class="display-6 fw-bold" style="font-size:1.75rem;">{{ stats.app_version }}</div>
+                        <div class="small opacity-75">UTC {{ stats.utc_time }}</div>
                     </div>
                 </div>
                 {% endif %}
             </div>
         </div>
+
+    <div class="settings-section" id="personalSection">
+            <div class="row g-3 mb-3" id="personalActionBar">
+                <div class="col-md-4"><button data-personal-panel="profile" class="btn btn-primary w-100 personal-nav"><i class="bi bi-person"></i> Profile</button></div>
+                <div class="col-md-4"><button data-personal-panel="password" class="btn btn-warning w-100 personal-nav"><i class="bi bi-lock"></i> Password</button></div>
+                <div class="col-md-4"><button data-personal-panel="privacy" class="btn btn-info w-100 personal-nav"><i class="bi bi-shield-check"></i> Privacy</button></div>
+            </div>
+            <div id="personalDynamicContainer" class="mb-3"></div>
+            <div class="alert alert-light border small mb-0" role="alert">
+                <i class="bi bi-info-circle me-1"></i> Manage your account and privacy preferences here.
+            </div>
+        </div>
+
+    <div class="settings-section" id="dataSection">
+            <div class="row g-3 mb-3" id="dataActionBar">
+                <div class="col-md-4"><button data-data-panel="import_books" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-book-half"></i> Import Books</button></div>
+                <div class="col-md-4"><button data-data-panel="import_reading" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-calendar-check"></i> Import Reading</button></div>
+                {% if current_user.is_admin %}
+                <div class="col-md-4"><button data-data-panel="backup" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-cloud-download"></i> Backup Manager</button></div>
+                {% else %}
+                <div class="col-md-4"><button data-data-panel="export_logs" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-file-earmark-arrow-down"></i> Export Logs</button></div>
+                {% endif %}
+            </div>
+            <div id="dataDynamicContainer" class="mb-3"></div>
+            <div class="alert alert-light border small mb-0" role="alert">
+                <i class="bi bi-info-circle me-1"></i> Manage library data, imports, and backups.
+            </div>
+        </div>
+
+        {% if current_user.is_admin %}
+        <div class="settings-section" id="serverSection">
+            <div class="row g-3 mb-3" id="serverActionBar">
+                <div class="col-md-2"><button data-server-panel="config" data-color="danger" class="btn btn-outline-danger w-100 server-nav"><i class="bi bi-gear-wide-connected"></i> Config</button></div>
+                <div class="col-md-2"><button data-server-panel="users" data-color="danger" class="btn btn-outline-danger w-100 server-nav"><i class="bi bi-people"></i> Users</button></div>
+                <div class="col-md-2"><button data-server-panel="metadata" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-collection"></i> Metadata Providers</button></div>
+                <div class="col-md-3"><button data-server-panel="ai" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-robot"></i> AI</button></div>
+                <div class="col-md-3"><button data-server-panel="debug" data-color="info" class="btn btn-outline-info w-100 server-nav"><i class="bi bi-bug"></i> Debug</button></div>
+            </div>
+            <div id="serverDynamicContainer" class="mb-3"></div>
+            <div class="alert alert-warning small mb-0" role="alert">
+                <i class="bi bi-exclamation-triangle me-1"></i> Administrative actions can affect all users. Proceed carefully.
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const tiles = document.querySelectorAll('.settings-tile');
+    function activate(tile){
+        const target = tile.getAttribute('data-target');
+        tiles.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected','false'); });
+        tile.classList.add('active');
+        tile.setAttribute('aria-selected','true');
+        document.querySelectorAll('.settings-section').forEach(sec => {
+            if (sec.id === target) sec.classList.add('active'); else sec.classList.remove('active');
+        });
+    }
+    tiles.forEach(tile => {
+        tile.addEventListener('click', () => activate(tile));
+        tile.addEventListener('keydown', (e) => {
+            if(['Enter',' '].includes(e.key)){ e.preventDefault(); activate(tile); }
+            if(['ArrowRight','ArrowLeft'].includes(e.key)){
+                const arr = Array.from(tiles);
+                const idx = arr.indexOf(tile);
+                const dir = e.key === 'ArrowRight' ? 1 : -1;
+                let next = (idx + dir + arr.length) % arr.length;
+                arr[next].focus();
+            }
+        });
+    });
+    // Server dynamic panels (AJAX embed)
+    const serverContainer = document.getElementById('serverDynamicContainer');
+    // Global delegated handlers for user edit actions (robust against non-executed partial scripts)
+    function ensureUserEditDelegation(){
+        if(!serverContainer) return;
+        if(serverContainer._userEditDelegationAttached) return; // idempotent
+    serverContainer.addEventListener('click', (e)=>{
+            const btn = e.target.closest('button[data-user-action]');
+            if(!btn) return;
+            const action = btn.getAttribute('data-user-action');
+            const uid = btn.getAttribute('data-user-id');
+            if(!action || !uid) return;
+            const csrfEl = serverContainer.querySelector('#deleteUserInlineForm input[name="csrf_token"]');
+            const csrf = csrfEl? csrfEl.value : '';
+            if(action==='legacy-delete'){
+                if(!confirm('Force delete via legacy admin route?')) return;
+                const fd = new FormData(); if(csrf) fd.append('csrf_token', csrf);
+        fetch(`/admin/users/${uid}/delete`, {method:'POST', body:fd, credentials:'same-origin'})
+                  .then(r=>{ if(r.redirected){ window.location.href=r.url; } })
+                  .catch(()=> alert('Legacy delete failed.'));
+            } else if(action==='api-delete'){
+                if(!confirm('Use API delete? This is immediate and logs diagnostics.')) return;
+                const fd = new FormData(); if(csrf) fd.append('csrf_token', csrf);
+        console.debug('[USER_DELETE_CLIENT] Initiating API delete', {user_id: uid});
+    fetch(`/admin/api/users/${uid}/delete`, {method:'POST', body:fd, credentials:'same-origin'})
+          .then(async r=>{ const txt = await r.text(); let data; try{ data = JSON.parse(txt); }catch(parseErr){ console.error('[USER_DELETE_CLIENT] JSON parse error', parseErr, txt); throw new Error('Bad JSON '+r.status); } return {status:r.status, data}; })
+          .then(({status, data})=>{ console.debug('[USER_DELETE_CLIENT] API response', {status, data}); if(data.ok){ alert('API delete success.'); if(typeof window.loadServerUsersFull==='function'){ window.loadServerUsersFull(); } } else { alert('API delete failed: '+(data.error||('deleted='+data.deleted+' exists_after='+data.exists_after))); } })
+          .catch(err=> { console.error('[USER_DELETE_CLIENT] API delete network/error', err); alert('API delete error. Check console for details.'); });
+            }
+        });
+        serverContainer.addEventListener('submit',(e)=>{
+            const form = e.target;
+            if(form && form.id === 'deleteUserInlineForm'){
+                e.preventDefault();
+                const uid = form.querySelector('input[name="user_id"]').value;
+                const adminPwd = form.querySelector('input[name="admin_password"]').value;
+                const csrf = form.querySelector('input[name="csrf_token"]').value;
+                const fd = new FormData();
+                if(csrf) fd.append('csrf_token', csrf);
+                if(adminPwd) fd.append('admin_password', adminPwd);
+                // Clear sensitive field immediately
+                try { form.querySelector('input[name="admin_password"]').value=''; } catch(_){ }
+                fetch(`/admin/api/users/${uid}/delete`, {method:'POST', body:fd, credentials:'same-origin'})
+                  .then(r=> r.json().catch(()=>({ok:false,error:'bad json'})))
+                  .then(d=>{
+                      if(d.ok){
+                          // Refresh users list silently
+                          if(typeof window.loadServerUsersFull==='function'){ window.loadServerUsersFull(); }
+                          showTempServerMessage('success','User deleted.');
+                      } else {
+                          showTempServerMessage('danger','Delete failed: '+(d.error||('deleted='+d.deleted+' exists_after='+d.exists_after)));
+                      }
+                  })
+                  .catch(err=> { console.error('[USER_DELETE_CLIENT] inline API delete error', err); showTempServerMessage('danger','Delete request error.'); });
+            }
+        });
+        // Helper to show ephemeral message inside the server panel
+        function showTempServerMessage(type, text){
+            const msg = document.createElement('div');
+            msg.className = `alert alert-${type} py-1 small`; msg.textContent = text;
+            serverContainer.prepend(msg);
+            setTimeout(()=>{ try{ msg.remove(); }catch(_){} }, 4000);
+        }
+        serverContainer._userEditDelegationAttached = true;
+    }
+        function loadServerPanel(panel){
+                if(!serverContainer) return;
+                let endpoint;
+                if(panel==='config') endpoint = "{{ url_for('admin.settings_config_partial') }}";
+                if(panel==='users') endpoint = "{{ url_for('auth.settings_server_partial', panel='users') }}";
+                if(panel==='debug') endpoint = "{{ url_for('auth.settings_server_partial', panel='debug') }}";
+                if(panel==='ai') endpoint = "{{ url_for('auth.settings_server_partial', panel='ai') }}";
+                if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";
+                if(!endpoint){ serverContainer.innerHTML = '<div class="text-danger small">Unknown panel.</div>'; return; }
+                serverContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
+                fetch(endpoint)
+                    .then(r=>r.text())
+                    .then(html=> { 
+                        serverContainer.innerHTML = html; 
+                        if(panel==='config'){
+                            if(typeof window.saveServerConfig !== 'function'){
+                                window.saveServerConfig = async function(form){
+                                    try {
+                                        const fd = new FormData(form);
+                                        if(!fd.get('inline')) fd.append('inline','1');
+                                        const btn = form.querySelector('button[type="submit"],button:not([type])');
+                                        const container = document.getElementById('serverDynamicContainer');
+                                        if(btn){ btn.disabled=true; btn.dataset.original=btn.innerHTML; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...'; }
+                                        const resp = await fetch(form.action, {method:'POST', body:fd, headers:{'X-Requested-With':'XMLHttpRequest'}});
+                                        const html2 = await resp.text();
+                                        if(container) container.innerHTML = html2;
+                                        // ensure function persists after re-render
+                                        if(!container.querySelector('.alert-inline-save-success')){
+                                            const alert=document.createElement('div'); alert.className='alert alert-success py-2 mb-3 alert-inline-save-success'; alert.textContent='Configuration saved.'; container.prepend(alert); setTimeout(()=>alert.remove(),3000);
+                                        }
+                                    } catch(e){ alert('Failed to save configuration.'); }
+                                    finally {
+                                        const btn2 = form.querySelector('button[type="submit"],button:not([type])');
+                                        if(btn2){ btn2.disabled=false; btn2.innerHTML=btn2.dataset.original||'Save'; }
+                                    }
+                                    return false;
+                                }
+                            }
+                            // Attach listener redundantly in case inline onsubmit not executed due to script tag non-execution
+                            try {
+                                const cfgForm = serverContainer.querySelector('form[action*="/settings/partial/server/config"]');
+                                if(cfgForm){ cfgForm.onsubmit = function(){ return window.saveServerConfig(this); }; }
+                            } catch(e){ console.warn('Config form hook failed', e); }
+                        }
+                        if(panel==='ai'){
+                            // Inline <script> tags inside inserted HTML from fetch won't execute; ensure functions exist
+                            if(!window.__initAISettings){
+                                // Lightweight reimplementation if script tag not run
+                                window.__initAISettings = function(){
+                                    const providerSelect = document.getElementById('ai_provider');
+                                    if(!providerSelect) return;
+                                    const openai = document.getElementById('openai-settings');
+                                    const ollama = document.getElementById('ollama-settings');
+                                    function sync(){
+                                        const val = providerSelect.value;
+                                        if(val==='openai'){ openai.style.display='block'; ollama.style.display='none'; }
+                                        else { openai.style.display='none'; ollama.style.display='block'; }
+                                    }
+                                    providerSelect.addEventListener('change', sync); sync();
+                                    const manualChk = document.getElementById('ollama_manual_model');
+                                    if(manualChk){ manualChk.addEventListener('change', ()=>{
+                                        const manual = document.getElementById('ollama_model_manual');
+                                        const select = document.getElementById('ollama_model');
+                                        if(manual){ manual.style.display = manualChk.checked ? 'block':'none'; }
+                                        if(select){ select.style.display = manualChk.checked ? 'none':'block'; }
+                                    }); }
+                                    const maxTokens = document.getElementById('ai_max_tokens');
+                                    const warn = document.getElementById('ai-max-tokens-warning');
+                                    if(maxTokens && warn){ const toggle=()=>{ warn.style.display = parseInt(maxTokens.value||'0',10) > 16000 ? 'block':'none'; }; maxTokens.addEventListener('input', toggle); toggle(); }
+                                };
+                            }
+                            // Fallback test functions if inline script not executed
+                            if(typeof window.testAIConnection !== 'function'){
+                                window.testAIConnection = async function(btn){
+                                    if(!btn) return; const original = btn.innerHTML; btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';
+                                    const provider = document.getElementById('ai_provider').value;
+                                    const fd = new FormData();
+                                    const csrf = document.querySelector('input[name="csrf_token"]'); if(csrf) fd.append('csrf_token', csrf.value);
+                                    fd.append('ai_provider', provider);
+                                    if(provider==='openai'){
+                                        fd.append('openai_api_key', document.getElementById('openai_api_key').value);
+                                        fd.append('openai_base_url', document.querySelector('input[name="openai_base_url"]').value);
+                                        fd.append('openai_model', document.getElementById('openai_model').value);
+                                    } else {
+                                        fd.append('ollama_base_url', document.getElementById('ollama_base_url').value);
+                                        fd.append('ollama_model', document.getElementById('ollama_model').value);
+                                    }
+                                    const results = document.getElementById('ai-test-results'); if(results) results.innerHTML='';
+                                    try { const resp=await fetch('/admin/test-ai-connection',{method:'POST', body:fd}); const data=await resp.json(); if(results) results.innerHTML=`<div class="alert alert-${data.success?'success':'danger'} p-2 mb-0 small">${data.message||'Test complete'}</div>`; } catch(e){ if(results) results.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error testing connection.</div>'; }
+                                    btn.disabled=false; btn.innerHTML=original;
+                                };
+                            }
+                            if(typeof window.testOllamaConnection !== 'function'){
+                                window.testOllamaConnection = async function(btn){
+                                    const baseUrlInput=document.getElementById('ollama_base_url'); const select=document.getElementById('ollama_model'); const resultsDiv=document.getElementById('ollama-test-results');
+                                    if(!baseUrlInput||!select){return;} const original=btn?btn.innerHTML:''; if(btn){btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';}
+                                    resultsDiv.innerHTML='<div class="text-muted small">Testing connection...</div>';
+                                    const fd=new FormData(); fd.append('ollama_base_url', baseUrlInput.value.trim()); const csrf=document.querySelector('input[name="csrf_token"]'); if(csrf) fd.append('csrf_token', csrf.value);
+                                    try { const resp=await fetch('/admin/test-ollama-connection',{method:'POST', body: fd}); const data=await resp.json(); if(data.success && data.models){ select.innerHTML='<option value="">Select a model</option>'; data.models.forEach(m=>{ const opt=document.createElement('option'); opt.value=m.name||m; opt.textContent=(m.name?`${m.name} (${m.size})`:m); select.appendChild(opt); }); resultsDiv.innerHTML=`<div class="alert alert-success p-2 mb-0 small">Loaded ${data.models.length} models.</div>`;} else { resultsDiv.innerHTML=`<div class="alert alert-danger p-2 mb-0 small">${data.message||'Connection failed'}</div>`;} } catch(e){ resultsDiv.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error contacting server.</div>'; }
+                                    if(btn){btn.disabled=false; btn.innerHTML=original;}
+                                };
+                            }
+                            try { window.__initAISettings(); } catch(e){ console.warn('AI init failed', e); }
+                        }
+                        if(panel==='users'){
+                            // Provide fallback JS if script tags inside partial didn't execute
+                            if(typeof window.editUserInline !== 'function'){
+                                window.editUserInline = function(uid){
+                                    const container = document.getElementById('serverDynamicContainer');
+                                    if(!container) return;
+                                    const url = `{{ url_for('auth.settings_server_partial', panel='user_edit') }}?user_id=`+encodeURIComponent(uid);
+                                    container.innerHTML = '<div class="text-muted small p-3">Loading editor...</div>';
+                                    fetch(url, {credentials:'same-origin'}).then(r=>{ if(!r.ok) throw new Error(r.status); return r.text();}).then(html=> { container.innerHTML = html; ensureUserEditDelegation(); }).catch(err=> container.innerHTML='<div class="text-danger small p-3">Failed to load editor ('+err+').</div>');
+                                };
+                            }
+                            if(typeof window.loadServerUsersFull !== 'function'){
+                                window.loadServerUsersFull = function(search){
+                                    const container = document.getElementById('serverDynamicContainer'); if(!container) return;
+                                    const urlObj = new URL("{{ url_for('auth.settings_server_partial', panel='users') }}", window.location.origin);
+                                    if(search) urlObj.searchParams.set('search', search);
+                                    container.innerHTML = '<div class="text-muted small p-3">Loading...</div>';
+                                    fetch(urlObj.toString()).then(r=>r.text()).then(html=> container.innerHTML=html).catch(()=> container.innerHTML='<div class="text-danger small p-3">Failed to load users.</div>');
+                                };
+                            }
+                        }
+                        if(panel==='user_edit'){
+                            if(typeof window.submitUserEdit !== 'function'){
+                                window.submitUserEdit = function(form){
+                                    const fd = new FormData(form);
+                                    fetch(`{{ url_for('auth.settings_server_partial', panel='user_edit') }}`, {method:'POST', body:fd, credentials:'same-origin'})
+                                      .then(r=>r.text())
+                                      .then(html=> document.getElementById('serverDynamicContainer').innerHTML = html)
+                                      .catch(()=> alert('Failed to submit.'));
+                                    return false;
+                                };
+                            }
+                            if(typeof window.confirmDeleteUser !== 'function'){
+                                window.confirmDeleteUser = function(form){
+                                    if(!confirm('This will permanently delete the user. Continue?')) return false;
+                                    return window.submitUserEdit(form);
+                                };
+                            }
+                            if(typeof window.submitLegacyAdminDelete !== 'function'){
+                                window.submitLegacyAdminDelete = function(uid){
+                                    if(!confirm('Force delete via legacy admin route?')) return;
+                                    try {
+                                        const csrfEl = document.querySelector('#deleteUserInlineForm input[name="csrf_token"]');
+                                        const csrf = csrfEl ? csrfEl.value : '';
+                                        const fd = new FormData(); if(csrf) fd.append('csrf_token', csrf);
+                                        fetch(`/admin/users/${uid}/delete`, {method:'POST', body:fd})
+                                          .then(r=>{ if(r.redirected){ window.location.href=r.url; return ''; } return r.text();})
+                                          .catch(()=> alert('Legacy delete failed.'));
+                                    } catch(err){ console.error('legacy delete error', err); alert('Legacy delete JS error.'); }
+                                };
+                            }
+                            if(typeof window.apiDeleteUser !== 'function'){
+                                window.apiDeleteUser = function(uid){
+                                    if(!confirm('Use API delete? This is immediate and logs diagnostics.')) return;
+                                    try {
+                                        const csrfEl = document.querySelector('#deleteUserInlineForm input[name="csrf_token"]');
+                                        const csrf = csrfEl ? csrfEl.value : '';
+                                        const fd = new FormData(); if(csrf) fd.append('csrf_token', csrf);
+                                        fetch(`/admin/api/users/${uid}/delete`, {method:'POST', body:fd})
+                                          .then(r=>r.json())
+                                          .then(d=>{
+                                            if(d.ok){
+                                                alert('API delete success. Refreshing list.');
+                                                if(typeof window.loadServerUsersFull === 'function'){ window.loadServerUsersFull(); }
+                                            } else {
+                                                alert('API delete failed: '+(d.error||('deleted='+d.deleted+' exists_after='+d.exists_after)));
+                                            }
+                                          })
+                                          .catch(()=> alert('API delete error.'));
+                                    } catch(err){ console.error('api delete error', err); alert('API delete JS error.'); }
+                                };
+                            }
+                            // Always ensure delegation after user edit load via server panel path
+                            try { ensureUserEditDelegation(); } catch(err) {}
+                        }
+                    })
+                    .catch(()=> serverContainer.innerHTML = '<div class="text-danger small">Failed to load.</div>');
+        }
+    function normalizeServerButtons(){
+        document.querySelectorAll('.server-nav').forEach(b=>{
+            const color = b.dataset.color;
+            b.classList.remove('active');
+            if(color){
+                b.classList.remove('btn-'+color);
+                if(!b.classList.contains('btn-outline-'+color)) b.classList.add('btn-outline-'+color);
+            }
+        });
+    }
+    function activateServerButton(btn){
+        const color = btn.dataset.color;
+        if(color){
+            btn.classList.remove('btn-outline-'+color);
+            btn.classList.add('btn-'+color);
+        }
+        btn.classList.add('active');
+    }
+    document.querySelectorAll('.server-nav').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+            normalizeServerButtons();
+            activateServerButton(btn);
+            loadServerPanel(btn.getAttribute('data-server-panel'));
+        });
+    });
+    // Preload config panel when server section first revealed
+    const serverTile = document.querySelector('[data-target="serverSection"]');
+    if(serverTile){
+        serverTile.addEventListener('click', ()=>{
+            if(!serverContainer.dataset.loaded){
+                loadServerPanel('config');
+                serverContainer.dataset.loaded = '1';
+                const cfg = document.querySelector('[data-server-panel="config"]');
+                if(cfg){ normalizeServerButtons(); activateServerButton(cfg); }
+            }
+        });
+    }
+
+    // Personal dynamic panels (simple inline content)
+    const personalContainer = document.getElementById('personalDynamicContainer');
+    function loadPersonal(panel){
+        if(!personalContainer) return;
+            const routes = {
+                'profile': "{{ url_for('auth.settings_profile_partial') }}",
+                'password': "{{ url_for('auth.settings_password_partial') }}",
+                'privacy': "{{ url_for('auth.settings_privacy_partial') }}",
+                'activity': "{{ url_for('auth.my_activity') }}" // fallback link
+            };
+            if(panel==='activity'){
+                personalContainer.innerHTML = `<div class='card p-3'><div class='small text-muted mb-2'>Your detailed activity opens in a new page.</div><a href='${routes.activity}' class='btn btn-sm btn-outline-primary'><i class='bi bi-graph-up'></i> Open Activity</a></div>`;
+                return;
+            }
+            personalContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
+            fetch(routes[panel])
+              .then(r=>r.text())
+              .then(html=> personalContainer.innerHTML = html)
+              .catch(()=> personalContainer.innerHTML = '<div class="text-danger small">Failed to load.</div>');
+    }
+    document.querySelectorAll('.personal-nav').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+            document.querySelectorAll('.personal-nav').forEach(b=>b.classList.remove('active'));
+            btn.classList.add('active');
+            loadPersonal(btn.getAttribute('data-personal-panel'));
+        });
+    });
+    const personalTile = document.querySelector('[data-target="personalSection"]');
+    if(personalTile){
+        personalTile.addEventListener('click', ()=>{
+            if(!personalContainer.dataset.loaded){
+                loadPersonal('profile');
+                personalContainer.dataset.loaded='1';
+                document.querySelector('[data-personal-panel="profile"]').classList.add('active');
+            }
+        });
+    }
+
+    // Data & Import dynamic panels
+    const dataContainer = document.getElementById('dataDynamicContainer');
+        function loadData(panel){
+                if(!dataContainer) return;
+                dataContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
+                fetch(`{{ url_for('auth.settings_data_partial', panel='__P__') }}`.replace('__P__', panel))
+                    .then(r=>r.text())
+                    .then(html=> dataContainer.innerHTML = html)
+                    .catch(()=> dataContainer.innerHTML = '<div class="text-danger small">Failed to load.</div>');
+        }
+    document.querySelectorAll('.data-nav').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+            document.querySelectorAll('.data-nav').forEach(b=>b.classList.remove('active'));
+            btn.classList.add('active');
+            loadData(btn.getAttribute('data-data-panel'));
+        });
+    });
+    const dataTile = document.querySelector('[data-target="dataSection"]');
+    if(dataTile){
+        dataTile.addEventListener('click', ()=>{
+            if(!dataContainer.dataset.loaded){
+                loadData('import_books');
+                dataContainer.dataset.loaded='1';
+                document.querySelector('[data-data-panel="import_books"]').classList.add('active');
+            }
+        });
+    }
+});
+</script>
 {% endblock %}

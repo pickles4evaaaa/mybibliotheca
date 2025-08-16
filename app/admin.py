@@ -578,10 +578,18 @@ def delete_user(user_id):
                 return redirect(url_for('admin.user_detail', user_id=user_id))
         
         username = user.username
-        
-        # Delete user (would need service implementation for cascading deletes)
-        # For now, just mark as placeholder
-        flash(f'User deletion not fully implemented for Kuzu backend. User {username} would be deleted.', 'warning')
+        # Perform actual delete now that repository supports it
+        deleted = False
+        try:
+            if hasattr(user_service, 'delete_user_sync'):
+                deleted = user_service.delete_user_sync(user_id)  # type: ignore
+        except Exception as de:
+            current_app.logger.error(f"Admin delete exception for user {user_id}: {de}")
+            deleted = False
+        if deleted:
+            flash(f'User {username} deleted.', 'success')
+        else:
+            flash(f'Failed to delete user {username}.', 'error')
         return redirect(url_for('admin.users'))
     except Exception as e:
         current_app.logger.error(f"Error deleting user {user_id}: {e}")
@@ -663,13 +671,17 @@ def settings():
         else:
             flash('Error saving system settings. Please check permissions and try again.', 'error')
         
-        return redirect(url_for('admin.settings'))
+        if request.form.get('inline') == '1' or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            # Return updated partial for unified settings
+            ctx = get_admin_settings_context()
+            return render_template('admin/partials/server_config.html', **ctx)
+    # Always bounce to unified settings page (auth.settings) for non-inline posts
+    return redirect(url_for('auth.settings'))
+
+    # NOTE: api_delete_user route moved to module scope for proper registration.
     
-    # Get the current settings from config file and environment variables
-    system_config = load_system_config()
-    current_site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
-    current_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
-    current_terminology = system_config.get('terminology_preference', 'genre')
+    # Reuse helper to build context for template
+    ctx = get_admin_settings_context()
     
     # Get available timezones
     available_timezones = pytz.all_timezones
@@ -694,24 +706,105 @@ def settings():
                 return False
         debug_manager = MockDebugManager()
     
-    return render_template('admin/settings.html', 
-                         title='Admin Settings', 
-                         site_name=current_site_name,
-                         server_timezone=current_timezone,
-                         terminology_preference=current_terminology,
-                         common_timezones=common_timezones,
-                         available_timezones=sorted(available_timezones),
-                         ai_config=load_ai_config(),
-                         debug_manager=debug_manager,
-                         background_config=system_config.get('background_config', {
-                             'type': 'default',
-                             'solid_color': '#667eea',
-                             'gradient_start': '#667eea', 
-                             'gradient_end': '#764ba2',
-                             'gradient_direction': '135deg',
-                             'image_url': '',
-                             'image_position': 'cover'
-                         }))
+    # ctx already contains debug_manager; avoid passing duplicate keyword
+    return render_template('admin/settings.html', title='Admin Settings', **ctx)
+
+# ---------------- API User Deletion (diagnostic) -----------------
+@admin.route('/api/users/<string:user_id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def api_delete_user(user_id):
+    """Diagnostic JSON deletion endpoint used by unified settings UI to debug failures.
+    Now serves as the primary deletion API (normal paths log at INFO)."""
+    try:
+        current_app.logger.info(f"[USER_DELETE_DEBUG_API] start user_id={user_id}")
+        if not user_id:
+            return jsonify({'ok': False, 'error': 'missing id'}), 400
+        if getattr(current_user, 'id', None) == user_id:
+            return jsonify({'ok': False, 'error': 'cannot delete self'}), 400
+        # Optional admin password verification (if provided)
+        admin_pwd = request.form.get('admin_password') or request.json.get('admin_password') if request.is_json else None  # type: ignore
+        if admin_pwd and not current_user.check_password(admin_pwd):  # type: ignore
+            return jsonify({'ok': False, 'error': 'admin password invalid'}), 400
+        user = user_service.get_user_by_id_sync(user_id)
+        if not user:
+            current_app.logger.info(f"[USER_DELETE_DEBUG_API] user not found user_id={user_id}")
+            return jsonify({'ok': False, 'error': 'not found'}), 404
+        if getattr(user, 'is_admin', False):
+            admin_count = user_service.get_admin_count_sync() if hasattr(user_service,'get_admin_count_sync') else 1
+            if admin_count <= 1:
+                return jsonify({'ok': False, 'error': 'last admin'}), 400
+        deleted = False
+        try:
+            deleted = user_service.delete_user_sync(user_id) if hasattr(user_service,'delete_user_sync') else False
+            current_app.logger.info(f"[USER_DELETE_DEBUG_API] service.delete returned {deleted}")
+        except Exception as de:
+            current_app.logger.error(f"[USER_DELETE_DEBUG_API] service.delete exception {de}")
+        exists_flag = True
+        try:
+            repo = getattr(user_service, 'user_repo', None)
+            if repo and hasattr(repo, 'safe_manager'):
+                res = repo.safe_manager.execute_query("MATCH (u:User {id: $uid}) RETURN COUNT(u) as c", {"uid": user_id})
+                from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
+                data = _cvt(res)
+                exists_flag = bool(data and int(data[0].get('c',0))>0)
+            current_app.logger.info(f"[USER_DELETE_DEBUG_API] exists_after={exists_flag}")
+        except Exception as ce:
+            current_app.logger.error(f"[USER_DELETE_DEBUG_API] existence check exception {ce}")
+        return jsonify({'ok': deleted and not exists_flag, 'deleted': deleted, 'exists_after': exists_flag})
+    except Exception as e:
+        current_app.logger.error(f"[USER_DELETE_DEBUG_API] fatal error {e}")
+        return jsonify({'ok': False, 'error': 'server error'}), 500
+
+def get_admin_settings_context():
+    """Helper to assemble context variables for admin settings forms (reused in partial)."""
+    system_config = load_system_config()
+    current_site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
+    current_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
+    current_terminology = system_config.get('terminology_preference', 'genre')
+    available_timezones = pytz.all_timezones
+    common_timezones = [
+        'UTC',
+        'US/Eastern', 'US/Central', 'US/Mountain', 'US/Pacific',
+        'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Rome',
+        'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata',
+        'Australia/Sydney', 'Australia/Melbourne',
+        'America/Toronto', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles'
+    ]
+    try:
+        from .debug_system import get_debug_manager
+        debug_manager = get_debug_manager()
+    except Exception:
+        class MockDebugManager:
+            def is_debug_enabled(self):
+                return False
+        debug_manager = MockDebugManager()
+    return {
+        'site_name': current_site_name,
+        'server_timezone': current_timezone,
+        'terminology_preference': current_terminology,
+        'common_timezones': common_timezones,
+        'available_timezones': sorted(available_timezones),
+        'ai_config': load_ai_config(),
+        'debug_manager': debug_manager,
+        'background_config': system_config.get('background_config', {
+            'type': 'default',
+            'solid_color': '#667eea',
+            'gradient_start': '#667eea',
+            'gradient_end': '#764ba2',
+            'gradient_direction': '135deg',
+            'image_url': '',
+            'image_position': 'cover'
+        })
+    }
+
+@admin.route('/settings/config_partial')
+@login_required
+@admin_required
+def settings_config_partial():
+    """Return just the server configuration form for embedding in unified settings page."""
+    ctx = get_admin_settings_context()
+    return render_template('admin/partials/server_config.html', **ctx)
 
 @admin.route('/api/stats')
 @login_required
@@ -758,6 +851,16 @@ def update_ai_settings():
         else:
             flash('Error saving AI settings. Please try again.', 'danger')
         
+        # Inline (AJAX/unified settings) support
+        if request.form.get('inline') == '1' or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            from app.admin import get_admin_settings_context, load_ai_config
+            ctx = get_admin_settings_context()
+            ctx['ai_config'] = load_ai_config()
+            # Return just the AI panel partial so caller can replace content
+            return render_template('settings/partials/server_ai.html', **ctx)
+        ref = request.referrer or ''
+        if '/settings' in ref and '/admin/settings' not in ref:
+            return redirect(url_for('auth.settings'))
         return redirect(url_for('admin.settings'))
         
     except Exception as e:

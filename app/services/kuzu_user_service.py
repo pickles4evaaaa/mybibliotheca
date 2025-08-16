@@ -241,7 +241,6 @@ class KuzuUserService:
         """Get total user count (sync version for compatibility)."""
         try:
             count = run_async(self.kuzu_service.get_user_count())
-            # Ensure we always return an int, never None
             return int(count) if count is not None else 0
         except Exception as e:
             current_app.logger.error(f"Error getting user count: {e}")
@@ -320,6 +319,28 @@ class KuzuUserService:
     def update_user_sync(self, user: User) -> Optional[User]:
         """Update an existing user (sync version for admin tools)."""
         return run_async(self.update_user(user))
+
+    async def delete_user(self, user_id: str) -> bool:
+        """Delete user (async)."""
+        try:
+            return await self.user_repo.delete(user_id)
+        except Exception as e:
+            current_app.logger.error(f"Error deleting user {user_id}: {e}")
+            return False
+
+    def delete_user_sync(self, user_id: str) -> bool:
+        """Delete user (sync wrapper)."""
+        return run_async(self.delete_user(user_id))
+
+    async def get_admin_count(self) -> int:
+        try:
+            return await self.user_repo.count_admins()
+        except Exception as e:
+            current_app.logger.error(f"Error counting admins: {e}")
+            return 0
+
+    def get_admin_count_sync(self) -> int:
+        return run_async(self.get_admin_count())
 
     async def create_user_location(self, user_id: str, name: str, description: Optional[str] = None,
                                   location_type: str = "home", is_default: bool = False) -> Optional[Location]:

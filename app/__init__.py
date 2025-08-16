@@ -827,6 +827,11 @@ def create_app():
     register_blueprints(app)
     app.register_blueprint(auth, url_prefix='/auth')
     app.register_blueprint(admin, url_prefix='/admin')
+    try:
+        from .routes.db_health_routes import db_health
+        app.register_blueprint(db_health)
+    except Exception as e:
+        print(f"Could not register db health routes: {e}")
     
     # Register simple backup routes
     try:

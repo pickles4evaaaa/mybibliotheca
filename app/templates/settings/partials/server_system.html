@@ -1,0 +1,28 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-info-square"></i>
+    <strong>System Info</strong>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="p-3 bg-light rounded h-100">
+          <div class="small text-muted">Current Admin</div>
+          <div class="fw-bold">{{ info.user }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="p-3 bg-light rounded h-100">
+          <div class="small text-muted">UTC Time</div>
+          <div class="fw-bold">{{ info.time }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="p-3 bg-light rounded h-100">
+          <div class="small text-muted">Version</div>
+          <div class="fw-bold">MyBibliotheca</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,21 @@
+{% with msgs = get_flashed_messages(with_categories=True) %}
+  {% if msgs %}
+    <div class="mb-2">
+      {% for c,m in msgs %}<div class="alert alert-{{ 'danger' if c=='error' else c }} py-1 mb-1 small">{{ m }}</div>{% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+<form method="POST" action="{{ url_for('auth.settings_profile_partial') }}" hx-post="{{ url_for('auth.settings_profile_partial') }}" hx-target="#personalDynamicContainer" hx-swap="innerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <div class="mb-3">
+    {{ form.username.label(class='form-label') }}
+    {{ form.username(class='form-control') }}
+    {% for e in form.username.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+  </div>
+  <div class="mb-3">
+    {{ form.email.label(class='form-label') }}
+    {{ form.email(class='form-control') }}
+    {% for e in form.email.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+  </div>
+  <button class="btn btn-primary"><i class="bi bi-check2"></i> Update Profile</button>
+</form>
