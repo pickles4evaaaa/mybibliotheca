@@ -109,6 +109,8 @@ class SimpleBackupService:
         # Auto-start scheduler if enabled
         if self._settings.get('enabled', True):
             self.ensure_scheduler()
+        # Prevent concurrent create_backup overlap
+        self._create_lock = threading.Lock()
 
     # -------------------------- Settings & Scheduling -----------------------
     def _load_or_create_settings(self) -> Dict[str, Any]:
@@ -224,6 +226,12 @@ class SimpleBackupService:
         Returns:
             BackupInfo if successful, None otherwise
         """
+        # Fast-fail if another thread/process in same runtime is already executing
+        if not getattr(self, '_create_lock', None):  # safety init
+            self._create_lock = threading.Lock()
+        if not self._create_lock.acquire(blocking=False):
+            logger.warning("Backup already in progress; skipping concurrent create_backup request")
+            return None
         try:
             # Generate backup ID and timestamp
             backup_id = str(uuid.uuid4())
@@ -314,21 +322,21 @@ class SimpleBackupService:
                     
                     logger.info(f"Backed up {uploads_count} uploaded files")
 
-                # Add settings/config files (non-secret)
-                settings_added = 0
-                try:
-                    if self.env_file.exists():
-                        zipf.write(self.env_file, f"config/.env")
-                        settings_added += 1
-                    if self.ai_config_file.exists():
-                        zipf.write(self.ai_config_file, f"config/ai_config.json")
-                        settings_added += 1
-                    if self.backup_settings_file.exists():
-                        zipf.write(self.backup_settings_file, f"config/backup_settings.json")
-                        settings_added += 1
-                    logger.info(f"Included {settings_added} config/settings files in backup")
-                except Exception as se:
-                    logger.warning(f"Failed adding settings files to backup: {se}")
+                    # Add settings/config files (non-secret) while zip is still open
+                    settings_added = 0
+                    try:
+                        if self.env_file.exists():
+                            zipf.write(self.env_file, "config/.env")
+                            settings_added += 1
+                        if self.ai_config_file.exists():
+                            zipf.write(self.ai_config_file, "config/ai_config.json")
+                            settings_added += 1
+                        if self.backup_settings_file.exists():
+                            zipf.write(self.backup_settings_file, "config/backup_settings.json")
+                            settings_added += 1
+                        logger.info(f"Included {settings_added} config/settings files in backup")
+                    except Exception as se:
+                        logger.warning(f"Failed adding settings files to backup: {se}")
             
             # Get backup file size
             file_size = backup_path.stat().st_size
@@ -360,6 +368,11 @@ class SimpleBackupService:
         except Exception as e:
             logger.error(f"Failed to create simple backup: {e}")
             return None
+        finally:
+            try:
+                self._create_lock.release()
+            except Exception:
+                pass
     
     def restore_backup(self, backup_id: str) -> bool:
         """

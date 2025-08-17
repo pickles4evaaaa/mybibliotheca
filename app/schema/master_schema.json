@@ -1,0 +1,135 @@
+{
+  "$schema": "https://example.com/mybibliotheca/kuzu-schema-v1.json",
+  "version": 1,
+  "generated_at": "2025-08-17T00:00:00Z",
+  "nodes": {
+    "User": {
+      "columns": {
+        "id": "STRING",
+        "username": "STRING",
+        "email": "STRING",
+        "password_hash": "STRING",
+        "share_current_reading": "BOOLEAN",
+        "share_reading_activity": "BOOLEAN",
+        "share_library": "BOOLEAN",
+        "is_admin": "BOOLEAN",
+        "is_active": "BOOLEAN",
+        "password_must_change": "BOOLEAN",
+        "failed_login_attempts": "INT64",
+        "locked_until": "TIMESTAMP",
+        "last_login": "TIMESTAMP",
+        "password_changed_at": "TIMESTAMP",
+        "reading_streak_offset": "INT64",
+        "timezone": "STRING",
+        "display_name": "STRING",
+        "bio": "STRING",
+        "location": "STRING",
+        "website": "STRING",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP"
+      },
+      "primary_key": "id"
+    },
+    "Book": {
+      "columns": {
+        "id": "STRING",
+        "title": "STRING",
+        "normalized_title": "STRING",
+        "subtitle": "STRING",
+        "isbn13": "STRING",
+        "isbn10": "STRING",
+        "asin": "STRING",
+        "description": "STRING",
+        "published_date": "DATE",
+        "page_count": "INT64",
+        "language": "STRING",
+        "cover_url": "STRING",
+        "google_books_id": "STRING",
+        "openlibrary_id": "STRING",
+        "average_rating": "DOUBLE",
+        "rating_count": "INT64",
+        "series": "STRING",
+        "series_volume": "STRING",
+        "series_order": "INT64",
+        "custom_metadata": "STRING",
+        "raw_categories": "STRING",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP",
+        "audio_length_minutes": "INT64",
+        "audio_is_abridged": "BOOLEAN",
+        "audio_narrators": "STRING",
+  "media_format": "STRING",
+  "audiobookshelf_id": "STRING",
+  "audio_duration_ms": "INT64",
+  "media_type": "STRING"
+      },
+      "primary_key": "id"
+    },
+    "Person": {
+      "columns": {
+        "id": "STRING",
+        "name": "STRING",
+        "normalized_name": "STRING",
+        "birth_date": "STRING",
+        "death_date": "STRING",
+        "birth_year": "INT64",
+        "death_year": "INT64",
+        "birth_place": "STRING",
+        "bio": "STRING",
+        "website": "STRING",
+        "openlibrary_id": "STRING",
+        "image_url": "STRING",
+        "wikidata_id": "STRING",
+        "imdb_id": "STRING",
+        "alternate_names": "STRING",
+        "fuller_name": "STRING",
+        "title": "STRING",
+        "official_links": "STRING",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP"
+      },
+      "primary_key": "id"
+    },
+    "ReadingLog": {
+      "columns": {
+        "id": "STRING",
+        "user_id": "STRING",
+        "book_id": "STRING",
+        "date": "DATE",
+        "pages_read": "INT64",
+        "minutes_read": "INT64",
+        "notes": "STRING",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP"
+      },
+      "primary_key": "id"
+    }
+  },
+  "relationships": {
+    "HAS_PERSONAL_METADATA": {
+      "from": "User",
+      "to": "Book",
+      "properties": {
+        "personal_notes": "STRING",
+        "personal_custom_fields": "STRING",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP"
+      }
+    },
+    "WRITTEN_BY": {"from": "Book", "to": "Person", "properties": {"contribution_type": "STRING", "role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "AUTHORED": {"from": "Person", "to": "Book", "properties": {"contribution_type": "STRING", "role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "NARRATED": {"from": "Person", "to": "Book", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "EDITED": {"from": "Person", "to": "Book", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "TRANSLATED": {"from": "Person", "to": "Book", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "ILLUSTRATED": {"from": "Person", "to": "Book", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "PUBLISHED_BY": {"from": "Book", "to": "Publisher", "properties": {"publication_date": "DATE", "created_at": "TIMESTAMP"}},
+    "CATEGORIZED_AS": {"from": "Book", "to": "Category", "properties": {"created_at": "TIMESTAMP"}},
+    "PART_OF_SERIES": {"from": "Book", "to": "Series", "properties": {"volume_number": "INT64", "series_order": "INT64", "created_at": "TIMESTAMP"}},
+    "CONTRIBUTED_TO_SERIES": {"from": "Person", "to": "Series", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
+    "LOGGED": {"from": "User", "to": "ReadingLog", "properties": {"book_id": "STRING", "created_at": "TIMESTAMP"}},
+    "FOR_BOOK": {"from": "ReadingLog", "to": "Book", "properties": {"created_at": "TIMESTAMP"}},
+    "PARENT_CATEGORY": {"from": "Category", "to": "Category", "properties": {"created_at": "TIMESTAMP"}},
+    "STORED_AT": {"from": "Book", "to": "Location", "properties": {"created_at": "TIMESTAMP"}},
+    "HAS_CUSTOM_FIELD": {"from": "User", "to": "CustomField", "properties": {"book_id": "STRING", "field_name": "STRING", "field_value": "STRING", "created_at": "TIMESTAMP", "updated_at": "TIMESTAMP"}}
+  }
+}

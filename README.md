@@ -408,3 +408,49 @@ Licensed under the [MIT License](LICENSE).
 **MyBibliotheca** is open source and contributions are welcome!
 
 Pull requests, bug reports, and feature suggestions are appreciated.
+
+---
+
+## 🧪 Schema Maintenance & Auto-Migrations
+
+MyBibliotheca uses **KuzuDB** with an additive, startup-time schema augmentation system. A JSON file (`app/schema/master_schema.json`) is the single source of truth for expected node columns and relationship definitions.
+
+### How It Works
+On application import (`run.py`), `schema_preflight`:
+1. Loads `master_schema.json` (override path with `MASTER_SCHEMA_PATH` env var)
+2. Logs schema version & SHA256 hash
+3. Detects missing node columns and relationship tables/properties
+4. (Optional) Creates a backup before applying changes
+5. Executes `ALTER TABLE ... ADD` or `CREATE REL TABLE ...` statements
+
+Only **additive** operations are performed automatically (no drops or renames). Destructive changes must be handled manually.
+
+### Environment Flags
+| Variable | Effect |
+|----------|--------|
+| `DISABLE_SCHEMA_PREFLIGHT` | Skip preflight entirely |
+| `SKIP_PREFLIGHT_BACKUP` | Don’t create automatic backup before applying changes |
+| `PREFLIGHT_REL_ONLY` | Process only relationship changes |
+| `PREFLIGHT_NODES_ONLY` | Process only node columns |
+| `MASTER_SCHEMA_PATH` | Alternate location for schema JSON |
+
+### Adding New Columns / Relationships
+1. Edit `app/schema/master_schema.json`
+2. Increment `version` (optional but recommended)
+3. Add new node columns under the appropriate `"columns"` map or new relationship under `"relationships"`
+4. Restart the application – preflight will add them automatically
+
+### Backups
+Before applying changes, a backup is created via `SimpleBackupService` unless `SKIP_PREFLIGHT_BACKUP` is set. Store backups securely if running in production.
+
+### Safety Tips
+* Avoid renaming or deleting columns directly – instead, add new ones and migrate data via a one-off script.
+* Review logs on startup to confirm: `Schema preflight upgrade complete`.
+* Use `DISABLE_SCHEMA_PREFLIGHT` in emergency scenarios where schema probing must be skipped.
+
+### Future Enhancements (Planned)
+* Non-additive migration scripting (manual approval)
+* Structured migration history & checksum validation
+* Optional dry-run reporting mode
+
+---
