@@ -117,6 +117,13 @@ CREATE REL TABLE {self.REL_NAME}(
         if os.getenv("DISABLE_OWNS_MIGRATION", "0") in ("1", "true", "True"):
             logger.info("OWNS migration skipped due to DISABLE_OWNS_MIGRATION env var")
             return
+        
+        # Check for completion flag to avoid re-running migration
+        kuzu_dir = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
+        migration_complete_flag = kuzu_dir / '.owns_migration_complete'
+        if migration_complete_flag.exists():
+            logger.debug("OWNS migration already completed (flag file exists), skipping")
+            return
         try:
             count_result = safe_execute_kuzu_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r)")
             count = 0
@@ -141,7 +148,7 @@ CREATE REL TABLE {self.REL_NAME}(
             query = """
             MATCH (u:User)-[r:OWNS]->(b:Book)
             RETURN u.id, b.id, r.personal_notes, r.user_review, r.start_date, r.finish_date,
-                   r.reading_status, r.ownership_status, r.user_rating, r.media_type, r.custom_metadata
+                   r.reading_status, r.ownership_status, r.user_rating, r.custom_metadata
             """
             result = safe_execute_kuzu_query(query)
             rows = []
@@ -173,8 +180,7 @@ CREATE REL TABLE {self.REL_NAME}(
                     reading_status = getv(6, 'reading_status')
                     ownership_status = getv(7, 'ownership_status')
                     user_rating = getv(8, 'user_rating')
-                    media_type = getv(9, 'media_type')
-                    custom_metadata_raw = getv(10, 'custom_metadata')
+                    custom_metadata_raw = getv(9, 'custom_metadata')
                 else:
                     user_id = row[0] if len(row) > 0 else None  # type: ignore[index]
                     book_id = row[1] if len(row) > 1 else None  # type: ignore[index]
@@ -185,8 +191,7 @@ CREATE REL TABLE {self.REL_NAME}(
                     reading_status = row[6] if len(row) > 6 else None  # type: ignore[index]
                     ownership_status = row[7] if len(row) > 7 else None  # type: ignore[index]
                     user_rating = row[8] if len(row) > 8 else None  # type: ignore[index]
-                    media_type = row[9] if len(row) > 9 else None  # type: ignore[index]
-                    custom_metadata_raw = row[10] if len(row) > 10 else None  # type: ignore[index]
+                    custom_metadata_raw = row[9] if len(row) > 9 else None  # type: ignore[index]
                 if not user_id or not book_id:
                     continue
                 custom_updates: Dict[str, Any] = {}
@@ -194,7 +199,6 @@ CREATE REL TABLE {self.REL_NAME}(
                     'reading_status': reading_status,
                     'ownership_status': ownership_status,
                     'user_rating': user_rating,
-                    'media_type': media_type,
                 }.items():
                     if v not in (None, ''):
                         custom_updates[k] = v
@@ -249,6 +253,16 @@ CREATE REL TABLE {self.REL_NAME}(
                 except Exception as e:
                     logger.warning(f"Failed migrating OWNS record user={user_id} book={book_id}: {e}")
             logger.info(f"Completed OWNS migration: migrated {migrated} / {count}")
+            
+            # Set completion flag to avoid re-running migration
+            try:
+                kuzu_dir = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
+                migration_complete_flag = kuzu_dir / '.owns_migration_complete'
+                migration_complete_flag.touch()
+                logger.info("OWNS migration completion flag set - future startups will skip migration")
+            except Exception as flag_error:
+                logger.warning(f"Failed to set OWNS migration completion flag: {flag_error}")
+                
         except Exception as e:
             logger.warning(f"OWNS migration failed: {e}")
     def _ensure_pre_owns_migration_backup(self, owns_count: int):

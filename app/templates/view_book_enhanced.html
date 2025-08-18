@@ -50,16 +50,8 @@
                         <!-- Cover Image -->
                         <div class="col-md-4 text-center mb-3 mb-md-0">
                             <div class="position-relative d-inline-block">
-                                {% if book.cover_url %}
-                                    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                         class="img-fluid rounded shadow-sm" style="height: 500px; min-width: 300px; width: auto;" id="book-cover"
-                                         onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
-                                {% else %}
-                                    <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                         style="height: 500px; width: 350px; margin: 0 auto;" id="book-cover">
-                                        <i class="bi bi-book text-muted" style="font-size: 6rem;"></i>
-                                    </div>
-                                {% endif %}
+                                {% from 'macros/cover_input.html' import render_cover_display %}
+                                {{ render_cover_display(book, css_classes="img-fluid rounded shadow-sm", style="height: 500px; min-width: 300px; width: auto;", img_id="book-cover") }}
                             </div>
                         </div>
                         

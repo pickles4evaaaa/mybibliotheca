@@ -10,6 +10,7 @@ improved thread safety and connection management.
 
 import json
 import traceback
+import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timezone
 
@@ -276,6 +277,9 @@ class KuzuRelationshipService:
                 setattr(book, 'finish_date', datetime.fromisoformat(finish_date).date())
             except:
                 setattr(book, 'finish_date', None)
+        
+        # media_type comes from Book node only - no personal metadata involvement
+        # Let the Book's native media_type property show through without any override
         
         return book
     
@@ -580,17 +584,51 @@ class KuzuRelationshipService:
         """
         raw = safe_execute_kuzu_query(query, {"book_id": uid, "user_id": user_id})
         results = _convert_query_result_to_list(raw)
+        logger.debug(f"[RELATIONSHIP_SERVICE][BOOK_LOOKUP] Raw rows for id={uid}: {results}")
         if not results:
+            logger.debug(f"[RELATIONSHIP_SERVICE][BOOK_LOOKUP] No results for book id={uid} user={user_id} db_path={os.getenv('KUZU_DB_PATH')}")
             return None
         row = results[0]
+        # Normal expected key pattern is col_0 / col_1 / col_2. Fallbacks handle alternate shapes.
         if 'col_0' not in row:
-            return None
-        book_data = row['col_0']
+            # Attempt graceful recovery: pick first value-like entry
+            possible_keys = [k for k in row.keys() if k.startswith('col_')]
+            if possible_keys:
+                possible_keys.sort()
+                book_data = row[possible_keys[0]]
+                logger.debug(f"[RELATIONSHIP_SERVICE][BOOK_LOOKUP] Missing col_0 key; recovered using {possible_keys[0]} for book id={uid}")
+            elif 'result' in row:
+                book_data = row['result']
+                logger.debug(f"[RELATIONSHIP_SERVICE][BOOK_LOOKUP] Used 'result' key fallback for book id={uid}")
+            else:
+                logger.debug(f"[RELATIONSHIP_SERVICE][BOOK_LOOKUP] Row lacked expected keys for book id={uid}: keys={list(row.keys())}")
+                return None
+        else:
+            book_data = row['col_0']
         locations_data = row.get('col_1', []) or []
         relationship_data = {}
         personal_meta = row.get('col_2') or {}
         valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
         debug_log(f"Book {uid} locations from STORED_AT: {valid_locations}", "RELATIONSHIP")
+        # Ensure minimal dict shape if book_data is a bare id or missing expected keys
+        if isinstance(book_data, str):
+            book_data = { 'id': book_data }
+        if isinstance(book_data, dict) and 'title' not in book_data:
+            # Fallback fetch for core fields if only id present
+            try:
+                fallback_q = "MATCH (b:Book {id: $bid}) RETURN b.title, b.normalized_title, b.created_at, b.updated_at"
+                fb_raw = safe_execute_kuzu_query(fallback_q, {"bid": uid})
+                fb_rows = _convert_query_result_to_list(fb_raw)
+                if fb_rows:
+                    fr = fb_rows[0]
+                    # Map col indices defensively
+                    if isinstance(fr, dict):
+                        title = fr.get('col_0') or fr.get('title') or ''
+                        norm = fr.get('col_1') or (title.lower() if title else '')
+                        book_data.setdefault('title', title)
+                        book_data.setdefault('normalized_title', norm)
+            except Exception as _fb_err:
+                logger.debug(f"[RELATIONSHIP_SERVICE][BOOK_LOOKUP] Fallback field fetch failed for id={uid}: {_fb_err}")
         book = self._create_enriched_book(book_data, relationship_data, valid_locations, personal_meta)
         setattr(book, 'custom_metadata', {})
         return book

@@ -1,0 +1,34 @@
+{% macro render_cover_input(book) %}
+{# Uses UnifiedCoverManager for consistent cover form handling #}
+<div class="mb-3">
+    <label for="cover_url" class="form-label fw-medium">
+        <i class="bi bi-image me-1"></i>Cover URL
+    </label>
+    <input type="url" class="form-control" id="cover_url" name="cover_url" 
+           placeholder="{% if book.cover_url %}Leave empty to keep current cover{% else %}https://...{% endif %}">
+    {% if book.cover_url %}
+    <div class="form-text">
+        <small class="text-success">✅ Current cover: {{ book.cover_url[:50] }}{% if book.cover_url|length > 50 %}...{% endif %}</small>
+        <br><small class="text-info">💡 Leave this field empty to keep the current cover, or enter a new URL to replace it</small>
+    </div>
+    {% else %}
+    <div class="form-text">
+        <small class="text-muted">Enter a URL to add a cover image for this book</small>
+    </div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{% macro render_cover_display(book, css_classes="", style="", img_id="") %}
+{# Uses UnifiedCoverManager for consistent cover display #}
+{% if book.cover_url %}
+    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
+         class="{{ css_classes }}" style="{{ style }}" {% if img_id %}id="{{ img_id }}"{% endif %}
+         onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
+{% else %}
+    <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm {{ css_classes }}" 
+         style="{{ style }}" {% if img_id %}id="{{ img_id }}"{% endif %}>
+        <i class="bi-book text-muted" style="font-size: 6rem;"></i>
+    </div>
+{% endif %}
+{% endmacro %}

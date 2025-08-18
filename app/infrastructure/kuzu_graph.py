@@ -7,7 +7,6 @@ Focus on simple nodes and clear relationships.
 
 import os
 import json
-import threading
 import kuzu  # type: ignore
 import logging
 import uuid
@@ -17,26 +16,6 @@ from datetime import datetime, date, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_get_row_value(row: Any, index: int) -> Any:
-    """Safely extract a value from a KuzuDB row at the given index.
-    
-    KuzuDB rows are returned as lists, but the type system thinks they might be dicts.
-    This function handles the type conversion safely.
-    """
-    if isinstance(row, list):
-        return row[index] if index < len(row) else None
-    elif isinstance(row, dict):
-        # If it's a dict, try to get by string key or convert to list
-        keys = list(row.keys())
-        return row[keys[index]] if index < len(keys) else None
-    else:
-        # Fallback: try direct indexing
-        try:
-            return row[index]  # type: ignore
-        except (IndexError, KeyError, TypeError):
-            return None
 
 
 class KuzuGraphDB:
@@ -52,7 +31,6 @@ class KuzuGraphDB:
         self._database: Optional[kuzu.Database] = None
         self._connection: Optional[kuzu.Connection] = None
         self._is_initialized = False
-        self._lock = threading.RLock()  # Add instance-level lock for thread safety
     
     def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
         """Execute a query and normalize the result to always return a QueryResult."""
@@ -68,71 +46,99 @@ class KuzuGraphDB:
         
     def connect(self) -> kuzu.Connection:
         """Establish connection and initialize schema."""
-        with self._lock:  # Thread-safe connection establishment
-            if self._connection is None:
-                # Establish path reference early (used by recovery logic)
+        if self._connection is None:
+            try:
+                
+                # Check if database path exists and log file info
                 db_path = Path(self.database_path)
-                try:
+                
+                if db_path.exists():
+                    files = list(db_path.glob("*"))
+                    # Log file info only in debug mode
+                    debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+                    if debug_mode:
+                        for file in files[:10]:  # Limit to first 10 files
+                            print(f"📁 DB file: {file.name} ({file.stat().st_size} bytes)")
+                        if len(files) > 10:
+                            print(f"... and {len(files) - 10} more files")
+                
+                Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+                self._database = kuzu.Database(self.database_path)
+                self._connection = kuzu.Connection(self._database)
+                logger.info("Database connection established, initializing schema...")
+                self._initialize_schema()
+                logger.info(f"Kuzu connected at {self.database_path}")
+                
+                # Log post-connection state
+                if db_path.exists():
+                    files = list(db_path.glob("*"))
+                    total_size = sum(f.stat().st_size for f in files if f.is_file())
                     
-                    # Check if database path exists and log file info
+            except Exception as e:
+                logger.error(f"Failed to connect to Kuzu: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # Check if this is a database recovery error
+                if "std::bad_alloc" in str(e) or "Error during recovery" in str(e):
+                    logger.error("Database recovery failed - this usually indicates corrupted or incomplete database files")
                     
-                    if db_path.exists():
-                        files = list(db_path.glob("*"))
-                        # Log file info only in debug mode
-                        debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
-                        if debug_mode:
-                            for file in files[:10]:  # Limit to first 10 files
-                                print(f"📁 DB file: {file.name} ({file.stat().st_size} bytes)")
-                            if len(files) > 10:
-                                print(f"... and {len(files) - 10} more files")
-                    
-                    Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-                    self._database = kuzu.Database(self.database_path)
-                    self._connection = kuzu.Connection(self._database)
-                    logger.info("Database connection established, initializing schema...")
-                    self._initialize_schema()
-                    logger.info(f"Kuzu connected at {self.database_path}")
-                    
-                    # Log post-connection state
-                    if db_path.exists():
-                        files = list(db_path.glob("*"))
-                        total_size = sum(f.stat().st_size for f in files if f.is_file())
-                        
-                except Exception as e:
-                    logger.error(f"Failed to connect to Kuzu: {e}")
-                    import traceback, shutil
-                    traceback.print_exc()
-                    # Optional recovery path (opt-in)
-                    if ("std::bad_alloc" in str(e) or "Error during recovery" in str(e)) and os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() == 'true':
-                        try:
-                            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-                            backup_dir = Path(self.database_path).parent / 'corrupt_backups'
-                            backup_dir.mkdir(parents=True, exist_ok=True)
-                            backup_target = backup_dir / f'kuzu_backup_{timestamp}'
-                            if db_path.exists():
-                                if db_path.is_dir():
-                                    shutil.copytree(db_path, backup_target)
-                                else:
-                                    shutil.copy2(str(db_path), str(backup_target.with_suffix('.db')))
-                                logger.info(f"📦 Backed up corrupt DB to {backup_target}")
-                            # Clear and reinitialize
-                            if db_path.is_dir():
-                                shutil.rmtree(db_path, ignore_errors=True)
-                            else:
-                                db_path.unlink(missing_ok=True)  # type: ignore
-                            Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-                            self._database = kuzu.Database(self.database_path)
-                            self._connection = kuzu.Connection(self._database)
-                            self._initialize_schema()
-                            logger.info(f"Kuzu connected at {self.database_path} (recovered)")
-                        except Exception as rec_err:
-                            logger.error(f"Database recovery failed: {rec_err}")
-                            raise
-                    else:
+                    # Do NOT clear the database by default. Require explicit opt-in.
+                    allow_clear = os.getenv('KUZU_AUTO_RECOVER_CLEAR', 'false').lower() == 'true'
+                    if not allow_clear:
+                        logger.error("Safety lock engaged: KUZU_AUTO_RECOVER_CLEAR is not true. Skipping destructive recovery to protect data.")
+                        logger.error("To force a rebuild, set KUZU_AUTO_RECOVER_CLEAR=true (optional: KUZU_DEBUG=true) and restart. Back up /app/data/kuzu first.")
                         raise
-            if self._connection is None:
-                raise RuntimeError("Kuzu connection could not be established")
-            return self._connection
+
+                    logger.warning("Attempting destructive recovery by clearing database path (opt-in enabled)...")
+                    try:
+                        db_path = Path(self.database_path)
+                        if db_path.exists():
+                            # Back up existing DB path first (file or directory)
+                            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                            backup_dir = Path(os.getenv('KUZU_BACKUP_DIR', '/app/data/backups'))
+                            backup_dir.mkdir(parents=True, exist_ok=True)
+                            backup_target = backup_dir / f"kuzu_backup_{ts}"
+                            try:
+                                import shutil
+                                if db_path.is_dir():
+                                    shutil.make_archive(str(backup_target), 'gztar', root_dir=db_path)
+                                else:
+                                    # Single-file DB: copy to backups with timestamp
+                                    shutil.copy2(str(db_path), str(backup_target.with_suffix('.db')))
+                                logger.info(f"📦 Backed up Kuzu DB to {backup_target}")
+                            except Exception as be:
+                                logger.warning(f"Backup before recovery failed: {be}")
+
+                            # Now clear the path
+                            try:
+                                import shutil
+                                if db_path.is_dir():
+                                    shutil.rmtree(db_path, ignore_errors=True)
+                                else:
+                                    db_path.unlink(missing_ok=True)  # type: ignore
+                                logger.info("Database path cleared, creating fresh database...")
+                            except Exception as de:
+                                logger.error(f"Failed to clear database path: {de}")
+                                raise
+
+                        # Create parent and reinitialize
+                        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+                        self._database = kuzu.Database(self.database_path)
+                        self._connection = kuzu.Connection(self._database)
+                        logger.info("Database connection established, initializing schema...")
+                        self._initialize_schema()
+                        logger.info(f"Kuzu connected at {self.database_path} (recovered)")
+                    except Exception as recovery_error:
+                        logger.error(f"Database recovery failed: {recovery_error}")
+                        print("🔧 Make sure KuzuDB is running and accessible")
+                        print("💡 If this is a fresh deployment, the database will be created automatically")
+                        print("⚠️  If this persists, check that the data directory has proper permissions")
+                        raise recovery_error
+                else:
+                    print("🔧 Make sure KuzuDB is running and accessible")
+                    raise
+        return self._connection
     
     def _initialize_schema(self):
         """Initialize the graph schema with node and relationship tables."""
@@ -169,15 +175,10 @@ class KuzuGraphDB:
                             user_count = _vals[0] if _vals else 0
                         except Exception:
                             user_count = 0
-                        # Cast to int defensively (result may be bytes/str)
-                        try:
-                            _uc_int = int(user_count)
-                        except Exception:
-                            _uc_int = 0
-                        if _uc_int > 0:
+                        if user_count > 0:
                             # Database has existing users - ensure all tables exist but preserve data
                             has_existing_users = True
-                            logger.info(f"Database contains {_uc_int} users - will ensure all tables exist")
+                            logger.info(f"Database contains {user_count} users - will ensure all tables exist")
                             
                             # Check for books too
                             try:
@@ -265,30 +266,6 @@ class KuzuGraphDB:
                         except Exception as alter_e:
                             print(f"Note: Could not add updated_at to ReadingLog table: {alter_e}")
                 # Note: ReadingLog table migration completed
-
-                # Ensure HAS_PERSONAL_METADATA relationship exists (upgrade path from versions before personal metadata)
-                try:
-                    self._execute_query("MATCH ()-[r:HAS_PERSONAL_METADATA]->() RETURN COUNT(r) as count LIMIT 1")
-                except Exception as e:
-                    err_str = str(e)
-                    if "HAS_PERSONAL_METADATA" in err_str and any(tok in err_str.lower() for tok in ["does not exist", "cannot find", "unknown table", "binder exception"]):
-                        logger.info("Adding missing HAS_PERSONAL_METADATA relationship table (upgrade path)")
-                        try:
-                            create_rel = """
-                            CREATE REL TABLE HAS_PERSONAL_METADATA(
-                                FROM User TO Book,
-                                personal_notes STRING,
-                                personal_custom_fields STRING,
-                                created_at TIMESTAMP,
-                                updated_at TIMESTAMP
-                            )
-                            """
-                            self._execute_query(create_rel)
-                            logger.info("Created HAS_PERSONAL_METADATA relationship table")
-                        except Exception as ce:
-                            logger.warning(f"Failed creating HAS_PERSONAL_METADATA relationship table: {ce}")
-                    else:
-                        logger.debug("HAS_PERSONAL_METADATA relationship already present or different error encountered")
                         
             else:
                 logger.info("🔧 Creating new database schema...")
@@ -573,53 +550,37 @@ class KuzuGraphDB:
             ]
             
             # Create relationship tables
-            relationship_queries = []
-            # OWNS deprecated: Only create if explicitly enabled for legacy migration
-            import os as _os_dep_owns
-            if _os_dep_owns.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes'):  # pragma: no cover
-                relationship_queries.append(
-                    """
-                    CREATE REL TABLE OWNS(
-                        FROM User TO Book,
-                        reading_status STRING,
-                        date_added TIMESTAMP,
-                        start_date TIMESTAMP,
-                        finish_date TIMESTAMP,
-                        current_page INT64,
-                        total_pages INT64,
-                        ownership_status STRING,
-                        media_type STRING,
-                        borrowed_from STRING,
-                        borrowed_from_user_id STRING,
-                        borrowed_date TIMESTAMP,
-                        borrowed_due_date TIMESTAMP,
-                        loaned_to STRING,
-                        loaned_to_user_id STRING,
-                        loaned_date TIMESTAMP,
-                        loaned_due_date TIMESTAMP,
-                        location_id STRING,
-                        user_rating DOUBLE,
-                        rating_date TIMESTAMP,
-                        user_review STRING,
-                        review_date TIMESTAMP,
-                        is_review_spoiler BOOLEAN,
-                        personal_notes STRING,
-                        pace STRING,
-                        character_driven BOOLEAN,
-                        source STRING,
-                        custom_metadata STRING,
-                        created_at TIMESTAMP,
-                        updated_at TIMESTAMP
-                    )
-                    """
-                )
-            
-            relationship_queries += [
+            relationship_queries = [
                 """
-                CREATE REL TABLE HAS_PERSONAL_METADATA(
+                CREATE REL TABLE OWNS(
                     FROM User TO Book,
+                    reading_status STRING,
+                    date_added TIMESTAMP,
+                    start_date TIMESTAMP,
+                    finish_date TIMESTAMP,
+                    current_page INT64,
+                    total_pages INT64,
+                    ownership_status STRING,
+                    media_type STRING,
+                    borrowed_from STRING,
+                    borrowed_from_user_id STRING,
+                    borrowed_date TIMESTAMP,
+                    borrowed_due_date TIMESTAMP,
+                    loaned_to STRING,
+                    loaned_to_user_id STRING,
+                    loaned_date TIMESTAMP,
+                    loaned_due_date TIMESTAMP,
+                    location_id STRING,
+                    user_rating DOUBLE,
+                    rating_date TIMESTAMP,
+                    user_review STRING,
+                    review_date TIMESTAMP,
+                    is_review_spoiler BOOLEAN,
                     personal_notes STRING,
-                    personal_custom_fields STRING,
+                    pace STRING,
+                    character_driven BOOLEAN,
+                    source STRING,
+                    custom_metadata STRING,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -830,39 +791,38 @@ class KuzuGraphDB:
             return self.connect()
         return self._connection
     
-    @property 
-    def storage(self) -> 'KuzuGraphStorage':
-        """Get a single storage instance to avoid multiple Database connections."""
-        if not hasattr(self, '_storage'):
-            self._storage = KuzuGraphStorage(self)
-        return self._storage
-    
     # Repository-expected methods that delegate to storage layer
     
     def create_node(self, node_type: str, data: Dict[str, Any]) -> bool:
         """Create a node using the storage layer."""
+        storage = KuzuGraphStorage(self)
         node_id = data.get('id', str(uuid.uuid4()))
-        return self.storage.store_node(node_type, node_id, data)
+        return storage.store_node(node_type, node_id, data)
     
     def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
         """Get a node using the storage layer."""
-        return self.storage.get_node(node_type, node_id)
+        storage = KuzuGraphStorage(self)
+        return storage.get_node(node_type, node_id)
     
     def update_node(self, node_type: str, node_id: str, updates: Dict[str, Any]) -> bool:
         """Update a node using the storage layer."""
-        return self.storage.update_node(node_type, node_id, updates)
+        storage = KuzuGraphStorage(self)
+        return storage.update_node(node_type, node_id, updates)
     
     def delete_node(self, node_type: str, node_id: str) -> bool:
         """Delete a node using the storage layer."""
-        return self.storage.delete_node(node_type, node_id)
+        storage = KuzuGraphStorage(self)
+        return storage.delete_node(node_type, node_id)
     
     def get_nodes_by_type(self, node_type: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Get nodes by type using the storage layer."""
-        return self.storage.get_nodes_by_type(node_type, limit, offset)
+        storage = KuzuGraphStorage(self)
+        return storage.get_nodes_by_type(node_type, limit, offset)
     
     def find_nodes_by_type(self, node_type: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Find nodes by type using the storage layer."""
-        return self.storage.find_nodes_by_type(node_type, limit, offset)
+        storage = KuzuGraphStorage(self)
+        return storage.find_nodes_by_type(node_type, limit, offset)
     
     def query(self, cypher_query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return results."""
@@ -879,7 +839,7 @@ class KuzuGraphDB:
                     # Convert row to dict
                     if len(row) == 1:
                         # Single column result
-                        rows.append({'result': _safe_get_row_value(row, 0)})
+                        rows.append({'result': row[0]})
                     else:
                         # Multiple columns - create dict with column names
                         row_dict = {}
@@ -982,7 +942,7 @@ class KuzuGraphStorage:
                     # Convert row to dict format expected by services
                     if len(row) == 1:
                         # Single column result
-                        rows.append({'result': _safe_get_row_value(row, 0)})
+                        rows.append({'result': row[0]})
                     else:
                         # Multiple columns - create dict with generic column names
                         row_dict = {}
@@ -1440,8 +1400,8 @@ class KuzuGraphStorage:
             if result:
                 while result.has_next():
                     row = result.get_next()
-                    rel_data = dict(_safe_get_row_value(row, 0))
-                    to_data = dict(_safe_get_row_value(row, 1))
+                    rel_data = dict(row[0])
+                    to_data = dict(row[1])
                     relationships.append({
                         "relationship": rel_data,
                         "target": to_data
@@ -1470,12 +1430,12 @@ class KuzuGraphStorage:
     
     def store_custom_metadata(self, user_id: str, book_id: str, field_name: str, field_value: str, field_type: Optional[str] = None) -> bool:
         """
-    Store custom metadata for a user-book relationship (OWNS deprecated).
-
-    Strategy (universal library mode):
-    1. Update HAS_PERSONAL_METADATA JSON blob via PersonalMetadataService
-    2. Create/Update HAS_CUSTOM_FIELD relationship for usage tracking
-    3. Increment CustomField usage_count
+        Store custom metadata for a user-book relationship.
+        
+        This method handles the dual storage system:
+        1. Updates OWNS relationship custom_metadata JSON for display
+        2. Creates HAS_CUSTOM_FIELD relationships for usage tracking  
+        3. Increments usage count on CustomField definitions
         
         Args:
             user_id: The user ID
@@ -1488,14 +1448,42 @@ class KuzuGraphStorage:
             True if successful, False otherwise
         """
         try:
-            # Step 1: Update personal metadata JSON blob
-            try:
-                from app.services.personal_metadata_service import personal_metadata_service
-                personal_metadata_service.update_personal_metadata(
-                    user_id, book_id, custom_updates={field_name: field_value}, merge=True
-                )
-            except Exception as e:  # pragma: no cover - safety net
-                logger.warning(f"Failed updating personal metadata for custom field {field_name}: {e}")
+            
+            # Step 1: Update the OWNS relationship custom_metadata
+            # First get the current OWNS relationship
+            query_get_owns = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            RETURN r.custom_metadata as current_metadata
+            """
+            
+            result = self._execute_query(query_get_owns, {"user_id": user_id, "book_id": book_id})
+            current_metadata = {}
+            
+            if result and result.has_next():
+                _row = result.get_next()
+                _vals = self._row_values(_row)
+                metadata_json = _vals[0] if _vals else None
+                if metadata_json:
+                    try:
+                        current_metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+                    except (json.JSONDecodeError, TypeError):
+                        current_metadata = {}
+            
+            # Update the metadata
+            current_metadata[field_name] = field_value
+            metadata_json_str = json.dumps(current_metadata)
+            
+            # Update the OWNS relationship with new metadata
+            query_update_owns = """
+            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+            SET r.custom_metadata = $metadata_json
+            """
+            
+            self.kuzu_conn.execute(query_update_owns, {
+                "user_id": user_id, 
+                "book_id": book_id, 
+                "metadata_json": metadata_json_str
+            })
             
             
             # Step 2: Look for existing CustomField definition by name
@@ -1543,7 +1531,7 @@ class KuzuGraphStorage:
                     count = _valsc[0] if _valsc else 0
                     rel_exists = int(count) > 0
                 
-                if not rel_exists and field_definition_id:
+                if not rel_exists:
                     # Create new HAS_CUSTOM_FIELD relationship
                     rel_props = {
                         'book_id': book_id,
@@ -1580,7 +1568,7 @@ class KuzuGraphStorage:
                     })
                     
             else:
-                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - stored only in personal metadata")
+                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - metadata stored in OWNS only")
             
             return True
             
@@ -1667,11 +1655,37 @@ _kuzu_database = None
 _graph_storage = None
 
 
+def get_kuzu_connection() -> 'KuzuGraphDB':
+    """Get the global KuzuDB instance. DEPRECATED: Use get_kuzu_database() instead."""
+    return get_kuzu_database()
+
+
+def get_kuzu_database() -> 'KuzuGraphDB':
+    """
+    Get the single global KuzuGraphDB instance.
+    
+    ⚠️ WARNING: This function is NOT thread-safe and should be avoided in production!
+    It will cause concurrency issues with multiple users. Use safe_execute_query() 
+    or safe_get_connection() from app.utils.safe_kuzu_manager instead.
+    
+    This function is deprecated and will be removed in a future version.
+    """
+    global _kuzu_database
+    if _kuzu_database is None:
+        logger.warning("🚨 DANGEROUS: Using thread-unsafe global KuzuDB singleton! "
+                      "This will cause concurrency issues. Use safe_execute_query() instead.")
+        _kuzu_database = KuzuGraphDB()
+        _kuzu_database.connect()
+        logger.info(f"Single global KuzuDB instance established")
+    # Suppress repeated reuse messages - only log once
+    return _kuzu_database
+
+
 def get_graph_storage() -> 'KuzuGraphStorage':
     """
-    Get global KuzuGraphStorage instance using the safe database connection.
+    Get global KuzuGraphStorage instance using the single database.
     
-    WARNING: This function is NOT thread-safe and should be avoided in production!
+    ⚠️ WARNING: This function is NOT thread-safe and should be avoided in production!
     It will cause concurrency issues with multiple users. Use safe_execute_query() 
     or safe_get_connection() from app.utils.safe_kuzu_manager instead.
     
@@ -1679,16 +1693,10 @@ def get_graph_storage() -> 'KuzuGraphStorage':
     """
     global _graph_storage
     if _graph_storage is None:
-        logger.warning("DANGEROUS: Using thread-unsafe global KuzuDB storage! "
+        logger.warning("🚨 DANGEROUS: Using thread-unsafe global KuzuDB storage! "
                       "This will cause concurrency issues. Use safe_get_connection() instead.")
-        from app.utils.safe_kuzu_manager import SafeKuzuManager
-        manager = SafeKuzuManager()
-        # Create a temporary storage for backward compatibility (not recommended)
-        with manager.get_connection() as conn:
-            # This is a hack for backward compatibility - creates unsafe storage
-            database = KuzuGraphDB()
-            database._connection = conn
-            _graph_storage = KuzuGraphStorage(database)
+        database = get_kuzu_database()  # Always use the same database instance
+        _graph_storage = KuzuGraphStorage(database)
     return _graph_storage
 
 
@@ -1731,12 +1739,11 @@ def safe_execute_kuzu_query(query: str, params: Optional[Dict[str, Any]] = None,
         from ..utils.safe_kuzu_manager import safe_execute_query
         return safe_execute_query(query, params, user_id, operation)
     except ImportError:
-        logger.error("CRITICAL: safe_execute_query not available! Using dangerous fallback.")
-        # Fallback to unsafe method if safe manager not available
-        from app.utils.safe_kuzu_manager import SafeKuzuManager
-        manager = SafeKuzuManager()
-        with manager.get_connection(user_id, operation) as conn:
-            return conn.execute(query, params or {})
+        logger.error("🚨 CRITICAL: safe_execute_query not available! Using dangerous fallback.")
+        # Fallback to dangerous global (temporary during migration)
+        db = get_kuzu_database()
+        conn = db.connect()
+        return conn.execute(query, params or {})
 
 
 def safe_get_kuzu_connection(user_id: Optional[str] = None, operation: str = "connection"):
@@ -1762,8 +1769,7 @@ def safe_get_kuzu_connection(user_id: Optional[str] = None, operation: str = "co
         from ..utils.safe_kuzu_manager import safe_get_connection
         return safe_get_connection(user_id, operation)
     except ImportError:
-        logger.error("CRITICAL: safe_get_connection not available! Using dangerous fallback.")
-        # Fallback to unsafe method if safe manager not available
-        from app.utils.safe_kuzu_manager import SafeKuzuManager
-        manager = SafeKuzuManager()
-        return manager.get_connection(user_id, operation)
+        logger.error("🚨 CRITICAL: safe_get_connection not available! Using dangerous fallback.")
+        # Fallback to dangerous global (temporary during migration)
+        db = get_kuzu_database()
+        return db.connect()

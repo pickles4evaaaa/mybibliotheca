@@ -425,6 +425,19 @@ def create_app():
             return json.loads(json_string)
         except (json.JSONDecodeError, TypeError):
             return []
+    
+    # Cover management filters
+    @app.template_filter('cover_info')
+    def get_cover_info_filter(book):
+        """Get cover info for a book using UnifiedCoverManager."""
+        from app.services.unified_cover_manager import cover_manager
+        return cover_manager.get_cover_info(book)
+    
+    @app.template_filter('has_cover')
+    def has_cover_filter(book):
+        """Check if book has a valid cover using UnifiedCoverManager."""
+        from app.services.unified_cover_manager import cover_manager
+        return cover_manager.get_cover_info(book).has_cover
 
     # CSRF error handler
     @app.errorhandler(400)
@@ -946,27 +959,35 @@ def create_app():
             except Exception as close_error:
                 print(f"🛑 [APP_SHUTDOWN] ❌ Failed to close KuzuDB connection: {close_error}")
     
-    # Register shutdown handler for both normal exit AND signal termination
-    atexit.register(shutdown_handler)
-    
-    # 🔥 CRITICAL FIX: Add signal handlers for Docker SIGTERM/SIGINT
+    # Register shutdown/signal handlers only once globally. During tests the factory can be
+    # invoked many times which previously registered duplicate atexit handlers leading to
+    # repeated shutdown execution and a final bus error (Kuzu closed multiple times).
     import signal
-    
-    def signal_shutdown_handler(signum, frame):
-        """Handle Docker container shutdown signals (SIGTERM, SIGINT)."""
-        print(f"🛑 [SIGNAL_SHUTDOWN] Received signal {signum}")
-        shutdown_handler()
-        # Exit gracefully after handling shutdown
-        sys.exit(0)
-    
-    # Register signal handlers for Docker container termination
-    signal.signal(signal.SIGTERM, signal_shutdown_handler)  # Docker stop
-    signal.signal(signal.SIGINT, signal_shutdown_handler)   # Ctrl+C
-    
-    # Only log signal handler registration in debug mode
-    debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
-    if debug_mode:
-        logger.debug("Signal handlers registered for SIGTERM/SIGINT - KuzuDB persistence fixed!")
+    module_globals = globals()
+    if not module_globals.get('_mybibliotheca_shutdown_handlers_registered'):
+        atexit.register(shutdown_handler)
+
+        def signal_shutdown_handler(signum, frame):
+            """Handle Docker container shutdown signals (SIGTERM, SIGINT)."""
+            print(f"🛑 [SIGNAL_SHUTDOWN] Received signal {signum}")
+            shutdown_handler()
+            # Exit gracefully after handling shutdown
+            sys.exit(0)
+
+        try:
+            signal.signal(signal.SIGTERM, signal_shutdown_handler)  # Docker stop
+            signal.signal(signal.SIGINT, signal_shutdown_handler)   # Ctrl+C
+        except Exception as _sig_err:
+            # Ignore if signals can't be set (e.g., in certain restricted environments)
+            if os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true':
+                print(f"Could not register signal handlers: {_sig_err}")
+
+        module_globals['_mybibliotheca_shutdown_handlers_registered'] = True
+
+        # Only log signal handler registration in debug mode
+        debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+        if debug_mode:
+            logger.debug("Signal/atexit shutdown handlers registered (idempotent)")
 
     # Ultra-visibility WSGI request logger to stdout
     def _wsgi_log_wrapper(app_wsgi):

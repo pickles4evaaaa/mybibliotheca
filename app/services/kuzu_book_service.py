@@ -124,6 +124,7 @@ class KuzuBookService:
             openlibrary_id=book_data.get('openlibrary_id'),
             average_rating=book_data.get('average_rating'),
             rating_count=book_data.get('rating_count'),
+            media_type=book_data.get('media_type'),
             custom_metadata=book_data.get('custom_metadata', {}),
             created_at=book_data.get('created_at', datetime.now(timezone.utc)),
             updated_at=book_data.get('updated_at', datetime.now(timezone.utc))
@@ -417,6 +418,13 @@ class KuzuBookService:
             
             # Update basic fields
             for field, value in updates.items():
+                # Defensive guard: never overwrite an existing cover with empty/None inadvertently
+                if field == 'cover_url':
+                    current_cover = getattr(book, 'cover_url', None)
+                    # If attempting to set blank/None while there is an existing cover, skip
+                    if (value is None or (isinstance(value, str) and not value.strip())) and current_cover:
+                        logger.info(f"[COVER] Ignoring blank cover_url update to preserve existing cover {current_cover}")
+                        continue
                 if hasattr(book, field):
                     setattr(book, field, value)
             
@@ -436,6 +444,15 @@ class KuzuBookService:
                         book_dict['series'] = value.name
                     else:
                         book_dict['series'] = str(value)
+                elif field == 'cover_url':
+                    current_cover = getattr(book, 'cover_url', None)
+                    if (value is None or (isinstance(value, str) and not value.strip())) and current_cover:
+                        # Skip adding blank cover_url to update statement
+                        continue
+                    if hasattr(book, field):
+                        book_dict[field] = getattr(book, field)
+                    else:
+                        book_dict[field] = value
                 elif hasattr(book, field):
                     # Get the updated value from the book object
                     book_dict[field] = getattr(book, field)
@@ -449,7 +466,7 @@ class KuzuBookService:
                 'title', 'subtitle', 'normalized_title', 'isbn13', 'isbn10', 'asin',
                 'description', 'published_date', 'page_count', 'language', 'cover_url',
                 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count',
-                'series', 'series_volume', 'series_order', 'created_at', 'updated_at'
+                'series', 'series_volume', 'series_order', 'created_at', 'updated_at', 'media_type'
             }
 
             set_clauses = []

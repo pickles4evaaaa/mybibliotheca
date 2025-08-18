@@ -2,7 +2,11 @@
 Kuzu Service Facade
 
 Provides a unified interface for all Kuzu services while maintaining backward compatibility
-with the original KuzuBookService. This facade composes all the individual services
+        # Personal standard fields stored per-user
+        personal_relationship_fields = {
+            'reading_status', 'ownership_status', 'user_rating',
+            'personal_notes', 'review', 'start_date', 'finish_date'
+        }the original KuzuBookService. This facade composes all the individual services
 and delegates method calls to the appropriate service.
 """
 
@@ -118,7 +122,7 @@ class KuzuServiceFacade:
         # Personal standard fields stored per-user
         personal_relationship_fields = {
             'reading_status', 'ownership_status', 'user_rating',
-            'personal_notes', 'review', 'start_date', 'finish_date', 'media_type'
+            'personal_notes', 'review', 'start_date', 'finish_date'
         }
 
         # Custom metadata fields

@@ -192,7 +192,48 @@ class SimpleBackupService:
         
         try:
             with open(self.backup_index_file, 'r') as f:
-                data = json.load(f)
+                content = f.read().strip()
+                
+            # Try to handle corrupted JSON by finding the first complete JSON object
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError as parse_error:
+                logger.warning(f"Backup index JSON corrupted at position {parse_error.pos}, attempting recovery...")
+                
+                # Try to extract valid JSON by finding the last complete closing brace
+                if content.startswith('{'):
+                    brace_count = 0
+                    last_valid_pos = 0
+                    for i, char in enumerate(content):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                last_valid_pos = i + 1
+                                break
+                    
+                    if last_valid_pos > 0:
+                        try:
+                            data = json.loads(content[:last_valid_pos])
+                            logger.info(f"Successfully recovered backup index by truncating at position {last_valid_pos}")
+                            # Save the corrected version
+                            self._backup_index = {}
+                            for backup_id, backup_data in data.items():
+                                try:
+                                    self._backup_index[backup_id] = SimpleBackupInfo.from_dict(backup_data)
+                                except Exception as e:
+                                    logger.warning(f"Failed to load backup info for {backup_id}: {e}")
+                            self._save_backup_index()
+                            return self._backup_index
+                        except json.JSONDecodeError:
+                            pass
+                
+                # If recovery fails, backup the corrupted file and start fresh
+                corrupted_backup = self.backup_index_file.with_suffix('.json.corrupted')
+                self.backup_index_file.rename(corrupted_backup)
+                logger.warning(f"Backup index was corrupted, moved to {corrupted_backup} and starting fresh")
+                return {}
             
             index = {}
             for backup_id, backup_data in data.items():
