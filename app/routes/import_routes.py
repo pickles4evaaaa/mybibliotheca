@@ -2204,8 +2204,40 @@ def batch_fetch_book_metadata(isbns):
     metadata = {}
     failed_isbns = []
 
+    # Local validator mirrors unified_metadata logic (keep lightweight, no dependency loop)
+    import re as _re
+    def _valid_isbn10(v: str) -> bool:
+        if len(v) != 10 or not _re.match(r'^[0-9]{9}[0-9Xx]$', v):
+            return False
+        total = 0
+        for i, ch in enumerate(v[:9]):
+            if not ch.isdigit():
+                return False
+            total += (10 - i) * int(ch)
+        check = v[9]
+        total += 10 if check in 'Xx' else int(check)
+        return total % 11 == 0
+    def _valid_isbn13(v: str) -> bool:
+        if len(v) != 13 or not v.isdigit():
+            return False
+        if not (v.startswith('978') or v.startswith('979')):
+            return False
+        s = 0
+        for i, ch in enumerate(v[:12]):
+            s += (1 if i % 2 == 0 else 3) * int(ch)
+        return (10 - (s % 10)) % 10 == int(v[12])
+    def _is_valid_isbn(raw: str) -> bool:
+        if not raw:
+            return False
+        cleaned = _re.sub(r'[^0-9Xx]', '', raw.strip())
+        return _valid_isbn10(cleaned) or _valid_isbn13(cleaned)
+
     for i, isbn in enumerate(isbns):
         if not isbn:
+            continue
+        if not _is_valid_isbn(isbn):
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][METADATA][SKIP_INVALID] idx={i} isbn={isbn}")
             continue
         if _META_DEBUG_FLAG:
             logger.debug(f"[IMPORT][METADATA][FETCH_START] idx={i} isbn={isbn}")

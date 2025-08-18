@@ -361,6 +361,23 @@ def _format_published_date_for_input(published_date_str):
 def fetch_book(isbn):
     """Legacy endpoint: now powered by unified ISBN metadata with graceful fallback."""
     try:
+        # Early ISBN validation to avoid unnecessary provider calls
+        import re as _re
+        raw = _re.sub(r'[^0-9Xx]', '', (isbn or '').strip())
+        def _v10(v: str):
+            if len(v)!=10 or not _re.match(r'^[0-9]{9}[0-9Xx]$', v): return False
+            s=0
+            for i,ch in enumerate(v[:9]): s += (10-i)*int(ch)
+            s += 10 if v[9] in 'Xx' else int(v[9])
+            return s%11==0
+        def _v13(v: str):
+            if len(v)!=13 or not v.isdigit(): return False
+            if not (v.startswith('978') or v.startswith('979')): return False
+            t=0
+            for i,ch in enumerate(v[:12]): t += (1 if i%2==0 else 3)*int(ch)
+            return (10-(t%10))%10 == int(v[12])
+        if not raw or not (_v10(raw) or _v13(raw)):
+            return jsonify({'error': 'Invalid ISBN'}), 400
         from app.utils.metadata_aggregator import fetch_unified_by_isbn
         unified = fetch_unified_by_isbn(isbn) or {}
         book_data = dict(unified)

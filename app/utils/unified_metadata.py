@@ -633,8 +633,36 @@ def _unified_fetch_pair(isbn: str):
 	import re as _re_norm
 	isbn_clean = (isbn or '').strip()
 	isbn_clean = _re_norm.sub(r'[^0-9Xx]', '', isbn_clean)
+	# Early structural + checksum validation to avoid wasting provider calls
+	def _valid_isbn10(val: str) -> bool:
+		if len(val) != 10: return False
+		if not _re_norm.match(r'^[0-9]{9}[0-9Xx]$', val): return False
+		s = 0
+		for i, ch in enumerate(val[:9]):
+			if not ch.isdigit(): return False
+			s += (10 - i) * int(ch)
+		check = val[9]
+		if check in 'Xx':
+			s += 10
+		else:
+			if not check.isdigit(): return False
+			s += int(check)
+		return s % 11 == 0
+	def _valid_isbn13(val: str) -> bool:
+		if len(val) != 13 or not val.isdigit(): return False
+		if not (val.startswith('978') or val.startswith('979')): return False
+		tot = 0
+		for i, ch in enumerate(val[:12]):
+			w = 1 if i % 2 == 0 else 3
+			tot += int(ch) * w
+		calc = (10 - (tot % 10)) % 10
+		return calc == int(val[12])
+	def _isbn_valid(val: str) -> bool:
+		return _valid_isbn10(val) or _valid_isbn13(val)
 	if not isbn_clean:
 		return {}, {}, {'input': 'empty'}
+	if not _isbn_valid(isbn_clean):
+		return {}, {}, {'input': 'invalid_format'}
 	google: Dict[str, Any] = {}
 	openlib: Dict[str, Any] = {}
 	_errors: Dict[str, str] = {}
