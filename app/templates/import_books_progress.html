@@ -314,13 +314,21 @@ function updateProgress() {
                 // Remap tiles to reading history semantics
                 const booksInvolved = data.books_involved || 0;
                 const logsCreated = data.reading_logs_created || 0;
-                const booksMatched = data.books_matched || 0;
+                // During needs_book_matching, reflect auto-matched count; otherwise prefer final books_matched
+                let booksMatched = data.books_matched || 0;
+                if ((data.status === 'needs_book_matching') && !booksMatched) {
+                    if (typeof data.auto_matched_count === 'number') {
+                        booksMatched = data.auto_matched_count;
+                    } else if (Array.isArray(data.books_for_matching)) {
+                        booksMatched = data.books_for_matching.filter(b => b && b.matched_book).length;
+                    }
+                }
                 const booksCreated = data.books_created || 0;
                 document.getElementById('processedCount').textContent = booksInvolved; // Books involved
                 document.querySelector('[data-status="processed"] small').textContent = 'Books';
                 document.getElementById('successCount').textContent = logsCreated; // Logs created
                 document.querySelector('[data-status="success"] small').textContent = 'Logs';
-                document.getElementById('mergedCount').textContent = booksMatched; // Matched existing books
+                document.getElementById('mergedCount').textContent = booksMatched; // Matched existing books (auto-matched during review)
                 document.querySelector('[data-status="merged"] small').textContent = 'Matched';
                 document.getElementById('skippedCount').textContent = booksCreated; // Newly created books
                 document.querySelector('[data-status="skipped"] small').textContent = 'Created';
@@ -343,7 +351,8 @@ function updateProgress() {
                 if (data.unmatched !== undefined) {
                     unmatchedCount = data.unmatched;
                 } else if (data.books_for_matching) {
-                    unmatchedCount = data.books_for_matching.filter(book => !book.matched_book).length;
+                    // Exclude bookless pseudo-entries from unmatched
+                    unmatchedCount = data.books_for_matching.filter(book => !book.matched_book && !book.is_bookless).length;
                 }
             } else {
                 // For regular book imports
@@ -397,9 +406,9 @@ function updateProgress() {
                 
                 // Handle different data structures for different import types
                 let unmatchedCount = 0;
-                if (data.books_for_matching) {
-                    // Reading history import format
-                    unmatchedCount = data.books_for_matching.length;
+                if (Array.isArray(data.books_for_matching)) {
+                    // Reading history import format: count only entries needing manual matching
+                    unmatchedCount = data.books_for_matching.filter(book => !book.matched_book && !book.is_bookless).length;
                 } else if (data.unmatched_books) {
                     // Legacy format
                     unmatchedCount = data.unmatched_books.length;

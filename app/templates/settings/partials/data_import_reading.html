@@ -5,11 +5,11 @@
   </div>
   <div class="card-body">
     <p class="text-muted small">Upload a CSV of reading sessions or history. We'll queue analysis and show progress.</p>
-    <form id="importReadingForm" enctype="multipart/form-data" method="post" action="{{ url_for('import.import_reading_history') }}" target="_blank">
+  <form id="importReadingForm" enctype="multipart/form-data" method="post" action="{{ url_for('import.import_reading_history') }}" target="_blank">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <div class="mb-3">
-        <label for="readingFile" class="form-label">Select file</label>
-        <input class="form-control" type="file" id="readingFile" name="file" accept=".csv,.tsv,.txt" required>
+  <label for="csv_file" class="form-label">Select CSV/TSV file</label>
+  <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv,.tsv,.txt" required>
       </div>
       <div class="d-flex flex-wrap gap-2">
         <button type="submit" class="btn btn-success"><i class="bi bi-upload"></i> Start Import (opens workflow)</button>

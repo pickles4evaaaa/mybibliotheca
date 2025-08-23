@@ -74,9 +74,9 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         
                         <div class="mb-3">
-                            <label for="csv_file" class="form-label">Select CSV File</label>
-                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
-                            <div class="form-text">Maximum file size: 10MB</div>
+                            <label for="csv_file" class="form-label">Select CSV/TSV File</label>
+                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv,.tsv,.txt" required>
+                            <div class="form-text">Supported: .csv, .tsv, .txt (delimiter auto-detected). Maximum file size: 10MB</div>
                         </div>
                         
                         <div class="d-grid">

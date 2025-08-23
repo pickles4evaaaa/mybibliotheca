@@ -44,6 +44,7 @@ from app.services import book_service, import_mapping_service, custom_field_serv
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import CustomFieldDefinition, CustomFieldType
 from app.utils import normalize_goodreads_value
+from app.utils.user_settings import get_effective_reading_defaults
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.book_utils import get_best_cover_for_book
 from app.utils.safe_import_manager import (
@@ -416,8 +417,14 @@ def import_books():
         else:
             # Handle new file upload and show field mapping
             file = request.files.get('csv_file')
-            if not file or not file.filename or not file.filename.endswith('.csv'):
-                flash('Please upload a valid CSV file.', 'danger')
+            if not file or not file.filename:
+                flash('Please upload a valid delimited file (.csv, .tsv, or .txt).', 'danger')
+                return redirect(url_for('import.import_books'))
+            # Allow common delimited text files
+            allowed_exts = ('.csv', '.tsv', '.txt')
+            filename_lc = file.filename.lower()
+            if not any(filename_lc.endswith(ext) for ext in allowed_exts):
+                flash('Please upload a valid delimited file (.csv, .tsv, or .txt).', 'danger')
                 return redirect(url_for('import.import_books'))
             
             # Save file temporarily
@@ -446,6 +453,18 @@ def import_books():
                 reader = csv.DictReader(csvfile, delimiter=delimiter)
                 headers = reader.fieldnames or []
                 
+                # Auto-detect if this looks like a reading history file and route to that workflow
+                def _looks_like_reading_history(hdrs) -> bool:
+                    low = [str(h).lower().strip() for h in (hdrs or [])]
+                    has_date = any('date' == h or h.startswith('date') for h in low)
+                    has_any_metrics = any(k in low for k in ['pages read','minutes read','start page','end page'])
+                    # Avoid false positives on typical book exports by requiring absence of both title and author headers
+                    typical_book_cols = any(k in low for k in ['title','author','authors','isbn','isbn13','isbn_13'])
+                    return has_date and has_any_metrics and not typical_book_cols
+                if _looks_like_reading_history(headers):
+                    # Hand off to the Reading History importer using the saved file
+                    return redirect(url_for('import.import_reading_history', csv_file_path=temp_path))
+
                 # Get first 3 rows for preview
                 preview_rows = []
                 total_rows = 0
@@ -2827,6 +2846,41 @@ def import_waiting(task_id):
 def import_reading_history():
     """Import reading history from CSV."""
     if request.method == 'GET':
+        # If handed off from generic importer with an existing temp file, go straight to mapping
+        csv_file_path = request.args.get('csv_file_path')
+        if csv_file_path and os.path.exists(csv_file_path):
+            try:
+                with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                    sample = csvfile.read(1024)
+                    csvfile.seek(0)
+                    delimiter = ','
+                    try:
+                        sniffer = csv.Sniffer()
+                        delimiter = sniffer.sniff(sample).delimiter
+                    except Exception:
+                        for test_delimiter in [',', ';', '\t', '|']:
+                            if test_delimiter in sample:
+                                delimiter = test_delimiter
+                                break
+                    reader = csv.DictReader(csvfile, delimiter=delimiter)
+                    headers = reader.fieldnames or []
+                    preview_rows = []
+                    total_rows = 0
+                    for i, row in enumerate(reader):
+                        if i < 3:
+                            preview_rows.append([row.get(header, '') for header in headers])
+                        total_rows += 1
+                suggested_mappings = _auto_detect_reading_history_fields(headers)
+                return render_template('import_reading_history_mapping.html',
+                                      csv_file_path=csv_file_path,
+                                      csv_headers=headers,
+                                      csv_preview=preview_rows,
+                                      total_rows=total_rows,
+                                      suggested_mappings=suggested_mappings)
+            except Exception as e:
+                current_app.logger.error(f"Error preparing mapping for handed-off reading history file: {e}")
+                flash('Error preparing file for mapping. Please re-upload.', 'danger')
+                return render_template('import_reading_history.html')
         return render_template('import_reading_history.html')
     
     # Handle POST request - file upload
@@ -2835,9 +2889,8 @@ def import_reading_history():
         flash('No CSV file selected.', 'error')
         return redirect(url_for('import.import_reading_history'))
     
-    if not csv_file.filename.endswith('.csv'):
-        flash('Please upload a CSV file.', 'error')
-        return redirect(url_for('import.import_reading_history'))
+    # Don't strictly enforce .csv extension; accept CSV/TSV/TXT and rely on sniffer below
+    # This mirrors the robustness of the main Import Books page
     
     try:
         # Save uploaded file temporarily
@@ -3477,12 +3530,29 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
             for entry in entries:
                 try:
                     log_date = datetime.strptime(entry.get('date'), '%Y-%m-%d').date()
+                    # Resolve pages/minutes with priority: entry -> user defaults -> server defaults -> fallback 1 minute
+                    try:
+                        p_val = entry.get('pages_read', 0) or 0
+                        m_val = entry.get('minutes_read', 0) or 0
+                    except Exception:
+                        p_val, m_val = 0, 0
+                    if p_val <= 0 and m_val <= 0:
+                        try:
+                            dp, dm = get_effective_reading_defaults(user_id)
+                        except Exception:
+                            dp, dm = (None, None)
+                        if (dp or 0) > 0:
+                            p_val = int(dp)  # type: ignore[arg-type]
+                        if (dm or 0) > 0:
+                            m_val = int(dm)  # type: ignore[arg-type]
+                        if p_val <= 0 and m_val <= 0:
+                            m_val = 1
                     rl = ReadingLog(
                         user_id=str(user_id),
                         book_id=target_book_id,
                         date=log_date,
-                        pages_read=entry.get('pages_read', 0),
-                        minutes_read=entry.get('minutes_read', 0),
+                        pages_read=p_val,
+                        minutes_read=m_val,
                         notes=(entry.get('notes') or (f"Original book name: {csv_name}" if act == 'bookless' else None)),
                         created_at=datetime.now(timezone.utc),
                         updated_at=datetime.now(timezone.utc)
@@ -3500,8 +3570,8 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                                 pass
                         label = f"{log_date} — {display_name}"
                         bits = []
-                        p = entry.get('pages_read') or 0
-                        m = entry.get('minutes_read') or 0
+                        p = p_val
+                        m = m_val
                         if p: bits.append(f"{p}p")
                         if m: bits.append(f"{m}m")
                         if bits:
@@ -3727,7 +3797,20 @@ async def process_reading_history_import(import_config):
                     # Calculate pages read if not provided but start/end pages are
                     if not pages_read and start_page and end_page and end_page >= start_page:
                         pages_read = end_page - start_page + 1
-                    
+
+                    # Apply defaults if still missing: user > server > legacy(1 minute)
+                    if pages_read <= 0 and minutes_read <= 0:
+                        try:
+                            dp, dm = get_effective_reading_defaults(user_id)
+                        except Exception:
+                            dp, dm = (None, None)
+                        if (dp or 0) > 0:
+                            pages_read = int(dp)  # type: ignore[arg-type]
+                        if (dm or 0) > 0:
+                            minutes_read = int(dm)  # type: ignore[arg-type]
+                        if pages_read <= 0 and minutes_read <= 0:
+                            minutes_read = 1
+
                     # Validate that we have either pages or minutes read
                     if pages_read <= 0 and minutes_read <= 0:
                         validation_errors.append(f"Row {row_num}: Must have either pages read or minutes read")
