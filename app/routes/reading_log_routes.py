@@ -12,6 +12,7 @@ import logging
 from app.forms import ReadingLogEntryForm
 from app.services import reading_log_service, book_service
 from app.domain.models import ReadingLog
+from app.utils.user_settings import get_effective_reading_defaults
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,14 @@ def create_reading_log_entry():
                 'message': 'Invalid page or minute values'
             }), 400
         
-        # Ensure at least one metric is provided
+        # Apply defaults if both zero/missing
+        if pages_read_int <= 0 and minutes_read_int <= 0:
+            dp, dm = get_effective_reading_defaults(getattr(current_user, 'id', None))
+            if (dp or 0) > 0:
+                pages_read_int = int(dp)  # type: ignore[arg-type]
+            if (dm or 0) > 0:
+                minutes_read_int = int(dm)  # type: ignore[arg-type]
+        # Re-validate after defaults
         if pages_read_int <= 0 and minutes_read_int <= 0:
             return jsonify({
                 'status': 'error',
@@ -356,6 +364,13 @@ def quick_add_bookless_log():
                 'message': 'Pages and minutes must be valid numbers'
             }), 400
         
+        # Apply defaults if needed
+        if pages_read <= 0 and minutes_read <= 0:
+            dp, dm = get_effective_reading_defaults(getattr(current_user, 'id', None))
+            if (dp or 0) > 0:
+                pages_read = int(dp)  # type: ignore[arg-type]
+            if (dm or 0) > 0:
+                minutes_read = int(dm)  # type: ignore[arg-type]
         # Validate that we have either pages or minutes
         if pages_read <= 0 and minutes_read <= 0:
             return jsonify({

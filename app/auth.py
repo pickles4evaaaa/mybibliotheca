@@ -567,6 +567,29 @@ def settings_privacy_partial():
             pass
     return render_template('settings/partials/privacy_form.html', form=p_form, streak_form=streak_form)
 
+@auth.route('/settings/partial/reading_prefs', methods=['GET', 'POST'])
+@login_required
+def settings_reading_prefs_partial():
+    # Simple manual form parsing; no WTForms needed
+    from app.utils.user_settings import load_user_settings, save_user_settings
+    if request.method == 'POST':
+        dp_raw = (request.form.get('default_pages_per_log') or '').strip()
+        dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
+        def _to_int_or_none(v: str):
+            try:
+                return int(v) if v not in (None, '',) else None
+            except Exception:
+                return None
+        payload = {
+            'default_pages_per_log': _to_int_or_none(dp_raw),
+            'default_minutes_per_log': _to_int_or_none(dm_raw)
+        }
+        ok = save_user_settings(getattr(current_user, 'id', None), payload)
+        flash('Reading preferences saved.' if ok else 'Failed to save preferences.', 'success' if ok else 'error')
+    # Load current settings for display
+    settings = load_user_settings(getattr(current_user, 'id', None))
+    return render_template('settings/partials/reading_prefs.html', settings=settings)
+
 @auth.route('/settings/partial/data/<string:panel>')
 @login_required
 def settings_data_partial(panel: str):
@@ -909,6 +932,22 @@ def settings_server_partial(panel: str):
                 'image_url': request.form.get('background_image_url', ''),
                 'image_position': request.form.get('image_position', 'cover')
             }
+            # Reading defaults (optional numbers)
+            try:
+                dp_raw = request.form.get('default_pages_per_log', '').strip()
+                dm_raw = request.form.get('default_minutes_per_log', '').strip()
+            except Exception:
+                dp_raw = ''
+                dm_raw = ''
+            def _to_int_or_none(v: str):
+                try:
+                    return int(v) if v not in (None, '',) else None
+                except Exception:
+                    return None
+            reading_log_defaults = {
+                'default_pages_per_log': _to_int_or_none(dp_raw),
+                'default_minutes_per_log': _to_int_or_none(dm_raw)
+            }
             # Handle optional image upload
             if 'background_image_file' in request.files:
                 file = request.files['background_image_file']
@@ -939,7 +978,8 @@ def settings_server_partial(panel: str):
                 'site_name': site_name,
                 'server_timezone': server_timezone,
                 'terminology_preference': terminology_preference,
-                'background_config': background_config
+                'background_config': background_config,
+                'reading_log_defaults': reading_log_defaults
             }
             if save_system_config(config):
                 flash('System settings saved.', 'success')

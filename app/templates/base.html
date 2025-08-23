@@ -1154,14 +1154,14 @@
               <div class="col-md-6">
                 <div class="mb-3">
                   <label for="pages_read" class="form-label">Pages Read</label>
-                  <input type="number" class="form-control" id="pages_read" name="pages_read" min="1" readonly>
+                  <input type="number" class="form-control" id="pages_read" name="pages_read" min="1" readonly value="">
                   <small class="form-text text-muted">Auto-calculated from start/end pages</small>
                 </div>
               </div>
               <div class="col-md-6">
                 <div class="mb-3">
                   <label for="minutes_read" class="form-label">Minutes Read</label>
-                  <input type="number" class="form-control" id="minutes_read" name="minutes_read" min="1">
+                  <input type="number" class="form-control" id="minutes_read" name="minutes_read" min="1" value="">
                 </div>
               </div>
             </div>
@@ -1301,8 +1301,53 @@
       let userBooksData = [];
       let searchTimeout = null;
       
-      // Load user's books when modal is shown
+      // Capture server-rendered defaults as fallback constants
+  const STATIC_DEFAULTS = JSON.parse('{{ {"pages": (get_effective_reading_defaults(current_user.id)[0] if (current_user and current_user.is_authenticated) else None), "minutes": (get_effective_reading_defaults(current_user.id)[1] if (current_user and current_user.is_authenticated) else None)} | tojson | safe }}');
+
+      function resolveEffectiveDefaults() {
+        // 1) Prefer in-page personal settings values if present (reactive on save)
+        try {
+          const personal = document.getElementById('personalDynamicContainer');
+          if (personal) {
+            const dp = personal.querySelector('input[name="default_pages_per_log"]');
+            const dm = personal.querySelector('input[name="default_minutes_per_log"]');
+            const pVal = dp && dp.value !== '' ? parseInt(dp.value, 10) : null;
+            const mVal = dm && dm.value !== '' ? parseInt(dm.value, 10) : null;
+            if ((pVal !== null && !Number.isNaN(pVal)) || (mVal !== null && !Number.isNaN(mVal))) {
+              return { pages: (Number.isNaN(pVal) ? null : pVal), minutes: (Number.isNaN(mVal) ? null : mVal) };
+            }
+          }
+        } catch(_) { /* ignore */ }
+        // 2) If admin server config panel is open with new defaults, use those
+        try {
+          const server = document.getElementById('serverDynamicContainer');
+          if (server) {
+            const dp = server.querySelector('input[name="default_pages_per_log"]');
+            const dm = server.querySelector('input[name="default_minutes_per_log"]');
+            const pVal = dp && dp.value !== '' ? parseInt(dp.value, 10) : null;
+            const mVal = dm && dm.value !== '' ? parseInt(dm.value, 10) : null;
+            if ((pVal !== null && !Number.isNaN(pVal)) || (mVal !== null && !Number.isNaN(mVal))) {
+              return { pages: (Number.isNaN(pVal) ? null : pVal), minutes: (Number.isNaN(mVal) ? null : mVal) };
+            }
+          }
+        } catch(_) { /* ignore */ }
+        // 3) Fallback to server-rendered values from page load
+  return { pages: (STATIC_DEFAULTS && STATIC_DEFAULTS.pages !== undefined ? STATIC_DEFAULTS.pages : null), minutes: (STATIC_DEFAULTS && STATIC_DEFAULTS.minutes !== undefined ? STATIC_DEFAULTS.minutes : null) };
+      }
+
+      // Prefill defaults and load user's books when modal is shown
       modal.addEventListener('show.bs.modal', function() {
+        try {
+          const eff = resolveEffectiveDefaults();
+          if (eff.pages !== null && eff.pages !== undefined && pagesReadInput) {
+            pagesReadInput.value = String(eff.pages);
+            pagesReadInput.readOnly = false; // allow user to tweak
+          }
+          const minutesInput = document.getElementById('minutes_read');
+          if (eff.minutes !== null && eff.minutes !== undefined && minutesInput) {
+            minutesInput.value = String(eff.minutes);
+          }
+        } catch (e) { /* ignore */ }
         if (userBooksData.length === 0) {
           loadUserBooks();
         }
@@ -1536,6 +1581,12 @@
         document.getElementById('readingLogForm').reset();
         clearBookSelection();
         pagesReadInput.readOnly = true;
+        try {
+          const eff = resolveEffectiveDefaults();
+          if (eff.pages !== null && eff.pages !== undefined) { pagesReadInput.value = String(eff.pages); pagesReadInput.readOnly = false; }
+          const minutesInput = document.getElementById('minutes_read');
+          if (eff.minutes !== null && eff.minutes !== undefined && minutesInput) { minutesInput.value = String(eff.minutes); }
+        } catch(e) { /* ignore */ }
       });
       
       function showAlert(type, message) {

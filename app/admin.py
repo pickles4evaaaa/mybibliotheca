@@ -156,6 +156,22 @@ def save_system_config(config):
         # Update background configuration if provided
         if 'background_config' in config:
             existing_config['background_config'] = config['background_config']
+        # Optional: reading log defaults
+        if 'reading_log_defaults' in config:
+            # Normalize to simple ints or None
+            rld = config.get('reading_log_defaults') or {}
+            try:
+                dp = rld.get('default_pages_per_log')
+                dm = rld.get('default_minutes_per_log')
+                dp_i = int(dp) if dp not in (None, '',) else None
+                dm_i = int(dm) if dm not in (None, '',) else None
+            except Exception:
+                dp_i = rld.get('default_pages_per_log') if isinstance(rld.get('default_pages_per_log'), int) else None
+                dm_i = rld.get('default_minutes_per_log') if isinstance(rld.get('default_minutes_per_log'), int) else None
+            existing_config['reading_log_defaults'] = {
+                'default_pages_per_log': dp_i,
+                'default_minutes_per_log': dm_i
+            }
         existing_config['last_updated'] = datetime.now().isoformat()
         
         # Save updated config
@@ -208,6 +224,10 @@ def load_system_config():
             'gradient_direction': '135deg',
             'image_url': '',
             'image_position': 'cover'
+        },
+        'reading_log_defaults': {
+            'default_pages_per_log': None,
+            'default_minutes_per_log': None
         }
     }
 
@@ -657,12 +677,30 @@ def settings():
                 else:
                     flash('Invalid file type. Please upload a PNG, JPG, JPEG, GIF, or WebP image.', 'error')
         
+        # Reading defaults (optional)
+        try:
+            dp_raw = (request.form.get('default_pages_per_log') or '').strip()
+            dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
+        except Exception:
+            dp_raw = ''
+            dm_raw = ''
+        def _to_int_or_none(v: str):
+            try:
+                return int(v) if v not in (None, '',) else None
+            except Exception:
+                return None
+        reading_log_defaults = {
+            'default_pages_per_log': _to_int_or_none(dp_raw),
+            'default_minutes_per_log': _to_int_or_none(dm_raw)
+        }
+
         # Save system configuration to .env file
         config = {
             'site_name': site_name,
             'server_timezone': server_timezone,
             'terminology_preference': terminology_preference,
-            'background_config': background_config
+            'background_config': background_config,
+            'reading_log_defaults': reading_log_defaults
         }
         
         if save_system_config(config):
@@ -795,6 +833,10 @@ def get_admin_settings_context():
             'gradient_direction': '135deg',
             'image_url': '',
             'image_position': 'cover'
+        }),
+        'reading_log_defaults': system_config.get('reading_log_defaults', {
+            'default_pages_per_log': None,
+            'default_minutes_per_log': None
         })
     }
 

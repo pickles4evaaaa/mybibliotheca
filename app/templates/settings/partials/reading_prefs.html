@@ -1,0 +1,26 @@
+{% with msgs = get_flashed_messages(with_categories=True) %}
+  {% if msgs %}
+    <div class="mb-2">
+      {% for c,m in msgs %}<div class="alert alert-{{ 'danger' if c=='error' else c }} py-1 mb-1 small">{{ m }}</div>{% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<form method="POST" action="{{ url_for('auth.settings_reading_prefs_partial') }}" hx-post="{{ url_for('auth.settings_reading_prefs_partial') }}" hx-target="#personalDynamicContainer" hx-swap="innerHTML" class="mb-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label">Default Pages per Log</label>
+      <input type="number" min="0" step="1" name="default_pages_per_log" class="form-control" value="{{ settings.default_pages_per_log or '' }}" placeholder="e.g. 10"/>
+      <small class="text-muted">Leave blank to use server default (if any)</small>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Default Minutes per Log</label>
+      <input type="number" min="0" step="1" name="default_minutes_per_log" class="form-control" value="{{ settings.default_minutes_per_log or '' }}" placeholder="e.g. 20"/>
+      <small class="text-muted">Leave blank to use server default (if any)</small>
+    </div>
+  </div>
+  <div class="mt-3">
+    <button class="btn btn-primary"><i class="bi bi-save"></i> Save Reading Preferences</button>
+  </div>
+</form>

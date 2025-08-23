@@ -118,9 +118,10 @@
 
     <div class="settings-section" id="personalSection">
             <div class="row g-3 mb-3" id="personalActionBar">
-                <div class="col-md-4"><button data-personal-panel="profile" class="btn btn-primary w-100 personal-nav"><i class="bi bi-person"></i> Profile</button></div>
-                <div class="col-md-4"><button data-personal-panel="password" class="btn btn-warning w-100 personal-nav"><i class="bi bi-lock"></i> Password</button></div>
-                <div class="col-md-4"><button data-personal-panel="privacy" class="btn btn-info w-100 personal-nav"><i class="bi bi-shield-check"></i> Privacy</button></div>
+                <div class="col-6 col-md-3"><button data-personal-panel="profile" data-color="primary" class="btn btn-primary w-100 personal-nav"><i class="bi bi-person"></i> Profile</button></div>
+                <div class="col-6 col-md-3"><button data-personal-panel="password" data-color="warning" class="btn btn-warning w-100 personal-nav"><i class="bi bi-lock"></i> Password</button></div>
+                <div class="col-6 col-md-3"><button data-personal-panel="privacy" data-color="info" class="btn btn-info w-100 personal-nav"><i class="bi bi-shield-check"></i> Privacy</button></div>
+                <div class="col-6 col-md-3"><button data-personal-panel="reading_prefs" data-color="secondary" class="btn btn-secondary w-100 personal-nav"><i class="bi bi-journal-plus"></i> Reading Defaults</button></div>
             </div>
             <div id="personalDynamicContainer" class="mb-3"></div>
             <div class="alert alert-light border small mb-0" role="alert">
@@ -480,6 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'profile': "{{ url_for('auth.settings_profile_partial') }}",
                 'password': "{{ url_for('auth.settings_password_partial') }}",
                 'privacy': "{{ url_for('auth.settings_privacy_partial') }}",
+                'reading_prefs': "{{ url_for('auth.settings_reading_prefs_partial') }}",
                 'activity': "{{ url_for('auth.my_activity') }}" // fallback link
             };
             if(panel==='activity'){
@@ -492,9 +494,41 @@ document.addEventListener('DOMContentLoaded', () => {
               .then(html=> personalContainer.innerHTML = html)
               .catch(()=> personalContainer.innerHTML = '<div class="text-danger small">Failed to load.</div>');
     }
+        // Intercept submits within personalContainer to avoid full page navigation
+        if(personalContainer){
+                personalContainer.addEventListener('submit', (e)=>{
+                        const form = e.target;
+                        if(!(form instanceof HTMLFormElement)) return;
+                        // Only handle partial routes to keep behavior scoped
+                        if(!form.action || form.action.indexOf('/settings/partial/') === -1) return;
+                        e.preventDefault();
+                        const fd = new FormData(form);
+                        const submitBtn = form.querySelector('button[type="submit"],button:not([type])');
+                        if(submitBtn){ submitBtn.disabled = true; submitBtn.dataset.original = submitBtn.innerHTML; submitBtn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...'; }
+                        fetch(form.action, { method:'POST', body: fd, headers: { 'X-Requested-With':'XMLHttpRequest' }, credentials:'same-origin' })
+                            .then(r=>r.text())
+                            .then(html=> { personalContainer.innerHTML = html; })
+                            .catch(()=> { alert('Failed to save.'); })
+                            .finally(()=> {
+                                // Button is now in a replaced DOM; nothing to restore
+                            });
+                });
+        }
     document.querySelectorAll('.personal-nav').forEach(btn=>{
         btn.addEventListener('click',()=>{
-            document.querySelectorAll('.personal-nav').forEach(b=>b.classList.remove('active'));
+            document.querySelectorAll('.personal-nav').forEach(b=>{
+                const c = b.dataset.color;
+                b.classList.remove('active');
+                if(c){
+                    b.classList.remove('btn-outline-'+c);
+                    if(!b.classList.contains('btn-'+c)) b.classList.add('btn-'+c);
+                }
+            });
+            const c = btn.dataset.color;
+            if(c){
+                btn.classList.remove('btn-'+c);
+                btn.classList.add('btn-outline-'+c);
+            }
             btn.classList.add('active');
             loadPersonal(btn.getAttribute('data-personal-panel'));
         });
@@ -505,7 +539,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if(!personalContainer.dataset.loaded){
                 loadPersonal('profile');
                 personalContainer.dataset.loaded='1';
-                document.querySelector('[data-personal-panel="profile"]').classList.add('active');
+                // Set initial active styling (outlined) for 'profile'
+                const defBtn = document.querySelector('[data-personal-panel="profile"]');
+                if(defBtn){
+                    const c = defBtn.dataset.color; defBtn.classList.add('active');
+                    if(c){ defBtn.classList.remove('btn-'+c); defBtn.classList.add('btn-outline-'+c); }
+                }
             }
         });
     }

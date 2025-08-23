@@ -80,6 +80,10 @@ def inject_site_config():
             'image_url': '',
             'image_position': 'cover'
         })
+        reading_log_defaults = system_config.get('reading_log_defaults', {
+            'default_pages_per_log': None,
+            'default_minutes_per_log': None
+        })
     except Exception:
         # Fallback to environment variables if config loading fails
         site_name = os.getenv('SITE_NAME', 'MyBibliotheca')
@@ -94,12 +98,17 @@ def inject_site_config():
             'image_url': '',
             'image_position': 'cover'
         }
+        reading_log_defaults = {
+            'default_pages_per_log': None,
+            'default_minutes_per_log': None
+        }
     
     return {
         'site_name': site_name,
         'server_timezone': server_timezone,
         'terminology_preference': terminology_preference,
-        'background_config': background_config,
+    'background_config': background_config,
+    'reading_log_defaults': reading_log_defaults,
         # Helper functions for terminology
         'get_terminology': lambda: terminology_preference,
         'get_genre_term': lambda: 'Genre' if terminology_preference == 'genre' else 'Category',
@@ -269,3 +278,11 @@ def register_context_processors(app):
     app.context_processor(inject_site_config)
     app.context_processor(inject_reading_streak)
     app.context_processor(inject_datetime)
+    # Helper for templates to resolve effective reading defaults quickly
+    def _get_defaults(user_id=None):
+        try:
+            from app.utils.user_settings import get_effective_reading_defaults
+            return get_effective_reading_defaults(user_id)
+        except Exception:
+            return (None, None)
+    app.jinja_env.globals.update(get_effective_reading_defaults=_get_defaults)

@@ -23,6 +23,21 @@
     </div>
   </div>
   <div class="mt-4">
+    <h6 class="fw-semibold">Reading Log Defaults</h6>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Default Pages/Log</label>
+        <input type="number" min="0" step="1" name="default_pages_per_log" class="form-control" value="{{ (reading_log_defaults.default_pages_per_log if reading_log_defaults else None) or '' }}" placeholder="e.g. 10" />
+        <small class="text-muted">Leave blank for no default</small>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Default Minutes/Log</label>
+        <input type="number" min="0" step="1" name="default_minutes_per_log" class="form-control" value="{{ (reading_log_defaults.default_minutes_per_log if reading_log_defaults else None) or '' }}" placeholder="e.g. 20" />
+        <small class="text-muted">Leave blank for no default</small>
+      </div>
+    </div>
+  </div>
+  <div class="mt-4">
     <h6 class="fw-semibold">Background</h6>
     <div class="row g-3">
       <div class="col-md-3">
