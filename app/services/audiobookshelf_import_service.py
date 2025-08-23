@@ -34,33 +34,38 @@ class AudiobookshelfImportService:
         """Map ABS item JSON to SimplifiedBook structure (robust fields)."""
         media = item.get('media') or {}
         md = media.get('metadata') or {}
+
         # Authors and narrators can be arrays in md
         author = ''
-        addl = []
-        narrators = []
-        # ABS can have md.authors as list of strings
+        addl: List[str] = []
+        narrators: List[str] = []
         if isinstance(md.get('authors'), list) and md['authors']:
             first = md['authors'][0]
             if isinstance(first, dict):
                 author = str(first.get('name') or first.get('title') or '').strip()
             else:
                 author = str(first).strip()
-            if len(md['authors']) > 1:
-                for a in md['authors'][1:]:
-                    if isinstance(a, dict):
-                        name = a.get('name') or a.get('title')
-                        if name:
-                            addl.append(str(name).strip())
-                    elif a:
-                        addl.append(str(a).strip())
+            for a in md['authors'][1:]:
+                if isinstance(a, dict):
+                    name = a.get('name') or a.get('title')
+                    if name:
+                        addl.append(str(name).strip())
+                elif a:
+                    addl.append(str(a).strip())
         elif isinstance(md.get('author'), str):
             author = md.get('author') or ''
+
         # Narrators
         if isinstance(md.get('narrators'), list):
-            narrators = [
-                (str(n.get('name') or n.get('title')).strip() if isinstance(n, dict) else str(n).strip())
-                for n in md['narrators'] if n
-            ]
+            for n in md['narrators']:
+                if not n:
+                    continue
+                if isinstance(n, dict):
+                    nname = n.get('name') or n.get('title')
+                    if nname:
+                        narrators.append(str(nname).strip())
+                else:
+                    narrators.append(str(n).strip())
         elif isinstance(md.get('narrator'), str) and md['narrator']:
             narrators = [md['narrator']]
 
@@ -68,14 +73,64 @@ class AudiobookshelfImportService:
         subtitle = md.get('subtitle') or None
         description = md.get('description') or ''
         language = (md.get('language') or 'en')
-        series = None
-        series_order = None
-        if isinstance(md.get('series'), dict):
-            series = md['series'].get('name') or None
-            # ABS sometimes provides sequence
-            series_order = md['series'].get('sequence') or md['series'].get('number')
-        elif isinstance(md.get('series'), str):
-            series = md.get('series')
+
+        # Series: Only pull from ABS series object; no subtitle or heuristic parsing
+        series: Optional[str] = None
+        series_order: Optional[int] = None
+        series_volume: Optional[str] = None
+
+        def _to_int(val) -> Optional[int]:
+            try:
+                if isinstance(val, bool):
+                    return None
+                if isinstance(val, int):
+                    return val
+                if isinstance(val, float):
+                    return int(val)
+                if isinstance(val, str) and val.strip().isdigit():
+                    return int(val.strip())
+                return None
+            except Exception:
+                return None
+
+        # Prefer series from item if provided, fallback to media.metadata.series
+        s = item.get('series') if isinstance(item.get('series'), (dict, list, str)) else md.get('series')
+        # If array, take first entry
+        if isinstance(s, list) and s:
+            s = s[0]
+        if isinstance(s, dict):
+            series = (s.get('name') or s.get('title') or s.get('seriesName') or None)
+            cand_order = (
+                s.get('sequence') or s.get('sequenceNumber') or s.get('number') or s.get('index') or s.get('position')
+            )
+            series_order = _to_int(cand_order)
+            # If sequence is present, reflect it as volume string too for UI consistency
+            if series_order is not None and not series_volume:
+                series_volume = str(series_order)
+            # Prefer explicit volume if ABS provides one in object
+            if s.get('volume') is not None and not series_volume:
+                series_volume = str(s.get('volume'))
+            if s.get('volumeNumber') is not None and not series_volume:
+                series_volume = str(s.get('volumeNumber'))
+        elif isinstance(s, str):
+            # Use the series name only; don't derive order from it
+            series = s.strip() or None
+        else:
+            # Alternate field names used by some ABS versions
+            alt_name = item.get('seriesName') or md.get('seriesName') or md.get('series_name')
+            if isinstance(alt_name, str) and alt_name.strip():
+                series = alt_name.strip()
+            # Order candidates on item or metadata
+            cand_order = (
+                item.get('seriesSequence') or item.get('bookNumber') or
+                md.get('seriesSequence') or md.get('seriesIndex') or md.get('seriesPosition') or md.get('sequenceNumber') or md.get('bookNumber')
+            )
+            if series_order is None:
+                series_order = _to_int(cand_order)
+            if not series_volume:
+                cand_vol = md.get('seriesVolume') or md.get('volume') or md.get('volumeNumber') or item.get('bookNumber')
+                if cand_vol is not None:
+                    series_volume = str(cand_vol)
 
         asin = md.get('asin') or None
         isbn13 = md.get('isbn13') or md.get('isbn') or None
@@ -96,7 +151,6 @@ class AudiobookshelfImportService:
         if cover_path:
             cover_url = self.client.build_cover_url(cover_path)
         else:
-            # Fallback: construct cover endpoint if we have an ID
             item_id = item.get('id') or item.get('_id') or item.get('itemId')
             if item_id:
                 cover_url = self.client._url(f"/api/items/{item_id}/cover?width=600")
@@ -109,12 +163,12 @@ class AudiobookshelfImportService:
             language=language,
             series=series,
             series_order=series_order,
+            series_volume=series_volume,
             asin=asin,
             isbn13=isbn13,
             isbn10=isbn10,
             cover_url=cover_url,
         )
-        # Additional people
         if addl:
             simplified.additional_authors = ', '.join(addl)
         if narrators:
@@ -396,7 +450,20 @@ class AudiobookshelfImportService:
             'processed_books': []
         })
 
+        # Capture Flask app to provide application context inside background thread
+        _ctx_mgr = None
+        try:
+            from flask import current_app as _flask_current_app
+            _app_obj = _flask_current_app
+            if _app_obj:
+                _ctx_mgr = _app_obj.app_context()
+        except Exception:
+            _app_obj = None
+
         def worker():
+            # Ensure Flask application context is available for any services that need it
+            if _ctx_mgr is not None:
+                _ctx_mgr.push()
             try:
                 processed = 0
                 successes: List[str] = []
@@ -508,6 +575,21 @@ class AudiobookshelfImportService:
                                 book_id = self._resolve_book_id(bd)
                                 if book_id:
                                     self.kuzu_book_service.update_book_sync(book_id, {'cover_url': pre_local_cover})
+                                    # Attempt to backfill series fields if missing
+                                    try:
+                                        existing = self.kuzu_book_service.get_book_by_id_sync(book_id)
+                                        updates: Dict[str, Any] = {}
+                                        if existing and bd:
+                                            if (not getattr(existing, 'series', None)) and (bd.series):
+                                                updates['series'] = bd.series
+                                            if (getattr(existing, 'series_order', None) in (None, 0)) and (bd.series_order is not None):
+                                                updates['series_order'] = bd.series_order
+                                            if (not getattr(existing, 'series_volume', None)) and (bd.series_volume):
+                                                updates['series_volume'] = bd.series_volume
+                                        if updates:
+                                            self.kuzu_book_service.update_book_sync(book_id, updates)
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                         current_job = safe_get_import_job(self.user_id, task_id) or {}
@@ -543,6 +625,12 @@ class AudiobookshelfImportService:
                     'status': 'failed',
                     'error_messages': ['Unexpected error during ABS test sync']
                 })
+            finally:
+                try:
+                    if _ctx_mgr is not None:
+                        _ctx_mgr.pop()
+                except Exception:
+                    pass
 
         t = threading.Thread(target=worker, name=f"abs-test-sync-{task_id}")
         t.daemon = True
@@ -570,7 +658,20 @@ class AudiobookshelfImportService:
             'processed_books': []
         })
 
+        # Capture Flask app to provide application context inside background thread
+        _ctx_mgr_full = None
+        try:
+            from flask import current_app as _flask_current_app
+            _app_obj_full = _flask_current_app
+            if _app_obj_full:
+                _ctx_mgr_full = _app_obj_full.app_context()
+        except Exception:
+            _app_obj_full = None
+
         def worker():
+            # Ensure Flask application context is available for any services that need it
+            if _ctx_mgr_full is not None:
+                _ctx_mgr_full.push()
             try:
                 libs_to_try = self._resolve_library_ids(library_ids or [])
                 if not libs_to_try:
@@ -661,6 +762,21 @@ class AudiobookshelfImportService:
                                         book_id = self._resolve_book_id(bd)
                                         if book_id:
                                             self.kuzu_book_service.update_book_sync(book_id, {'cover_url': pre_local_cover})
+                                            # Backfill series fields if missing on existing book
+                                            try:
+                                                existing = self.kuzu_book_service.get_book_by_id_sync(book_id)
+                                                updates: Dict[str, Any] = {}
+                                                if existing and bd:
+                                                    if (not getattr(existing, 'series', None)) and (bd.series):
+                                                        updates['series'] = bd.series
+                                                    if (getattr(existing, 'series_order', None) in (None, 0)) and (bd.series_order is not None):
+                                                        updates['series_order'] = bd.series_order
+                                                    if (not getattr(existing, 'series_volume', None)) and (bd.series_volume):
+                                                        updates['series_volume'] = bd.series_volume
+                                                if updates:
+                                                    self.kuzu_book_service.update_book_sync(book_id, updates)
+                                            except Exception:
+                                                pass
                                 except Exception:
                                     pass
                                 current_job = safe_get_import_job(self.user_id, task_id) or {}
@@ -697,6 +813,12 @@ class AudiobookshelfImportService:
                     'status': 'failed',
                     'error_messages': ['Unexpected error during ABS full sync']
                 })
+            finally:
+                try:
+                    if _ctx_mgr_full is not None:
+                        _ctx_mgr_full.pop()
+                except Exception:
+                    pass
 
         t = threading.Thread(target=worker, name=f"abs-full-sync-{task_id}")
         t.daemon = True

@@ -118,19 +118,47 @@ class AudiobookShelfClient:
             return {"ok": False, "message": f"Failed to list items: {e}", "items": []}
 
     def get_item(self, item_id: str, expanded: bool = True) -> Dict[str, Any]:
-        """Get a single item details. Returns dict with ok, item, message."""
+        """Get a single item. Always returns shape { ok, item, message? }.
+
+        Tries a few known variants and normalizes the response so callers can
+        reliably access 'item'.
+        """
         if not item_id:
             return {"ok": False, "message": "Missing item_id"}
+        attempts: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+        # Primary
+        attempts.append((self._url(f"/api/items/{item_id}"), {"expanded": 1} if expanded else None))
+        # Include variants used by some ABS builds
+        if expanded:
+            attempts.append((self._url(f"/api/items/{item_id}"), {"include": "media,metadata"}))
+            attempts.append((self._url(f"/api/items/{item_id}"), {"full": 1}))
+        # Some deployments expose libraryItems path
+        attempts.append((self._url(f"/api/library-items/{item_id}"), None))
+        last_err: Optional[str] = None
         try:
-            path = f"/api/items/{item_id}"
-            if expanded:
-                path += "?expanded=1"
-            resp = requests.get(self._url(path), headers=self._headers(), timeout=self.timeout)
-            if resp.status_code == 401:
-                return {"ok": False, "message": "Unauthorized"}
-            resp.raise_for_status()
-            data = resp.json() if resp.content else {}
-            return {"ok": True, "item": data}
+            for url, params in attempts:
+                try:
+                    resp = requests.get(url, headers=self._headers(), timeout=self.timeout, params=params)
+                    if resp.status_code == 401:
+                        return {"ok": False, "message": "Unauthorized"}
+                    resp.raise_for_status()
+                    data = resp.json() if resp.content else {}
+                    # Normalize item payload
+                    item_obj = None
+                    if isinstance(data, dict):
+                        if 'item' in data and isinstance(data['item'], dict):
+                            item_obj = data['item']
+                        elif 'libraryItem' in data and isinstance(data['libraryItem'], dict):
+                            item_obj = data['libraryItem']
+                        elif data.get('id') or data.get('_id'):
+                            # Response is the item itself
+                            item_obj = data
+                    if item_obj is not None:
+                        return {"ok": True, "item": item_obj}
+                except Exception as e:
+                    last_err = str(e)
+                    continue
+            return {"ok": False, "message": last_err or "Item not found"}
         except Exception as e:
             return {"ok": False, "message": f"Failed to get item: {e}"}
 

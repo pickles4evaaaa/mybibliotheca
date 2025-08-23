@@ -133,6 +133,43 @@
         .catch(() => { status.textContent = 'Test failed'; });
     });
   }
+  // Helper: start inline progress polling
+  function startInlineProgressPolling(taskInfo){
+    try { if (window.__absProgressPoll) { clearInterval(window.__absProgressPoll); } } catch(e){}
+    if (!taskInfo || !taskInfo.api_progress_url) return;
+    const startedAt = Date.now();
+    window.__absProgressPoll = setInterval(async () => {
+      try {
+        const r = await fetch(taskInfo.api_progress_url, { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const j = await r.json();
+        const processed = j.processed || 0;
+        const total = j.total || j.total_books || 0;
+        const st = (j.status || '').toLowerCase();
+        if (status) {
+          const pct = total > 0 ? Math.min(100, Math.round((processed/total)*100)) : 0;
+          let line = `Running: ${processed}/${total}${total?` (${pct}%)`:''}. `;
+          if (taskInfo.progress_url) {
+            line += `<a href="${taskInfo.progress_url}" class="link-primary">View progress</a>`;
+          }
+          status.innerHTML = line;
+        }
+        if (st === 'completed' || st === 'failed' || (total > 0 && processed >= total)) {
+          clearInterval(window.__absProgressPoll);
+          if (status) {
+            const doneLine = `${st === 'failed' ? 'Failed' : 'Completed'}: ${processed}/${total}.` + (taskInfo.progress_url?` <a href="${taskInfo.progress_url}" class="link-primary">Details</a>`:'');
+            status.innerHTML = doneLine;
+          }
+        }
+        // Safety: stop polling after 15 minutes
+        if (Date.now() - startedAt > 15*60*1000) {
+          clearInterval(window.__absProgressPoll);
+        }
+      } catch(e) {
+        // Ignore transient errors
+      }
+    }, 1500);
+  }
   if (syncTestBtn) {
     syncTestBtn.addEventListener('click', async function(){
       status.textContent = 'Starting test sync...';
@@ -143,7 +180,12 @@
         const resp = await fetch("{{ url_for('auth.audiobookshelf_test_sync') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5})});
         const j = await resp.json();
         if(j.ok){
-          status.innerHTML = 'Sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+          const to = j.progress_url || j.api_progress_url || '#';
+          if (to && to !== '#') {
+            window.location.assign(to);
+          } else {
+            status.innerHTML = 'Sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+          }
         } else {
           status.textContent = 'Failed: ' + (j.message||'');
         }
@@ -162,7 +204,12 @@
         const resp = await fetch("{{ url_for('auth.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
         const j = await resp.json();
         if(j.ok){
-          status.innerHTML = 'Full sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+          const to = j.progress_url || j.api_progress_url || '#';
+          if (to && to !== '#') {
+            window.location.assign(to);
+          } else {
+            status.innerHTML = 'Full sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+          }
         } else {
           status.textContent = 'Failed: ' + (j.message||'');
         }
