@@ -116,6 +116,7 @@ def get_database_url() -> str:
     if not url:
         print("DATABASE_URL not set in environment or .env file")
         sys.exit(1)
+
     # Normalize SQLAlchemy style driver prefixes to plain postgres
     # e.g. postgresql+psycopg://  -> postgresql://
     #      postgresql+psycopg2:// -> postgresql://

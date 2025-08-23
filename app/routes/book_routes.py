@@ -3784,7 +3784,7 @@ def add_book_manual():
                 
                 volume_info = items[0]["volumeInfo"]
                 
-                # Extract ISBN information from industryIdentifiers
+                # Extract ISBN and ASIN information from industryIdentifiers
                 api_isbn10 = None
                 api_isbn13 = None
                 asin = None
@@ -3798,8 +3798,18 @@ def add_book_manual():
                         api_isbn10 = id_value
                     elif id_type == 'ISBN_13':
                         api_isbn13 = id_value
+                    elif id_type == 'ASIN':
+                        # Validate ASIN format
+                        if id_value and len(id_value.strip()) == 10 and id_value.strip().isalnum():
+                            asin = id_value.strip().upper()
                     elif id_type == 'OTHER' and 'ASIN' in id_value:
-                        asin = id_value
+                        # Fallback for incorrectly categorized ASINs
+                        # Extract ASIN pattern from the identifier value
+                        asin_match = re.search(r'[A-Z0-9]{10}', str(id_value).upper())
+                        if asin_match:
+                            candidate_asin = asin_match.group()
+                            if len(candidate_asin) == 10 and candidate_asin.isalnum():
+                                asin = candidate_asin
                 
                 # Get best quality cover image
                 image_links = volume_info.get("imageLinks", {})

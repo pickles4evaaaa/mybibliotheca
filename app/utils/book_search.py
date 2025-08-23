@@ -27,6 +27,28 @@ def _dprint(*args, **kwargs):
 print = _dprint
 
 
+def validate_asin(asin: str) -> bool:
+    """
+    Validate ASIN format.
+    ASIN is typically 10 characters, alphanumeric, starts with B for most products.
+    """
+    if not asin or not isinstance(asin, str):
+        return False
+    
+    # Remove whitespace and convert to uppercase
+    asin = asin.strip().upper()
+    
+    # ASIN should be exactly 10 characters
+    if len(asin) != 10:
+        return False
+    
+    # ASIN should be alphanumeric
+    if not asin.isalnum():
+        return False
+    
+    return True
+
+
 def normalize_title(title: str) -> str:
     """Normalize title for comparison by removing articles, punctuation, and extra spaces."""
     if not title:
@@ -157,15 +179,27 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
                 average_rating = volume_info.get('averageRating')
                 rating_count = volume_info.get('ratingsCount')
                 
-                # Extract ISBNs
+                # Extract ISBNs and ASIN
                 isbn_10 = None
                 isbn_13 = None
+                asin = None
                 industry_identifiers = volume_info.get('industryIdentifiers', [])
                 for identifier in industry_identifiers:
-                    if identifier.get('type') == 'ISBN_10':
-                        isbn_10 = identifier.get('identifier')
-                    elif identifier.get('type') == 'ISBN_13':
-                        isbn_13 = identifier.get('identifier')
+                    identifier_type = identifier.get('type', '')
+                    identifier_value = identifier.get('identifier', '')
+                    if identifier_type == 'ISBN_10':
+                        isbn_10 = identifier_value
+                    elif identifier_type == 'ISBN_13':
+                        isbn_13 = identifier_value
+                    elif identifier_type == 'ASIN':
+                        if validate_asin(identifier_value):
+                            asin = identifier_value.strip().upper()
+                    elif identifier_type == 'OTHER' and 'ASIN' in str(identifier_value):
+                        # Fallback for incorrectly categorized ASINs
+                        # Extract ASIN from the identifier value
+                        asin_match = re.search(r'[A-Z0-9]{10}', str(identifier_value).upper())
+                        if asin_match and validate_asin(asin_match.group()):
+                            asin = asin_match.group()
                 
                 # Extract and normalize Google cover image (no immediate download for speed)
                 cover_url = None
@@ -223,6 +257,7 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
                     'cover_url': cover_url,
                     'isbn_10': isbn_10,
                     'isbn_13': isbn_13,
+                    'asin': asin,
                     'publisher': publisher,
                     'language': language,
                     'description': description,
