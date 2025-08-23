@@ -402,7 +402,10 @@ def site_config_step():
                 'terminology_preference': request.form.get('terminology_preference', 'genre'),
                 # Simple high-level metadata preferences captured during onboarding.
                 'book_metadata_mode': request.form.get('book_metadata_mode', 'both'),
-                'people_metadata_mode': request.form.get('people_metadata_mode', 'openlibrary')
+                'people_metadata_mode': request.form.get('people_metadata_mode', 'openlibrary'),
+                # Optional reading log defaults (may be omitted or blank)
+                'default_pages_per_log': (request.form.get('default_pages_per_log') or '').strip(),
+                'default_minutes_per_log': (request.form.get('default_minutes_per_log') or '').strip()
             }
             
             logger.info(f"🔍 ONBOARDING DEBUG: Saving site_config: {site_config}")
@@ -1426,6 +1429,23 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 'server_timezone': site_config.get('timezone', 'UTC'),
                 'terminology_preference': site_config.get('terminology_preference', 'genre')
             }
+            # Include optional reading defaults if provided during onboarding
+            try:
+                dp_raw = (site_config.get('default_pages_per_log') or '').strip()
+                dm_raw = (site_config.get('default_minutes_per_log') or '').strip()
+            except Exception:
+                dp_raw = ''
+                dm_raw = ''
+            def _to_int_or_none(v: str):
+                try:
+                    return int(v) if v not in (None, '',) else None
+                except Exception:
+                    return None
+            reading_log_defaults = {
+                'default_pages_per_log': _to_int_or_none(dp_raw),
+                'default_minutes_per_log': _to_int_or_none(dm_raw)
+            }
+            system_config['reading_log_defaults'] = reading_log_defaults
             if save_system_config(system_config):
                 logger.info(f"✅ Applied site configuration to system settings: {system_config}")
             else:
@@ -1851,6 +1871,22 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 'site_name': site_config.get('site_name', 'MyBibliotheca'),
                 'server_timezone': site_config.get('timezone', 'UTC'),
                 'terminology_preference': site_config.get('terminology_preference', 'genre')
+            }
+            # Include optional reading defaults if provided during onboarding
+            try:
+                dp_raw = (site_config.get('default_pages_per_log') or '').strip()
+                dm_raw = (site_config.get('default_minutes_per_log') or '').strip()
+            except Exception:
+                dp_raw = ''
+                dm_raw = ''
+            def _to_int_or_none(v: str):
+                try:
+                    return int(v) if v not in (None, '',) else None
+                except Exception:
+                    return None
+            system_config['reading_log_defaults'] = {
+                'default_pages_per_log': _to_int_or_none(dp_raw),
+                'default_minutes_per_log': _to_int_or_none(dm_raw)
             }
             print(f"🚀 [SETUP] Applying system config: {system_config}")
             if save_system_config(system_config):

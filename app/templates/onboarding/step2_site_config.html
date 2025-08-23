@@ -54,6 +54,21 @@
         </select>
         <div class="form-text">Used for displaying dates and reading logs</div>
     </div>
+
+    <!-- Reading Log Defaults (Optional) -->
+    <hr class="my-4">
+    <h4 class="mb-3"><i class="bi bi-journal-plus me-2"></i>Reading Log Defaults <span class="badge bg-secondary" style="font-size: 0.7rem;">Optional</span></h4>
+    <p class="text-muted">You can set default values that will pre-fill new reading log entries and be used during reading history import when a row is missing both values. You can change these anytime in Admin settings.</p>
+    <div class="row g-3 align-items-end mb-2">
+        <div class="col-md-3 col-6">
+            <label for="ob_default_pages" class="form-label">Default Pages per Log</label>
+            <input type="number" id="ob_default_pages" name="default_pages_per_log" class="form-control" min="0" step="1" value="{{ current_config.get('default_pages_per_log') or '' }}" placeholder="e.g., 10">
+        </div>
+        <div class="col-md-3 col-6">
+            <label for="ob_default_minutes" class="form-label">Default Minutes per Log</label>
+            <input type="number" id="ob_default_minutes" name="default_minutes_per_log" class="form-control" min="0" step="1" value="{{ current_config.get('default_minutes_per_log') or '' }}" placeholder="e.g., 20">
+        </div>
+    </div>
     
     <!-- Default Location Field -->
     <div class="form-group">
