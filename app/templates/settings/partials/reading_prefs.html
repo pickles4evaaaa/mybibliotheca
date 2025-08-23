@@ -19,8 +19,48 @@
       <input type="number" min="0" step="1" name="default_minutes_per_log" class="form-control" value="{{ settings.default_minutes_per_log or '' }}" placeholder="e.g. 20"/>
       <small class="text-muted">Leave blank to use server default (if any)</small>
     </div>
+    <div class="col-md-4">
+      <label class="form-label">Audiobookshelf Username</label>
+      <input type="text" name="abs_username" class="form-control" value="{{ settings.abs_username or '' }}" placeholder="Your ABS username"/>
+      <small class="text-muted">Used to sync listening history to your reading logs.</small>
+    </div>
   </div>
   <div class="mt-3">
     <button class="btn btn-primary"><i class="bi bi-save"></i> Save Reading Preferences</button>
   </div>
 </form>
+
+<div class="border-top pt-3 mt-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <strong>Sync from Audiobookshelf</strong>
+      <div class="text-muted small">Pull listening history for your ABS username into reading logs.</div>
+    </div>
+    <div>
+      <button id="absSyncBtn" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-repeat"></i> Sync from ABS</button>
+    </div>
+  </div>
+  <div id="absSyncStatus" class="small mt-2 text-muted"></div>
+</div>
+
+<script>
+(function(){
+  const btn = document.getElementById('absSyncBtn');
+  const status = document.getElementById('absSyncStatus');
+  if(btn){
+    btn.addEventListener('click', async function(){
+      btn.disabled = true; const orig = btn.innerHTML; btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Syncing...';
+      status.textContent = 'Starting sync...';
+      try {
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        const headers = csrfMeta && csrfMeta.content ? {'X-CSRFToken': csrfMeta.content} : {};
+        const resp = await fetch('/api/audiobookshelf/sync', {method:'POST', headers, credentials:'same-origin'});
+        const data = await resp.json().catch(()=>({ok:false,error:'bad_json'}));
+        if(data.ok){ status.textContent = data.message || 'Sync started.'; }
+        else { status.textContent = 'Sync failed: ' + (data.error || 'unknown'); }
+      } catch(e){ status.textContent = 'Sync error.'; }
+      finally { btn.disabled=false; btn.innerHTML = orig; }
+    });
+  }
+})();
+</script>

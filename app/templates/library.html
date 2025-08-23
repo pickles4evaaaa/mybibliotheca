@@ -444,12 +444,17 @@
             <input type="checkbox" class="book-checkbox" value="{{ book.uid }}">
           </div>
 
-          <div class="book-cover-wrapper" onclick="openBook('{{ book.uid }}')">
+          <div class="book-cover-wrapper position-relative" onclick="openBook('{{ book.uid }}')">
             <img 
               src="{{ book.cover_url or url_for('serve_static', filename='bookshelf.png') }}"
               class="book-cover-shelf"
               alt="{{ book.title }} cover"
               onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}'">
+            {% if book.media_type and book.media_type|lower == 'audiobook' %}
+              <span class="position-absolute bottom-0 end-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Audiobook">
+                <i class="bi bi-soundwave"></i>
+              </span>
+            {% endif %}
           </div>
 
           <div class="book-info" onclick="openBook('{{ book.uid }}')">

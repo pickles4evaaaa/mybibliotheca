@@ -575,6 +575,7 @@ def settings_reading_prefs_partial():
     if request.method == 'POST':
         dp_raw = (request.form.get('default_pages_per_log') or '').strip()
         dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
+        abs_username = (request.form.get('abs_username') or '').strip()
         def _to_int_or_none(v: str):
             try:
                 return int(v) if v not in (None, '',) else None
@@ -582,13 +583,38 @@ def settings_reading_prefs_partial():
                 return None
         payload = {
             'default_pages_per_log': _to_int_or_none(dp_raw),
-            'default_minutes_per_log': _to_int_or_none(dm_raw)
+            'default_minutes_per_log': _to_int_or_none(dm_raw),
+            'abs_username': abs_username
         }
         ok = save_user_settings(getattr(current_user, 'id', None), payload)
         flash('Reading preferences saved.' if ok else 'Failed to save preferences.', 'success' if ok else 'error')
     # Load current settings for display
     settings = load_user_settings(getattr(current_user, 'id', None))
     return render_template('settings/partials/reading_prefs.html', settings=settings)
+
+# Trigger sync from Audiobookshelf for the current user (listening history)
+@auth.route('/api/audiobookshelf/sync', methods=['POST'])
+@login_required
+def api_abs_sync_current_user():
+    try:
+        from app.utils.user_settings import load_user_settings
+        from app.utils.audiobookshelf_settings import load_abs_settings
+        from app.services.audiobookshelf_service import get_client_from_settings
+        # Resolve user ABS username
+        user_settings = load_user_settings(getattr(current_user, 'id', None))
+        abs_username = (user_settings.get('abs_username') or '').strip() if isinstance(user_settings, dict) else ''
+        if not abs_username:
+            return jsonify({'ok': False, 'error': 'missing_abs_username'}), 400
+        abs_global = load_abs_settings()
+        client = get_client_from_settings(abs_global)
+        if not client:
+            return jsonify({'ok': False, 'error': 'abs_not_configured'}), 400
+        # Placeholder: no full sync yet; acknowledge and return
+        # Future: fetch listening history for abs_username and write reading logs.
+        return jsonify({'ok': True, 'message': 'Sync started (placeholder).'}), 200
+    except Exception as e:
+        current_app.logger.error(f"ABS sync trigger failed: {e}")
+        return jsonify({'ok': False, 'error': 'server_error'}), 500
 
 @auth.route('/settings/partial/data/<string:panel>')
 @login_required
@@ -993,6 +1019,66 @@ def settings_server_partial(panel: str):
         ctx = get_admin_settings_context()
         ctx['ai_config'] = load_ai_config()
         return render_template('settings/partials/server_ai.html', **ctx)
+    if panel == 'audiobookshelf':
+        # Admin-only ABS settings management
+        if not current_user.is_admin:
+            return '<div class="text-danger small">Not authorized.</div>'
+        from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
+        from app.services.audiobookshelf_service import get_client_from_settings
+        import json as _json
+        settings = load_abs_settings()
+        connection_test = None
+        # Handle POST to save settings
+        if request.method == 'POST':
+            payload: dict[str, Any] = {}
+            # Allow form or JSON
+            if request.content_type and 'application/json' in request.content_type.lower():
+                try:
+                    payload = (request.get_json(silent=True) or {})
+                except Exception:
+                    payload = {}
+            else:
+                payload = {}
+                if 'base_url' in request.form:
+                    payload['base_url'] = (request.form.get('base_url') or '').strip()
+                if 'api_key' in request.form:
+                    payload['api_key'] = (request.form.get('api_key') or '').strip()
+                libs_raw = (request.form.get('library_ids') or '').strip()
+                if libs_raw:
+                    try:
+                        # support comma-separated or JSON array -> store as comma string; utils will normalize
+                        if libs_raw.startswith('['):
+                            arr = _json.loads(libs_raw)
+                            if isinstance(arr, list):
+                                payload['library_ids'] = ','.join([str(s).strip() for s in arr if str(s).strip()])
+                            else:
+                                payload['library_ids'] = libs_raw
+                        else:
+                            payload['library_ids'] = ','.join([s.strip() for s in libs_raw.split(',') if s.strip()])
+                    except Exception:
+                        payload['library_ids'] = libs_raw
+                # Scheduler fields (from form)
+                if 'auto_sync_enabled' in request.form or 'library_sync_every_hours' in request.form or 'listening_sync_every_hours' in request.form:
+                    payload['auto_sync_enabled'] = True if request.form.get('auto_sync_enabled') else False
+                    try:
+                        payload['library_sync_every_hours'] = int(request.form.get('library_sync_every_hours') or 24)
+                    except Exception:
+                        payload['library_sync_every_hours'] = 24
+                    try:
+                        payload['listening_sync_every_hours'] = int(request.form.get('listening_sync_every_hours') or 12)
+                    except Exception:
+                        payload['listening_sync_every_hours'] = 12
+            ok = save_abs_settings(payload)
+            if ok:
+                settings = load_abs_settings()
+        # Optionally test connection if query flag present
+        try:
+            if request.args.get('test') == '1':
+                client = get_client_from_settings(settings)
+                connection_test = client.test_connection() if client else { 'ok': False, 'message': 'Missing base_url or api_key' }
+        except Exception:
+            connection_test = { 'ok': False, 'message': 'Connection test failed' }
+        return render_template('settings/partials/server_audiobookshelf.html', settings=settings, connection_test=connection_test)
     if panel == 'metadata':
         from app.utils.metadata_settings import get_metadata_settings, save_metadata_settings
         if request.method == 'POST':
@@ -1046,6 +1132,88 @@ def settings_server_partial(panel: str):
         return render_template('settings/partials/server_metadata.html', metadata_settings=metadata_settings)
     # 'system' panel removed; info moved to overview section
     return '<div class="text-danger small">Unknown panel.</div>'
+
+# Lightweight endpoint to test ABS connection via AJAX
+@auth.route('/settings/audiobookshelf/test', methods=['POST'])
+@login_required
+def test_audiobookshelf_connection():
+    if not current_user.is_admin:
+        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
+    try:
+        from app.utils.audiobookshelf_settings import load_abs_settings
+        from app.services.audiobookshelf_service import get_client_from_settings
+        settings = load_abs_settings()
+        client = get_client_from_settings(settings)
+        result = client.test_connection() if client else { 'ok': False, 'message': 'Missing base_url or api_key' }
+        return jsonify(result)
+    except Exception as e:
+        current_app.logger.error(f"ABS test error: {e}")
+        return jsonify({'ok': False, 'message': 'error'}), 500
+
+# Start a background ABS Test Sync (limited import)
+@auth.route('/settings/audiobookshelf/test-sync', methods=['POST'])
+@login_required
+def audiobookshelf_test_sync():
+    # Only admins can trigger a library-level sync test
+    if not current_user.is_admin:
+        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
+    try:
+        # Load settings and build client
+        from app.utils.audiobookshelf_settings import load_abs_settings
+        from app.services.audiobookshelf_service import get_client_from_settings
+        from app.services.audiobookshelf_import_service import AudiobookshelfImportService
+        settings = load_abs_settings()
+        client = get_client_from_settings(settings)
+        if not client:
+            return jsonify({'ok': False, 'message': 'ABS not configured'}), 400
+        library_ids = settings.get('library_ids') or []
+        if isinstance(library_ids, str):
+            library_ids = [s.strip() for s in library_ids.split(',') if s.strip()]
+        # Limit from request JSON (optional)
+        limit = 5
+        try:
+            payload = request.get_json(silent=True) or {}
+            limit = int(payload.get('limit') or 5)
+        except Exception:
+            limit = 5
+        svc = AudiobookshelfImportService(str(current_user.id), client)
+        res = svc.start_test_sync(library_ids, limit=limit)
+        task_id = res.get('task_id')
+        # Reuse legacy import progress UI endpoints
+        from app.routes.import_routes import import_bp
+        progress_url = url_for('import.import_books_progress', task_id=task_id)
+        api_progress_url = url_for('import.api_import_progress', task_id=task_id)
+        return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
+    except Exception as e:
+        current_app.logger.error(f"ABS test sync error: {e}")
+        return jsonify({'ok': False, 'message': 'error'}), 500
+
+# Start a background ABS Full Sync (all items)
+@auth.route('/settings/audiobookshelf/full-sync', methods=['POST'])
+@login_required
+def audiobookshelf_full_sync():
+    if not current_user.is_admin:
+        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
+    try:
+        from app.utils.audiobookshelf_settings import load_abs_settings
+        from app.services.audiobookshelf_service import get_client_from_settings
+        from app.services.audiobookshelf_import_service import AudiobookshelfImportService
+        settings = load_abs_settings()
+        client = get_client_from_settings(settings)
+        if not client:
+            return jsonify({'ok': False, 'message': 'ABS not configured'}), 400
+        library_ids = settings.get('library_ids') or []
+        if isinstance(library_ids, str):
+            library_ids = [s.strip() for s in library_ids.split(',') if s.strip()]
+        svc = AudiobookshelfImportService(str(current_user.id), client)
+        res = svc.start_full_sync(library_ids or [])
+        task_id = res.get('task_id')
+        progress_url = url_for('import.import_books_progress', task_id=task_id)
+        api_progress_url = url_for('import.api_import_progress', task_id=task_id)
+        return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
+    except Exception as e:
+        current_app.logger.error(f"ABS full sync error: {e}")
+        return jsonify({'ok': False, 'message': 'error'}), 500
 
 @auth.route('/privacy_settings', methods=['GET', 'POST'])
 @login_required

@@ -95,6 +95,23 @@ def load_ai_config():
             except Exception:
                 pass
 
+    # 2b. Backward-compatibility: also overlay legacy data/ai_settings.json if present
+    #     This allows older setups to keep using ai_settings.json without losing values.
+    try:
+        ai_legacy_path = os.path.join(data_dir, 'ai_settings.json')
+        if os.path.exists(ai_legacy_path):
+            with open(ai_legacy_path, 'r') as jf2:
+                legacy_data = json.load(jf2)
+            if isinstance(legacy_data, dict):
+                for k, v in legacy_data.items():
+                    if isinstance(v, (str, int, float)):
+                        config[k] = str(v)
+    except Exception as le:
+        try:
+            current_app.logger.warning(f"Failed reading ai_settings.json: {le}")
+        except Exception:
+            pass
+
     # 3. Apply defaults for any unset keys
     defaults = {
         'OPENAI_API_KEY': '',

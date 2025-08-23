@@ -1,0 +1,175 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <h5 class="mb-0"><i class="bi bi-soundwave me-2"></i>Audiobookshelf</h5>
+    <div class="d-flex gap-2">
+      <button id="absFullSyncBtn" class="btn btn-sm btn-outline-danger"><i class="bi bi-cloud-arrow-down"></i> Full Sync</button>
+      <button id="absSyncTestBtn" class="btn btn-sm btn-outline-success"><i class="bi bi-cloud-download"></i> Test Sync (5)</button>
+      <button id="absTestBtn" class="btn btn-sm btn-outline-primary"><i class="bi bi-wifi"></i> Test Connection</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <form id="absSettingsForm" method="post" action="{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Base URL</label>
+          <input type="url" name="base_url" class="form-control" placeholder="http://localhost:13378" value="{{ (settings.base_url or '') if settings else '' }}" required>
+          <div class="form-text">Your Audiobookshelf server root URL (no trailing slash)</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">API Key</label>
+          <input type="password" name="api_key" class="form-control" value="{{ (settings.api_key or '') if settings else '' }}" autocomplete="off">
+        </div>
+        <div class="col-12">
+          <label class="form-label">Library IDs</label>
+          <input type="text" name="library_ids" class="form-control" placeholder="lib1, lib2" value="{{ (settings.library_ids | join(', ')) if settings and settings.library_ids is iterable and settings.library_ids is not string else (settings.library_ids or '') }}">
+          <div class="form-text">Comma-separated list of ABS library IDs to sync.</div>
+        </div>
+      </div>
+      <div class="mt-3 d-flex gap-2">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save</button>
+        <span id="absStatus" class="text-muted small"></span>
+      </div>
+    </form>
+
+    <hr class="my-4">
+    <div>
+      <h6 class="mb-2"><i class="bi bi-clock-history me-1"></i> Scheduler</h6>
+      <form id="absSchedulerForm" method="post" action="{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" id="absAutoSync" name="auto_sync_enabled" {% if settings and settings.auto_sync_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="absAutoSync">Enable automatic sync</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Library sync every (hours)</label>
+            <input type="number" min="1" step="1" class="form-control" name="library_sync_every_hours" value="{{ (settings.library_sync_every_hours or 24) if settings else 24 }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Listening sync every (hours)</label>
+            <input type="number" min="1" step="1" class="form-control" name="listening_sync_every_hours" value="{{ (settings.listening_sync_every_hours or 12) if settings else 12 }}">
+          </div>
+        </div>
+        <div class="mt-3">
+          <button type="submit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-save2"></i> Save Scheduler</button>
+          <small id="absSchedulerStatus" class="text-muted ms-2"></small>
+        </div>
+      </form>
+    </div>
+    {% if connection_test is not none %}
+      <div class="mt-3">
+        {% if connection_test.ok %}
+          <div class="alert alert-success py-2">Connected. {{ connection_test.message }}</div>
+          {% if connection_test.libraries %}
+            <div class="small">Libraries:
+              <ul class="mb-0">
+                {% for lib in connection_test.libraries %}
+                  <li>{{ lib.name }} <code class="small">{{ lib.id }}</code></li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        {% else %}
+          <div class="alert alert-warning py-2">{{ connection_test.message }}</div>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+(function(){
+  const root = document.currentScript && document.currentScript.parentElement || document;
+  const form = root.querySelector('#absSettingsForm');
+  const status = root.querySelector('#absStatus');
+  const testBtn = root.querySelector('#absTestBtn');
+  const syncTestBtn = root.querySelector('#absSyncTestBtn');
+  const fullSyncBtn = root.querySelector('#absFullSyncBtn');
+  const schedForm = root.querySelector('#absSchedulerForm');
+  const schedStatus = root.querySelector('#absSchedulerStatus');
+  if (form) {
+    form.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      status.textContent = 'Saving...';
+      const fd = new FormData(form);
+      fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(r => r.text())
+        .then(html => { document.getElementById('serverDynamicContainer').innerHTML = html; })
+        .catch(() => { status.textContent = 'Save failed'; });
+    });
+  }
+  if (schedForm) {
+    schedForm.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      if (schedStatus) schedStatus.textContent = 'Saving scheduler...';
+      const fd = new FormData(schedForm);
+      // Normalize boolean
+      if (!fd.get('auto_sync_enabled')) fd.set('auto_sync_enabled', '');
+      fetch(schedForm.action, { method:'POST', body: fd, credentials:'same-origin' })
+        .then(r=>r.text())
+        .then(html=>{
+          document.getElementById('serverDynamicContainer').innerHTML = html;
+        })
+        .catch(()=>{ if(schedStatus) schedStatus.textContent = 'Save failed'; });
+    });
+  }
+  if (testBtn) {
+    testBtn.addEventListener('click', function(){
+      status.textContent = 'Testing...';
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = {};
+      if (csrfMeta && csrfMeta.content) headers['X-CSRFToken'] = csrfMeta.content;
+      fetch("{{ url_for('auth.test_audiobookshelf_connection') }}", { method: 'POST', credentials: 'same-origin', headers })
+        .then(r => r.json())
+        .then(j => {
+          status.textContent = (j.ok ? 'OK: ' : 'Fail: ') + (j.message || '');
+          // Reload panel with ?test=1 to show libraries list
+          fetch("{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}?test=1", { credentials: 'same-origin' })
+            .then(r => r.text()).then(html => { document.getElementById('serverDynamicContainer').innerHTML = html; });
+        })
+        .catch(() => { status.textContent = 'Test failed'; });
+    });
+  }
+  if (syncTestBtn) {
+    syncTestBtn.addEventListener('click', async function(){
+      status.textContent = 'Starting test sync...';
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = {'Content-Type':'application/json'};
+      if (csrfMeta && csrfMeta.content) headers['X-CSRFToken'] = csrfMeta.content;
+      try {
+        const resp = await fetch("{{ url_for('auth.audiobookshelf_test_sync') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5})});
+        const j = await resp.json();
+        if(j.ok){
+          status.innerHTML = 'Sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+        } else {
+          status.textContent = 'Failed: ' + (j.message||'');
+        }
+      } catch(e){
+        status.textContent = 'Failed to start test sync';
+      }
+    });
+  }
+  if (fullSyncBtn) {
+    fullSyncBtn.addEventListener('click', async function(){
+      status.textContent = 'Starting full sync...';
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = {'Content-Type':'application/json'};
+      if (csrfMeta && csrfMeta.content) headers['X-CSRFToken'] = csrfMeta.content;
+      try {
+        const resp = await fetch("{{ url_for('auth.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
+        const j = await resp.json();
+        if(j.ok){
+          status.innerHTML = 'Full sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+        } else {
+          status.textContent = 'Failed: ' + (j.message||'');
+        }
+      } catch(e){
+        status.textContent = 'Failed to start full sync';
+      }
+    });
+  }
+})();
+</script>

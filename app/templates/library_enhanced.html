@@ -556,9 +556,14 @@
 
                                 <!-- Book Cover -->
                                                                 <!-- Book Cover -->
-                                <div class="book-cover-wrapper" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
+                                                                <div class="book-cover-wrapper position-relative" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
                                     {% from 'macros/cover_input.html' import render_cover_display %}
                                     {{ render_cover_display(book, css_classes="card-img-top book-cover", style="", img_id="") }}
+                                                                        {% if book.media_type and book.media_type|lower == 'audiobook' %}
+                                                                            <span class="position-absolute bottom-0 end-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Audiobook">
+                                                                                <i class="bi bi-soundwave"></i>
+                                                                            </span>
+                                                                        {% endif %}
                                 </div>
 
                                 <!-- Book Info -->
