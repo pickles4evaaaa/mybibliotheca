@@ -394,6 +394,294 @@ class AudiobookshelfImportService:
         except Exception:
             pass
 
+    # Public internal: run test sync using an existing task_id (no thread)
+    def _run_test_sync_job(self, task_id: str, library_ids: List[str], limit: int = 5) -> None:
+        try:
+            processed = 0
+            successes: List[str] = []
+            errors: List[str] = []
+
+            libs_to_try: List[str] = self._resolve_library_ids(library_ids)
+            if not libs_to_try:
+                raise ValueError('No ABS library_id configured or discovered')
+
+            items: List[Dict[str, Any]] = []
+            last_msg: Optional[str] = None
+            for lib_id in libs_to_try:
+                res = self.client.list_library_items(lib_id, page=1, size=limit)
+                last_msg = res.get('message')
+                cand = res.get('items') or []
+                if cand:
+                    items = cand
+                    break
+
+            if not items:
+                safe_update_import_job(self.user_id, task_id, {
+                    'status': 'completed',
+                    'processed': 0,
+                    'total': 0,
+                    'total_books': 0,
+                    'error_messages': ([f"No items returned from ABS. Last message: {last_msg}"] if last_msg else ["No items returned from ABS."])
+                })
+                return
+
+            total_local = min(len(items), limit)
+            safe_update_import_job(self.user_id, task_id, {
+                'total': total_local,
+                'total_books': total_local,
+            })
+
+            for item in items[:limit]:
+                current_title = 'Unknown'
+                book_data: Optional[SimplifiedBook] = None
+                try:
+                    item_id = item.get('id') or item.get('_id') or item.get('itemId')
+                    if item_id:
+                        detail = self.client.get_item(item_id, expanded=True)
+                        if detail.get('ok') and detail.get('item'):
+                            item = detail['item']
+
+                    book_data = self._map_abs_item_to_simplified(item)
+                    try:
+                        pre_local_cover = self._cache_cover_with_auth(item)
+                        if pre_local_cover:
+                            book_data.cover_url = pre_local_cover
+                    except Exception:
+                        pass
+                    current_title = book_data.title or 'Unknown'
+
+                    created = self.simple_books.add_book_to_user_library_sync(book_data, self.user_id, media_type='audiobook')
+                    if not created:
+                        raise RuntimeError('Failed to create book')
+                    book_id: Optional[str] = self._resolve_book_id(book_data)
+                    if book_id:
+                        try:
+                            local_cover = self._cache_cover_with_auth(item)
+                            if local_cover:
+                                self.kuzu_book_service.update_book_sync(book_id, {'cover_url': local_cover})
+                        except Exception:
+                            pass
+                        self._apply_audiobook_fields(book_id, item)
+                        try:
+                            self.kuzu_book_service.update_book_sync(book_id, {'media_type': 'audiobook'})
+                        except Exception:
+                            pass
+                        cats = self._extract_categories(item)
+                        if cats:
+                            try:
+                                from app.services.kuzu_service_facade import KuzuServiceFacade
+                                svc = KuzuServiceFacade()
+                                svc.update_book_sync(book_id, self.user_id, raw_categories=cats)
+                            except Exception:
+                                pass
+
+                    processed += 1
+                    successes.append(current_title)
+                    current_job = safe_get_import_job(self.user_id, task_id) or {}
+                    pb = list(current_job.get('processed_books') or [])
+                    pb.append({'title': current_title, 'status': 'success'})
+                    safe_update_import_job(self.user_id, task_id, {
+                        'status': 'running',
+                        'processed': processed,
+                        'processed_books': pb[-100:],
+                    })
+                except BookAlreadyExistsError:
+                    processed += 1
+                    try:
+                        pre_local_cover = self._cache_cover_with_auth(item)
+                        if pre_local_cover:
+                            bd = book_data or self._map_abs_item_to_simplified(item)
+                            book_id = self._resolve_book_id(bd)
+                            if book_id:
+                                self.kuzu_book_service.update_book_sync(book_id, {'cover_url': pre_local_cover})
+                                try:
+                                    existing = self.kuzu_book_service.get_book_by_id_sync(book_id)
+                                    updates: Dict[str, Any] = {}
+                                    if existing and bd:
+                                        if (not getattr(existing, 'series', None)) and (bd.series):
+                                            updates['series'] = bd.series
+                                        if (getattr(existing, 'series_order', None) in (None, 0)) and (bd.series_order is not None):
+                                            updates['series_order'] = bd.series_order
+                                        if (not getattr(existing, 'series_volume', None)) and (bd.series_volume):
+                                            updates['series_volume'] = bd.series_volume
+                                    if updates:
+                                        self.kuzu_book_service.update_book_sync(book_id, updates)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    current_job = safe_get_import_job(self.user_id, task_id) or {}
+                    pb = list(current_job.get('processed_books') or [])
+                    pb.append({'title': current_title, 'status': 'merged'})
+                    safe_update_import_job(self.user_id, task_id, {
+                        'status': 'running',
+                        'processed': processed,
+                        'success_titles': successes[-10:],
+                        'processed_books': pb[-100:],
+                    })
+                except Exception as e:
+                    processed += 1
+                    errors.append(str(e))
+                    current_job = safe_get_import_job(self.user_id, task_id) or {}
+                    pb = list(current_job.get('processed_books') or [])
+                    pb.append({'title': current_title, 'status': 'error'})
+                    safe_update_import_job(self.user_id, task_id, {
+                        'status': 'running',
+                        'processed': processed,
+                        'error_messages': errors[-10:],
+                        'processed_books': pb[-100:],
+                    })
+
+            safe_update_import_job(self.user_id, task_id, {
+                'status': 'completed',
+                'processed': processed,
+                'total': total_local
+            })
+        except Exception:
+            traceback.print_exc()
+            safe_update_import_job(self.user_id, task_id, {
+                'status': 'failed',
+                'error_messages': ['Unexpected error during ABS test sync']
+            })
+
+    # Public internal: run full sync using an existing task_id (no thread)
+    def _run_full_sync_job(self, task_id: str, library_ids: Optional[List[str]] = None, page_size: int = 50) -> None:
+        try:
+            libs_to_try = self._resolve_library_ids(library_ids or [])
+            if not libs_to_try:
+                raise ValueError('No ABS libraries found to sync')
+            processed = 0
+            errors: List[str] = []
+            success_titles: List[str] = []
+            grand_total = 0
+
+            for lib_id in libs_to_try:
+                meta = self.client.list_library_items(lib_id, page=1, size=page_size)
+                lib_total = int(meta.get('total') or 0)
+                grand_total += lib_total
+            safe_update_import_job(self.user_id, task_id, {
+                'total': grand_total,
+                'total_books': grand_total,
+            })
+
+            for lib_id in libs_to_try:
+                page = 1
+                while True:
+                    res = self.client.list_library_items(lib_id, page=page, size=page_size)
+                    items = res.get('items') or []
+                    if not items:
+                        break
+                    for item in items:
+                        current_title = 'Unknown'
+                        book_data: Optional[SimplifiedBook] = None
+                        try:
+                            item_id = item.get('id') or item.get('_id') or item.get('itemId')
+                            if item_id:
+                                detail = self.client.get_item(item_id, expanded=True)
+                                if detail.get('ok') and detail.get('item'):
+                                    item = detail['item']
+                            book_data = self._map_abs_item_to_simplified(item)
+                            try:
+                                pre_local_cover = self._cache_cover_with_auth(item)
+                                if pre_local_cover:
+                                    book_data.cover_url = pre_local_cover
+                            except Exception:
+                                pass
+                            current_title = book_data.title or 'Unknown'
+                            created = self.simple_books.add_book_to_user_library_sync(book_data, self.user_id, media_type='audiobook')
+                            if not created:
+                                raise RuntimeError('Failed to create book')
+                            book_id: Optional[str] = self._resolve_book_id(book_data)
+                            if book_id:
+                                try:
+                                    local_cover = self._cache_cover_with_auth(item)
+                                    if local_cover:
+                                        self.kuzu_book_service.update_book_sync(book_id, {'cover_url': local_cover})
+                                except Exception:
+                                    pass
+                                self._apply_audiobook_fields(book_id, item)
+                                try:
+                                    self.kuzu_book_service.update_book_sync(book_id, {'media_type': 'audiobook'})
+                                except Exception:
+                                    pass
+                                cats = self._extract_categories(item)
+                                if cats:
+                                    try:
+                                        from app.services.kuzu_service_facade import KuzuServiceFacade
+                                        svc = KuzuServiceFacade()
+                                        svc.update_book_sync(book_id, self.user_id, raw_categories=cats)
+                                    except Exception:
+                                        pass
+                            processed += 1
+                            success_titles.append(current_title)
+                            current_job = safe_get_import_job(self.user_id, task_id) or {}
+                            pb = list(current_job.get('processed_books') or [])
+                            pb.append({'title': current_title, 'status': 'success'})
+                            safe_update_import_job(self.user_id, task_id, {
+                                'status': 'running',
+                                'processed': processed,
+                                'processed_books': pb[-100:],
+                            })
+                        except BookAlreadyExistsError:
+                            processed += 1
+                            try:
+                                pre_local_cover = self._cache_cover_with_auth(item)
+                                if pre_local_cover:
+                                    bd: SimplifiedBook = book_data if 'book_data' in locals() and book_data else self._map_abs_item_to_simplified(item)
+                                    book_id = self._resolve_book_id(bd)
+                                    if book_id:
+                                        self.kuzu_book_service.update_book_sync(book_id, {'cover_url': pre_local_cover})
+                                        try:
+                                            existing = self.kuzu_book_service.get_book_by_id_sync(book_id)
+                                            updates: Dict[str, Any] = {}
+                                            if existing and bd:
+                                                if (not getattr(existing, 'series', None)) and (bd.series):
+                                                    updates['series'] = bd.series
+                                                if (getattr(existing, 'series_order', None) in (None, 0)) and (bd.series_order is not None):
+                                                    updates['series_order'] = bd.series_order
+                                                if (not getattr(existing, 'series_volume', None)) and (bd.series_volume):
+                                                    updates['series_volume'] = bd.series_volume
+                                            if updates:
+                                                self.kuzu_book_service.update_book_sync(book_id, updates)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                            current_job = safe_get_import_job(self.user_id, task_id) or {}
+                            pb = list(current_job.get('processed_books') or [])
+                            pb.append({'title': current_title, 'status': 'merged'})
+                            safe_update_import_job(self.user_id, task_id, {
+                                'status': 'running',
+                                'processed': processed,
+                                'success_titles': success_titles[-10:],
+                                'processed_books': pb[-100:],
+                            })
+                        except Exception as e:
+                            processed += 1
+                            errors.append(str(e))
+                            current_job = safe_get_import_job(self.user_id, task_id) or {}
+                            pb = list(current_job.get('processed_books') or [])
+                            pb.append({'title': current_title, 'status': 'error'})
+                            safe_update_import_job(self.user_id, task_id, {
+                                'status': 'running',
+                                'processed': processed,
+                                'error_messages': errors[-10:],
+                                'processed_books': pb[-100:],
+                            })
+                    page += 1
+
+            safe_update_import_job(self.user_id, task_id, {
+                'status': 'completed',
+                'processed': processed,
+                'total': grand_total
+            })
+        except Exception:
+            traceback.print_exc()
+            safe_update_import_job(self.user_id, task_id, {
+                'status': 'failed',
+                'error_messages': ['Unexpected error during ABS full sync']
+            })
+
     def _resolve_library_ids(self, library_ids: List[str]) -> List[str]:
         """Resolve provided identifiers (IDs or names) to actual library IDs.
 

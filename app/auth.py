@@ -1158,14 +1158,10 @@ def audiobookshelf_test_sync():
     if not current_user.is_admin:
         return jsonify({'ok': False, 'error': 'not_authorized'}), 403
     try:
-        # Load settings and build client
+        # Load settings and enqueue job into ABS runner
         from app.utils.audiobookshelf_settings import load_abs_settings
-        from app.services.audiobookshelf_service import get_client_from_settings
-        from app.services.audiobookshelf_import_service import AudiobookshelfImportService
+        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
         settings = load_abs_settings()
-        client = get_client_from_settings(settings)
-        if not client:
-            return jsonify({'ok': False, 'message': 'ABS not configured'}), 400
         library_ids = settings.get('library_ids') or []
         if isinstance(library_ids, str):
             library_ids = [s.strip() for s in library_ids.split(',') if s.strip()]
@@ -1176,9 +1172,8 @@ def audiobookshelf_test_sync():
             limit = int(payload.get('limit') or 5)
         except Exception:
             limit = 5
-        svc = AudiobookshelfImportService(str(current_user.id), client)
-        res = svc.start_test_sync(library_ids, limit=limit)
-        task_id = res.get('task_id')
+        runner = get_abs_sync_runner()
+        task_id = runner.enqueue_test_sync(str(current_user.id), library_ids, limit=limit)
         # Reuse legacy import progress UI endpoints
         from app.routes.import_routes import import_bp
         progress_url = url_for('import.import_books_progress', task_id=task_id)
@@ -1196,18 +1191,13 @@ def audiobookshelf_full_sync():
         return jsonify({'ok': False, 'error': 'not_authorized'}), 403
     try:
         from app.utils.audiobookshelf_settings import load_abs_settings
-        from app.services.audiobookshelf_service import get_client_from_settings
-        from app.services.audiobookshelf_import_service import AudiobookshelfImportService
+        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
         settings = load_abs_settings()
-        client = get_client_from_settings(settings)
-        if not client:
-            return jsonify({'ok': False, 'message': 'ABS not configured'}), 400
         library_ids = settings.get('library_ids') or []
         if isinstance(library_ids, str):
             library_ids = [s.strip() for s in library_ids.split(',') if s.strip()]
-        svc = AudiobookshelfImportService(str(current_user.id), client)
-        res = svc.start_full_sync(library_ids or [])
-        task_id = res.get('task_id')
+        runner = get_abs_sync_runner()
+        task_id = runner.enqueue_full_sync(str(current_user.id), library_ids or [], page_size=50)
         progress_url = url_for('import.import_books_progress', task_id=task_id)
         api_progress_url = url_for('import.api_import_progress', task_id=task_id)
         return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})

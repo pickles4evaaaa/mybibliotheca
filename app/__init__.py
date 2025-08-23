@@ -365,6 +365,14 @@ def create_app():
         except Exception as e:
             app.logger.warning(f"Failed to initialize backup scheduler: {e}")
 
+        # Ensure Audiobookshelf sync runner is started (queue + scheduler)
+        try:
+            from .services.audiobookshelf_sync_runner import ensure_abs_sync_runner
+            ensure_abs_sync_runner()
+            app.logger.info("ABS sync runner ensured")
+        except Exception as e:
+            app.logger.warning(f"Failed to start ABS sync runner: {e}")
+
     # Initialize extensions (no SQLAlchemy)
     csrf.init_app(app)
     sess.init_app(app)  # Initialize Flask-Session

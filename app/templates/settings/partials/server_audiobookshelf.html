@@ -180,9 +180,12 @@
         const resp = await fetch("{{ url_for('auth.audiobookshelf_test_sync') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5})});
         const j = await resp.json();
         if(j.ok){
+          // Begin inline polling immediately so progress starts updating even before navigation
+          try { startInlineProgressPolling(j); } catch(e) {}
           const to = j.progress_url || j.api_progress_url || '#';
           if (to && to !== '#') {
-            window.location.assign(to);
+            // Small delay so the status line updates before redirect
+            setTimeout(()=>{ window.location.assign(to); }, 150);
           } else {
             status.innerHTML = 'Sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
           }
@@ -204,9 +207,10 @@
         const resp = await fetch("{{ url_for('auth.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
         const j = await resp.json();
         if(j.ok){
+          try { startInlineProgressPolling(j); } catch(e) {}
           const to = j.progress_url || j.api_progress_url || '#';
           if (to && to !== '#') {
-            window.location.assign(to);
+            setTimeout(()=>{ window.location.assign(to); }, 150);
           } else {
             status.innerHTML = 'Full sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
           }
