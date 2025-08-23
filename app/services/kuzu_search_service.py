@@ -258,42 +258,11 @@ class KuzuSearchService:
             user_books = await self.relationship_service.get_books_for_user(user_id, limit=1000)
             user_book_ids = {book.id for book in user_books}
             
-            # Find users who have read similar books
-            similar_users_query = """
-            MATCH (u1:User {id: $user_id})-[:OWNS]->(b:Book)<-[:OWNS]-(u2:User)
-            WHERE u1 <> u2
-            WITH u2, COUNT(b) as shared_books
-            WHERE shared_books >= 3
-            RETURN u2.id as similar_user_id
-            ORDER BY shared_books DESC
-            LIMIT 10
-            """
-            
-            # Use safe query execution and convert result
-            raw_result = safe_execute_kuzu_query(
-                query=similar_users_query,
-                params={"user_id": user_id},
-                user_id=self.user_id,
-                operation="find_similar_users"
-            )
-            
-            results = _convert_query_result_to_list(raw_result)
-            similar_user_ids = [result['col_0'] for result in results if 'col_0' in result]
-            
-            # Get books from similar users that this user doesn't have
-            recommended_books = []
-            for similar_user_id in similar_user_ids:
-                similar_user_books = await self.relationship_service.get_books_for_user(similar_user_id, limit=500)
-                
-                for book in similar_user_books:
-                    if book.id not in user_book_ids and len(recommended_books) < limit:
-                        book_dict = book.__dict__.copy() if hasattr(book, '__dict__') else {}
-                        # Ensure uid is available
-                        if 'id' in book_dict:
-                            book_dict['uid'] = book_dict['id']
-                        recommended_books.append(book_dict)
-            
-            return recommended_books[:limit]
+            # Universal library mode: OWNS relationships removed, so collaborative
+            # filtering based on shared ownership is no longer applicable.
+            # Placeholder: return an empty list (future enhancement: derive similarity
+            # from tags/categories/genres + personal metadata reading history).
+            return []
             
         except Exception as e:
             traceback.print_exc()

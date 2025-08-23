@@ -28,6 +28,10 @@ services:
       # Logging settings - disable verbose initialization to prevent duplicate messages
       MYBIBLIOTHECA_VERBOSE_INIT: ${MYBIBLIOTHECA_VERBOSE_INIT:-false}
 
+  # Kuzu recovery options (uncomment as needed)
+  # KUZU_AUTO_RECOVER_CLEAR: "true"   # Full backup + wipe on detected corruption
+  # KUZU_DISABLE_AUTO_RENAME_CORRUPT: "true"  # Disable soft auto-rename fallback
+
       # Migration settings (DISABLED for manual migration)
       AUTO_MIGRATE: "false"
       # - MIGRATION_DEFAULT_USER=admin

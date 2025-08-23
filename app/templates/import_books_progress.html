@@ -97,6 +97,12 @@
                                 <small class="text-success">Success</small>
                             </div>
                         </div>
+                        <div class="col-md-2 status-tile" data-status="merged" role="button" tabindex="0">
+                            <div class="border rounded p-2 h-100">
+                                <div class="h4 mb-0" id="mergedCount">0</div>
+                                <small class="text-info">Merged</small>
+                            </div>
+                        </div>
                         <div class="col-md-2 status-tile" data-status="errors" role="button" tabindex="0">
                             <div class="border rounded p-2 h-100">
                                 <div class="h4 mb-0" id="errorCount">0</div>
@@ -139,9 +145,7 @@
                             <a href="{{ url_for('main.library') }}" class="btn btn-primary">
                                 <i class="fas fa-books"></i> View Library
                             </a>
-                            <a href="{{ url_for('main.import_books') }}" class="btn btn-outline-secondary">
-                                <i class="fas fa-upload"></i> Import More Books
-                            </a>
+                            <!-- Removed 'Import More Books' button (legacy simple import deprecated) -->
                             <button id="downloadErrorsBtn" class="btn btn-outline-danger d-none">
                                 <i class="fas fa-download"></i> Download Error Report
                             </button>
@@ -177,7 +181,9 @@ let taskId = '{{ task_id }}';
 let totalBooks = parseInt(document.getElementById('totalCount').textContent, 10) || 0;
 let startTime = new Date('{{ start_time }}');
 // Cache books by status as they come in (lightweight - only titles)
-const statusBuckets = {success: [], errors: [], skipped: [], unmatched: []};
+const statusBuckets = {success: [], merged: [], errors: [], skipped: [], unmatched: []};
+// Global label map (updated dynamically for reading history relabeling)
+let labelMap = {processed:'Processed', success:'Success', merged:'Merged', errors:'Errors', skipped:'Skipped', unmatched:'Unmatched'};
 
 function toggleStatusDetails(statusKey, label){
     const container = document.getElementById('statusDetails');
@@ -197,9 +203,9 @@ document.addEventListener('click', (e)=>{
     const tile = e.target.closest('.status-tile');
     if(!tile) return;
     const status = tile.dataset.status;
-    const labelMap = {processed:'Processed', success:'Success', errors:'Errors', skipped:'Skipped', unmatched:'Unmatched'};
-    if(status in {success:1, errors:1, skipped:1, unmatched:1}){
-        toggleStatusDetails(status,labelMap[status]);
+    // Use current (possibly relabeled) small text for merged/skipped when building title
+    if(status in {success:1, merged:1, errors:1, skipped:1, unmatched:1}){
+        toggleStatusDetails(status, labelMap[status] || status.charAt(0).toUpperCase()+status.slice(1));
     }
 });
 
@@ -216,20 +222,24 @@ function updateProgress() {
             
             // Update progress bar - handle different total counts for different import types
             let totalForProgress = totalBooks;
-            if (data.import_type === 'reading_history' && data.total) {
-                // For reading history, use the total distinct books count
-                totalForProgress = data.total;
-                // Also update the total count display
+            if (data.import_type === 'reading_history') {
+                // Prefer new distinct_books_total metric, fallback to legacy total
+                if (data.distinct_books_total) {
+                    totalForProgress = data.distinct_books_total;
+                } else if (data.total) {
+                    totalForProgress = data.total;
+                }
                 document.getElementById('totalCount').textContent = totalForProgress;
             }
             
             // Derive counters with fallbacks for reading history payloads
             const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
-            const processedCount = (typeof data.processed === 'number') ? data.processed : (isReadingHistory ? (data.success || 0) : 0);
+            const processedCount = (typeof data.processed === 'number') ? data.processed : (isReadingHistory ? (data.books_involved || data.success || 0) : 0);
             const successCount = (typeof data.success === 'number') ? data.success : (isReadingHistory ? (data.reading_logs_created || 0) : 0);
             const errorCount = (typeof data.errors === 'number') ? data.errors : (isReadingHistory ? (data.reading_log_errors || 0) : 0);
 
-            const percentage = totalForProgress > 0 ? Math.round((processedCount / totalForProgress) * 100) : 0;
+            let percentage = totalForProgress > 0 ? Math.round((processedCount / totalForProgress) * 100) : 0;
+            if (percentage > 100) percentage = 100; // Cap to 100 to prevent visual overflow
             const progressBar = document.getElementById('progressBar');
             progressBar.style.width = percentage + '%';
             progressBar.setAttribute('aria-valuenow', percentage);
@@ -246,47 +256,85 @@ function updateProgress() {
                 jobStatus.textContent = 'Completed';
                 jobStatus.className = 'badge bg-success';
                 progressBar.className = 'progress-bar bg-success';
-                const readingLogsCreated = data.reading_logs_created || data.success || processedCount || 0;
-                const booksProcessed = data.success || processedCount || 0;
-                const readingLogErrors = data.reading_log_errors || errorCount || 0;
-                const successMessage = readingLogsCreated > 0 ? 
-                    `Successfully created ${readingLogsCreated} reading log entries from ${booksProcessed} books` : 
-                    'No reading logs were created';
-                let statusIcon = '<i class="fas fa-check-circle"></i>';
-                let alertClass = 'alert alert-success';
-                if ((data.errors || 0) > 0 || readingLogErrors > 0) {
-                    statusIcon = '<i class="fas fa-exclamation-triangle"></i>';
-                    alertClass = 'alert alert-warning';
-                }
-                let errorMessage = '';
-                if (readingLogErrors > 0) {
-                    errorMessage = ` ${readingLogErrors} reading log entries had errors.`;
-                }
+                    const readingLogsCreated = data.reading_logs_created || data.success || 0;
+                    const booksMatched = data.books_matched || 0;
+                    const booksCreated = data.books_created || 0;
+                    const booksInvolved = data.books_involved || (booksMatched + booksCreated) || 0;
+                    const readingLogErrors = data.reading_log_errors || 0;
+                    const successMessage = readingLogsCreated > 0 ?
+                        `${readingLogsCreated} reading log entries processed across ${booksInvolved} books (${booksMatched} matched / ${booksCreated} created)` :
+                        'No reading logs were created';
+                    let statusIcon = '<i class="fas fa-check-circle"></i>';
+                    let alertClass = 'alert alert-success';
+                    if (data.errors > 0 || readingLogErrors > 0) {
+                        statusIcon = '<i class="fas fa-exclamation-triangle"></i>';
+                        alertClass = 'alert alert-warning';
+                    }
+                    let errorMessage = '';
+                    if (readingLogErrors > 0) {
+                        errorMessage = ` ${readingLogErrors} reading log entries had errors.`;
+                    }
                     document.getElementById('statusMessage').innerHTML = 
-                    `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
-                         <div class=\"mt-2\">
-                             <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">
-                                 <i class=\"fas fa-book-reader\"></i> View Reading Log
-                             </a>
-                             <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">
-                                 <i class=\"fas fa-books\"></i> Back to Library
-                             </a>
-                         </div>`;
-                document.getElementById('statusMessage').className = alertClass;
-                return; // Stop polling
+                        `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
+                             <div class=\"mt-2\">
+                                 <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">
+                                     <i class=\"fas fa-book-reader\"></i> View Reading Log
+                                 </a>
+                                 <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">
+                                     <i class=\"fas fa-books\"></i> Back to Library
+                                 </a>
+                             </div>`;
+                    document.getElementById('statusMessage').className = alertClass;
+                    return; // Stop polling
             }
             
             // Fill buckets from enriched arrays (override lightweight parsing)
             if (Array.isArray(data.success_titles)) statusBuckets.success = data.success_titles.slice();
+            // For reading history, prefer detailed per-log strings if provided
+            if (isReadingHistory && Array.isArray(data.reading_log_success_details) && data.reading_log_success_details.length) {
+                statusBuckets.success = data.reading_log_success_details.slice(0,500);
+            }
+            if (Array.isArray(data.merged_titles)) statusBuckets.merged = data.merged_titles.slice();
             if (Array.isArray(data.error_titles)) statusBuckets.errors = data.error_titles.slice();
             if (Array.isArray(data.skipped_titles)) statusBuckets.skipped = data.skipped_titles.slice();
             if (Array.isArray(data.unmatched_titles)) statusBuckets.unmatched = data.unmatched_titles.slice();
 
+            // If we have structured error details, prefer them for display: "Title — Reason"
+            if (Array.isArray(data.error_details) && data.error_details.length > 0) {
+                statusBuckets.errors = data.error_details.map(d => {
+                    const title = d.title || 'Unknown';
+                    let msg = d.message || '';
+                    if (msg.length > 160) msg = msg.slice(0,157) + '…';
+                    return msg ? `${title} — ${msg}` : title;
+                });
+            }
+
             // Update counters
-            document.getElementById('processedCount').textContent = processedCount;
-            document.getElementById('successCount').textContent = successCount;
-            document.getElementById('errorCount').textContent = errorCount;
-            document.getElementById('skippedCount').textContent = data.skipped || 0;
+            if (isReadingHistory) {
+                // Remap tiles to reading history semantics
+                const booksInvolved = data.books_involved || 0;
+                const logsCreated = data.reading_logs_created || 0;
+                const booksMatched = data.books_matched || 0;
+                const booksCreated = data.books_created || 0;
+                document.getElementById('processedCount').textContent = booksInvolved; // Books involved
+                document.querySelector('[data-status="processed"] small').textContent = 'Books';
+                document.getElementById('successCount').textContent = logsCreated; // Logs created
+                document.querySelector('[data-status="success"] small').textContent = 'Logs';
+                document.getElementById('mergedCount').textContent = booksMatched; // Matched existing books
+                document.querySelector('[data-status="merged"] small').textContent = 'Matched';
+                document.getElementById('skippedCount').textContent = booksCreated; // Newly created books
+                document.querySelector('[data-status="skipped"] small').textContent = 'Created';
+                document.getElementById('errorCount').textContent = errorCount; // reading log entry errors
+                // Update global labelMap for toggles after relabel
+                labelMap.merged = 'Matched';
+                labelMap.skipped = 'Created';
+            } else {
+                document.getElementById('processedCount').textContent = processedCount;
+                document.getElementById('successCount').textContent = successCount;
+                document.getElementById('errorCount').textContent = errorCount;
+                document.getElementById('mergedCount').textContent = data.merged || 0;
+                document.getElementById('skippedCount').textContent = data.skipped || 0;
+            }
             
             // Update unmatched count - handle different data structures
             let unmatchedCount = 0;
@@ -309,57 +357,38 @@ function updateProgress() {
                 jobStatus.textContent = 'Completed';
                 jobStatus.className = data.status === 'completed' ? 'badge bg-success' : 'badge bg-warning';
                 progressBar.className = data.status === 'completed' ? 'progress-bar bg-success' : 'progress-bar bg-warning';
-                
-                // Check if this is a reading history import or regular book import
+
                 const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
-                
                 if (isReadingHistory) {
-                    // For reading history imports, show reading logs created using the specific count
-                    const readingLogsCreated = data.reading_logs_created || data.success || 0;
-                    const booksProcessed = data.success || 0;
+                    const readingLogsCreated = data.reading_logs_created || 0;
+                    const booksMatched = data.books_matched || 0;
+                    const booksCreated = data.books_created || 0;
+                    const booksInvolved = data.books_involved || (booksMatched + booksCreated) || 0;
                     const readingLogErrors = data.reading_log_errors || 0;
-                    
-                    const successMessage = readingLogsCreated > 0 ? 
-                        `Successfully created ${readingLogsCreated} reading log entries from ${booksProcessed} books` : 
-                        'No reading logs were created';
-                    
+                    const successMessage = `${readingLogsCreated} reading log entries processed across ${booksInvolved} books (${booksMatched} matched / ${booksCreated} created)`;
                     let statusIcon = '<i class="fas fa-check-circle"></i>';
                     let alertClass = 'alert alert-success';
-                    
                     if (data.errors > 0 || readingLogErrors > 0) {
                         statusIcon = '<i class="fas fa-exclamation-triangle"></i>';
                         alertClass = 'alert alert-warning';
                     }
-                    
                     let errorMessage = '';
                     if (readingLogErrors > 0) {
                         errorMessage = ` ${readingLogErrors} reading log entries had errors.`;
                     }
-                    
                     document.getElementById('statusMessage').innerHTML = 
                         `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
-                         <div class=\"mt-2\">
-                             <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">
-                                 <i class=\"fas fa-book-reader\"></i> View Reading Log
-                             </a>
-                             <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">
-                                 <i class=\"fas fa-books\"></i> Back to Library
-                             </a>
-                         </div>`;
+                         <div class=\"mt-2\">\n                             <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">\n                                 <i class=\"fas fa-book-reader\"></i> View Reading Log\n                             </a>\n                             <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">\n                                 <i class=\"fas fa-books\"></i> Back to Library\n                             </a>\n                         </div>`;
                     document.getElementById('statusMessage').className = alertClass;
                 } else {
-                    // For book imports, show books imported
                     document.getElementById('statusMessage').innerHTML = 
-                        `<i class="fas fa-check-circle"></i> Import completed! Successfully imported ${data.success} books.`;
+                        `<i class=\"fas fa-check-circle\"></i> Import completed! Successfully imported ${data.success} books.`;
                     document.getElementById('statusMessage').className = 'alert alert-success';
-                    
                     document.getElementById('completionButtons').classList.remove('d-none');
-                    
                     if (data.errors > 0) {
                         document.getElementById('downloadErrorsBtn').classList.remove('d-none');
                     }
                 }
-                
                 return; // Stop polling
             } else if (data.status === 'needs_book_matching') {
                 jobStatus.textContent = 'Needs Book Matching';

@@ -1,0 +1,18 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-speedometer2"></i>
+    <strong>Admin Dashboard</strong>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      {% for stat in dashboard_stats %}
+      <div class="col-md-3 col-sm-6">
+        <div class="p-3 bg-light rounded text-center h-100">
+          <div class="fw-bold fs-5">{{ stat.value }}</div>
+          <div class="small text-muted">{{ stat.label }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>

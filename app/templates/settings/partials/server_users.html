@@ -1,0 +1,25 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-people"></i>
+    <strong>User Management (snapshot)</strong>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small">Showing up to 50 users. Open full user admin for more actions.</p>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Created</th></tr></thead>
+        <tbody>
+        {% for u in users %}
+          <tr>
+            <td>{{ u.username }}</td>
+            <td class="small text-muted">{{ u.email }}</td>
+            <td>{% if u.is_admin %}<span class="badge bg-danger">Admin</span>{% else %}<span class="badge bg-secondary">User</span>{% endif %}</td>
+            <td class="small text-muted">{{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <a href="{{ url_for('admin.users') }}" target="_blank" class="btn btn-outline-secondary btn-sm mt-3"><i class="bi bi-box-arrow-up-right"></i> Open Full User Admin</a>
+  </div>
+</div>

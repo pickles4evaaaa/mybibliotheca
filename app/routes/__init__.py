@@ -121,16 +121,14 @@ def people():
     return redirect(url_for('people.people'))
 
 @main_bp.route('/import_books')
-def import_books():
-    """Compatibility route for main.import_books - redirect to simple import"""
+def import_books():  # legacy endpoint -> library
     from flask import redirect, url_for
-    return redirect(url_for('import.simple_import'))
+    return redirect(url_for('book.library'))
 
 @main_bp.route('/simple-import')
-def simple_import_redirect():
-    """Main route for simple import"""
+def simple_import_redirect():  # legacy endpoint -> library
     from flask import redirect, url_for
-    return redirect(url_for('import.simple_import'))
+    return redirect(url_for('book.library'))
 
 @main_bp.route('/add_book')
 def add_book():

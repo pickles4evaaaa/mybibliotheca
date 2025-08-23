@@ -425,6 +425,19 @@ def create_app():
             return json.loads(json_string)
         except (json.JSONDecodeError, TypeError):
             return []
+    
+    # Cover management filters
+    @app.template_filter('cover_info')
+    def get_cover_info_filter(book):
+        """Get cover info for a book using UnifiedCoverManager."""
+        from app.services.unified_cover_manager import cover_manager
+        return cover_manager.get_cover_info(book)
+    
+    @app.template_filter('has_cover')
+    def has_cover_filter(book):
+        """Check if book has a valid cover using UnifiedCoverManager."""
+        from app.services.unified_cover_manager import cover_manager
+        return cover_manager.get_cover_info(book).has_cover
 
     # CSRF error handler
     @app.errorhandler(400)
@@ -485,7 +498,7 @@ def create_app():
                 try:
                     user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
                     book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
-                    owns_result = safe_execute_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r) AS count", {})
+                    # OWNS deprecated: omit counting legacy ownership edges (migration handles any residual)
                     
                     user_count = 0
                     if user_result and user_result.has_next():
@@ -497,13 +510,8 @@ def create_app():
                         row = book_result.get_next()
                         book_count = row[0] if row else 0
                     
-                    owns_count = 0
-                    if owns_result and owns_result.has_next():
-                        row = owns_result.get_next()
-                        owns_count = row[0] if row else 0
-                        
                     if verbose_init:
-                        print(f"📊 Database state: Users: {user_count}, Books: {book_count}, Ownership relationships: {owns_count}")
+                        print(f"📊 Database state: Users: {user_count}, Books: {book_count}")
                 except Exception as count_e:
                     if verbose_init:
                         print(f"Error counting nodes: {count_e}")
@@ -832,6 +840,11 @@ def create_app():
     register_blueprints(app)
     app.register_blueprint(auth, url_prefix='/auth')
     app.register_blueprint(admin, url_prefix='/admin')
+    try:
+        from .routes.db_health_routes import db_health
+        app.register_blueprint(db_health)
+    except Exception as e:
+        print(f"Could not register db health routes: {e}")
     
     # Register simple backup routes
     try:
@@ -894,24 +907,26 @@ def create_app():
             print(f"🛑 [APP_SHUTDOWN] Process ID: {os.getpid()}")
             print(f"🛑 [APP_SHUTDOWN] Shutdown time: {datetime.now()}")
             
-            # Try to get final database state using safe methods
-            from .utils.kuzu_migration_helper import safe_execute_query
-            
+            # Try to get final database state only if manager was initialized earlier
             try:
-                user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
-                book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
-                owns_result = safe_execute_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r) AS count", {})
-                
-                user_count = user_result[0].get('count', 0) if user_result else 0
-                book_count = book_result[0].get('count', 0) if book_result else 0
-                owns_count = owns_result[0].get('count', 0) if owns_result else 0
+                from .utils.safe_kuzu_manager import is_safe_kuzu_initialized
+                if is_safe_kuzu_initialized():
+                    from .utils.kuzu_migration_helper import safe_execute_query
+                    try:
+                        user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
+                        book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
+                        user_count = user_result[0].get('count', 0) if user_result else 0
+                        book_count = book_result[0].get('count', 0) if book_result else 0
+                    except Exception:
+                        user_count = book_count = "unknown"
+                else:
+                    user_count = book_count = "skipped"
             except Exception:
-                user_count = book_count = owns_count = "unknown"
+                user_count = book_count = "unknown"
             
             print(f"🛑 [APP_SHUTDOWN] Final database state:")
             print(f"🛑 [APP_SHUTDOWN]   - Users: {user_count}")
             print(f"🛑 [APP_SHUTDOWN]   - Books: {book_count}")
-            print(f"🛑 [APP_SHUTDOWN]   - OWNS relationships: {owns_count}")
             
             # Check database files
             db_path = Path(os.getenv('KUZU_DB_PATH', '/app/data/kuzu'))
@@ -922,10 +937,16 @@ def create_app():
             
             # 🔥 CRITICAL FIX: Close KuzuDB connections properly
             print(f"🛑 [APP_SHUTDOWN] Closing KuzuDB connections to ensure data persistence...")
-            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
-            manager = get_safe_kuzu_manager()
-            stale_count = manager.cleanup_stale_connections(max_age_minutes=0)  # Clean up all
-            print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connections closed ({stale_count} cleaned up)")
+            try:
+                from .utils.safe_kuzu_manager import get_safe_kuzu_manager, is_safe_kuzu_initialized
+                if is_safe_kuzu_initialized():
+                    manager = get_safe_kuzu_manager()
+                    stale_count = manager.cleanup_stale_connections(max_age_minutes=0)  # Clean up all
+                    print(f"🛑 [APP_SHUTDOWN] ✅ KuzuDB connections closed ({stale_count} cleaned up)")
+                else:
+                    print("🛑 [APP_SHUTDOWN] Kuzu manager not initialized earlier; skipping connection cleanup")
+            except Exception as _c_err:
+                print(f"🛑 [APP_SHUTDOWN] Skipped connection cleanup: {_c_err}")
             
         except Exception as e:
             print(f"🛑 [APP_SHUTDOWN] Error during shutdown logging: {e}")
@@ -938,27 +959,35 @@ def create_app():
             except Exception as close_error:
                 print(f"🛑 [APP_SHUTDOWN] ❌ Failed to close KuzuDB connection: {close_error}")
     
-    # Register shutdown handler for both normal exit AND signal termination
-    atexit.register(shutdown_handler)
-    
-    # 🔥 CRITICAL FIX: Add signal handlers for Docker SIGTERM/SIGINT
+    # Register shutdown/signal handlers only once globally. During tests the factory can be
+    # invoked many times which previously registered duplicate atexit handlers leading to
+    # repeated shutdown execution and a final bus error (Kuzu closed multiple times).
     import signal
-    
-    def signal_shutdown_handler(signum, frame):
-        """Handle Docker container shutdown signals (SIGTERM, SIGINT)."""
-        print(f"🛑 [SIGNAL_SHUTDOWN] Received signal {signum}")
-        shutdown_handler()
-        # Exit gracefully after handling shutdown
-        sys.exit(0)
-    
-    # Register signal handlers for Docker container termination
-    signal.signal(signal.SIGTERM, signal_shutdown_handler)  # Docker stop
-    signal.signal(signal.SIGINT, signal_shutdown_handler)   # Ctrl+C
-    
-    # Only log signal handler registration in debug mode
-    debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
-    if debug_mode:
-        logger.debug("Signal handlers registered for SIGTERM/SIGINT - KuzuDB persistence fixed!")
+    module_globals = globals()
+    if not module_globals.get('_mybibliotheca_shutdown_handlers_registered'):
+        atexit.register(shutdown_handler)
+
+        def signal_shutdown_handler(signum, frame):
+            """Handle Docker container shutdown signals (SIGTERM, SIGINT)."""
+            print(f"🛑 [SIGNAL_SHUTDOWN] Received signal {signum}")
+            shutdown_handler()
+            # Exit gracefully after handling shutdown
+            sys.exit(0)
+
+        try:
+            signal.signal(signal.SIGTERM, signal_shutdown_handler)  # Docker stop
+            signal.signal(signal.SIGINT, signal_shutdown_handler)   # Ctrl+C
+        except Exception as _sig_err:
+            # Ignore if signals can't be set (e.g., in certain restricted environments)
+            if os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true':
+                print(f"Could not register signal handlers: {_sig_err}")
+
+        module_globals['_mybibliotheca_shutdown_handlers_registered'] = True
+
+        # Only log signal handler registration in debug mode
+        debug_mode = os.getenv('KUZU_DEBUG', 'false').lower() == 'true'
+        if debug_mode:
+            logger.debug("Signal/atexit shutdown handlers registered (idempotent)")
 
     # Ultra-visibility WSGI request logger to stdout
     def _wsgi_log_wrapper(app_wsgi):

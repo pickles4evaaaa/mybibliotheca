@@ -42,16 +42,13 @@
                                                     {% endif %}
                                                 </td>
                                                 <td>
-                                                    <span class="badge badge-secondary">{{ field.field_type.value|title }}</span>
+                                                    <span class="cf-badge type-{{ field.field_type.value|default(field.field_type)|lower }}">{{ field.field_type.value|default(field.field_type)|title }}</span>
                                                 </td>
                                                 <td>
                                                     {% if field.is_global %}
-                                                        <span class="badge badge-info">Global</span>
+                                                        <span class="cf-badge scope-global">Global</span>
                                                     {% else %}
-                                                        <span class="badge badge-light">Personal</span>
-                                                    {% endif %}
-                                                    {% if field.is_shareable %}
-                                                        <span class="badge badge-success">Shareable</span>
+                                                        <span class="cf-badge scope-personal">Personal</span>
                                                     {% endif %}
                                                 </td>
                                                 <td>{{ field.usage_count }}</td>
@@ -85,53 +82,7 @@
                 </div>
                 
                 <div class="col-lg-4 mb-4">
-                    <div class="card">
-                        <div class="card-header">
-                            <h6 class="mb-0">Community Fields</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <input type="text" class="form-control" id="searchFields" 
-                                       placeholder="Search community fields...">
-                            </div>
-                            
-                            {% if shareable_fields %}
-                                <div id="shareableFieldsList">
-                                    {% for field in shareable_fields[:10] %}
-                                    <div class="card mb-2 shareable-field-item" 
-                                         data-name="{{ field.name }}" 
-                                         data-display="{{ field.display_name }}"
-                                         data-type="{{ field.field_type.value }}">
-                                        <div class="card-body py-2">
-                                            <h6 class="mb-1">{{ field.display_name }}</h6>
-                                            <small class="text-muted">
-                                                {{ field.field_type.value|title }}
-                                                {% if field.description %} • {{ field.description }}{% endif %}
-                                                <br>Used by {{ field.usage_count }} users
-                                            </small>
-                                            <div class="mt-2">
-                                                <button class="btn btn-sm btn-outline-primary" 
-                                                        onclick="copyFieldDefinition('{{ field.id }}')">
-                                                    Copy to My Fields
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {% endfor %}
-                                </div>
-                                
-                                {% if shareable_fields|length > 10 %}
-                                <div class="text-center mt-2">
-                                    <small class="text-muted">{{ shareable_fields|length - 10 }} more available</small>
-                                </div>
-                                {% endif %}
-                            {% else %}
-                                <p class="text-muted">No community fields available yet.</p>
-                            {% endif %}
-                        </div>
-                    </div>
-                    
-                    <div class="card mt-3">
+                    <div class="card mt-3 field-types-card">
                         <div class="card-header">
                             <h6 class="mb-0">Field Types</h6>
                         </div>
@@ -183,33 +134,8 @@
 function confirmDelete(fieldId, fieldName) {
     document.getElementById('deleteFieldName').textContent = fieldName;
     document.getElementById('deleteForm').action = "{{ url_for('metadata.delete_field', field_id='FIELD_ID') }}".replace('FIELD_ID', fieldId);
-    
-    // Show modal (Bootstrap 5 syntax)
     const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
     modal.show();
 }
-
-function copyFieldDefinition(fieldId) {
-    // TODO: Implement copying field definition
-    alert('Copy field functionality will be implemented in the next phase');
-}
-
-// Search functionality
-document.getElementById('searchFields').addEventListener('input', function(e) {
-    const query = e.target.value.toLowerCase();
-    const fieldItems = document.querySelectorAll('.shareable-field-item');
-    
-    fieldItems.forEach(item => {
-        const name = item.dataset.name.toLowerCase();
-        const display = item.dataset.display.toLowerCase();
-        const type = item.dataset.type.toLowerCase();
-        
-        if (name.includes(query) || display.includes(query) || type.includes(query)) {
-            item.style.display = 'block';
-        } else {
-            item.style.display = 'none';
-        }
-    });
-});
 </script>
 {% endblock %}

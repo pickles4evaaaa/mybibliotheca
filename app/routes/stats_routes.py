@@ -707,14 +707,29 @@ def _get_book_date(book, date_type):
             # Fallback to legacy logic below if parsing fails
             pass
     
+    # Primary selection based on requested type
     if date_type == 'finish_date' and book.get('finish_date'):
         date_value = book['finish_date']
     elif date_type == 'start_date' and book.get('start_date'):
         date_value = book['start_date']
     elif date_type == 'publication_date' and book.get('publication_date'):
         date_value = book['publication_date']
-    elif book.get('date_added'):  # fallback to date_added
+    elif date_type == 'date_added' and book.get('date_added'):
         date_value = book['date_added']
+
+    # Fallback sequence if we still don't have a value:
+    # 1. date_added (user context)
+    # 2. publication_date (bibliographic)
+    # 3. start_date (reading context)
+    # 4. finish_date
+    if not date_value and book.get('date_added'):
+        date_value = book['date_added']
+    if not date_value and book.get('publication_date'):
+        date_value = book['publication_date']
+    if not date_value and book.get('start_date'):
+        date_value = book['start_date']
+    if not date_value and book.get('finish_date'):
+        date_value = book['finish_date']
     
     # Convert string dates to datetime if needed
     if isinstance(date_value, str):

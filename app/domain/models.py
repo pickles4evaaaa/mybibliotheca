@@ -456,6 +456,9 @@ class Book:
     # Raw category data from API/CSV (temporary field for processing)
     raw_categories: Optional[Any] = None
 
+    # Core format field (physical, ebook, audiobook, kindle, etc.) now global
+    media_type: Optional[str] = None
+
     def __init__(self, author: Optional[str] = None, name: Optional[str] = None, **kwargs):
         """Custom initializer to accept legacy-friendly aliases.
         Accepts:

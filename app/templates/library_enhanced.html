@@ -555,18 +555,10 @@
                                 </div>
 
                                 <!-- Book Cover -->
+                                                                <!-- Book Cover -->
                                 <div class="book-cover-wrapper" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
-                                    {% if book.cover_url %}
-                                        {% set fallback_url = url_for('serve_static', filename='bookshelf.png') %}
-                                        <img src="{{ book.cover_url }}" 
-                                             class="card-img-top book-cover" 
-                                             alt="{{ book.title }} cover"
-                                             onerror="this.onerror=null;this.src='{{ fallback_url }}';">
-                                    {% else %}
-                                        <div class="bg-light d-flex align-items-center justify-content-center book-cover">
-                                            <i class="bi bi-book text-muted" style="font-size: 3rem;"></i>
-                                        </div>
-                                    {% endif %}
+                                    {% from 'macros/cover_input.html' import render_cover_display %}
+                                    {{ render_cover_display(book, css_classes="card-img-top book-cover", style="", img_id="") }}
                                 </div>
 
                                 <!-- Book Info -->

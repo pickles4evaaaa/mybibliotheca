@@ -31,10 +31,23 @@ try:
     _person_service = None
     _reading_log_service = None
     
+    # Module-level flag to ensure migration executes only once lazily
+    _OWNS_MIGRATION_RAN = False
+    def _run_migration_once():
+        global _OWNS_MIGRATION_RAN
+        if not _OWNS_MIGRATION_RAN:
+            try:
+                from .owns_migration_service import auto_run_migration_if_needed
+                auto_run_migration_if_needed()
+            except Exception:
+                pass
+            _OWNS_MIGRATION_RAN = True
+
     def _get_book_service():
         """Get book service instance with lazy initialization."""
         global _book_service
         if _book_service is None:
+            _run_migration_once()
             _book_service = KuzuServiceFacade()
         return _book_service
     
@@ -42,6 +55,7 @@ try:
         """Get user service instance with lazy initialization."""
         global _user_service
         if _user_service is None:
+            _run_migration_once()
             _user_service = KuzuUserService()
         return _user_service
     
@@ -49,6 +63,7 @@ try:
         """Get custom field service instance with lazy initialization."""
         global _custom_field_service
         if _custom_field_service is None:
+            _run_migration_once()
             _custom_field_service = KuzuCustomFieldService()
         return _custom_field_service
     
@@ -56,6 +71,7 @@ try:
         """Get import mapping service instance with lazy initialization."""
         global _import_mapping_service
         if _import_mapping_service is None:
+            _run_migration_once()
             _import_mapping_service = KuzuImportMappingService()
         return _import_mapping_service
     
@@ -63,6 +79,7 @@ try:
         """Get person service instance with lazy initialization."""
         global _person_service
         if _person_service is None:
+            _run_migration_once()
             _person_service = KuzuPersonService()
         return _person_service
     
@@ -70,6 +87,7 @@ try:
         """Get reading log service instance with lazy initialization."""
         global _reading_log_service
         if _reading_log_service is None:
+            _run_migration_once()
             _reading_log_service = KuzuReadingLogService()
         return _reading_log_service
     

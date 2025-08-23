@@ -34,6 +34,237 @@ def _dprint(*args, **kwargs):
         __builtins__.print(*args, **kwargs)
 print = _dprint
 
+# =============================
+# Helper functions (refactored edit_book logic)
+# =============================
+def _scalar_diff_changes(user_book, form):
+    """Compute scalar changes (no contributors/categories) - DEPRECATED: Use _get_changed_fields instead."""
+    # This function is kept for any legacy callers but is no longer used in the main edit flow
+    return _get_changed_fields(user_book, form)
+
+def _get_changed_fields(user_book, form):
+    """
+    Get only the fields that actually changed from the form.
+    
+    Uses UnifiedCoverManager for intelligent cover preservation.
+    """
+    from app.services.unified_cover_manager import cover_manager
+    
+    def _norm(v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
+
+    changes = {}
+    
+    # All possible updatable fields (EXCLUDING cover_url - handled separately)
+    all_fields = [
+        'title', 'subtitle', 'description', 'publisher', 'isbn13', 'isbn10', 'published_date', 
+        'language', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 
+        'rating_count', 'media_type', 'personal_notes', 'review', 
+        'user_rating', 'reading_status', 'ownership_status'
+    ]
+    
+    # Process regular fields
+    for field in all_fields:
+        if field not in form:
+            continue
+            
+        new_val = _norm(form.get(field, ''))
+        current_val = getattr(user_book, field, None)
+        current_norm = current_val.strip() if isinstance(current_val, str) else current_val
+        if isinstance(current_norm, str) and not current_norm:
+            current_norm = None
+            
+        if new_val != current_norm:
+            # Handle special field types
+            if field == 'published_date' and new_val:
+                try:
+                    new_val = _convert_published_date_to_date(new_val)
+                except Exception:
+                    continue
+            elif field in ('average_rating', 'user_rating') and new_val:
+                try:
+                    new_val = float(new_val)
+                except Exception:
+                    continue
+            elif field == 'rating_count' and new_val:
+                try:
+                    new_val = int(new_val)
+                except Exception:
+                    continue
+            
+            changes[field] = new_val
+    
+    # Handle cover_url separately using UnifiedCoverManager
+    cover_updates = cover_manager.process_cover_form_field(form, user_book)
+    changes.update(cover_updates)
+    
+    return changes
+
+def _handle_personal_only(uid, form):
+    update_data = {}
+    def _opt(name, cast=None):
+        if name in form:
+            val = form.get(name, '').strip()
+            if cast and val:
+                try:
+                    return cast(val)
+                except Exception:
+                    return None
+            return val or None
+        return None
+    update_data['personal_notes'] = _opt('personal_notes')
+    update_data['review'] = _opt('review')
+    ur = _opt('user_rating', float)
+    if 'user_rating' in form:
+        update_data['user_rating'] = ur
+    rs = _opt('reading_status')
+    if rs:
+        update_data['reading_status'] = rs
+    os_ = _opt('ownership_status')
+    if os_:
+        update_data['ownership_status'] = os_
+    # media_type is Book metadata, not personal - don't handle it here
+    # Prune Nones except those explicitly set to clear (user_rating allowed to be None)
+    cleaned = {k:v for k,v in update_data.items() if v is not None or k == 'user_rating'}
+    try:
+        success = book_service.update_book_sync(uid, str(current_user.id), **cleaned)
+        if success:
+            updated = [
+                ('personal_notes','personal notes'),('review','review'),('user_rating','rating'),
+                ('reading_status','reading status'),('ownership_status','ownership status')
+            ]
+            names = [label for f,label in updated if f in cleaned]
+            flash(f"Updated {', '.join(names)} successfully." if names else 'Personal data updated successfully.', 'success')
+        else:
+            flash('Failed to update personal data.', 'error')
+    except Exception as e:  # pragma: no cover
+        traceback.print_exc()
+        flash(f'Error updating personal data: {str(e)}', 'error')
+    return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+def _handle_book_only(uid, form):
+    update_data = {}
+    def _opt(name):
+        if name in form:
+            val = form.get(name, '').strip()
+            return val or None
+        return None
+    for name in ['publisher','isbn13','isbn10','language','asin','google_books_id','openlibrary_id']:
+        val = _opt(name)
+        if name in form:
+            update_data[name] = val
+    if 'published_date' in form:
+        pd = form.get('published_date','').strip()
+        if pd:
+            update_data['published_date'] = _convert_published_date_to_date(pd)
+    if 'average_rating' in form:
+        ar = form.get('average_rating','').strip()
+        update_data['average_rating'] = float(ar) if ar else None
+    if 'rating_count' in form:
+        rc = form.get('rating_count','').strip()
+        update_data['rating_count'] = int(rc) if rc else None
+    try:
+        success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
+        if success:
+            label_map = {
+                'publisher':'publisher','average_rating':'average rating','rating_count':'rating count',
+                'isbn13':'ISBN-13','isbn10':'ISBN-10','published_date':'published date','language':'language',
+                'asin':'ASIN','google_books_id':'Google Books ID','openlibrary_id':'OpenLibrary ID'
+            }
+            names = [label_map[k] for k in update_data.keys() if k in label_map]
+            flash(f"Updated {', '.join(names)} successfully." if names else 'Book metadata updated successfully.', 'success')
+        else:
+            flash('Failed to update book metadata.', 'error')
+    except Exception as e:  # pragma: no cover
+        traceback.print_exc()
+        flash(f'Error updating book metadata: {str(e)}', 'error')
+    return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+def _handle_mixed(uid, form):
+    book_update_data = {}
+    personal_update_data = {}
+    for field in ['publisher','isbn13','isbn10','published_date','language','asin','google_books_id','openlibrary_id','average_rating','rating_count']:
+        if field in form:
+            val = form.get(field,'').strip() or None
+            if field == 'published_date' and val:
+                val = _convert_published_date_to_date(val)
+            elif field in ('average_rating',) and val:
+                try: val = float(val)
+                except Exception: continue
+            elif field in ('rating_count',) and val:
+                try: val = int(val)
+                except Exception: continue
+            book_update_data[field] = val
+    for field in ['personal_notes','review','user_rating','reading_status','ownership_status']:
+        if field in form:
+            val = form.get(field,'').strip() or None
+            if field == 'user_rating' and val:
+                try: val = float(val)
+                except Exception: continue
+            personal_update_data[field] = val
+    # media_type goes to book metadata, not personal
+    if 'media_type' in form:
+        val = form.get('media_type','').strip() or None
+        if val:
+            book_update_data['media_type'] = val
+    try:
+        b_ok = True
+        if book_update_data:
+            b_ok = book_service.update_book_sync(uid, str(current_user.id), **book_update_data)
+        p_ok = True
+        if personal_update_data:
+            p_ok = book_service.update_book_sync(uid, str(current_user.id), **personal_update_data)
+        if b_ok and p_ok:
+            updated = []
+            if 'publisher' in book_update_data: updated.append('publisher')
+            if 'average_rating' in book_update_data: updated.append('average rating')
+            if 'rating_count' in book_update_data: updated.append('rating count')
+            if 'review' in personal_update_data: updated.append('review')
+            if 'user_rating' in personal_update_data: updated.append('your rating')
+            if 'personal_notes' in personal_update_data: updated.append('personal notes')
+            flash(f"Updated {', '.join(updated)} successfully." if updated else 'Data updated successfully.', 'success')
+        else:
+            flash('Failed to update some data.', 'error')
+    except Exception as e:  # pragma: no cover
+        traceback.print_exc()
+        flash(f'Error updating data: {str(e)}', 'error')
+    return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+def _handle_edit_book_post(uid, user_book, form):
+    """Unified POST handler that updates only the fields that actually changed."""
+    form_keys = set(form.keys())
+    
+    # Check if this has contributors or categories (complex editing)
+    has_contributor_fields = any(k.startswith('contributors[') for k in form_keys)
+    has_category_fields = any(k == 'categories' or k.startswith('categories[') for k in form_keys)
+    
+    if has_contributor_fields or has_category_fields:
+        # Return None to fall back to legacy full processing
+        return None
+    
+    # Simple field updates - get only what changed
+    changes = _get_changed_fields(user_book, form)
+    
+    if changes:
+        try:
+            ok = book_service.update_book_sync(uid, str(current_user.id), **changes)
+            if ok:
+                field_names = ', '.join(sorted(changes.keys()))
+                flash(f"Updated: {field_names}", 'success')
+            else:
+                flash('No changes saved (update rejected).', 'warning')
+        except Exception as e:
+            current_app.logger.error(f"[BOOK_EDIT] Update failed: {e}")
+            flash('Error saving changes.', 'error')
+        return redirect(url_for('book.view_book_enhanced', uid=uid))
+    else:
+        flash('No changes detected.', 'info')
+        return redirect(url_for('book.view_book_enhanced', uid=uid))
+
 # Create book blueprint
 book_bp = Blueprint('book', __name__)
 api_book_bp = Blueprint('api_book', __name__, url_prefix='/api/book')
@@ -130,6 +361,23 @@ def _format_published_date_for_input(published_date_str):
 def fetch_book(isbn):
     """Legacy endpoint: now powered by unified ISBN metadata with graceful fallback."""
     try:
+        # Early ISBN validation to avoid unnecessary provider calls
+        import re as _re
+        raw = _re.sub(r'[^0-9Xx]', '', (isbn or '').strip())
+        def _v10(v: str):
+            if len(v)!=10 or not _re.match(r'^[0-9]{9}[0-9Xx]$', v): return False
+            s=0
+            for i,ch in enumerate(v[:9]): s += (10-i)*int(ch)
+            s += 10 if v[9] in 'Xx' else int(v[9])
+            return s%11==0
+        def _v13(v: str):
+            if len(v)!=13 or not v.isdigit(): return False
+            if not (v.startswith('978') or v.startswith('979')): return False
+            t=0
+            for i,ch in enumerate(v[:12]): t += (1 if i%2==0 else 3)*int(ch)
+            return (10-(t%10))%10 == int(v[12])
+        if not raw or not (_v10(raw) or _v13(raw)):
+            return jsonify({'error': 'Invalid ISBN'}), 400
         from app.utils.metadata_aggregator import fetch_unified_by_isbn
         unified = fetch_unified_by_isbn(isbn) or {}
         book_data = dict(unified)
@@ -1279,360 +1527,40 @@ def edit_book(uid):
         user_book = book_service.get_book_by_uid_sync(uid, str(current_user.id))
         if not user_book:
             abort(404)
+
+        # Early GET handling: render edit form without touching POST-specific fields
+        if request.method == 'GET':
+            book_categories = []
+            try:
+                book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+                if book_id:
+                    book_categories = book_service.get_book_categories_sync(book_id)
+            except Exception:
+                pass
+            # Normalize to object for template
+            if isinstance(user_book, dict):
+                class BookObj:
+                    def __init__(self, data):
+                        for k, v in data.items():
+                            setattr(self, k, v)
+                        if not hasattr(self, 'contributors'):
+                            self.contributors = []
+                        if not hasattr(self, 'categories'):
+                            self.categories = []
+                        if not hasattr(self, 'publisher'):
+                            self.publisher = None
+                    def get_contributors_by_type(self, contribution_type):
+                        return []
+                user_book_obj = BookObj(user_book)
+            else:
+                user_book_obj = user_book
+            return render_template('edit_book_enhanced.html', book=user_book_obj, book_categories=book_categories)
         
         if request.method == 'POST':
-            is_personal_data_only = False  # Initialize variable
-            is_book_metadata_only = False  # Initialize variable
-            is_mixed_form = False  # Initialize variable
-            try:
-                # Check what type of form submission this is
-                form_keys = set(request.form.keys())
-                
-                # Expanded set of user-specific fields that can be updated independently
-                personal_data_keys = {
-                    'csrf_token', 'personal_notes', 'review', 'user_rating', 
-                    'reading_status', 'ownership_status', 'media_type'
-                }
-                
-                # Set of book metadata fields that can be updated independently  
-                book_metadata_keys = {
-                    'csrf_token', 'publisher', 'isbn13', 'isbn10', 'published_date', 
-                    'language', 'asin', 'google_books_id', 'openlibrary_id', 
-                    'average_rating', 'rating_count', 'cover_url', 'action'
-                }
-                
-                # Check for contributor fields in the form
-                contributor_fields = {k for k in form_keys if k.startswith('contributors[')}
-                category_fields = {k for k in form_keys if k == 'categories' or k.startswith('categories[')}
-                
-                # Set of mixed form fields (combination of book metadata and user data)
-                mixed_form_keys = book_metadata_keys.union(personal_data_keys)
-                
-                # If we have contributor or category fields, this needs full form processing
-                has_contributor_fields = len(contributor_fields) > 0
-                has_category_fields = len(category_fields) > 0
-                
-                is_personal_data_only = form_keys.issubset(personal_data_keys)
-                is_book_metadata_only = form_keys.issubset(book_metadata_keys)
-                is_mixed_form = form_keys.issubset(mixed_form_keys) and not is_personal_data_only and not is_book_metadata_only
-                
-                # Check which fields are actually present for each category
-                personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
-                book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
-                unknown_fields = form_keys - mixed_form_keys
-                
-            except Exception as debug_error:
-                # Continue processing despite debug errors
-                pass
-                
-            # Initialize variables outside try block to avoid scope issues
-            personal_fields_present = set()
-            book_fields_present = set()
-            has_contributor_fields = False
-            has_category_fields = False
-            try:
-                # Re-analyze form if debug failed
-                form_keys = set(request.form.keys())
-                personal_data_keys = {
-                    'csrf_token', 'personal_notes', 'review', 'user_rating', 
-                    'reading_status', 'ownership_status', 'media_type'
-                }
-                book_metadata_keys = {
-                    'csrf_token', 'publisher', 'isbn13', 'isbn10', 'published_date', 
-                    'language', 'asin', 'google_books_id', 'openlibrary_id', 
-                    'average_rating', 'rating_count', 'cover_url', 'action'
-                }
-                personal_fields_present = form_keys.intersection(personal_data_keys - {'csrf_token'})
-                book_fields_present = form_keys.intersection(book_metadata_keys - {'csrf_token'})
-                
-                # Check for contributor and category fields
-                contributor_fields = {k for k in form_keys if k.startswith('contributors[')}
-                category_fields = {k for k in form_keys if k == 'categories' or k.startswith('categories[')}
-                has_contributor_fields = len(contributor_fields) > 0
-                has_category_fields = len(category_fields) > 0
-            except:
-                pass
-                
-            # Improved detection logic - handle mixed forms with unknown fields
-            has_personal_fields = len(personal_fields_present) > 0
-            has_book_fields = len(book_fields_present) > 0
-            has_only_personal = has_personal_fields and not has_book_fields and not has_contributor_fields and not has_category_fields
-            has_only_book = has_book_fields and not has_personal_fields and not has_contributor_fields and not has_category_fields
-            has_mixed = has_personal_fields and has_book_fields and not has_contributor_fields and not has_category_fields
-            
-            # If we have contributor or category fields, we need to do full form processing regardless
-            if has_contributor_fields or has_category_fields:
-                has_only_personal = False
-                has_only_book = False
-                has_mixed = False
-            
-            # Handle personal data only submission (notes, review, rating, status, etc.)
-            if has_only_personal:
-                
-                # Extract all user-specific fields from the form
-                update_data = {}
-                
-                # Personal notes and review
-                personal_notes = request.form.get('personal_notes', '').strip() or None
-                if 'personal_notes' in request.form:
-                    update_data['personal_notes'] = personal_notes
-                    
-                review = request.form.get('review', '').strip() or None
-                if 'review' in request.form:
-                    update_data['review'] = review
-                
-                # User rating
-                user_rating = request.form.get('user_rating', '').strip()
-                if 'user_rating' in request.form:
-                    if user_rating:
-                        try:
-                            update_data['user_rating'] = float(user_rating)
-                        except ValueError:
-                            pass
-                    else:
-                        update_data['user_rating'] = None  # Clear rating
-                
-                # Reading status
-                reading_status = request.form.get('reading_status', '').strip()
-                if 'reading_status' in request.form and reading_status:
-                    update_data['reading_status'] = reading_status
-                
-                # Ownership status
-                ownership_status = request.form.get('ownership_status', '').strip()
-                if 'ownership_status' in request.form and ownership_status:
-                    update_data['ownership_status'] = ownership_status
-                
-                # Media type
-                media_type = request.form.get('media_type', '').strip()
-                if 'media_type' in request.form and media_type:
-                    update_data['media_type'] = media_type
-                
-                
-                try:
-                    success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
-                    
-                    if success:
-                        # Create appropriate success message based on what was updated
-                        updated_fields = []
-                        if 'personal_notes' in update_data:
-                            updated_fields.append('personal notes')
-                        if 'review' in update_data:
-                            updated_fields.append('review')
-                        if 'user_rating' in update_data:
-                            updated_fields.append('rating')
-                        if 'reading_status' in update_data:
-                            updated_fields.append('reading status')
-                        if 'ownership_status' in update_data:
-                            updated_fields.append('ownership status')
-                        if 'media_type' in update_data:
-                            updated_fields.append('media type')
-                        
-                        if updated_fields:
-                            flash(f"Updated {', '.join(updated_fields)} successfully.", 'success')
-                        else:
-                            flash('Personal data updated successfully.', 'success')
-                    else:
-                        flash('Failed to update personal data.', 'error')
-                    return redirect(url_for('book.view_book_enhanced', uid=uid))
-                    
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    flash(f'Error updating personal data: {str(e)}', 'error')
-                    return redirect(url_for('book.view_book_enhanced', uid=uid))
-            
-            # Handle book metadata only submission (publisher, rating, etc.)
-            elif has_only_book:
-                
-                # Extract book metadata fields from the form
-                update_data = {}
-                
-                # Publisher
-                publisher = request.form.get('publisher', '').strip() or None
-                if 'publisher' in request.form:
-                    update_data['publisher'] = publisher
-                
-                # ISBN fields
-                isbn13 = request.form.get('isbn13', '').strip() or None
-                if 'isbn13' in request.form:
-                    update_data['isbn13'] = isbn13
-                    
-                isbn10 = request.form.get('isbn10', '').strip() or None
-                if 'isbn10' in request.form:
-                    update_data['isbn10'] = isbn10
-                
-                # Published date
-                published_date_str = request.form.get('published_date', '').strip()
-                if 'published_date' in request.form and published_date_str:
-                    update_data['published_date'] = _convert_published_date_to_date(published_date_str)
-                
-                # Language
-                language = request.form.get('language', '').strip() or None
-                if 'language' in request.form:
-                    update_data['language'] = language
-                
-                # External IDs
-                asin = request.form.get('asin', '').strip() or None
-                if 'asin' in request.form:
-                    update_data['asin'] = asin
-                    
-                google_books_id = request.form.get('google_books_id', '').strip() or None
-                if 'google_books_id' in request.form:
-                    update_data['google_books_id'] = google_books_id
-                    
-                openlibrary_id = request.form.get('openlibrary_id', '').strip() or None
-                if 'openlibrary_id' in request.form:
-                    update_data['openlibrary_id'] = openlibrary_id
-                
-                # Rating fields
-                average_rating = request.form.get('average_rating', '').strip()
-                if 'average_rating' in request.form:
-                    if average_rating:
-                        try:
-                            update_data['average_rating'] = float(average_rating)
-                        except ValueError:
-                            pass
-                    else:
-                        update_data['average_rating'] = None
-                
-                rating_count = request.form.get('rating_count', '').strip()
-                if 'rating_count' in request.form:
-                    if rating_count:
-                        try:
-                            update_data['rating_count'] = int(rating_count)
-                        except ValueError:
-                            pass
-                    else:
-                        update_data['rating_count'] = None
-                
-                try:
-                    success = book_service.update_book_sync(uid, str(current_user.id), **update_data)
-                    
-                    if success:
-                        # Create appropriate success message based on what was updated
-                        updated_fields = []
-                        if 'publisher' in update_data:
-                            updated_fields.append('publisher')
-                        if 'average_rating' in update_data:
-                            updated_fields.append('average rating')
-                        if 'rating_count' in update_data:
-                            updated_fields.append('rating count')
-                        if 'isbn13' in update_data:
-                            updated_fields.append('ISBN-13')
-                        if 'isbn10' in update_data:
-                            updated_fields.append('ISBN-10')
-                        if 'published_date' in update_data:
-                            updated_fields.append('published date')
-                        if 'language' in update_data:
-                            updated_fields.append('language')
-                        if 'asin' in update_data:
-                            updated_fields.append('ASIN')
-                        if 'google_books_id' in update_data:
-                            updated_fields.append('Google Books ID')
-                        if 'openlibrary_id' in update_data:
-                            updated_fields.append('OpenLibrary ID')
-                        
-                        if updated_fields:
-                            flash(f"Updated {', '.join(updated_fields)} successfully.", 'success')
-                        else:
-                            flash('Book metadata updated successfully.', 'success')
-                    else:
-                        flash('Failed to update book metadata.', 'error')
-                    return redirect(url_for('book.view_book_enhanced', uid=uid))
-                    
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    flash(f'Error updating book metadata: {str(e)}', 'error')
-                    return redirect(url_for('book.view_book_enhanced', uid=uid))
-            
-            # Handle mixed form submission (both book metadata and personal data)
-            elif has_mixed:
-                
-                # Split fields into book metadata and personal data
-                book_update_data = {}
-                personal_update_data = {}
-                
-                # Process book metadata fields
-                for field in ['publisher', 'isbn13', 'isbn10', 'published_date', 'language', 
-                             'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count']:
-                    if field in request.form:
-                        value = request.form.get(field, '').strip() or None
-                        if field == 'published_date' and value:
-                            book_update_data[field] = _convert_published_date_to_date(value)
-                        elif field in ['average_rating'] and value:
-                            try:
-                                book_update_data[field] = float(value)
-                            except ValueError:
-                                pass
-                        elif field in ['rating_count'] and value:
-                            try:
-                                book_update_data[field] = int(value)
-                            except ValueError:
-                                pass
-                        else:
-                            book_update_data[field] = value
-                
-                # Process personal data fields
-                for field in ['personal_notes', 'review', 'user_rating', 'reading_status', 
-                             'ownership_status', 'media_type']:
-                    if field in request.form:
-                        value = request.form.get(field, '').strip() or None
-                        if field == 'user_rating' and value:
-                            try:
-                                personal_update_data[field] = float(value)
-                            except ValueError:
-                                pass
-                        else:
-                            personal_update_data[field] = value
-                
-                try:
-                    # Update book metadata if any book fields present
-                    book_success = True
-                    if book_update_data:
-                        book_success = book_service.update_book_sync(uid, str(current_user.id), **book_update_data)
-                    
-                    # Update personal data if any personal fields present  
-                    personal_success = True
-                    if personal_update_data:
-                        personal_success = book_service.update_book_sync(uid, str(current_user.id), **personal_update_data)
-                    
-                    if book_success and personal_success:
-                        # Create appropriate success message
-                        updated_fields = []
-                        
-                        # Add book field names
-                        if 'publisher' in book_update_data:
-                            updated_fields.append('publisher')
-                        if 'average_rating' in book_update_data:
-                            updated_fields.append('average rating')
-                        if 'rating_count' in book_update_data:
-                            updated_fields.append('rating count')
-                        
-                        # Add personal field names
-                        if 'review' in personal_update_data:
-                            updated_fields.append('review')
-                        if 'user_rating' in personal_update_data:
-                            updated_fields.append('your rating')
-                        if 'personal_notes' in personal_update_data:
-                            updated_fields.append('personal notes')
-                        
-                        if updated_fields:
-                            flash(f"Updated {', '.join(updated_fields)} successfully.", 'success')
-                        else:
-                            flash('Data updated successfully.', 'success')
-                    else:
-                        flash('Failed to update some data.', 'error')
-                    return redirect(url_for('book.view_book_enhanced', uid=uid))
-                    
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    flash(f'Error updating data: {str(e)}', 'error')
-                    return redirect(url_for('book.view_book_enhanced', uid=uid))
-            
-            # Handle full form submission (if not personal data only, book metadata only, or mixed form)
-            pass
+            # Refactored: delegate POST handling to helper orchestrator
+            response = _handle_edit_book_post(uid, user_book, request.form)
+            if response is not None:
+                return response
         
         new_isbn13 = request.form.get('isbn13', '').strip() or None
         new_isbn10 = request.form.get('isbn10', '').strip() or None
@@ -1753,12 +1681,44 @@ def edit_book(uid):
                     
                     person = None
                     if person_data_list:
-                        person_data = person_data_list[0]
-                        # Convert back to Person object
+                        raw_person_data = person_data_list[0]
+                        # Some query result conversions produce col_0..col_N keys instead of aliases
+                        # Query column order (see find_person_query): id, name, normalized_name, birth_year, death_year, birth_place, bio, website
+                        if 'id' not in raw_person_data and 'col_0' in raw_person_data:
+                            person_data = {
+                                'id': raw_person_data.get('col_0'),
+                                'name': raw_person_data.get('col_1'),
+                                'normalized_name': raw_person_data.get('col_2'),
+                                'birth_year': raw_person_data.get('col_3'),
+                                'death_year': raw_person_data.get('col_4'),
+                                'birth_place': raw_person_data.get('col_5'),
+                                'bio': raw_person_data.get('col_6'),
+                                'website': raw_person_data.get('col_7'),
+                            }
+                        else:
+                            person_data = raw_person_data
+
+                        # Defensive: some Kuzu result rows may be returned as list/tuple rather than dict
+                        if isinstance(person_data, (list, tuple)):
+                            # Expected column order from query: id, name, normalized_name, birth_year, death_year, birth_place, bio, website
+                            # Build dict safely with length checks
+                            cols = list(person_data)
+                            person_data = {
+                                'id': cols[0] if len(cols) > 0 else None,
+                                'name': cols[1] if len(cols) > 1 else None,
+                                'normalized_name': cols[2] if len(cols) > 2 else None,
+                                'birth_year': cols[3] if len(cols) > 3 else None,
+                                'death_year': cols[4] if len(cols) > 4 else None,
+                                'birth_place': cols[5] if len(cols) > 5 else None,
+                                'bio': cols[6] if len(cols) > 6 else None,
+                                'website': cols[7] if len(cols) > 7 else None,
+                            }
+
+                        # Convert back to Person object using normalized mapping
                         person = Person(
                             id=person_data.get('id'),
-                            name=person_data.get('name', ''),
-                            normalized_name=person_data.get('normalized_name', ''),
+                            name=person_data.get('name', '') or '',
+                            normalized_name=(person_data.get('normalized_name') or '').strip().lower(),
                             birth_year=person_data.get('birth_year'),
                             death_year=person_data.get('death_year'),
                             birth_place=person_data.get('birth_place'),
@@ -1875,7 +1835,7 @@ def edit_book(uid):
             'review': request.form.get('review', '').strip() or None,
         }
         
-        # Remove properties that belong to relationships from the node update payload (avoids Kuzu errors)
+    # Remove properties that belong to relationships from the node update payload (avoids Kuzu errors)
         # They are handled elsewhere (e.g., publisher via separate relationship updates)
         if 'publisher' in update_data:
             update_data.pop('publisher', None)

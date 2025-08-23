@@ -740,7 +740,10 @@ class LocationService:
     def migrate_user_books_to_default_location(self, user_id: str) -> int:
         """Migrate books that have no location to the user's default location.
         
-        This helps transition from the old OWNS.location_id system to STORED_AT relationships.
+    Legacy note: previously matched (u)-[:OWNS]->(b). In universal library mode all
+    books are global; we instead look for books that have personal metadata for the
+    user (HAS_PERSONAL_METADATA) but lack any STORED_AT relationship. This keeps
+    semantics similar (only migrate books the user interacted with).
         """
         debug_log(f"Migrating books without location for user {user_id}", "LOCATION")
         
@@ -751,12 +754,10 @@ class LocationService:
             return 0
         
         try:
-            # Find books owned by user that have no STORED_AT relationships for this user
+            # Find books with personal metadata for user lacking any location
             query = """
-            MATCH (u:User {id: $user_id})-[:OWNS]->(b:Book)
-            WHERE NOT EXISTS {
-                MATCH (b)-[stored:STORED_AT]->(:Location)
-            }
+            MATCH (u:User {id: $user_id})-[:HAS_PERSONAL_METADATA]->(b:Book)
+            WHERE NOT EXISTS { MATCH (b)-[:STORED_AT]->(:Location) }
             RETURN b.id as book_id
             """
             

@@ -233,87 +233,81 @@ class KuzuCustomFieldService:
             return None
     
     def get_user_fields_sync(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get custom fields for a user."""
-        logger.debug(f"Getting custom fields for user {user_id}")
-        
+        """Return ALL custom field definitions (global + personal) for display.
+
+        Simplified semantics (post-OWNS removal):
+          - Global fields (is_global=true): single shared value per book across users.
+          - Personal fields (is_global=false): definition visible to everyone, values stored per-user
+            in HAS_PERSONAL_METADATA just like personal notes/reviews.
+        """
+        logger.debug("Listing all custom field definitions (global + personal)")
         try:
-            # Get user-specific fields and global fields
             query = """
-            MATCH (f:CustomField) 
-            WHERE f.created_by_user_id = $user_id OR f.is_global = true
-            RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at, f.updated_at
+            MATCH (f:CustomField)
+            RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at, f.updated_at, f.created_by_user_id
             ORDER BY f.created_at DESC
             """
-            
-            result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            result = safe_execute_kuzu_query(query)
             results = _convert_query_result_to_list(result)
-            
-            fields = []
-            for result in results:
-                # KuzuDB returns column-based results (col_0, col_1, etc.) instead of named columns
-                # Based on the query: f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at, f.updated_at
-                # Mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, col_4=description, col_5=is_global, col_6=created_at, col_7=updated_at
-                name_val = result.get('col_1')
-                if name_val and is_reserved_core_field(name_val):
-                    logger.debug(f"Skipping reserved core field in get_user_fields_sync listing: {name_val}")
+            seen_names = set()
+            fields: List[Dict[str, Any]] = []
+            for row in results:
+                name_val = row.get('col_1')
+                if not name_val:
                     continue
+                if is_reserved_core_field(name_val):
+                    continue
+                # Deduplicate by name; prefer first occurrence (newest first due to ORDER BY DESC)
+                if name_val in seen_names:
+                    continue
+                seen_names.add(name_val)
                 fields.append({
-                    'id': result.get('col_0'),
+                    'id': row.get('col_0'),
                     'name': name_val,
-                    'display_name': result.get('col_2'),
-                    'field_type': result.get('col_3', 'text'),
-                    'description': result.get('col_4', ''),
-                    'is_global': result.get('col_5', False),
-                    'created_at': result.get('col_6'),
-                    'updated_at': result.get('col_7')
+                    'display_name': row.get('col_2'),
+                    'field_type': row.get('col_3', 'text'),
+                    'description': row.get('col_4', ''),
+                    'is_global': row.get('col_5', False),
+                    'created_at': row.get('col_6'),
+                    'updated_at': row.get('col_7'),
+                    'created_by_user_id': row.get('col_8')
                 })
-            
-            logger.debug(f"Found {len(fields)} fields for user {user_id}")
+            logger.debug(f"Custom field definitions returned: {len(fields)} (deduplicated)")
             return fields
-            
-        except Exception as e:
+        except Exception:
             return []
     
     def create_field_sync(self, user_id: str, field_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a custom field definition. 
-        Global fields affect Book properties, personal fields are stored in relationships."""
         field_name = field_data.get('name', 'unknown_field')
         is_global = field_data.get('is_global', False)  # Default to personal fields
-        
+
         logger.debug(f"Creating {'global' if is_global else 'personal'} field '{field_name}' for user {user_id}")
-        
+
         try:
             if is_reserved_core_field(field_name):
                 logger.debug(f"Refusing to create field for reserved core field name: {field_name}")
                 return None
             # Check if field already exists with same scope
-            if is_global:
-                # For global fields, check if any global field with this name exists
-                check_query = """
-                MATCH (f:CustomField) 
-                WHERE f.name = $name AND f.is_global = true 
-                RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
-                """
-                check_params = {"name": field_name}
-            else:
-                # For personal fields, check if this user already has a field with this name
-                check_query = """
-                MATCH (f:CustomField) 
-                WHERE f.name = $name AND f.created_by_user_id = $user_id AND f.is_global = false 
-                RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
-                """
-                check_params = {"name": field_name, "user_id": user_id}
-            
+            # Unified uniqueness: any existing field (global OR personal) with this name returns early
+            check_query = """
+            MATCH (f:CustomField)
+            WHERE f.name = $name
+            RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
+            ORDER BY f.is_global DESC, f.created_at ASC
+            LIMIT 1
+            """
+            check_params = {"name": field_name}
+
             existing_query_result = safe_execute_kuzu_query(check_query, check_params)
             existing_results = _convert_query_result_to_list(existing_query_result)
-            
+
             if existing_results and len(existing_results) > 0:
                 # Field already exists, return it
                 result = existing_results[0]
                 created_at = result.get('col_6')
                 existing_field = {
                     'id': result.get('col_0'),
-                    'name': result.get('col_1'), 
+                    'name': result.get('col_1'),
                     'display_name': result.get('col_2'),
                     'field_type': result.get('col_3'),
                     'description': result.get('col_4'),
@@ -321,17 +315,17 @@ class KuzuCustomFieldService:
                     'created_at': created_at.isoformat() if created_at and hasattr(created_at, 'isoformat') else None
                 }
                 return existing_field
-            
-            # Field doesn't exist, create new one
+
+            # Field doesn't exist, create new one (recording creator for auditing only)
             field_id = f"field_{datetime.now(timezone.utc).timestamp()}"
             current_time = datetime.now(timezone.utc)
-            
+
             # Validate field type
             valid_types = ['text', 'textarea', 'number', 'date', 'boolean', 'rating_5', 'rating_10', 'tags']
             field_type = field_data.get('field_type', 'text')
             if field_type not in valid_types:
                 field_type = 'text'
-            
+
             # Insert field definition
             query = """
             CREATE (f:CustomField {
@@ -344,10 +338,9 @@ class KuzuCustomFieldService:
                 is_global: $is_global,
                 created_at: $created_at,
                 updated_at: $updated_at
-            })
-            RETURN f
+            }) RETURN f
             """
-            
+
             params = {
                 'id': field_id,
                 'name': field_name,
@@ -359,31 +352,43 @@ class KuzuCustomFieldService:
                 'created_at': current_time,
                 'updated_at': current_time
             }
-            
+
             create_query_result = safe_execute_kuzu_query(query, params)
             result = _convert_query_result_to_list(create_query_result)
-            
+
             if result and len(result) > 0:
-                created_field = result[0].get('f', {})
-                
-                # For global fields, we might want to add the property to the Book schema
+                row = result[0]
+                # Kuzu return fallback: single column result stored as 'result'
+                created_field = row.get('f') or row.get('result') or {}
+                # If we still don't have fields (empty dict), synthesize from params
+                if not created_field or not isinstance(created_field, dict):
+                    created_field = {
+                        'id': field_id,
+                        'name': field_name,
+                        'display_name': params['display_name'],
+                        'field_type': field_type,
+                        'description': params['description'],
+                        'is_global': is_global,
+                        'created_at': current_time
+                    }
+
                 if is_global:
-                    logger.debug(f"Note: Global field '{field_name}' will be stored as Book.{field_name} property")
-                
-                created_at = created_field.get('created_at')
+                    logger.debug(f"Note: Global field '{field_name}' created (is_global=True)")
+
+                created_at = created_field.get('created_at') or current_time
                 return {
                     'id': created_field.get('id'),
                     'name': created_field.get('name'),
                     'display_name': created_field.get('display_name'),
                     'field_type': created_field.get('field_type'),
                     'description': created_field.get('description'),
-                    'is_global': created_field.get('is_global'),
-                    'created_at': created_at.isoformat() if created_at and hasattr(created_at, 'isoformat') else None
+                    'is_global': created_field.get('is_global', is_global),
+                    'created_at': created_at.isoformat() if hasattr(created_at, 'isoformat') else None
                 }
             else:
                 return None
-                
-        except Exception as e:
+
+        except Exception:
             traceback.print_exc()
             return None
     
@@ -700,31 +705,7 @@ class KuzuCustomFieldService:
             else:
                 logger.debug(f" No personal custom metadata found")
             
-            # Fallback: Check old OWNS relationship for migration compatibility
-            if not custom_metadata:
-                logger.debug(f" No metadata found in new structure, checking OWNS relationship for backward compatibility...")
-                owns_query = """
-                MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-                RETURN r.custom_metadata AS custom_metadata
-                """
-                
-                owns_query_result = safe_execute_kuzu_query(owns_query, {
-                    "book_id": book_id,
-                    "user_id": user_id
-                })
-                owns_results = _convert_query_result_to_list(owns_query_result)
-                
-                if owns_results and owns_results[0].get('custom_metadata'):
-                    metadata_json = owns_results[0].get('custom_metadata')
-                    if metadata_json:
-                        try:
-                            if isinstance(metadata_json, str):
-                                custom_metadata = json.loads(metadata_json)
-                            elif isinstance(metadata_json, dict):
-                                custom_metadata = metadata_json
-                            logger.debug(f" Found {len(custom_metadata)} metadata items in OWNS relationship (backward compatibility)")
-                        except (json.JSONDecodeError, TypeError) as e:
-                            pass  # Error parsing OWNS custom_metadata JSON
+            # OWNS fallback removed (fully deprecated). Custom metadata now only sourced from personal structure.
             
             logger.debug(f" Found {len(custom_metadata)} total custom metadata items")
             return custom_metadata
@@ -734,143 +715,114 @@ class KuzuCustomFieldService:
             return {}
     
     def get_user_fields_with_calculated_usage_sync(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get user fields with usage stats."""
-        logger.debug(f" Getting fields with usage for user {user_id}")
-        
+        """Return all field definitions with basic metadata (usage stats omitted).
+
+        Mirrors simplified semantics: visibility is universal regardless of creator.
+        """
+        logger.debug("Listing all custom field definitions with usage counts")
         try:
-            # First, let's debug what's actually in the database
-            debug_query = "MATCH (f:CustomField) RETURN f.id, f.name, f.created_by_user_id, f.is_global LIMIT 10"
-            debug_query_result = safe_execute_kuzu_query(debug_query)
-            debug_results = _convert_query_result_to_list(debug_query_result)
-            logger.debug(f" DEBUG: Found {len(debug_results)} CustomField nodes in total")
-            for i, result in enumerate(debug_results):
-                logger.debug(f" DEBUG: Field {i}: {result}")
-            
-            # Get fields without usage count for now (KuzuDB has issues with COUNT + OPTIONAL MATCH + GROUP BY)
+            # 1. Load all field definitions
             query = """
-            MATCH (f:CustomField) 
-            WHERE f.created_by_user_id = $user_id OR f.is_global = true
-            RETURN f.id AS field_id, f.name AS field_name, f.display_name AS field_display_name, 
-                   f.field_type AS field_type, f.description AS field_description, 
-                   f.is_global AS field_is_global, f.created_at AS field_created_at
+            MATCH (f:CustomField)
+            RETURN f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
             ORDER BY f.created_at DESC
             """
-            
-            logger.debug(f" Query: {query}")
-            logger.debug(f" Parameters: user_id={user_id}")
-            
-            query_result = safe_execute_kuzu_query(query, {"user_id": user_id})
-            results = _convert_query_result_to_list(query_result)
-            
-            logger.debug(f" Raw query results: {len(results)} rows")
-            for i, result in enumerate(results):
-                logger.debug(f" Row {i}: {result}")
-            
-            fields = []
-            for result in results:
-                # KuzuDB returns column-based results (col_0, col_1, etc.) instead of named columns
-                # Based on the query: f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
-                # Mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, col_4=description, col_5=is_global, col_6=created_at
-                field_data = {
-                    'id': result.get('col_0'),
-                    'name': result.get('col_1'),
-                    'display_name': result.get('col_2'),
-                    'field_type': result.get('col_3', 'text'),
-                    'description': result.get('col_4', ''),
-                    'is_global': result.get('col_5', False),
-                    'created_at': result.get('col_6')
-                }
-                if field_data['name'] and is_reserved_core_field(field_data['name']):
-                    logger.debug(f" Skipping reserved core field in user list: {field_data['name']}")
+            result = safe_execute_kuzu_query(query)
+            rows = _convert_query_result_to_list(result)
+
+            # Prepare sets of names for global/personal to optimize counting
+            global_field_names = set()
+            personal_field_names = set()
+            seen = set()
+            field_rows: List[Dict[str, Any]] = []
+            for r in rows:
+                raw_name = r.get('col_1')
+                if raw_name is None:
                     continue
-                # Calculate actual usage count for this field
-                usage_count = self._calculate_field_usage_count(field_data['name'], field_data['is_global'])
-                
-                if field_data.get('id'):
-                    logger.debug(f" Processing field: {field_data} (usage: {usage_count})")
-                    fields.append({
-                        'id': field_data['id'],
-                        'name': field_data['name'],
-                        'display_name': field_data['display_name'],
-                        'field_type': field_data['field_type'],
-                        'description': field_data['description'],
-                        'is_global': field_data['is_global'],
-                        'usage_count': usage_count,
-                        'created_at': field_data['created_at']
-                    })
-            
-            logger.debug(f" Found {len(fields)} fields with usage for user {user_id}")
-            return fields
-            
-        except Exception as e:
-            return []
-    
-    def get_shareable_fields_with_calculated_usage_sync(self, exclude_user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get shareable fields with usage stats."""
-        logger.debug(f" Getting shareable fields (excluding user: {exclude_user_id})")
-        
-        try:
-            # Get global fields without usage count for now (KuzuDB has issues with COUNT + OPTIONAL MATCH + GROUP BY)
-            if exclude_user_id:
-                query = """
-                MATCH (f:CustomField) 
-                WHERE f.is_global = true AND f.created_by_user_id <> $exclude_user_id
-                RETURN f.id AS field_id, f.name AS field_name, f.display_name AS field_display_name, 
-                       f.field_type AS field_type, f.description AS field_description, 
-                       f.is_global AS field_is_global, f.created_at AS field_created_at
-                ORDER BY f.created_at DESC
-                """
-                params = {"exclude_user_id": exclude_user_id}
-            else:
-                query = """
-                MATCH (f:CustomField) 
-                WHERE f.is_global = true
-                RETURN f.id AS field_id, f.name AS field_name, f.display_name AS field_display_name, 
-                       f.field_type AS field_type, f.description AS field_description, 
-                       f.is_global AS field_is_global, f.created_at AS field_created_at
-                ORDER BY f.created_at DESC
-                """
-                params = {}
-            
-            results_temp = safe_execute_kuzu_query(query, params)
-            results = _convert_query_result_to_list(results_temp)
-            
-            fields = []
-            for result in results:
-                # KuzuDB returns column-based results (col_0, col_1, etc.) instead of named columns
-                # Based on the query: f.id, f.name, f.display_name, f.field_type, f.description, f.is_global, f.created_at
-                # Mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, col_4=description, col_5=is_global, col_6=created_at
-                field_data = {
-                    'id': result.get('col_0'),
-                    'name': result.get('col_1'),
-                    'display_name': result.get('col_2'),
-                    'field_type': result.get('col_3', 'text'),
-                    'description': result.get('col_4', ''),
-                    'is_global': result.get('col_5', False),
-                    'created_at': result.get('col_6')
-                }
-                if field_data['name'] and is_reserved_core_field(field_data['name']):
-                    logger.debug(f" Skipping reserved core field in shareable list: {field_data['name']}")
+                name_val = str(raw_name)
+                if not name_val or is_reserved_core_field(name_val):
                     continue
-                # Calculate actual usage count for this field
-                usage_count = self._calculate_field_usage_count(field_data['name'], field_data['is_global'])
-                
-                if field_data.get('id'):
-                    fields.append({
-                        'id': field_data['id'],
-                        'name': field_data['name'],
-                        'display_name': field_data['display_name'],
-                        'field_type': field_data['field_type'],
-                        'description': field_data['description'],
-                        'is_global': field_data['is_global'],
-                        'usage_count': usage_count,
-                        'created_at': field_data['created_at']
-                    })
-            
-            logger.debug(f" Found {len(fields)} shareable fields")
+                if name_val in seen:
+                    continue
+                seen.add(name_val)
+                is_global = bool(r.get('col_5'))
+                if is_global:
+                    global_field_names.add(name_val)
+                else:
+                    personal_field_names.add(name_val)
+                field_rows.append(r)
+
+            # 2. Compute usage for global fields (count books where field has non-empty value)
+            global_counts: Dict[str, int] = {n: 0 for n in global_field_names}
+            if global_field_names:
+                g_query = """
+                MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                WHERE r.global_custom_fields IS NOT NULL AND r.global_custom_fields <> ''
+                RETURN r.global_custom_fields
+                """
+                g_res = safe_execute_kuzu_query(g_query)
+                g_rows = _convert_query_result_to_list(g_res)
+                for row in g_rows:
+                    raw = row.get('col_0') or row.get('result')
+                    if not raw:
+                        continue
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                    except Exception:
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    for fname, val in data.items():
+                        if fname in global_counts and val is not None and str(val).strip():
+                            global_counts[fname] += 1
+
+            # 3. Compute usage for personal fields (count books for THIS user where field has value)
+            personal_counts: Dict[str, int] = {n: 0 for n in personal_field_names}
+            if personal_field_names:
+                p_query = """
+                MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book)
+                WHERE r.personal_custom_fields IS NOT NULL AND r.personal_custom_fields <> ''
+                RETURN r.personal_custom_fields
+                """
+                p_res = safe_execute_kuzu_query(p_query, {"user_id": user_id})
+                p_rows = _convert_query_result_to_list(p_res)
+                for row in p_rows:
+                    raw = row.get('col_0') or row.get('result')
+                    if not raw:
+                        continue
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                    except Exception:
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    for fname, val in data.items():
+                        if fname in personal_counts and val is not None and str(val).strip():
+                            personal_counts[fname] += 1
+
+            # 4. Build final list with usage counts
+            fields: List[Dict[str, Any]] = []
+            for r in field_rows:
+                raw_name = r.get('col_1')
+                if raw_name is None:
+                    continue
+                name_val: str = str(raw_name)
+                is_global = bool(r.get('col_5'))
+                usage = global_counts.get(name_val, 0) if is_global else personal_counts.get(name_val, 0)
+                fields.append({
+                    'id': r.get('col_0'),
+                    'name': name_val,
+                    'display_name': r.get('col_2'),
+                    'field_type': r.get('col_3'),
+                    'description': r.get('col_4'),
+                    'is_global': is_global,
+                    'usage_count': usage,
+                    'created_at': r.get('col_6')
+                })
+            logger.debug(f"Computed usage counts for {len(fields)} fields (global scans={len(global_counts)}, personal scans={len(personal_counts)})")
             return fields
-            
-        except Exception as e:
+        except Exception:
+            traceback.print_exc()
             return []
     
     def get_field_by_id_sync(self, field_id: str) -> Optional[Dict[str, Any]]:
@@ -893,17 +845,64 @@ class KuzuCustomFieldService:
                 result = results[0]
                 # Column mapping: col_0=id, col_1=name, col_2=display_name, col_3=field_type, 
                 # col_4=description, col_5=is_global, col_6=created_at, col_7=updated_at, col_8=created_by_user_id
+                is_global = bool(result.get('col_5', False))
+                field_name = result.get('col_1')
+                usage_count = 0
+                if field_name:
+                    try:
+                        if is_global:
+                            u_query = """
+                            MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
+                            WHERE r.global_custom_fields IS NOT NULL AND r.global_custom_fields <> ''
+                            RETURN r.global_custom_fields
+                            """
+                            u_res = safe_execute_kuzu_query(u_query)
+                            u_rows = _convert_query_result_to_list(u_res)
+                            for row in u_rows:
+                                raw = row.get('col_0') or row.get('result')
+                                if not raw:
+                                    continue
+                                try:
+                                    data = json.loads(raw) if isinstance(raw, str) else raw
+                                except Exception:
+                                    continue
+                                if isinstance(data, dict):
+                                    val = data.get(field_name)
+                                    if val is not None and str(val).strip():
+                                        usage_count += 1
+                        else:
+                            u_query = """
+                            MATCH (u:User)-[r:HAS_PERSONAL_METADATA]->(b:Book)
+                            WHERE r.personal_custom_fields IS NOT NULL AND r.personal_custom_fields <> ''
+                            RETURN r.personal_custom_fields
+                            """
+                            u_res = safe_execute_kuzu_query(u_query)
+                            u_rows = _convert_query_result_to_list(u_res)
+                            for row in u_rows:
+                                raw = row.get('col_0') or row.get('result')
+                                if not raw:
+                                    continue
+                                try:
+                                    data = json.loads(raw) if isinstance(raw, str) else raw
+                                except Exception:
+                                    continue
+                                if isinstance(data, dict):
+                                    val = data.get(field_name)
+                                    if val is not None and str(val).strip():
+                                        usage_count += 1
+                    except Exception:
+                        pass
                 field_data = {
                     'id': result.get('col_0'),
-                    'name': result.get('col_1'),
+                    'name': field_name,
                     'display_name': result.get('col_2'),
                     'field_type': result.get('col_3', 'text'),
                     'description': result.get('col_4', ''),
-                    'is_global': result.get('col_5', False),
+                    'is_global': is_global,
                     'created_at': result.get('col_6'),
                     'updated_at': result.get('col_7'),
                     'created_by_user_id': result.get('col_8'),
-                    'usage_count': 0  # Add usage count for template compatibility
+                    'usage_count': usage_count
                 }
                 logger.debug(f" Found field: {field_data}")
                 return field_data
@@ -1134,103 +1133,14 @@ class KuzuCustomFieldService:
             return False
         
     def migrate_custom_metadata_from_owns(self, book_id: str, user_id: str) -> bool:
-        """Migrate custom metadata from OWNS relationship to new architecture."""
-        logger.debug(f" Migrating custom metadata for book {book_id}, user {user_id}")
-        
-        try:
-            # Get metadata from OWNS relationship
-            owns_query = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-            RETURN r.custom_metadata AS custom_metadata
-            """
-            
-            owns_results_temp = safe_execute_kuzu_query(owns_query, {
-                "book_id": book_id,
-                "user_id": user_id
-            })
-            owns_results = _convert_query_result_to_list(owns_results_temp)
-            
-            if owns_results and owns_results[0].get('custom_metadata'):
-                metadata_json = owns_results[0].get('custom_metadata')
-                if metadata_json:
-                    try:
-                        if isinstance(metadata_json, str):
-                            old_metadata = json.loads(metadata_json)
-                        elif isinstance(metadata_json, dict):
-                            old_metadata = metadata_json
-                        else:
-                            return True  # Nothing to migrate
-                        
-                        if old_metadata:
-                            logger.debug(f" Found {len(old_metadata)} metadata items to migrate")
-                            
-                            # Save using new architecture
-                            success = self.save_custom_metadata_sync(book_id, user_id, old_metadata)
-                            
-                            if success:
-                                # Clear the old metadata from OWNS relationship
-                                clear_owns_query = """
-                                MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-                                SET r.custom_metadata = NULL
-                                """
-                                
-                                safe_execute_kuzu_query(clear_owns_query, {
-                                    "book_id": book_id,
-                                    "user_id": user_id
-                                })
-                                
-                                return True
-                            else:
-                                return False
-                                
-                    except (json.JSONDecodeError, TypeError) as e:
-                        return False
-            
-            logger.debug(f" No metadata to migrate")
-            return True
-            
-        except Exception as e:
-            return False
+        """Deprecated no-op: OWNS relationship removed."""
+        logger.debug(" migrate_custom_metadata_from_owns called after OWNS removal - no action taken")
+        return True
 
     def migrate_all_custom_metadata_from_owns(self) -> bool:
-        """Migrate all custom metadata from OWNS relationships to new architecture."""
-        logger.debug(f" Starting migration of all custom metadata from OWNS relationships")
-        
-        try:
-            # Find all OWNS relationships with custom metadata
-            migration_query = """
-            MATCH (u:User)-[r:OWNS]->(b:Book)
-            WHERE r.custom_metadata IS NOT NULL AND r.custom_metadata <> ''
-            RETURN u.id AS user_id, b.id AS book_id, r.custom_metadata AS custom_metadata
-            """
-            
-            migration_results_temp = safe_execute_kuzu_query(migration_query)
-            migration_results = _convert_query_result_to_list(migration_results_temp)
-            
-            if not migration_results:
-                logger.debug(f" No OWNS relationships with custom metadata found")
-                return True
-            
-            logger.debug(f" Found {len(migration_results)} OWNS relationships with custom metadata to migrate")
-            
-            migrated_count = 0
-            failed_count = 0
-            
-            for result in migration_results:
-                user_id = result.get('col_0')  # u.id
-                book_id = result.get('col_1')  # b.id
-                
-                if user_id and book_id:
-                    success = self.migrate_custom_metadata_from_owns(book_id, user_id)
-                    if success:
-                        migrated_count += 1
-                    else:
-                        failed_count += 1
-            
-            return failed_count == 0
-            
-        except Exception as e:
-            return False
+        """Deprecated no-op: OWNS relationship removed."""
+        logger.debug(" migrate_all_custom_metadata_from_owns called after OWNS removal - no action taken")
+        return True
 
     def cleanup_old_custom_field_nodes(self) -> bool:
         """Clean up old CustomFieldValue nodes that are no longer needed."""

@@ -145,6 +145,31 @@
     </div>
     <small class="text-muted d-block mb-4">A backup runs after imports and at the scheduled time. Backups include database, covers, uploads, and settings.</small>
 
+    <!-- Metadata Provider Preferences -->
+    <hr class="my-4">
+    <h4 class="mb-3"><i class="bi bi-diagram-2 me-2"></i>Metadata Providers</h4>
+    <p class="text-muted">Choose which external provider supplies metadata during imports. You can fine-tune every field later in Settings &gt; Server &gt; Metadata.</p>
+    <div class="row g-3 align-items-end mb-2">
+        <div class="col-md-4 col-12">
+            <label class="form-label" for="ob_book_metadata_mode">Books Metadata</label>
+            <select id="ob_book_metadata_mode" name="book_metadata_mode" class="form-select">
+                <option value="both" selected>Google + OpenLibrary</option>
+                <option value="google">Google Only</option>
+                <option value="openlibrary">OpenLibrary Only</option>
+            </select>
+            <div class="form-text">When both are used, Google is the initial default (can be changed later).</div>
+        </div>
+        <div class="col-md-4 col-12">
+            <label class="form-label" for="ob_people_metadata_mode">People Metadata</label>
+            <select id="ob_people_metadata_mode" name="people_metadata_mode" class="form-select">
+                <option value="openlibrary" selected>OpenLibrary</option>
+                <option value="none">None (skip automatic enrichment)</option>
+            </select>
+            <div class="form-text">People enrichment currently relies on OpenLibrary.</div>
+        </div>
+    </div>
+    <small class="text-muted d-block mb-4">Field-level priorities (e.g., description vs cover) can be customized later.</small>
+
     <!-- Navigation Buttons -->
     <div class="navigation-buttons">
         <a href="{{ url_for('onboarding.step', step_num=1) }}" 

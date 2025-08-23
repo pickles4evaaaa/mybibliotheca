@@ -3,6 +3,15 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+"""Application entry point.
+
+Performs a schema preflight (additive column auto-upgrade with backup) before
+creating the Flask app so migrations happen deterministically at startup.
+"""
+
+# Import triggers preflight side-effect (safe no-op if nothing to change)
+from app.startup import schema_preflight  # noqa: F401
+
 from app import create_app
 
 # This app is intended to be run via Gunicorn only

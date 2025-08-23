@@ -399,7 +399,10 @@ def site_config_step():
                 'timezone': request.form.get('timezone', 'UTC'),
                 'location': request.form.get('location', ''),
                 'location_set_as_default': 'location_set_as_default' in request.form,
-                'terminology_preference': request.form.get('terminology_preference', 'genre')
+                'terminology_preference': request.form.get('terminology_preference', 'genre'),
+                # Simple high-level metadata preferences captured during onboarding.
+                'book_metadata_mode': request.form.get('book_metadata_mode', 'both'),
+                'people_metadata_mode': request.form.get('people_metadata_mode', 'openlibrary')
             }
             
             logger.info(f"🔍 ONBOARDING DEBUG: Saving site_config: {site_config}")
@@ -416,6 +419,42 @@ def site_config_step():
             
             # Move to next step
             logger.info(f"🔍 ONBOARDING DEBUG: Moving to step 3")
+
+            # If metadata settings file does not yet exist, seed it with coarse preferences
+            try:
+                from .utils.metadata_settings import save_metadata_settings, DEFAULT_BOOK_FIELDS, DEFAULT_PERSON_FIELDS, _get_cache  # type: ignore
+                cache = _get_cache()
+                if cache.path.exists():
+                    logger.info("🔍 ONBOARDING DEBUG: Metadata settings file already exists; skipping seed")
+                else:
+                    logger.info("🔍 ONBOARDING DEBUG: Seeding initial metadata settings file")
+                book_mode = site_config.get('book_metadata_mode','both')
+                people_mode = site_config.get('people_metadata_mode','openlibrary')
+                if book_mode not in ('google','openlibrary','both'): book_mode = 'both'
+                if people_mode not in ('openlibrary','none'): people_mode = 'openlibrary'
+                # Build new settings structure respecting chosen coarse modes
+                books_cfg = {}
+                for f in DEFAULT_BOOK_FIELDS:
+                    if book_mode == 'both':
+                        books_cfg[f] = {'mode': 'both', 'default': 'google'}
+                    else:
+                        books_cfg[f] = {'mode': book_mode}
+                people_cfg = {}
+                for f in DEFAULT_PERSON_FIELDS:
+                    if people_mode == 'none':
+                        people_cfg[f] = {'mode': 'none'}
+                    else:
+                        # Only openlibrary or none supported for people at onboarding
+                        if f in ('name',):
+                            people_cfg[f] = {'mode': 'openlibrary'}
+                        else:
+                            people_cfg[f] = {'mode': 'openlibrary'}
+                    candidate = {'books': books_cfg, 'people': people_cfg}
+                    save_metadata_settings(candidate)
+                    logger.info("🔍 ONBOARDING DEBUG: Seeded metadata provider settings from onboarding step 2")
+            except Exception as e:
+                logger.warning(f"⚠️ ONBOARDING DEBUG: Failed to seed metadata settings: {e}")
+
             session['onboarding_step'] = 3
             session.modified = True
             

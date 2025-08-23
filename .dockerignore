@@ -97,6 +97,8 @@ npm-debug.log*
 
 # Development tools
 scripts/
+!scripts/export_postgres_single_user_to_sqlite.py
+!scripts/run_postgres_export.sh
 migrations/
 .coverage
 htmlcov/

@@ -65,12 +65,12 @@ def create_reading_log_entry():
                 'message': 'Please provide either pages read or minutes read'
             }), 400
         
-        # Verify user owns the book
-        user_book = book_service.get_book_by_id_for_user_sync(book_id, current_user.id)
+        # Universal library: verify book exists globally (personal metadata optional)
+        user_book = book_service.get_book_by_id_sync(book_id)
         if not user_book:
             return jsonify({
                 'status': 'error',
-                'message': 'Book not found in your library'
+                'message': 'Book not found'
             }), 404
         
         # Create reading log entry

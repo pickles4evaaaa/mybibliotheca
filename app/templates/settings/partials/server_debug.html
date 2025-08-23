@@ -1,0 +1,13 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-bug"></i>
+    <strong>Debug Tools</strong>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small">Quick access to diagnostics. Open full debug pages for deeper inspection.</p>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-info btn-sm" target="_blank" href="{{ url_for('main.download_db') }}"><i class="bi bi-activity"></i> Download DB (Diag)</a>
+      <a class="btn btn-outline-info btn-sm" target="_blank" href="/logs" onclick="event.preventDefault(); alert('Logs viewer not yet implemented inline.');"><i class="bi bi-file-text"></i> View Logs</a>
+    </div>
+  </div>
+</div>

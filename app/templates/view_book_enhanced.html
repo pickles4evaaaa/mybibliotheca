@@ -50,16 +50,8 @@
                         <!-- Cover Image -->
                         <div class="col-md-4 text-center mb-3 mb-md-0">
                             <div class="position-relative d-inline-block">
-                                {% if book.cover_url %}
-                                    <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                                         class="img-fluid rounded shadow-sm" style="height: 500px; min-width: 300px; width: auto;" id="book-cover"
-                                         onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
-                                {% else %}
-                                    <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm" 
-                                         style="height: 500px; width: 350px; margin: 0 auto;" id="book-cover">
-                                        <i class="bi bi-book text-muted" style="font-size: 6rem;"></i>
-                                    </div>
-                                {% endif %}
+                                {% from 'macros/cover_input.html' import render_cover_display %}
+                                {{ render_cover_display(book, css_classes="img-fluid rounded shadow-sm", style="height: 500px; min-width: 300px; width: auto;", img_id="book-cover") }}
                             </div>
                         </div>
                         
@@ -1565,43 +1557,102 @@ document.addEventListener('DOMContentLoaded', function() {
     const customFieldsEditMode = document.querySelector('.custom-fields-edit-mode');
     const editCustomFieldsToggle = document.getElementById('editCustomFieldsToggle');
     
+    // Helper: POST a form with fetch
+    async function postForm(form) {
+        if (!form) return { ok: true };
+        const fd = new FormData(form);
+        // Ensure hidden dynamic inputs are up to date for main form
+        if (form.id === 'book-edit-form') {
+            if (window.updateContributorHiddenInputs) window.updateContributorHiddenInputs();
+            if (window.updateCategoryHiddenInputs) window.updateCategoryHiddenInputs();
+        }
+        const resp = await fetch(form.action, {
+            method: form.method || 'POST',
+            body: fd,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        return { ok: resp.ok, status: resp.status };
+    }
+
+    // Helper: Merge multiple forms (posting to same endpoint) into a single request
+    async function postMergedToEditEndpoint() {
+        const mainForm = document.getElementById('book-edit-form');
+        if (!mainForm) return { ok: true };
+        // Update dynamic inputs before reading
+        if (window.updateContributorHiddenInputs) window.updateContributorHiddenInputs();
+        if (window.updateCategoryHiddenInputs) window.updateCategoryHiddenInputs();
+
+        const merged = new FormData();
+        const forms = [
+            document.getElementById('book-edit-form'),
+            document.getElementById('description-form'),
+            document.getElementById('basic-info-form'),
+            document.getElementById('personal-notes-form')
+        ].filter(Boolean);
+
+        for (const f of forms) {
+            const fd = new FormData(f);
+            // Copy entries; later forms can override specific fields if duplicated
+            for (const [k, v] of fd.entries()) {
+                merged.set(k, v);
+            }
+        }
+
+        const resp = await fetch(mainForm.action, {
+            method: mainForm.method || 'POST',
+            body: merged,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        return { ok: resp.ok, status: resp.status };
+    }
+
+    // Save all active edits before exiting edit mode
+    async function saveAllEdits() {
+        try {
+            if (editToggle) {
+                editToggle.disabled = true;
+                editToggle.title = 'Saving changes…';
+                editToggle.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+            }
+
+            // 1) Post merged data to the main edit endpoint (book metadata + personal data + description)
+            const mainResult = await postMergedToEditEndpoint();
+            if (!mainResult.ok) throw new Error('Failed to save main edits');
+
+            // 2) Post custom fields (separate endpoint)
+            const customForm = document.getElementById('custom-fields-form');
+            if (customForm) {
+                const customResult = await postForm(customForm);
+                if (!customResult.ok) throw new Error('Failed to save custom fields');
+            }
+
+            // Reload to reflect saved changes and show any flash messages
+            window.location.reload();
+        } catch (e) {
+            console.error('Save on exit failed:', e);
+            // Keep user in edit mode so they can correct issues
+            if (editMode && viewMode) {
+                editMode.style.display = 'block';
+                viewMode.style.display = 'none';
+            }
+            if (editToggle) {
+                editToggle.disabled = false;
+                editToggle.innerHTML = '<i class="bi bi-pencil" id="edit-icon"></i>';
+                editToggle.title = 'Edit Book Details';
+            }
+            alert('Some changes could not be saved automatically. Please click individual Save buttons or try again.');
+        }
+    }
+
     if (editToggle && viewMode && editMode) {
-        editToggle.addEventListener('click', function() {
+        editToggle.addEventListener('click', async function() {
             // Toggle main card edit mode
             const isEditMode = editMode.style.display !== 'none';
             
             if (isEditMode) {
-                // Switch back to view mode for all sections
-                editMode.style.display = 'none';
-                viewMode.style.display = 'block';
-                
-                if (basicInfoEditMode && basicInfoViewMode) {
-                    basicInfoEditMode.style.display = 'none';
-                    basicInfoViewMode.style.display = 'block';
-                }
-                
-                if (descriptionEditMode && descriptionViewMode) {
-                    descriptionEditMode.style.display = 'none';
-                    descriptionViewMode.style.display = 'block';
-                }
-                
-                if (readingProgressEditMode && readingProgressViewMode) {
-                    readingProgressEditMode.style.display = 'none';
-                    readingProgressViewMode.style.display = 'block';
-                }
-                
-                if (personalNotesEditMode && personalNotesViewMode) {
-                    personalNotesEditMode.style.display = 'none';
-                    personalNotesViewMode.style.display = 'block';
-                }
-                
-                if (customMetadataEditMode && customMetadataViewMode) {
-                    customMetadataEditMode.style.display = 'none';
-                    customMetadataViewMode.style.display = 'block';
-                }
-                
-                editToggle.innerHTML = '<i class="bi bi-pencil" id="edit-icon"></i>';
-                editToggle.title = 'Edit Book Details';
+                // Save all edits on exit, then reload (no manual toggle needed)
+                await saveAllEdits();
+                return;
             } else {
                 // Switch to edit mode for all sections
                 viewMode.style.display = 'none';
@@ -1633,7 +1684,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 
                 editToggle.innerHTML = '<i class="bi bi-check" id="edit-icon"></i>';
-                editToggle.title = 'Exit Edit Mode';
+                editToggle.title = 'Exit Edit Mode (saves changes)';
             }
         });
         

@@ -456,13 +456,8 @@
                                             </div>
                                         </div>
                                         
-                                        <div class="mb-3">
-                                            <label for="cover_url" class="form-label fw-medium">
-                                                <i class="bi bi-image me-1"></i>Cover URL
-                                            </label>
-                                            <input type="url" class="form-control" id="cover_url" name="cover_url" 
-                                                   value="{{ book.cover_url or '' }}" placeholder="https://...">
-                                        </div>
+                                        {% from 'macros/cover_input.html' import render_cover_input %}
+                                        {{ render_cover_input(book) }}
                                         
                                         <!-- Series Information -->
                                         <div class="row">

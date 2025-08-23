@@ -17,8 +17,12 @@ import asyncio
 import tempfile
 import secrets
 import logging
+import json
 import os as _os_for_import_verbosity
 import requests  # Add requests import
+
+# Metadata debug flag (shared with unified metadata module)
+_META_DEBUG_FLAG = (os.getenv('METADATA_DEBUG','0').lower() in ('1','true','yes','on'))
 
 # Set up import-specific logger
 logger = logging.getLogger(__name__)
@@ -294,98 +298,12 @@ def auto_create_custom_fields(field_mappings, user_id):
     existing_field_names = set()
     if existing_fields:
         try:
-            # Handle case where service returns None or empty result
-            for field in existing_fields:
-                if isinstance(field, dict) and 'name' in field:
-                    existing_field_names.add(field['name'])
-                elif hasattr(field, 'name'):
-                    field_name = getattr(field, 'name', None)
-                    if field_name:
-                        existing_field_names.add(field_name)
-        except:
+            for f in existing_fields:
+                name = f.get('name') if isinstance(f, dict) else getattr(f, 'name', None)
+                if name:
+                    existing_field_names.add(name)
+        except Exception:
             pass
-    
-    # Process each mapping
-    for csv_field, target_field in field_mappings.items():
-        if not isinstance(target_field, str):
-            continue
-            
-        # Check if this is a custom field reference
-        if target_field.startswith('custom_global_') or target_field.startswith('custom_personal_'):
-            # Extract field name
-            if target_field.startswith('custom_global_'):
-                field_name = target_field[14:]  # Remove 'custom_global_'
-                is_global = True
-            else:
-                field_name = target_field[16:]  # Remove 'custom_personal_'
-                is_global = False
-            
-            # Skip if field already exists
-            if field_name in existing_field_names:
-                continue
-                
-            # Get field configuration
-            config = FIELD_CONFIGS.get(field_name)
-            if config:
-                try:
-                    # Create the custom field definition
-                    field_definition = CustomFieldDefinition(
-                        name=field_name,
-                        display_name=config['display_name'],
-                        field_type=config['type'],
-                        is_global=config['global'],
-                        created_by_user_id=user_id,
-                        description=f'Auto-created during import for CSV column "{csv_field}"'
-                    )
-                    
-                    # Create the field using the service
-                    field_data = {
-                        'name': field_definition.name,
-                        'display_name': field_definition.display_name,
-                        'field_type': field_definition.field_type,
-                        'is_global': field_definition.is_global,
-                        'created_by_user_id': field_definition.created_by_user_id,
-                        'description': field_definition.description
-                    }
-                    success = custom_field_service.create_field_sync(user_id, field_data)
-                    if success:
-                        existing_field_names.add(field_name)
-                    else:
-                        pass  # Field creation failed
-                        
-                except Exception as e:
-                    pass  # Error creating field
-            else:
-                # Create a generic field if no specific config exists
-                try:
-                    # Generate display name from field name
-                    display_name = field_name.replace('_', ' ').title()
-                    
-                    field_definition = CustomFieldDefinition(
-                        name=field_name,
-                        display_name=display_name,
-                        field_type=CustomFieldType.TEXT,  # Default to text
-                        is_global=is_global,
-                        created_by_user_id=user_id,
-                        description=f'Auto-created during import for CSV column "{csv_field}"'
-                    )
-                    
-                    field_data = {
-                        'name': field_definition.name,
-                        'display_name': field_definition.display_name,
-                        'field_type': field_definition.field_type,
-                        'is_global': field_definition.is_global,
-                        'created_by_user_id': field_definition.created_by_user_id,
-                        'description': field_definition.description
-                    }
-                    success = custom_field_service.create_field_sync(user_id, field_data)
-                    if success:
-                        existing_field_names.add(field_name)
-                    else:
-                        pass  # Generic field creation failed
-                        
-                except Exception as e:
-                    pass  # Error creating generic field
 
 def get_goodreads_field_mappings():
     """Get predefined field mappings for Goodreads CSV format with custom field support.
@@ -756,6 +674,9 @@ def import_books_execute():
     csv_file_path = request.form.get('csv_file_path')
     use_template = request.form.get('use_template')
     skip_mapping = request.form.get('skip_mapping', 'false').lower() == 'true'
+
+    # Ensure mappings always defined to avoid unbound variable errors
+    mappings = {}
     
     # Initialize template saving variables
     save_as_template = False
@@ -805,7 +726,7 @@ def import_books_execute():
                     target_field = mapping_info.get('target_field')
                 else:
                     target_field = mapping_info  # Fallback for string format
-                
+                save_as_template = False
                 if target_field:
                     mappings[csv_field] = target_field
             
@@ -814,7 +735,7 @@ def import_books_execute():
         except Exception as e:
             current_app.logger.error(f"Error loading template for import: {e}")
             flash('Error loading template configuration', 'error')
-            return redirect(url_for('import.import_books'))
+                    # Since get_template_by_id_sync doesn't exist, look for template by name
     
     else:
         # Handle manual mapping (from mapping UI)
@@ -1055,22 +976,22 @@ def api_import_progress(task_id):
     # Augment response with status buckets for UI (success_titles, error_titles, skipped_titles, unmatched_titles)
     # Derive lazily so we don't store large arrays permanently in job record.
     success_titles = []
-    error_titles = []
+    error_titles = []  # Will be populated from error_messages only to avoid duplication
+    error_details = []  # Structured objects {title,message,row_number,error_type}
     skipped_titles = []
     unmatched_titles = []
+    merged_titles = []
     try:
         if job.get('import_type') == 'reading_history':
-            # For reading history we enumerate log entries with date + status if available.
-            # Job may not store per-entry status; approximate: matched/created entries counted as success,
-            # skipped as skipped, errors as errors. We derive representative strings including first/last date.
             books_for_matching = job.get('books_for_matching') or []
-            # Each item expected to have csv_name, entries list (each entry may have date/started_at/finished_at)
+            # If final stats included matched/created titles, preload into buckets
+            matched_book_titles = job.get('matched_book_titles') or []
+            created_book_titles = job.get('created_book_titles') or []
             for b in books_for_matching:
                 try:
                     entries = b.get('entries') or []
                     if not isinstance(entries, list):
                         continue
-                    # Collect dates
                     dates = []
                     for e in entries:
                         d = e.get('date') or e.get('finished_at') or e.get('started_at') or ''
@@ -1085,24 +1006,31 @@ def api_import_progress(task_id):
                     label = b.get('csv_name') or b.get('matched_title') or b.get('title') or 'Unknown'
                     if date_span:
                         label = f"{label} ({date_span})"
-                    # Determine bucket: if user resolution stored? fallback heuristics
                     status = (b.get('status') or '').lower()
                     if status in ('success','matched','created'):
                         success_titles.append(label)
-                    elif status in ('skipped', 'ignored'):
+                    elif status in ('skipped','ignored'):
                         skipped_titles.append(label)
                     elif status in ('unmatched','needs_match'):
                         unmatched_titles.append(label)
                 except Exception:
                     continue
-            # Errors specific to reading logs
             for err in job.get('reading_log_error_messages') or []:
                 if isinstance(err, dict):
                     t = err.get('title') or err.get('csv_name') or err.get('book') or ''
                     if t:
                         error_titles.append(t)
+            # Success details for reading logs (dates etc.)
+            success_detail_strings = job.get('reading_log_success_details') or []
+            # For consistency with UI, attach as success_titles if none gathered above
+            if success_detail_strings:
+                success_titles = success_detail_strings[:500]
+            # Map matched/created titles into merged/skipped buckets for tile display semantics
+            if matched_book_titles and not merged_titles:
+                merged_titles = matched_book_titles
+            if created_book_titles and not skipped_titles:
+                skipped_titles = created_book_titles
         else:
-            # Regular book import handling
             books = job.get('processed_books') or job.get('books') or []
             for b in books:
                 try:
@@ -1112,26 +1040,49 @@ def api_import_progress(task_id):
                         continue
                     if status == 'success':
                         success_titles.append(title)
+                    elif status == 'merged':
+                        merged_titles.append(title)
                     elif status == 'skipped':
                         skipped_titles.append(title)
                     elif status == 'unmatched':
                         unmatched_titles.append(title)
+                    # Do NOT append error titles here; we'll rely on error_messages for errors to avoid duplicates
                 except Exception:
                     continue
+            # Build error titles + details strictly from error_messages
             for err in job.get('error_messages') or []:
-                if isinstance(err, dict):
-                    t = err.get('title') or err.get('raw_title') or ''
-                    if t:
-                        error_titles.append(t)
+                if not isinstance(err, dict):
+                    continue
+                t = err.get('title') or err.get('raw_title') or ''
+                m = err.get('message') or err.get('error') or ''
+                if t:
+                    error_titles.append(t)
+                error_details.append({
+                    'title': t,
+                    'message': m[:300],  # limit size for payload
+                    'row_number': err.get('row_number') or err.get('row'),
+                    'error_type': err.get('type') or err.get('error_type') or 'error'
+                })
     except Exception:
         pass
+    # Deduplicate while preserving order for error titles
+    seen = set()
+    deduped_error_titles = []
+    for t in error_titles:
+        if t and t not in seen:
+            seen.add(t)
+            deduped_error_titles.append(t)
+
     enriched = dict(job)
     enriched['success_titles'] = success_titles
-    enriched['error_titles'] = error_titles
+    enriched['error_titles'] = deduped_error_titles
+    enriched['merged_titles'] = merged_titles
     enriched['skipped_titles'] = skipped_titles
     enriched['unmatched_titles'] = unmatched_titles
     enriched['success_preview'] = success_titles[:25]
-    enriched['error_preview'] = error_titles[:25]
+    enriched['error_preview'] = deduped_error_titles[:25]
+    enriched['merged_preview'] = merged_titles[:25]
+    enriched['error_details'] = error_details[:1000]  # safety cap
     enriched['skipped_preview'] = skipped_titles[:25]
     enriched['unmatched_preview'] = unmatched_titles[:25]
     return jsonify(enriched)
@@ -1145,7 +1096,7 @@ def api_import_errors(task_id):
         return jsonify({'error': 'Job not found'}), 404
     errors = job.get('error_messages') or []
 
-    header = ['row_number','error_type','message','raw_isbn','title','author','raw_row']
+    header = ['row_number','error_type','message','raw_isbn','isbn','title','author','file_name','raw_row']
     def _escape(v: str):
         if v is None:
             v = ''
@@ -1161,13 +1112,15 @@ def api_import_errors(task_id):
                     err.get('row_number') or err.get('row') or '',
                     err.get('type') or err.get('error_type') or 'error',
                     (err.get('message') or err.get('error') or '').replace('\n',' ').replace('\r',' ')[:500],
+                    err.get('raw_isbn') or '',
                     err.get('isbn') or err.get('raw_isbn') or '',
                     err.get('title') or '',
                     err.get('author') or '',
-                    err.get('raw_row') or ''
+                    err.get('file_name') or '',
+                    json.dumps(err.get('raw_row')) if isinstance(err.get('raw_row'), dict) else (err.get('raw_row') or '')
                 ]
             else:
-                row = ['', 'error', str(err).replace('\n',' '), '', '', '', '']
+                row = ['', 'error', str(err).replace('\n',' '), '', '', '', '', '', '']
             rows.append(','.join(_escape(v) for v in row))
     csv_content = '\n'.join(rows) + '\n'
     return Response(csv_content, mimetype='text/csv', headers={
@@ -1604,309 +1557,286 @@ def upload_import():
         return redirect(url_for('import.import_books'))
 
 @import_bp.route('/simple-import', methods=['GET', 'POST'])
-@login_required
-def simple_import():
-    """Simplified import that auto-detects format and uses default mappings."""
-    if request.method == 'GET':
-        return render_template('simple_import.html')
-    
-    try:
-        # Handle file upload
-        file = request.files.get('csv_file')
-        if not file or not file.filename or file.filename == '' or not file.filename.endswith('.csv'):
-            flash('Please select a valid CSV file', 'error')
-            return redirect(request.url)
-        
-        # Save file temporarily
-        filename = secure_filename(file.filename)
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'simple_import_{current_user.id}_')
-        file.save(temp_file.name)
-        temp_path = temp_file.name
-        
-        print(f"📁 [SIMPLE_IMPORT] Processing file: {filename}")
-        print(f"📁 [SIMPLE_IMPORT] Temp path: {temp_path}")
-        
-        # Detect CSV format
-        format_type, confidence = detect_csv_format(temp_path)
-        
-        if format_type == 'unknown':
-            flash('Could not detect CSV format. Please use the manual import for custom CSV files.', 'warning')
-            os.unlink(temp_path)
-            return redirect(url_for('import.import_books'))
-        
-        # Get appropriate mappings
-        if format_type == 'goodreads':
-            mappings = get_goodreads_field_mappings()
-            format_display = 'Goodreads'
-        else:  # storygraph
-            mappings = get_storygraph_field_mappings()
-            format_display = 'StoryGraph'
-        
-        print(f"📋 [SIMPLE_IMPORT] Using {format_display} mappings with {len(mappings)} field mappings")
-        
-        # Get import settings from form
-        default_reading_status = request.form.get('default_reading_status', 'plan_to_read')
-        enable_api_enrichment = request.form.get('enable_api_enrichment', 'true').lower() == 'true'
-        
-        # Create import job
-        task_id = str(uuid.uuid4())
-        job_data = {
-            'task_id': task_id,
-            'user_id': current_user.id,
-            'csv_file_path': temp_path,
-            'field_mappings': mappings,
-            'default_reading_status': default_reading_status,
-            'enable_api_enrichment': enable_api_enrichment,
-            'format_type': format_type,
-            'format_display': format_display,
-            'status': 'pending',
-            'processed': 0,
-            'success': 0,
-            'errors': 0,
-            'skipped': 0,
-            'total': 0,
-            'start_time': datetime.now(timezone.utc).isoformat(),
-            'current_book': None,
-            'error_messages': [],
-            'recent_activity': []
-        }
-        
-        # Count total rows
-        try:
-            with open(temp_path, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                job_data['total'] = sum(1 for _ in reader)
-        except:
-            job_data['total'] = 0
-        
-        # Store job data with user isolation
-        safe_create_import_job(current_user.id, task_id, job_data)
-        store_job_in_kuzu(task_id, job_data)
-        
-        print(f"🚀 [SIMPLE_IMPORT] Created job {task_id} for {job_data['total']} rows")
-        
-        # Start the import in background
-        import_config = {
-            'task_id': task_id,
-            'csv_file_path': temp_path,
-            'field_mappings': mappings,
-            'user_id': current_user.id,
-            'default_reading_status': default_reading_status,
-            'enable_api_enrichment': enable_api_enrichment,
-            'format_type': format_type
-        }
-        
-        def run_simple_import():
-            try:
-                print(f"🚀 [SIMPLE_IMPORT] Starting background thread for job {task_id}")
-                print(f"🔧 [SIMPLE_IMPORT] Import config: {import_config}")
-                
-                # Call the async import function with an event loop
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(process_simple_import(import_config))
-                finally:
-                    loop.close()
-                    
-            except Exception as e:
-                traceback.print_exc()
-                # Update job with error
-                error_update = {'status': 'failed', 'error_messages': [str(e)]}
-                update_job_in_kuzu(task_id, error_update)
-                safe_update_import_job(current_user.id, task_id, error_update)
-        
-        # Start background thread
-        thread = threading.Thread(target=run_simple_import)
-        thread.daemon = True
-        thread.start()
-        
-        flash(f'Import started! Detected {format_display} format with {confidence:.1%} confidence.', 'success')
-        return redirect(url_for('import.import_books_progress', task_id=task_id))
-        
-    except Exception as e:
-        current_app.logger.error(f"Error in simple import: {e}")
-        flash('An error occurred during import. Please try again.', 'error')
-        return redirect(request.url)
+def simple_import():  # legacy placeholder
+    from flask import redirect, url_for
+    return redirect(url_for('book.library'))
 
 async def process_simple_import(import_config):
-    """Process a simple import job with API enrichment."""
-    from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-    
+    """Process a simple import job with API enrichment and detailed error capture."""
+    from app.simplified_book_service import SimplifiedBookService
+
     task_id = import_config['task_id']
     csv_file_path = import_config['csv_file_path']
     mappings = import_config['field_mappings']
     user_id = import_config['user_id']
-    default_reading_status = import_config.get('default_reading_status', 'plan_to_read')
     enable_api_enrichment = import_config.get('enable_api_enrichment', True)
     format_type = import_config.get('format_type', 'unknown')
-    
-    # Force API enrichment for Goodreads and Storygraph imports to get proper categories
+
     if format_type in ['goodreads', 'storygraph']:
         enable_api_enrichment = True
-        print(f"🌐 [PROCESS_SIMPLE] Forcing API enrichment for {format_type} import to get proper genres/categories")
-    
-    print(f"🔄 [PROCESS_SIMPLE] Starting import for task {task_id}")
-    print(f"🔄 [PROCESS_SIMPLE] Format: {format_type}, API enrichment: {enable_api_enrichment}")
-    
-    # Initialize simplified book service
+
+    if _META_DEBUG_FLAG:
+        logger.debug(f"[IMPORT][PROCESS_START] task={task_id} format={format_type} enrich={enable_api_enrichment} mappings={mappings}")
     simplified_service = SimplifiedBookService()
-    
-    # Initialize counters
-    processed_count = 0
-    success_count = 0
-    error_count = 0
-    skipped_count = 0
-    
+
+    processed_count = success_count = error_count = skipped_count = merged_count = 0
     try:
-        # STEP 1: Pre-analyze and create custom fields BEFORE processing any books
+        # Pre-analyze custom fields
         try:
-            custom_fields_success, created_custom_fields = await pre_analyze_and_create_custom_fields(
-                csv_file_path, mappings, user_id
-            )
-            
-            if not custom_fields_success:
-                created_custom_fields = {}
-            else:
-                print(f"🔧 [PROCESS_SIMPLE] Created {len(created_custom_fields)} custom fields")
-        except Exception as e:
-            print(f"Warning: Could not create custom fields: {e}")
-            created_custom_fields = {}
-            
-        
-        # STEP 2: Read and process CSV
-        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile)
-            rows_list = list(reader)
-            
-            print(f"📋 [PROCESS_SIMPLE] Found {len(rows_list)} rows to process")
-            
-            # Collect ISBNs for batch API enrichment if enabled
-            isbns_to_enrich = []
-            if enable_api_enrichment:
-                print(f"🔍 [PROCESS_SIMPLE] Scanning {len(rows_list)} rows for ISBNs...")
-                for row_idx, row in enumerate(rows_list):
-                    isbn = (
-                        row.get('ISBN')
-                        or row.get('ISBN13')
-                        or row.get('ISBN/UID')  # StoryGraph alternate header
-                        or row.get('isbn')
-                        or row.get('isbn13')
-                    )
-                    if isbn:
-                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Found ISBN '{isbn}'")
-                        # Clean ISBN (handle Goodreads formatting)
-                        isbn_clean = normalize_goodreads_value(isbn, 'isbn')
-                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: Cleaned ISBN '{isbn_clean}' (length: {len(isbn_clean) if isbn_clean else 0})")
-                        if isbn_clean and isinstance(isbn_clean, str) and len(isbn_clean) >= 10:
-                            isbns_to_enrich.append(isbn_clean)
-                            print(f"✅ [PROCESS_SIMPLE] Row {row_idx+1}: Added ISBN to enrichment list")
-                        else:
-                            print(f"❌ [PROCESS_SIMPLE] Row {row_idx+1}: ISBN doesn't meet criteria")
-                    else:
-                        print(f"🔍 [PROCESS_SIMPLE] Row {row_idx+1}: No ISBN found in row keys: {list(row.keys())}")
-                
-                print(f"🌐 [PROCESS_SIMPLE] Will enrich {len(isbns_to_enrich)} books with API data")
-                print(f"🌐 [PROCESS_SIMPLE] ISBNs to enrich: {isbns_to_enrich[:5]}{'...' if len(isbns_to_enrich) > 5 else ''}")
-                
-                if isbns_to_enrich:
-                    # Batch fetch metadata
-                    print(f"🚀 [PROCESS_SIMPLE] Starting API enrichment for {len(isbns_to_enrich)} ISBNs...")
-                    book_metadata = batch_fetch_book_metadata(isbns_to_enrich[:50])  # Limit to first 50 to avoid rate limits
-                    print(f"🌐 [PROCESS_SIMPLE] Retrieved metadata for {len(book_metadata)} books")
-                else:
-                    print(f"⚠️ [PROCESS_SIMPLE] No valid ISBNs found - skipping API enrichment")
-                    book_metadata = {}
-            else:
-                print(f"⚠️ [PROCESS_SIMPLE] API enrichment disabled")
-                book_metadata = {}
-            
-            # Process each row
-            for row_num, row in enumerate(rows_list, 1):
+            cf_ok, created_cf = await pre_analyze_and_create_custom_fields(csv_file_path, mappings, user_id)
+            if cf_ok:
+                print(f"🔧 [PROCESS_SIMPLE] Created {len(created_cf)} custom fields")
+        except Exception as ce:
+            print(f"⚠️ [PROCESS_SIMPLE] Custom field analysis failed: {ce}")
+
+        # Read CSV
+        with open(csv_file_path, 'r', encoding='utf-8') as fh:
+            rows_list = list(csv.DictReader(fh))
+        print(f"📋 [PROCESS_SIMPLE] Rows to process: {len(rows_list)}")
+
+        # Batch enrichment
+        book_metadata = {}
+        if enable_api_enrichment:
+            isbns = []
+            for idx, r in enumerate(rows_list, 1):
+                raw_isbn = r.get('ISBN13') or r.get('isbn13') or r.get('ISBN') or r.get('ISBN/UID') or r.get('isbn')
+                if not raw_isbn:
+                    continue
+                cleaned = normalize_goodreads_value(raw_isbn, 'isbn')
+                if cleaned and isinstance(cleaned, str) and len(cleaned) >= 10:
+                    isbns.append(cleaned)
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][ISBN_COLLECT] row={idx} raw={raw_isbn!r} cleaned={cleaned!r}")
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][ISBN_COLLECT] collected={len(isbns)} values={isbns}")
+            # Deduplicate while preserving order
+            seen = set()
+            uniq = []
+            for v in isbns:
+                if v not in seen:
+                    seen.add(v); uniq.append(v)
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][ISBN_COLLECT] dedup_size={len(uniq)} values={uniq}")
+            if uniq:
+                book_metadata = batch_fetch_book_metadata(uniq[:50])
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][POST_BATCH] metadata_keys={list(book_metadata.keys())}")
+
+        source_filename = os.path.basename(csv_file_path)
+        for row_num, row in enumerate(rows_list, 1):
+            try:
+                simplified_book = simplified_service.build_book_data_from_row(row, mappings)
+                # Allow ISBN-only rows (title may be filled after enrichment). Skip only if missing both title and ISBN.
+                if not simplified_book or (not simplified_book.title and not (simplified_book.isbn13 or simplified_book.isbn10)):
+                    processed_count += 1
+                    skipped_count += 1
+                    raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                    job_snapshot = safe_get_import_job(user_id, task_id) or {}
+                    pb = job_snapshot.get('processed_books', [])
+                    pb.append({'title': raw_title, 'status': 'skipped'})
+                    safe_update_import_job(user_id, task_id, {'processed_books': pb})
+                    continue
+
+                if enable_api_enrichment and book_metadata:
+                    simplified_book = merge_api_data_into_simplified_book(simplified_book, book_metadata, {})
+                    if _META_DEBUG_FLAG:
+                        logger.debug(f"[IMPORT][ROW_ENRICHED] row={row_num} isbn13={simplified_book.isbn13} isbn10={simplified_book.isbn10} title={simplified_book.title!r}")
+
+                # After enrichment, if this was an ISBN-only row and we failed to retrieve metadata (no real title), record error instead of creating placeholder book
+                isbn_key = simplified_book.isbn13 or simplified_book.isbn10
+                if isbn_key and enable_api_enrichment:
+                    # Consider presence of either ISBN form in metadata map
+                    in_meta = isbn_key in book_metadata or (simplified_book.isbn13 and simplified_book.isbn13 in book_metadata) or (simplified_book.isbn10 and simplified_book.isbn10 in book_metadata)
+                    # Failed if not in metadata OR title is still placeholder (exactly equals any isbn form)
+                    placeholder_title = not simplified_book.title or simplified_book.title.strip() == '' or simplified_book.title in {simplified_book.isbn13, simplified_book.isbn10}
+                    lookup_failed = (not in_meta) or placeholder_title
+                    # If original CSV provided no title (row mapping produced empty title) and lookup failed, treat as error
+                    if lookup_failed and (not row.get(mappings.get('title',''))):
+                        try:
+                            logger.error(f"[IMPORT][LOOKUP_FAIL] row={row_num} isbn={isbn_key} in_metadata={isbn_key in book_metadata} title_after={simplified_book.title!r}")
+                        except Exception:
+                            pass
+                        processed_count += 1
+                        error_count += 1
+                        snap = safe_get_import_job(user_id, task_id) or {}
+                        pb = snap.get('processed_books', [])
+                        pb.append({'title': isbn_key, 'status': 'error'})
+                        errs = snap.get('error_messages', [])
+                        if len(errs) < 1000:
+                            errs.append({
+                                'row_number': row_num,
+                                'title': isbn_key,
+                                'author': '',
+                                'isbn': isbn_key,
+                                'raw_isbn': row.get('ISBN') or row.get('ISBN13') or row.get('ISBN/UID') or '',
+                                'file_name': source_filename,
+                                'error_type': 'lookup_failed',
+                                'message': f'Failed to fetch metadata for ISBN {isbn_key}',
+                                'raw_row': {k: v for k, v in row.items() if v}
+                            })
+                        progress_update = {
+                            'processed': processed_count,
+                            'success': success_count,
+                            'merged': merged_count,
+                            'errors': error_count,
+                            'skipped': skipped_count,
+                            'current_book': isbn_key,
+                            'processed_books': pb,
+                            'error_messages': errs
+                        }
+                        safe_update_import_job(user_id, task_id, progress_update)
+                        continue  # Skip creation attempt
+
+                if not simplified_book.reading_status:
+                    simplified_book.reading_status = import_config.get('default_reading_status', 'plan_to_read')
+
+                merged_applied = False
+                duplicate_existing_id = None
                 try:
-                    # Processing row (reduced logging for performance)
-                    
-                    # Build book data using mappings
-                    simplified_book = simplified_service.build_book_data_from_row(row, mappings)
-                    
-                    if not simplified_book:
-                        processed_count += 1
-                        skipped_count += 1
-                        continue
-                    
-                    # Apply API enrichment if enabled BEFORE validation
-                    if enable_api_enrichment and book_metadata:
-                        simplified_book = merge_api_data_into_simplified_book(
-                            simplified_book, book_metadata, {}
-                        )
-                    
-                    # Now check if we have enough data after API enrichment
-                    if not simplified_book.title:
-                        print(f"⚠️ [PROCESS_SIMPLE] Skipping row {row_num}: No title found even after API enrichment")
-                        processed_count += 1
-                        skipped_count += 1
-                        continue
-                    
-                    # Set default reading status if not provided
-                    if not simplified_book.reading_status:
-                        simplified_book.reading_status = import_config.get('default_reading_status', 'plan_to_read')
-                    
-                    # Add book to user's library
                     result = await simplified_service.add_book_to_user_library(
                         book_data=simplified_book,
                         user_id=user_id,
                         reading_status=simplified_book.reading_status,
                         ownership_status='owned',
                         media_type='physical',
-                        custom_metadata=simplified_book.personal_custom_metadata if hasattr(simplified_book, 'personal_custom_metadata') else None
+                        custom_metadata=getattr(simplified_book, 'personal_custom_metadata', None)
                     )
-                    
-                    processed_count += 1
+                except Exception as add_ex:
+                    # Detect duplicate via BookAlreadyExistsError class name
+                    if add_ex.__class__.__name__ == 'BookAlreadyExistsError':
+                        # Extract existing id if attribute present
+                        duplicate_existing_id = getattr(add_ex, 'book_id', None)
+                        try:
+                            # Merge logic: fill empty fields and append metadata
+                            from app.services.kuzu_book_service import KuzuBookService
+                            from app.services.kuzu_custom_field_service import KuzuCustomFieldService
+                            kbs = KuzuBookService(user_id=user_id)
+                            existing = await kbs.get_book_by_id(duplicate_existing_id) if duplicate_existing_id else None
+                            updates = {}
+                            # Helper for deciding emptiness
+                            def _needs(existing_val):
+                                return existing_val is None or (isinstance(existing_val, str) and existing_val.strip() == '') or existing_val == 0
+                            candidate_fields = ['subtitle','description','published_date','page_count','language','cover_url','asin','google_books_id','openlibrary_id','average_rating','rating_count','series','series_volume','series_order']
+                            for f in candidate_fields:
+                                new_val = getattr(simplified_book, f, None)
+                                if not new_val:
+                                    continue
+                                if existing and _needs(getattr(existing, f, None)):
+                                    updates[f] = new_val
+                            if updates and duplicate_existing_id:
+                                await kbs.update_book(duplicate_existing_id, updates)
+                                merged_applied = True
+                            # Merge global custom metadata
+                            try:
+                                cfs = KuzuCustomFieldService()
+                                gmeta = simplified_book.global_custom_metadata or {}
+                                pmeta = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+                                if gmeta or pmeta:
+                                    # Only include keys not already present in existing global metadata if we can fetch it
+                                    # (Service itself merges; we rely on that behavior.)
+                                    cfs.ensure_custom_fields_exist(user_id, gmeta, pmeta)
+                                    # Save combined dict so merge occurs
+                                    combined_meta = {}
+                                    combined_meta.update(gmeta)
+                                    combined_meta.update(pmeta)
+                                    if combined_meta and duplicate_existing_id:
+                                        cfs.save_custom_metadata_sync(book_id=duplicate_existing_id, user_id=user_id, custom_metadata=combined_meta)
+                                        merged_applied = True
+                            except Exception as meta_ex:
+                                print(f"⚠️ [MERGE] Custom metadata merge failed: {meta_ex}")
+                            result = True  # Treat duplicate+merge as success
+                        except Exception as merge_ex:
+                            print(f"⚠️ [MERGE] Failed merging duplicate: {merge_ex}")
+                            result = False
+                    else:
+                        # Unexpected error path
+                        raise
+
+                processed_count += 1
+                if result and merged_applied:
+                    merged_count += 1
+                    status_value = 'merged'
+                else:
+                    status_value = 'success' if result else 'error'
                     if result:
                         success_count += 1
-                    else:
-                        error_count += 1
-                    
-                    # Update progress after each book for real-time feedback
-                    progress_update = {
-                        'processed': processed_count,
-                        'success': success_count,
-                        'errors': error_count,
-                        'skipped': skipped_count,
-                        'current_book': simplified_book.title
-                    }
-                    # Update safely with user isolation
-                    safe_update_import_job(user_id, task_id, progress_update)
-                    
-                    # Update in Kuzu less frequently to avoid performance issues
-                    if processed_count % 5 == 0:
-                        update_job_in_kuzu(task_id, progress_update)
-                    
-                    # Small delay to prevent overwhelming the system
-                    await asyncio.sleep(0.05)
-                    
-                except Exception as row_error:
-                    processed_count += 1
+                if not result:
                     error_count += 1
-                    continue
-        
-        # Mark as completed
-        completion_data = {
+                    snap = safe_get_import_job(user_id, task_id) or {}
+                    errs = snap.get('error_messages', [])
+                    if len(errs) < 1000:
+                        message_txt = 'Duplicate book detected but merge failed' if duplicate_existing_id else 'Failed to add book to library (service returned no result)'
+                        errs.append({
+                            'row_number': row_num,
+                            'title': simplified_book.title or '',
+                            'author': getattr(simplified_book, 'authors', [''])[0] if getattr(simplified_book, 'authors', None) else '',
+                            'isbn': simplified_book.isbn13 or simplified_book.isbn10 or '',
+                            'raw_isbn': row.get('ISBN') or row.get('ISBN13') or row.get('ISBN/UID') or '',
+                            'file_name': source_filename,
+                            'error_type': 'duplicate_merge_failed' if duplicate_existing_id else 'add_failed',
+                            'message': message_txt,
+                            'raw_row': {k: v for k, v in row.items() if v}
+                        })
+                        safe_update_import_job(user_id, task_id, {'error_messages': errs})
+
+                snap = safe_get_import_job(user_id, task_id) or {}
+                pb = snap.get('processed_books', [])
+                pb.append({'title': simplified_book.title or 'Untitled', 'status': status_value})
+                progress_update = {
+                    'processed': processed_count,
+                    'success': success_count,
+                    'merged': merged_count,
+                    'errors': error_count,
+                    'skipped': skipped_count,
+                    'current_book': simplified_book.title,
+                    'processed_books': pb
+                }
+                safe_update_import_job(user_id, task_id, progress_update)
+                if processed_count % 5 == 0:
+                    update_job_in_kuzu(task_id, progress_update)
+            except Exception as ex:
+                processed_count += 1
+                error_count += 1
+                raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                snap = safe_get_import_job(user_id, task_id) or {}
+                pb = snap.get('processed_books', [])
+                pb.append({'title': raw_title, 'status': 'error'})
+                errs = snap.get('error_messages', [])
+                if len(errs) < 1000:
+                    errs.append({
+                        'row_number': row_num,
+                        'title': raw_title,
+                        'author': row.get('Author') or row.get('author') or '',
+                        'isbn': row.get('ISBN13') or row.get('ISBN') or '',
+                        'raw_isbn': row.get('ISBN') or row.get('ISBN13') or row.get('ISBN/UID') or '',
+                        'file_name': source_filename,
+                        'error_type': 'exception',
+                        'message': str(ex)[:500],
+                        'raw_row': {k: v for k, v in row.items() if v}
+                    })
+                safe_update_import_job(user_id, task_id, {'processed': processed_count, 'errors': error_count, 'processed_books': pb, 'current_book': raw_title, 'error_messages': errs})
+                continue
+
+        completion = {
             'status': 'completed',
             'processed': processed_count,
             'success': success_count,
+            'merged': merged_count,
             'errors': error_count,
             'skipped': skipped_count,
             'current_book': None,
-            'recent_activity': [f"Import completed! {success_count} books imported, {error_count} errors, {skipped_count} skipped"]
+            'recent_activity': [f"Import completed! {success_count} new, {merged_count} merged, {error_count} errors, {skipped_count} skipped"]
         }
-        update_job_in_kuzu(task_id, completion_data)
-        # Update safely with user isolation
-        safe_update_import_job(user_id, task_id, completion_data)
-
-        # Post-import automatic backup (fire and forget thread)
-        try:
-            if success_count > 0:
+        snap = safe_get_import_job(user_id, task_id) or {}
+        if 'processed_books' in snap:
+            completion['processed_books'] = snap['processed_books']
+        if 'error_messages' in snap:
+            completion['error_messages'] = snap['error_messages']
+        update_job_in_kuzu(task_id, completion)
+        safe_update_import_job(user_id, task_id, completion)
+        print(f"🎉 [PROCESS_SIMPLE] Done: {success_count} success, {error_count} errors, {skipped_count} skipped")
+        if success_count > 0:
+            try:
                 def _run_backup():
                     try:
                         from app.services.simple_backup_service import get_simple_backup_service
@@ -1914,33 +1844,20 @@ async def process_simple_import(import_config):
                         svc.create_backup(description=f'Post-import backup: {success_count} books added', reason='post_import_books')
                     except Exception as be:
                         current_app.logger.warning(f"Post-import backup failed: {be}")
-                t = threading.Thread(target=_run_backup, daemon=True)
-                t.start()
-        except Exception as outer_be:
-            current_app.logger.warning(f"Failed launching post-import backup thread: {outer_be}")
-        
-        print(f"🎉 [PROCESS_SIMPLE] Import completed! {success_count} success, {error_count} errors, {skipped_count} skipped")
-        
+                threading.Thread(target=_run_backup, daemon=True).start()
+            except Exception as outer_be:
+                current_app.logger.warning(f"Failed launching post-import backup thread: {outer_be}")
     except Exception as e:
         traceback.print_exc()
-        
-        # Mark as failed
-        error_data = {
-            'status': 'failed',
-            'error_messages': [str(e)]
-        }
-        update_job_in_kuzu(task_id, error_data)
-        # Update safely with user isolation
-        safe_update_import_job(user_id, task_id, error_data)
-    
+        err = {'status': 'failed', 'error_messages': [str(e)]}
+        update_job_in_kuzu(task_id, err)
+        safe_update_import_job(user_id, task_id, err)
     finally:
-        # Clean up temp file
         try:
             if os.path.exists(csv_file_path):
                 os.unlink(csv_file_path)
-                print(f"🗑️ [PROCESS_SIMPLE] Cleaned up temp file: {csv_file_path}")
-        except Exception as cleanup_error:
-            print(f"Warning: Could not clean up temp file: {cleanup_error}")
+        except Exception:
+            pass
 
 def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_metadata):
     """Merge API metadata into a SimplifiedBook object."""
@@ -2272,46 +2189,112 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
     return task_id
 
 def batch_fetch_book_metadata(isbns):
-    """Batch fetch metadata using the unified aggregator for a list of ISBNs."""
-    print(f"🌐 [UNIFIED_API] ===== STARTING BATCH FETCH =====")
-    print(f"🌐 [UNIFIED_API] Fetching metadata for {len(isbns)} ISBNs: {isbns}")
+    """Batch fetch metadata using the unified aggregator for a list of ISBNs.
 
-    from app.utils.unified_metadata import fetch_unified_by_isbn
+    Noise reduction: only warnings for empty results, errors for exceptions/batch failures.
+    Enable METADATA_DEBUG=1 for detailed per-ISBN diagnostics.
+    """
+    if _META_DEBUG_FLAG:
+        logger.debug(f"[IMPORT][METADATA][BATCH_START] size={len(isbns)} isbns={isbns}")
+
+    from app.utils.unified_metadata import fetch_unified_by_isbn, fetch_unified_by_isbn_detailed
     import time
     import random
 
     metadata = {}
     failed_isbns = []
 
+    # Local validator mirrors unified_metadata logic (keep lightweight, no dependency loop)
+    import re as _re
+    def _valid_isbn10(v: str) -> bool:
+        if len(v) != 10 or not _re.match(r'^[0-9]{9}[0-9Xx]$', v):
+            return False
+        total = 0
+        for i, ch in enumerate(v[:9]):
+            if not ch.isdigit():
+                return False
+            total += (10 - i) * int(ch)
+        check = v[9]
+        total += 10 if check in 'Xx' else int(check)
+        return total % 11 == 0
+    def _valid_isbn13(v: str) -> bool:
+        if len(v) != 13 or not v.isdigit():
+            return False
+        if not (v.startswith('978') or v.startswith('979')):
+            return False
+        s = 0
+        for i, ch in enumerate(v[:12]):
+            s += (1 if i % 2 == 0 else 3) * int(ch)
+        return (10 - (s % 10)) % 10 == int(v[12])
+    def _is_valid_isbn(raw: str) -> bool:
+        if not raw:
+            return False
+        cleaned = _re.sub(r'[^0-9Xx]', '', raw.strip())
+        return _valid_isbn10(cleaned) or _valid_isbn13(cleaned)
+
     for i, isbn in enumerate(isbns):
         if not isbn:
             continue
-
-        print(f"🌐 [UNIFIED_API] Processing {i+1}/{len(isbns)}: {isbn}")
+        if not _is_valid_isbn(isbn):
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][METADATA][SKIP_INVALID] idx={i} isbn={isbn}")
+            continue
+        if _META_DEBUG_FLAG:
+            logger.debug(f"[IMPORT][METADATA][FETCH_START] idx={i} isbn={isbn}")
         try:
             # Gentle delay to avoid API rate limits
             if i > 0:
                 time.sleep(random.uniform(0.25, 0.6))
 
-            data = fetch_unified_by_isbn(isbn)
+            # Perform detailed fetch first so we always have provider diagnostics
+            data, provider_errors = fetch_unified_by_isbn_detailed(isbn)
+            if _META_DEBUG_FLAG:
+                logger.debug(f"[IMPORT][METADATA][PROVIDERS] isbn={isbn} providers={provider_errors}")
             if data:
                 metadata[isbn] = {
                     'data': data,
-                    'source': 'unified'
+                    'source': 'unified',
+                    'provider_errors': provider_errors
                 }
-                if data.get('categories'):
-                    print(f"🏷️ [UNIFIED_API] {isbn} categories: {len(data['categories'])}")
+                # Canonicalize: if provider returned a distinct ISBN13, promote it as primary key
+                try:
+                    alt13 = data.get('isbn13')
+                    alt10 = data.get('isbn10')
+                    if alt13 and alt13 != isbn:
+                        # Promote alt13 entry (keep original as alias for safety)
+                        if alt13 not in metadata:
+                            metadata[alt13] = metadata[isbn]
+                        if _META_DEBUG_FLAG:
+                            logger.debug(f"[IMPORT][METADATA][CANON] promoted_isbn13={alt13} original_query={isbn}")
+                    # Index 10-digit alias if not present
+                    for alt in [alt10]:
+                        if alt and alt not in metadata:
+                            metadata[alt] = metadata[isbn]
+                    if alt13 and alt10 and alt13 != alt10:
+                        if _META_DEBUG_FLAG:
+                            logger.debug(f"[IMPORT][METADATA][ALT_INDEX] isbn_query={isbn} alt13={alt13} alt10={alt10}")
+                except Exception:
+                    pass
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][METADATA][FETCH_OK] isbn={isbn} title={data.get('title')}")
             else:
+                logger.warning(f"[IMPORT][METADATA] No metadata for ISBN {isbn}")
                 failed_isbns.append(isbn)
         except Exception as e:
-            print(f"⚠️ [UNIFIED_API] Failed for {isbn}: {e}")
+            # Structured error log with stack trace
+            logger.error(f"[IMPORT][METADATA] Exception fetching ISBN {isbn}: {e}", exc_info=True)
             failed_isbns.append(isbn)
             continue
 
-    success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
-    print(f"🎉 [UNIFIED_API] Completed batch fetch: {len(metadata)} successful out of {len(isbns)} ISBNs ({success_rate:.1f}% success rate)")
+    if _META_DEBUG_FLAG:
+        success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
+        logger.debug(f"[IMPORT][METADATA][BATCH_COMPLETE] success={len(metadata)} failed={len(failed_isbns)} rate={success_rate:.1f}% keys={list(metadata.keys())}")
     if failed_isbns:
         print(f"⚠️ [UNIFIED_API] Failed to fetch: {failed_isbns}")
+        logger.error(f"[IMPORT][METADATA] Batch fetch failures ({len(failed_isbns)}): {failed_isbns}")
+    else:
+        # Downgrade zero-failure message to debug (avoid misleading error spam)
+        logger.debug("[IMPORT][METADATA] Batch fetch completed with zero failures")
     return metadata
 
 def store_job_in_kuzu(task_id, job_data):
@@ -3270,7 +3253,8 @@ def resolve_reading_history_books(task_id):
                 if book_id:
                     book_resolutions[csv_name] = {
                         'action': 'match',
-                        'book_id': book_id
+                        # Use 'matched_book_id' to align with final processing expectations
+                        'matched_book_id': book_id
                     }
             elif action == 'create':
                 # Extract book creation data
@@ -3300,6 +3284,15 @@ def resolve_reading_history_books(task_id):
                     'book_title': csv_name  # Use the CSV name as the book title in the log
                 }
             # Books marked as 'skip' will not be in resolutions dict
+
+        # Automatically include bookless pseudo-entry (not shown in form UI) so finalization creates logs
+        for book_data in books_for_matching:
+            try:
+                if (book_data.get('is_bookless') or book_data.get('csv_name') == '[BOOKLESS_ENTRY]') \
+                        and book_data['csv_name'] not in book_resolutions:
+                    book_resolutions[book_data['csv_name']] = {'action': 'bookless'}
+            except Exception:
+                pass
         
         # Update job status to processing with proper progress reset
         total_entries = job_data.get('total_entries', job_data.get('total', 0))
@@ -3339,657 +3332,254 @@ def resolve_reading_history_books(task_id):
 
 
 async def _process_final_reading_history_import(task_id, job_data, book_resolutions):
-    """Process the final step of reading history import after book matching."""
+    """Finalize reading history import: create any new books, then create reading logs."""
     from app.services import book_service, reading_log_service
     from app.domain.models import ReadingLog
-    
+    from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+    # Lazy import location service only if needed
+    try:
+        from app.location_service import LocationService
+        location_service = LocationService()
+        default_location_obj = location_service.get_default_location()
+        default_location_id = getattr(default_location_obj, 'id', None) if default_location_obj else None
+    except Exception:
+        location_service = None
+        default_location_id = None
     user_id = job_data['user_id']
     csv_file_path = job_data.get('csv_file_path')
-    
     if not csv_file_path or not os.path.exists(csv_file_path):
         raise Exception("CSV file no longer available")
-    
-    books_for_matching = job_data.get('books_for_matching', [])
+    books_for_matching = job_data.get('books_for_matching', []) or []
+    total_entries_in_csv = sum(len(b.get('entries', [])) for b in books_for_matching)
     success_count = 0
     error_count = 0
     skipped_count = 0
     created_books = 0
-    unassigned_book_id = None  # Cache for "Unassigned Reading Logs" book ID
-    
+    success_detail_strings: list[str] = []
+    unassigned_book_id = None
+    created_book_titles: list[str] = []  # track created book titles for UI
+    safe_update_import_job(user_id, task_id, {
+        'status': 'processing',
+        'processed': 0,
+        'total': total_entries_in_csv,
+        'reading_logs_created': 0,
+        'reading_log_errors': 0,
+        'reading_logs_skipped': 0,
+        'books_created': 0,
+        'recent_activity': [f"Starting import of {total_entries_in_csv} reading log entries..."]
+    })
     try:
-        # Calculate total CSV entries for proper progress tracking
-        total_entries_in_csv = sum(len(book_data['entries']) for book_data in books_for_matching)
-        
-        # Initialize progress tracking with reading log metrics
-        safe_update_import_job(user_id, task_id, {
-            'status': 'processing',
-            'processed': 0,
-            'total': total_entries_in_csv,
-            'reading_logs_created': 0,  # Successful reading logs
-            'reading_log_errors': 0,    # Failed reading logs  
-            'reading_logs_skipped': 0,  # Skipped reading logs
-            'books_created': 0,         # New books created
-            'recent_activity': [f"Starting import of {total_entries_in_csv} reading log entries..."]
-        })
-        
-        # First, create any new books that need to be created
-        books_processed = 0
-        total_books_to_process = len(book_resolutions)
-        
-        for csv_name, resolution in book_resolutions.items():
-            if resolution['action'] == 'create':
+        # 1. create any required books
+        if isinstance(book_resolutions, dict):
+            for csv_name, resolution in book_resolutions.items():
+                if resolution.get('action') != 'create':
+                    continue
                 try:
-                    # SIMPLIFIED READING LOG IMPORT BOOK CREATION
-                    api_metadata = resolution.get('api_metadata', {})
-                    
-                    # Check if this should use ISBN lookup or manual creation
-                    use_isbn_lookup = api_metadata.get('_use_isbn_lookup', False)
-                    selected_isbn = api_metadata.get('_selected_isbn')
-                    manual_creation = api_metadata.get('_manual_creation', False)
-                    
-                    print(f"📚 [CREATE_BOOK] Processing: {resolution['title']}")
-                    print(f"    Use ISBN lookup: {use_isbn_lookup}")
-                    print(f"    Selected ISBN: {selected_isbn}")
-                    print(f"    Manual creation: {manual_creation}")
-                    
+                    api_meta = resolution.get('api_metadata', {}) or {}
+                    selected_isbn = api_meta.get('_selected_isbn')
+                    use_isbn_lookup = bool(api_meta.get('_use_isbn_lookup') and selected_isbn)
+                    manual_creation = api_meta.get('_manual_creation')
+                    service = SimplifiedBookService()
+                    new_book = None
                     if use_isbn_lookup and selected_isbn:
-                        # OPTION 2A: Create book using unified metadata fetched by ISBN
-                        print(f"🔍 [CREATE_BOOK] Creating book via ISBN lookup: {selected_isbn}")
-
-                        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-                        from app.utils.metadata_aggregator import fetch_unified_by_isbn
-                        simplified_service = SimplifiedBookService()
-
-                        # Fetch unified metadata for the selected ISBN
-                        unified = None
                         try:
-                            unified = fetch_unified_by_isbn(selected_isbn)
-                        except Exception as _:
-                            unified = None
-
-                        # Build SimplifiedBook using unified metadata when available
-                        meta_authors = (unified.get('authors') if unified else None) or []
-                        primary_author = (resolution.get('author') or (meta_authors[0] if meta_authors else 'Unknown Author'))
-                        isbn13_val = None
-                        isbn10_val = None
-                        if selected_isbn:
-                            if len(selected_isbn) == 13:
-                                isbn13_val = selected_isbn
-                            elif len(selected_isbn) == 10:
-                                isbn10_val = selected_isbn
-
-                        # Normalize fields to proper types
-                        unified_title = None
-                        unified_categories = []
-                        unified_language = 'en'
-                        if unified:
-                            try:
-                                unified_title = str(unified.get('title')).strip() if unified.get('title') else None
-                            except Exception:
-                                unified_title = None
-                            cats_val = unified.get('categories')
-                            if isinstance(cats_val, list):
-                                unified_categories = [str(c).strip() for c in cats_val if c]
-                            elif cats_val:
-                                unified_categories = [str(cats_val).strip()]
-                            lang_val = unified.get('language')
-                            if isinstance(lang_val, str) and lang_val.strip():
-                                unified_language = lang_val.strip()
-
-                        # Prepare numeric fields safely
-                        _pc = None
-                        if unified and ('page_count' in unified):
-                            try:
-                                v = unified.get('page_count')
-                                if v is not None:
-                                    _pc = int(v)
-                            except Exception:
-                                _pc = None
-                        _ar = None
-                        if unified and ('average_rating' in unified):
-                            try:
-                                v = unified.get('average_rating')
-                                if v is not None and str(v).strip() not in ('', 'None'):
-                                    _ar = float(v)
-                            except Exception:
-                                _ar = None
-                        _rc = None
-                        if unified and ('rating_count' in unified):
-                            try:
-                                v = unified.get('rating_count')
-                                if v is not None:
-                                    _rc = int(v)
-                            except Exception:
-                                _rc = None
-
-                        new_book = SimplifiedBook(
-                            title=unified_title if unified_title else (resolution['title'] or 'Unknown Title'),
-                            author=str(primary_author) if primary_author else 'Unknown Author',
-                            isbn13=(unified.get('isbn_13') if unified and unified.get('isbn_13') else (unified.get('isbn13') if unified else isbn13_val)),
-                            isbn10=(unified.get('isbn_10') if unified and unified.get('isbn_10') else (unified.get('isbn10') if unified else isbn10_val)),
-                            subtitle=(str(unified.get('subtitle')).strip() if unified and unified.get('subtitle') else None),
-                            description=(str(unified.get('description')).strip() if unified and unified.get('description') else None),
-                            publisher=(str(unified.get('publisher')).strip() if unified and unified.get('publisher') else None),
-                            published_date=(unified.get('published_date') if unified else None),
-                            page_count=_pc,
-                            language=unified_language,
-                            cover_url=((unified.get('cover_url') or unified.get('cover')) if unified else None),
-                            categories=unified_categories,
-                            google_books_id=(str(unified.get('google_books_id')).strip() if unified and unified.get('google_books_id') else None),
-                            openlibrary_id=(str(unified.get('openlibrary_id')).strip() if unified and unified.get('openlibrary_id') else None),
-                            asin=(str(unified.get('asin')).strip() if unified and unified.get('asin') else None),
-                            average_rating=_ar,
-                            rating_count=_rc,
-                        )
-
-                        # Unified cover selection to possibly upgrade cover
+                            from app.utils.metadata_aggregator import fetch_unified_by_isbn
+                            unified = fetch_unified_by_isbn(selected_isbn) or {}
+                        except Exception:
+                            unified = {}
+                        title = unified.get('title') or resolution.get('title') or 'Unknown Title'
+                        author = resolution.get('author') or (unified.get('authors') or ['Unknown Author'])[0]
+                        new_book = SimplifiedBook(title=title, author=author)
+                        new_book.isbn13 = selected_isbn if len(selected_isbn) == 13 else unified.get('isbn_13')
+                        new_book.isbn10 = selected_isbn if len(selected_isbn) == 10 else unified.get('isbn_10')
+                        new_book.description = unified.get('description')
+                        new_book.subtitle = unified.get('subtitle')
+                        new_book.publisher = unified.get('publisher')
+                        new_book.published_date = unified.get('published_date')
+                        new_book.page_count = unified.get('page_count')
+                        new_book.language = unified.get('language') or 'en'
+                        new_book.categories = unified.get('categories') or []
+                        new_book.cover_url = unified.get('cover_url') or unified.get('cover')
+                    elif manual_creation:
+                        new_book = SimplifiedBook(title=resolution.get('title') or 'Unknown Title', author=resolution.get('author') or 'Unknown Author')
+                    if new_book:
                         try:
                             from app.utils.book_utils import get_best_cover_for_book
-                            best_cover = get_best_cover_for_book(isbn=selected_isbn, title=new_book.title, author=new_book.author)
-                            if best_cover and best_cover.get('cover_url'):
-                                new_book.cover_url = best_cover['cover_url']
-                                new_book.global_custom_metadata['cover_source'] = best_cover.get('source')
-                                new_book.global_custom_metadata['cover_quality'] = best_cover.get('quality')
-                                print(f"🖼️ [CREATE_BOOK] Unified cover selected ({best_cover.get('source')}) for {selected_isbn}")
-                        except Exception as e:
-                            print(f"⚠️ [CREATE_BOOK] Unified cover selection failed for {selected_isbn}: {e}")
-
-                        # Map contributors if present in unified metadata
-                        contributors = (unified.get('contributors') if unified else None) or []
-                        if contributors:
-                            authors = [c.get('name') for c in contributors if c.get('role') == 'author']
-                            if authors and len(authors) > 1:
-                                primary = (new_book.author or '').lower().strip()
-                                additional = authors[1:] if authors[0] and authors[0].lower().strip() == primary else authors
-                                if additional:
-                                    new_book.additional_authors = ', '.join([a for a in additional if a])
-                            editors = [c.get('name') for c in contributors if c.get('role') == 'editor']
-                            translators = [c.get('name') for c in contributors if c.get('role') == 'translator']
-                            narrators = [c.get('name') for c in contributors if c.get('role') == 'narrator']
-                            illustrators = [c.get('name') for c in contributors if c.get('role') == 'illustrator']
-                            if editors:
-                                new_book.editor = ', '.join(editors)
-                                new_book.global_custom_metadata['editors'] = new_book.editor
-                            if translators:
-                                new_book.translator = ', '.join(translators)
-                                new_book.global_custom_metadata['translators'] = new_book.translator
-                            if narrators:
-                                new_book.narrator = ', '.join(narrators)
-                                new_book.global_custom_metadata['narrators'] = new_book.narrator
-                            if illustrators:
-                                new_book.illustrator = ', '.join(illustrators)
-                                new_book.global_custom_metadata['illustrators'] = new_book.illustrator
-
-                        # Prefer hierarchical raw categories if provided
-                        if unified and unified.get('raw_category_paths'):
-                            new_book.raw_categories = unified.get('raw_category_paths')
-
-                        # Normalize OpenLibrary ID if present
-                        if new_book.openlibrary_id:
+                            best = get_best_cover_for_book(isbn=selected_isbn, title=new_book.title, author=new_book.author)
+                            if best and best.get('cover_url'):
+                                new_book.cover_url = best['cover_url']
+                        except Exception:
+                            pass
+                        created_id = await service.create_standalone_book(new_book)
+                        if created_id:
+                            resolution['created_book_id'] = created_id
+                            created_books += 1
                             try:
-                                olid_val = str(new_book.openlibrary_id).strip()
-                                if not olid_val.startswith('/'):
-                                    suffix = olid_val[-1:].upper() if olid_val else ''
-                                    if suffix == 'M':
-                                        new_book.openlibrary_id = f"/books/{olid_val}"
-                                    elif suffix == 'W':
-                                        new_book.openlibrary_id = f"/works/{olid_val}"
-                                    elif suffix == 'A':
-                                        new_book.openlibrary_id = f"/authors/{olid_val}"
-                                    else:
-                                        new_book.openlibrary_id = f"/works/{olid_val}"
+                                if new_book.title and new_book.title not in created_book_titles:
+                                    created_book_titles.append(new_book.title)
+                                # Attach to default location if available
+                                if default_location_id and location_service:
+                                    try:
+                                        location_service.add_book_to_location(created_id, default_location_id, user_id)
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
-
-                        # Use the service to create the enriched book
-                        try:
-                            success = await simplified_service.add_book_to_user_library(
-                                book_data=new_book,
-                                user_id=user_id,
-                                reading_status='plan_to_read'
-                            )
-
-                            if success:
-                                # Retrieve created book id deterministically by ISBN
-                                created_book_id = simplified_service.find_book_by_isbn(selected_isbn) if selected_isbn else None
-                                if not created_book_id:
-                                    # Fallback to title/author lookup
-                                    created_book_id = simplified_service.find_book_by_title_author(new_book.title, new_book.author)
-                                if created_book_id:
-                                    resolution['book_id'] = created_book_id
-                                    created_books += 1
-                                    print(f"✅ [CREATE_BOOK] Created enriched book via ISBN: {created_book_id}")
-                                else:
-                                    raise Exception("Book created but could not retrieve ID")
-                            else:
-                                raise Exception("Failed to create book via ISBN lookup")
-
-                        except Exception as isbn_error:
-                            print(f"⚠️ [CREATE_BOOK] ISBN lookup failed, falling back to manual creation: {isbn_error}")
-                            # Fall back to manual creation below
-                            use_isbn_lookup = False
-                            manual_creation = True
-                    
-                    if not use_isbn_lookup or manual_creation:
-                        # OPTION 2B: Create basic book with just title and author
-                        print(f"🛠️ [CREATE_BOOK] Creating basic book manually: {resolution['title']}")
-                        
-                        # Validate required fields
-                        title = resolution['title'].strip() if resolution['title'] else None
-                        if not title:
-                            raise Exception("Title is required for manual book creation")
-                        
-                        author_name = resolution.get('author', '').strip()
-                        
-                        # Use the simplified book service to create a basic book
-                        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-                        simplified_service = SimplifiedBookService()
-                        
-                        # Create basic SimplifiedBook object
-                        new_book = SimplifiedBook(
-                            title=title,
-                            author=author_name if author_name else 'Unknown Author'
-                        )
-
-                        # Attempt unified cover selection even for manual creation (title/author only)
-                        try:
-                            from app.utils.book_utils import get_best_cover_for_book
-                            best_cover = get_best_cover_for_book(title=new_book.title, author=new_book.author)
-                            if best_cover and best_cover.get('cover_url') and not new_book.cover_url:
-                                new_book.cover_url = best_cover['cover_url']
-                                new_book.global_custom_metadata['cover_source'] = best_cover.get('source')
-                                new_book.global_custom_metadata['cover_quality'] = best_cover.get('quality')
-                                print(f"🖼️ [CREATE_BOOK] Unified cover selected ({best_cover.get('source')}) for manual '{new_book.title}'")
-                        except Exception as e:
-                            print(f"⚠️ [CREATE_BOOK] Unified cover selection failed for manual '{new_book.title}': {e}")
-                        
-                        # Apply any additional metadata from API results (non-ISBN)
-                        if api_metadata:
-                            print(f"🔧 [CREATE_BOOK] Applying additional metadata from API search")
-                            
-                            # Apply basic metadata that doesn't require ISBN
-                            if api_metadata.get('description'):
-                                new_book.description = api_metadata['description']
-                            if api_metadata.get('subtitle'):
-                                new_book.subtitle = api_metadata['subtitle']
-                            if api_metadata.get('cover_url'):
-                                new_book.cover_url = api_metadata['cover_url']
-                            if api_metadata.get('published_date'):
-                                new_book.published_date = api_metadata['published_date']
-                            if api_metadata.get('page_count'):
-                                new_book.page_count = int(api_metadata['page_count']) if api_metadata['page_count'] else None
-                            if api_metadata.get('publisher'):
-                                new_book.publisher = api_metadata['publisher']
-                            if api_metadata.get('language'):
-                                new_book.language = api_metadata['language']
-                            if api_metadata.get('categories'):
-                                new_book.categories = api_metadata['categories']
-                            if api_metadata.get('raw_category_paths'):
-                                new_book.raw_categories = api_metadata.get('raw_category_paths')
-                            # Map contributors if provided
-                            contributors = api_metadata.get('contributors') or []
-                            if contributors:
-                                authors = [c.get('name') for c in contributors if c.get('role') == 'author']
-                                editors = [c.get('name') for c in contributors if c.get('role') == 'editor']
-                                translators = [c.get('name') for c in contributors if c.get('role') == 'translator']
-                                narrators = [c.get('name') for c in contributors if c.get('role') == 'narrator']
-                                illustrators = [c.get('name') for c in contributors if c.get('role') == 'illustrator']
-                                # Additional authors (exclude primary)
-                                if authors and len(authors) > 1:
-                                    primary = (new_book.author or '').lower().strip()
-                                    additional = authors[1:] if authors[0] and authors[0].lower().strip() == primary else authors
-                                    if additional:
-                                        new_book.additional_authors = ', '.join([a for a in additional if a])
-                                if editors:
-                                    new_book.editor = ', '.join(editors)
-                                    new_book.global_custom_metadata['editors'] = new_book.editor
-                                if translators:
-                                    new_book.translator = ', '.join(translators)
-                                    new_book.global_custom_metadata['translators'] = new_book.translator
-                                if narrators:
-                                    new_book.narrator = ', '.join(narrators)
-                                    new_book.global_custom_metadata['narrators'] = new_book.narrator
-                                if illustrators:
-                                    new_book.illustrator = ', '.join(illustrators)
-                                    new_book.global_custom_metadata['illustrators'] = new_book.illustrator
-                            # External IDs
-                            if api_metadata.get('google_books_id'):
-                                new_book.google_books_id = api_metadata['google_books_id']
-                                new_book.global_custom_metadata['google_books_id'] = api_metadata['google_books_id']
-                            if api_metadata.get('openlibrary_id'):
-                                # Normalize OLID paths
-                                def _normalize_openlibrary_id(olid_val: str):
-                                    try:
-                                        if not olid_val:
-                                            return None
-                                        olid = str(olid_val).strip()
-                                        if olid.startswith('/'):
-                                            return olid
-                                        suffix = olid[-1:].upper()
-                                        if suffix == 'M':
-                                            return f"/books/{olid}"
-                                        if suffix == 'W':
-                                            return f"/works/{olid}"
-                                        if suffix == 'A':
-                                            return f"/authors/{olid}"
-                                        return f"/works/{olid}"
-                                    except Exception:
-                                        return None
-                                normalized_olid = _normalize_openlibrary_id(api_metadata['openlibrary_id'])
-                                new_book.openlibrary_id = normalized_olid or api_metadata['openlibrary_id']
-                                new_book.global_custom_metadata['openlibrary_id'] = new_book.openlibrary_id
-                            if api_metadata.get('asin'):
-                                new_book.asin = str(api_metadata['asin']).strip()
-                                new_book.global_custom_metadata['asin'] = new_book.asin
-                            # Ratings
-                            if api_metadata.get('average_rating') is not None:
-                                try:
-                                    new_book.average_rating = float(api_metadata['average_rating'])
-                                except Exception:
-                                    pass
-                            if api_metadata.get('rating_count') is not None:
-                                try:
-                                    new_book.rating_count = int(api_metadata['rating_count'])
-                                except Exception:
-                                    pass
-                            # If ISBNs present but we didn't or couldn't use ISBN lookup, still attach to aid de-dup
-                            if not use_isbn_lookup:
-                                if api_metadata.get('isbn13'):
-                                    new_book.isbn13 = api_metadata.get('isbn13')
-                                if api_metadata.get('isbn10'):
-                                    new_book.isbn10 = api_metadata.get('isbn10')
-                        
-                        # Create the book using the service
-                        try:
-                            success = await simplified_service.add_book_to_user_library(
-                                book_data=new_book,
-                                user_id=user_id,
-                                reading_status='plan_to_read'
-                            )
-                            
-                            if success:
-                                # Retrieve created book id by ISBN first (if present)
-                                created_book_id = None
-                                if new_book.isbn13:
-                                    created_book_id = simplified_service.find_book_by_isbn(new_book.isbn13)
-                                if not created_book_id and new_book.isbn10:
-                                    created_book_id = simplified_service.find_book_by_isbn(new_book.isbn10)
-                                if not created_book_id:
-                                    # Fallback to title/author lookup
-                                    created_book_id = simplified_service.find_book_by_title_author(new_book.title, new_book.author)
-                                if created_book_id:
-                                    resolution['book_id'] = created_book_id
-                                    created_books += 1
-                                    print(f"✅ [CREATE_BOOK] Created basic book: {created_book_id}")
-                                else:
-                                    raise Exception("Book created but could not retrieve ID")
-                            else:
-                                raise Exception("Failed to create basic book")
-                                
-                        except Exception as create_error:
-                            print(f"❌ [CREATE_BOOK] Failed to create book: {create_error}")
-                            raise create_error
-                    
-                    # Update progress
-                    books_processed += 1
-                    safe_update_import_job(user_id, task_id, {
-                        'books_created': created_books,
-                        'recent_activity': [f"Created book: {resolution['title']} ({books_processed}/{total_books_to_process})"]
-                    })
-                    
-                except Exception as e:
-                    print(f"❌ [CREATE_BOOK] Error creating book '{csv_name}': {e}")
-                    traceback.print_exc()
-                    error_count += 1
-                    
-                    # Continue processing other books even if one fails
-                    continue
-            
-            books_processed += 1
-            
-            # Update progress during book creation/matching phase
-            if books_processed % 2 == 0 or books_processed == total_books_to_process:
-                safe_update_import_job(user_id, task_id, {
-                    'processed': books_processed,
-                    'total': total_books_to_process,
-                    'recent_activity': [f"Processing books: {books_processed}/{total_books_to_process} completed"]
-                })
-        
-        # Now process all reading log entries
+                except Exception as ce:
+                    current_app.logger.warning(f"Create book failed for {csv_name}: {ce}")
+        # 2. process logs
         total_entries_processed = 0
-        
-        for book_data in books_for_matching:
-            csv_name = book_data['csv_name']
-            entries = book_data['entries']
-            
-            # Get the resolution for this CSV name or handle bookless entries
-            if csv_name == "[BOOKLESS_ENTRY]":
-                # Auto-resolve bookless entries
-                resolution = {'action': 'bookless'}
-            elif csv_name not in book_resolutions:
-                # Book was skipped by user
+        for block in books_for_matching:
+            csv_name = block.get('csv_name')
+            entries = block.get('entries', [])
+            res = book_resolutions.get(csv_name) if isinstance(book_resolutions, dict) else None
+            if not isinstance(res, dict):
+                res = {}
+            act = res.get('action')
+            # If no explicit resolution but block is marked bookless, treat as bookless
+            if not act and (block.get('is_bookless') or csv_name == '[BOOKLESS_ENTRY]'):
+                act = 'bookless'
+            if not act:
                 skipped_count += len(entries)
                 total_entries_processed += len(entries)
-                # Update progress after skipping entries
-                safe_update_import_job(user_id, task_id, {
-                    'processed': total_entries_processed,
-                    'total': total_entries_in_csv,
-                    'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
-                })
                 continue
-            else:
-                resolution = book_resolutions[csv_name]
-            
-            if resolution['action'] == 'error':
-                # Skip this book due to creation error
-                error_count += len(entries)
+            if act == 'skip':
+                skipped_count += len(entries)
                 total_entries_processed += len(entries)
-                # Update progress after error entries
-                safe_update_import_job(user_id, task_id, {
-                    'processed': total_entries_processed,
-                    'total': total_entries_in_csv,
-                    'reading_logs_created': success_count,
-                    'reading_log_errors': error_count,
-                    'reading_logs_skipped': skipped_count,
-                    'books_created': created_books,
-                    'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
-                })
                 continue
-            elif resolution['action'] in ['match', 'create']:
-                # Book-specific reading logs
-                book_id = resolution.get('book_id')
-                if not book_id:
-                    error_count += len(entries)
-                    total_entries_processed += len(entries)
-                    # Update progress after no book ID entries
-                    safe_update_import_job(user_id, task_id, {
-                        'processed': total_entries_processed,
-                        'total': total_entries_in_csv,
-                        'reading_logs_created': success_count,
-                        'reading_log_errors': error_count,
-                        'reading_logs_skipped': skipped_count,
-                        'books_created': created_books,
-                        'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
-                    })
-                    continue
-                    
-                # Create reading log entries for this book
-                for entry in entries:
-                    try:
-                        log_date = datetime.strptime(entry['date'], '%Y-%m-%d').date()
-                        
-                        reading_log = ReadingLog(
-                            user_id=str(user_id),
-                            book_id=book_id,
-                            date=log_date,
-                            pages_read=entry.get('pages_read', 0),
-                            minutes_read=entry.get('minutes_read', 0),
-                            notes=None,
-                            created_at=datetime.now(timezone.utc),
-                            updated_at=datetime.now(timezone.utc)
-                        )
-                        
-                        created_log = reading_log_service.create_reading_log_sync(reading_log)
-                        
-                        if created_log:
-                            success_count += 1
-                            print(f"✅ [READING_HISTORY] Created reading log: {csv_name} - {entry['date']}")
-                        else:
-                            error_count += 1
-                            print(f"❌ [READING_HISTORY] Failed to create reading log: {csv_name} - {entry['date']}")
-                        
-                        total_entries_processed += 1
-                        
-                        # Update progress periodically
-                        if total_entries_processed % 5 == 0 or total_entries_processed == total_entries_in_csv:
-                            safe_update_import_job(user_id, task_id, {
-                                'processed': total_entries_processed,
-                                'total': total_entries_in_csv,
-                                'reading_logs_created': success_count,
-                                'reading_log_errors': error_count,
-                                'reading_logs_skipped': skipped_count,
-                                'books_created': created_books,
-                                'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
-                            })
-                            
-                    except Exception as e:
-                        error_count += 1
-                        total_entries_processed += 1
-                        print(f"❌ [READING_HISTORY] Error creating reading log for {csv_name}: {e}")
-                        
-            elif resolution['action'] == 'bookless':
-                # Create "Unassigned Reading Logs" book if it doesn't exist
+            if act == 'bookless':
                 if unassigned_book_id is None:
                     try:
-                        # Check if "Unassigned Reading Logs" book already exists for this user
-                        search_results = book_service.search_books_sync("Unassigned Reading Logs", user_id, limit=1)
-                        
-                        if search_results:
-                            existing = search_results[0]
-                            unassigned_book_id = existing.id if hasattr(existing, 'id') else existing.get('id')
-                            print(f"✅ [READING_HISTORY] Found existing 'Unassigned Reading Logs' book: {unassigned_book_id}")
-                            # Backfill subtitle if missing
-                            existing_subtitle = getattr(existing, 'subtitle', None) if hasattr(existing, 'subtitle') else existing.get('subtitle') if isinstance(existing, dict) else None
-                            desired_subtitle = 'Generated by unspecified books during reading log imports'
-                            try:
-                                if not existing_subtitle:
-                                    book_service.update_book_sync(unassigned_book_id, str(user_id), subtitle=desired_subtitle)
-                                    print("🔧 [READING_HISTORY] Backfilled subtitle on existing 'Unassigned Reading Logs' book")
-                            except Exception as _:
-                                pass
+                        search = book_service.search_books_sync("Unassigned Reading Logs", user_id, limit=1)
+                        if search:
+                            unassigned_book_id = getattr(search[0], 'id', None) or search[0].get('id')
                         else:
-                            # Create the default "Unassigned Reading Logs" book
-                            from app.simplified_book_service import SimplifiedBook, SimplifiedBookService
-                            
-                            # Create a SimplifiedBook object
-                            unassigned_book_data = SimplifiedBook(
-                                title='Unassigned Reading Logs',
-                                author='System Generated',
-                                subtitle='Generated by unspecified books during reading log imports',
-                                description='Default book for reading log entries that could not be matched to specific books.',
-                                published_date='',
-                                publisher='',
-                                page_count=0,
-                                isbn13='',
-                                isbn10='',
-                                language='',
-                                categories=['Reading Logs'],
-                            )
-                            # Attempt a neutral cover via unified helper (optional)
-                            try:
-                                from app.utils.book_utils import get_best_cover_for_book
-                                best_cover = get_best_cover_for_book(title=unassigned_book_data.title, author=unassigned_book_data.author)
-                                if best_cover and best_cover.get('cover_url'):
-                                    unassigned_book_data.cover_url = best_cover['cover_url']
-                                    unassigned_book_data.global_custom_metadata['cover_source'] = best_cover.get('source')
-                                    unassigned_book_data.global_custom_metadata['cover_quality'] = best_cover.get('quality')
-                            except Exception as e:
-                                print(f"⚠️ [READING_HISTORY] Unified cover selection failed for Unassigned book: {e}")
-                            
-                            # Use SimplifiedBookService to create the book
-                            simplified_service = SimplifiedBookService()
-                            unassigned_book_id = await simplified_service.create_standalone_book(unassigned_book_data)
-                            
-                            if unassigned_book_id:
-                                print(f"✅ [READING_HISTORY] Created 'Unassigned Reading Logs' book: {unassigned_book_id}")
-                            else:
-                                raise Exception("Failed to create 'Unassigned Reading Logs' book")
-                        
-                    except Exception as e:
-                        print(f"❌ [READING_HISTORY] Error creating 'Unassigned Reading Logs' book: {e}")
-                        error_count += len(entries)
+                            service = SimplifiedBookService()
+                            ub = SimplifiedBook(title='Unassigned Reading Logs', author='System Generated')
+                            unassigned_book_id = await service.create_standalone_book(ub)
+                            if unassigned_book_id and default_location_id and location_service:
+                                try:
+                                    location_service.add_book_to_location(unassigned_book_id, default_location_id, user_id)
+                                except Exception:
+                                    pass
+                    except Exception as ue:
+                        current_app.logger.warning(f"Unassigned book creation failed: {ue}")
+                        skipped_count += len(entries)
                         total_entries_processed += len(entries)
                         continue
-                
-                for entry in entries:
-                    try:
-                        log_date = datetime.strptime(entry['date'], '%Y-%m-%d').date()
-                        
-                        reading_log = ReadingLog(
-                            user_id=str(user_id),
-                            book_id=unassigned_book_id,  # Use the unassigned book
-                            date=log_date,
-                            pages_read=entry.get('pages_read', 0),
-                            minutes_read=entry.get('minutes_read', 0),
-                            notes=f"Original book name: {csv_name}",  # Store original book name in notes
-                            created_at=datetime.now(timezone.utc),
-                            updated_at=datetime.now(timezone.utc)
-                        )
-                        
-                        created_log = reading_log_service.create_reading_log_sync(reading_log)
-                        
-                        if created_log:
-                            success_count += 1
-                            print(f"✅ [READING_HISTORY] Created reading log for 'Unassigned': {csv_name} - {entry['date']}")
-                        else:
-                            error_count += 1
-                            print(f"❌ [READING_HISTORY] Failed to create reading log for 'Unassigned': {csv_name} - {entry['date']}")
-                        
-                        total_entries_processed += 1
-                        
-                        # Update progress periodically
-                        if total_entries_processed % 5 == 0 or total_entries_processed == total_entries_in_csv:
-                            safe_update_import_job(user_id, task_id, {
-                                'processed': total_entries_processed,
-                                'total': total_entries_in_csv,
-                                'reading_logs_created': success_count,
-                                'reading_log_errors': error_count,
-                                'reading_logs_skipped': skipped_count,
-                                'books_created': created_books,
-                                'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
-                            })
-                            
-                    except Exception as e:
+                target_book_id = unassigned_book_id
+            else:
+                # Support legacy key 'book_id' for already persisted jobs
+                if act == 'match':
+                    target_book_id = res.get('matched_book_id') or res.get('book_id')
+                else:
+                    target_book_id = res.get('created_book_id')
+            for entry in entries:
+                try:
+                    log_date = datetime.strptime(entry.get('date'), '%Y-%m-%d').date()
+                    rl = ReadingLog(
+                        user_id=str(user_id),
+                        book_id=target_book_id,
+                        date=log_date,
+                        pages_read=entry.get('pages_read', 0),
+                        minutes_read=entry.get('minutes_read', 0),
+                        notes=(entry.get('notes') or (f"Original book name: {csv_name}" if act == 'bookless' else None)),
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc)
+                    )
+                    created_log = reading_log_service.create_reading_log_sync(rl)
+                    if created_log:
+                        success_count += 1
+                        display_name = csv_name
+                        if act == 'match':
+                            try:
+                                matched_book_obj = book_service.get_book_sync(target_book_id)
+                                if matched_book_obj:
+                                    display_name = getattr(matched_book_obj, 'title', None) or getattr(matched_book_obj, 'name', None) or (matched_book_obj.get('title') if isinstance(matched_book_obj, dict) else csv_name)
+                            except Exception:
+                                pass
+                        label = f"{log_date} — {display_name}"
+                        bits = []
+                        p = entry.get('pages_read') or 0
+                        m = entry.get('minutes_read') or 0
+                        if p: bits.append(f"{p}p")
+                        if m: bits.append(f"{m}m")
+                        if bits:
+                            label += f" ({', '.join(bits)})"
+                        if len(success_detail_strings) < 500:
+                            success_detail_strings.append(label)
+                    else:
                         error_count += 1
-                        total_entries_processed += 1
-                        print(f"❌ [READING_HISTORY] Error creating reading log for {csv_name}: {e}")
-        
-        # Final status update - use simple entry-based counts
+                except Exception:
+                    error_count += 1
+                finally:
+                    total_entries_processed += 1
+                    if total_entries_processed % 5 == 0 or total_entries_processed == total_entries_in_csv:
+                        safe_update_import_job(user_id, task_id, {
+                            'processed': total_entries_processed,
+                            'total': total_entries_in_csv,
+                            'reading_logs_created': success_count,
+                            'reading_log_errors': error_count,
+                            'reading_logs_skipped': skipped_count,
+                            'books_created': created_books,
+                            'recent_activity': [f"Processing reading logs: {total_entries_processed}/{total_entries_in_csv} entries completed"]
+                        })
+        matched_existing = 0
+        matched_book_titles: list[str] = []
+        if isinstance(book_resolutions, dict):
+            matched_ids = {}
+            for csv_name, r in book_resolutions.items():
+                if r.get('action') == 'match':
+                    bid = r.get('matched_book_id') or r.get('book_id')
+                    if bid and bid not in matched_ids:
+                        matched_ids[bid] = csv_name
+            matched_existing = len(matched_ids)
+            # Resolve titles
+            for bid, csv_name in matched_ids.items():
+                try:
+                    bobj = book_service.get_book_sync(bid)
+                    title = None
+                    if bobj:
+                        title = getattr(bobj, 'title', None) or getattr(bobj, 'name', None)
+                        if isinstance(bobj, dict):
+                            title = bobj.get('title') or bobj.get('name') or title
+                    if not title:
+                        title = csv_name
+                    if title and title not in matched_book_titles:
+                        matched_book_titles.append(title)
+                except Exception:
+                    if csv_name and csv_name not in matched_book_titles:
+                        matched_book_titles.append(csv_name)
+        books_involved = matched_existing + created_books
+        distinct_books_total = len([b for b in books_for_matching if b.get('csv_name') != '[BOOKLESS_ENTRY]'])
         final_status = 'completed' if error_count == 0 else 'completed_with_errors'
-        
         safe_update_import_job(user_id, task_id, {
             'status': final_status,
             'import_type': 'reading_history',
-            'processed': total_entries_processed,  # Total entries processed
-            'success': success_count,  # Successful reading log entries
-            'errors': error_count,  # Reading log entries that failed
-            'skipped': skipped_count,  # Reading log entries that were skipped
-            'unmatched': 0,  # No more unmatched books at this point
-            'total': total_entries_in_csv,  # Total entries in the CSV file
-            'books_for_matching': [],  # Clear the matching data
-            'reading_logs_created': success_count,  # Store actual reading log count
-            'reading_log_errors': error_count,  # Store reading log error count
-            'books_created': created_books,  # Number of new books created
+            'processed': total_entries_processed,
+            'success': success_count,
+            'errors': error_count,
+            'skipped': skipped_count,
+            'unmatched': 0,
+            'total': total_entries_in_csv,
+            'books_for_matching': [],
+            'reading_logs_created': success_count,
+            'reading_log_errors': error_count,
+            'books_created': created_books,
+            'books_matched': matched_existing,
+            'books_involved': books_involved,
+            'distinct_books_total': distinct_books_total,
+            'reading_log_success_details': success_detail_strings,
+            'matched_book_titles': matched_book_titles,
+            'created_book_titles': created_book_titles,
             'recent_activity': [
-                f"Import completed: {success_count} reading logs created, {error_count} errors, {skipped_count} skipped",
-                f"Total entries processed: {total_entries_processed}/{total_entries_in_csv}",
-                f"New books created: {created_books}"
+                f"Import completed: {success_count} reading logs created across {books_involved} books ({matched_existing} matched, {created_books} created)",
+                f"Errors: {error_count}, Skipped: {skipped_count}",
+                f"Total entries processed: {total_entries_processed}/{total_entries_in_csv}"
             ]
         })
-
-        # Trigger post-import backup for reading history imports if any logs created
-        try:
-            if success_count > 0:
+        if success_count > 0:
+            try:
                 def _run_backup():
                     try:
                         from app.services.simple_backup_service import get_simple_backup_service
@@ -3997,22 +3587,22 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                         svc.create_backup(description=f'Post-reading-history import backup: {success_count} logs', reason='post_import_reading_history')
                     except Exception as be:
                         current_app.logger.warning(f"Post-reading-history backup failed: {be}")
-                t = threading.Thread(target=_run_backup, daemon=True)
-                t.start()
-        except Exception as outer_be:
-            current_app.logger.warning(f"Failed launching post-reading-history backup thread: {outer_be}")
-        
-        print(f"🎉 [READING_HISTORY] Final import complete:")
-        print(f"   Reading logs created: {success_count}")
-        print(f"   Errors: {error_count}")
-        print(f"   Skipped: {skipped_count}")
-        print(f"   Books created: {created_books}")
-        
-    finally:
-        # Clean up temp file
+                threading.Thread(target=_run_backup, daemon=True).start()
+            except Exception as outer_be:
+                current_app.logger.warning(f"Failed launching post-reading-history backup thread: {outer_be}")
+    except Exception as e:
+        current_app.logger.error(f"Fatal reading history import error: {e}")
         try:
-            os.unlink(csv_file_path)
-            print(f"🗑️ [READING_HISTORY] Cleaned up temp file: {csv_file_path}")
+            safe_update_import_job(user_id, task_id, {
+                'status': 'failed',
+                'error_messages': [{'message': str(e), 'type': 'processing_error'}]
+            })
+        except Exception:
+            pass
+    finally:
+        try:
+            if csv_file_path and os.path.exists(csv_file_path):
+                os.unlink(csv_file_path)
         except Exception:
             pass
 
