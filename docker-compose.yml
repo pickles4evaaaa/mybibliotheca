@@ -6,8 +6,11 @@ services:
     volumes:
       # Mount local data directory for migration support, Kuzu database, and backups
       - ./data:/app/data
-      # Mount static directory for CSS, JS, and other static files
-      - ./app/static:/app/static
+  # NOTE: Do NOT bind-mount the static directory on macOS.
+  # Docker Desktop's osxfs can trigger EDEADLK (Resource deadlock avoided)
+  # when Gunicorn/Flask read static files via wsgi.file_wrapper.
+  # Static assets are copied into the image at build time; hot-reload of
+  # static files should be done with the dev compose file instead.
     environment:
       # Security - MUST be set via .env file or environment
       SECRET_KEY: ${SECRET_KEY}

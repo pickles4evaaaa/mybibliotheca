@@ -752,26 +752,40 @@ def create_app():
     # Add explicit static file serving for production (gunicorn doesn't serve static files by default)
     @app.route('/static/<path:filename>')
     def serve_static(filename):
-        """Serve static files in production mode."""
+        """Serve static files in production mode with robust path fallback.
+
+        Historically we bind-mounted ./app/static to /app/static in Docker. To avoid
+        macOS bind mount deadlocks, we removed that mount. The project structure keeps
+        static assets under the package path app/static (i.e., /app/app/static in the
+        container). This handler checks both locations and serves the first match.
+        """
         import os
         import mimetypes
-        from flask import send_from_directory
-        # Use the explicit static folder path since we disabled Flask's static handling
+        from flask import send_from_directory, abort
 
-        # Check if we're in Docker (production) or local development
         docker_static_dir = '/app/static'
-        local_static_dir = os.path.join(os.path.dirname(__file__), 'static')
-
-        if os.path.exists(docker_static_dir):
-            static_dir = docker_static_dir
-        else:
-            static_dir = local_static_dir
+        package_static_dir = os.path.join(os.path.dirname(__file__), 'static')  # /app/app/static
 
         # Ensure proper MIME types for fonts (bootstrap-icons)
         mimetypes.add_type('font/woff2', '.woff2')
         mimetypes.add_type('font/woff', '.woff')
 
-        return send_from_directory(static_dir, filename)
+        # Prefer /app/static only if the specific file exists there
+        docker_path = os.path.join(docker_static_dir, filename)
+        pkg_path = os.path.join(package_static_dir, filename)
+
+        if os.path.exists(docker_path):
+            return send_from_directory(docker_static_dir, filename)
+        if os.path.exists(pkg_path):
+            return send_from_directory(package_static_dir, filename)
+
+        # If neither exists, fall back to whichever directory exists to preserve
+        # prior behavior (will 404 from send_from_directory)
+        if os.path.isdir(docker_static_dir):
+            return send_from_directory(docker_static_dir, filename)
+        if os.path.isdir(package_static_dir):
+            return send_from_directory(package_static_dir, filename)
+        return abort(404)
 
     # Add routes to serve user data files from data directory
     @app.route('/covers/<path:filename>')
