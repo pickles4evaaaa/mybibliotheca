@@ -70,6 +70,23 @@
                                     <h2 class="h5 text-muted mb-3">{{ book.subtitle }}</h2>
                                 {% endif %}
                                 
+                                {# Series directly under subtitle #}
+                                {% if book.series or book.series_volume or book.series_order %}
+                                <div class="mb-3">
+                                    <small class="text-muted d-block">Series</small>
+                                    <span class="badge bg-primary me-2">
+                                        <i class="bi bi-collection me-1"></i>
+                                        {% if book.series %}
+                                            {{ book.series.name if book.series.name else book.series }}
+                                        {% else %}
+                                            Unknown Series
+                                        {% endif %}
+                                        {% if book.series_volume %} - Vol. {{ book.series_volume }}{% endif %}
+                                        {% if book.series_order %} (#{{ book.series_order }}){% endif %}
+                                    </span>
+                                </div>
+                                {% endif %}
+                                
                                 <!-- Contributors Section -->
                                 <div class="contributors-section mb-3">
                                     <!-- Authors -->
@@ -161,6 +178,15 @@
                                     </div>
                                     {% endif %}
                                 </div>
+                                
+                                
+                                {# Categories directly under contributors #}
+                                {% if book_categories or book.categories %}
+                                <div class="mb-3">
+                                    <small class="text-muted d-block mb-2">{{ get_genre_term_plural() }}:</small>
+                                    {{ display_categories(book, compact=false, show_icon=true, book_categories=book_categories) }}
+                                </div>
+                                {% endif %}
                                 
                                 <!-- Basic Metadata Row -->
                                 <div class="row g-3 mb-3">
@@ -261,30 +287,7 @@
                                 </div>
                                 {% endif %}
                                 
-                                <!-- Series Information -->
-                                {% if book.series or book.series_volume or book.series_order %}
-                                <div class="mb-3">
-                                    <small class="text-muted d-block">Series</small>
-                                    <span class="badge bg-primary me-2">
-                                        <i class="bi bi-collection me-1"></i>
-                                        {% if book.series %}
-                                            {{ book.series.name if book.series.name else book.series }}
-                                        {% else %}
-                                            Unknown Series
-                                        {% endif %}
-                                        {% if book.series_volume %} - Vol. {{ book.series_volume }}{% endif %}
-                                        {% if book.series_order %} (#{{ book.series_order }}){% endif %}
-                                    </span>
-                                </div>
-                                {% endif %}
                                 
-                                <!-- {{ get_genre_term_plural() }} -->
-                                {% if book_categories or book.categories %}
-                                <div class="mb-3">
-                                    <small class="text-muted d-block mb-2">{{ get_genre_term_plural() }}:</small>
-                                    {{ display_categories(book, compact=false, show_icon=true, book_categories=book_categories) }}
-                                </div>
-                                {% endif %}
                                 
                                 <!-- Status & Ownership Grid -->
                                 <div class="row g-3 align-items-stretch">
@@ -1528,6 +1531,8 @@
 
 
 
+<!-- Preload people data for client-side contributor search -->
+<script id="all-persons-json" type="application/json">{{ all_persons | tojson | safe }}</script>
 <script>
 // Terminology configuration for JavaScript
 const GENRE_TERM = '{{ get_genre_term() }}';
@@ -2696,7 +2701,8 @@ function initializeContributors() {
     }
 
     // Store all persons data for client-side filtering (like the People page)
-    window.allPersonsData = {{ all_persons | tojson | safe }};
+    const personsJsonEl = document.getElementById('all-persons-json');
+    window.allPersonsData = personsJsonEl ? JSON.parse(personsJsonEl.textContent || '[]') : [];
 
     function searchContributors(input, query) {
         if (!query || query.length < 1) {
