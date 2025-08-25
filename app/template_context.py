@@ -286,3 +286,11 @@ def register_context_processors(app):
         except Exception:
             return (None, None)
     app.jinja_env.globals.update(get_effective_reading_defaults=_get_defaults)
+    # Expose effective rows-per-page resolver
+    def _get_rows(user_id=None):
+        try:
+            from app.utils.user_settings import get_effective_rows_per_page
+            return get_effective_rows_per_page(user_id)
+        except Exception:
+            return None
+    app.jinja_env.globals.update(get_effective_rows_per_page=_get_rows)

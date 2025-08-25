@@ -573,6 +573,7 @@ def settings_reading_prefs_partial():
     # Simple manual form parsing; no WTForms needed
     from app.utils.user_settings import load_user_settings, save_user_settings
     if request.method == 'POST':
+        rows_raw = (request.form.get('library_rows_per_page') or '').strip()
         dp_raw = (request.form.get('default_pages_per_log') or '').strip()
         dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
         abs_username = (request.form.get('abs_username') or '').strip()
@@ -582,6 +583,7 @@ def settings_reading_prefs_partial():
             except Exception:
                 return None
         payload = {
+            'library_rows_per_page': _to_int_or_none(rows_raw),
             'default_pages_per_log': _to_int_or_none(dp_raw),
             'default_minutes_per_log': _to_int_or_none(dm_raw),
             'abs_username': abs_username

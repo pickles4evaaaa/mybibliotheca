@@ -293,6 +293,14 @@ class KuzuServiceFacade:
     def get_all_books_with_user_overlay_sync(self, user_id: str) -> List[Dict[str, Any]]:
         """Sync version of get_all_books_with_user_overlay."""
         return self.relationship_service.get_all_books_with_user_overlay_sync(user_id)
+
+    def get_books_with_user_overlay_paginated_sync(self, user_id: str, limit: int, offset: int, sort: str = 'title_asc') -> List[Dict[str, Any]]:
+        """Paginated list of books with user overlay."""
+        return self.relationship_service.get_books_with_user_overlay_paginated_sync(user_id, limit, offset, sort)
+
+    def get_total_book_count_sync(self) -> int:
+        """Total number of Book nodes."""
+        return self.relationship_service.get_total_book_count_sync()
     
     # ==========================================
     # Search Service Methods

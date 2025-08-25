@@ -1212,8 +1212,26 @@ def library():
     search_query = request.args.get('search', '')
     sort_option = request.args.get('sort', 'title_asc')  # Default to title A-Z
 
-    # Use service layer with global book visibility
-    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+    # Pagination parameters: rows*cols determines per_page; default rows via settings
+    try:
+        from app.utils.user_settings import get_effective_rows_per_page
+        default_rows = get_effective_rows_per_page(str(current_user.id)) or 4
+    except Exception:
+        default_rows = 4
+    page = request.args.get('page', 1, type=int)
+    cols = request.args.get('cols', 0, type=int)
+    rows = request.args.get('rows', default_rows, type=int)
+    # cols can be 0 on first load; client JS will detect and reload if needed. Fallback to 5 typical desktop cols.
+    effective_cols = cols if cols and cols > 0 else 5
+    per_page = max(1, rows) * max(1, effective_cols)
+
+    # Use service layer with global book visibility (paginated)
+    offset = (max(1, page) - 1) * per_page
+    user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
+    try:
+        total_books = book_service.get_total_book_count_sync()
+    except Exception:
+        total_books = len(user_books)
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
@@ -1255,7 +1273,7 @@ def library():
         return getattr(book, 'ownership_status', None)
     
     stats = {
-        'total_books': len(user_books),
+        'total_books': total_books,
         'books_read': len([b for b in user_books if get_reading_status(b) == 'read']),
         'currently_reading': len([b for b in user_books if get_reading_status(b) in ['reading', 'currently_reading']]),
         'want_to_read': len([b for b in user_books if get_reading_status(b) == 'plan_to_read']),
@@ -1425,7 +1443,7 @@ def library():
     
     books = converted_books
 
-    # Get distinct values for filter dropdowns (from all books, not filtered)
+    # Get distinct values for filter dropdowns (ideally from all books; fallback to current page sample for now)
     all_books = user_books
     
     categories = set()
@@ -1494,6 +1512,11 @@ def library():
         'library_enhanced.html',
         books=books,
         stats=stats,
+    page=page,
+    per_page=per_page,
+    rows=rows,
+    cols=cols,
+    total_books=total_books,
         categories=sorted([cat for cat in categories if cat is not None and cat != '']),
         publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
         languages=sorted([lang for lang in languages if lang is not None and lang != '']),

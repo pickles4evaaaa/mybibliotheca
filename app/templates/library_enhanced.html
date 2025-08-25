@@ -328,6 +328,8 @@
             </a>
         </div>
     </div>
+    <!-- Library pagination meta (for JS) -->
+    <div id="lib-meta" data-page="{{ page or 1 }}" data-rows="{{ rows or 4 }}" data-total="{{ (total_books or stats.total_books) if stats else total_books }}" hidden></div>
 
     <!-- Library Stats with Filters -->
     <div class="row mb-4">
@@ -520,6 +522,16 @@
     <div class="row">
         <div class="col-12">
             {% if books %}
+                <!-- Pagination controls -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="text-muted small">
+                        Page {{ page or 1 }} • Rows {{ rows or 1 }} • Per page {{ per_page or books|length }} • Total {{ (total_books or stats.total_books) if stats else total_books }}
+                    </div>
+                    <div class="btn-group">
+                        <a id="prevPageBtn" class="btn btn-outline-secondary btn-sm" href="#">&laquo; Prev</a>
+                        <a id="nextPageBtn" class="btn btn-outline-secondary btn-sm" href="#">Next &raquo;</a>
+                    </div>
+                </div>
                 <!-- Selection toolbar (hidden by default) -->
                 <div id="selection-toolbar" class="card bg-primary text-white mb-3" style="display: none;">
                     <div class="card-body py-2">
@@ -742,6 +754,67 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Searchable dropdown functionality
     initializeSearchableDropdowns();
+
+    // ---- Row-based pagination helpers ----
+    function measureColumns(){
+        const container = document.getElementById('books-container');
+        if(!container) return 0;
+        const first = container.querySelector('.book-item');
+        if(!first) return 0;
+        const rowWidth = container.clientWidth || container.getBoundingClientRect().width;
+        const itemWidth = first.getBoundingClientRect().width;
+        if(!rowWidth || !itemWidth) return 0;
+        return Math.max(1, Math.floor(rowWidth / itemWidth));
+    }
+    function goToPage(targetPage){
+        const url = new URL(window.location.href);
+        const cols = measureColumns();
+        const metaEl = document.getElementById('lib-meta');
+        const rows = parseInt((metaEl && metaEl.dataset.rows) ? metaEl.dataset.rows : '4', 10);
+        url.searchParams.set('page', String(targetPage));
+        url.searchParams.set('rows', String(rows));
+        url.searchParams.set('cols', String(cols || 1));
+        window.location.href = url.toString();
+    }
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    const metaEl = document.getElementById('lib-meta');
+    const currentPage = parseInt((metaEl && metaEl.dataset.page) ? metaEl.dataset.page : '1', 10);
+    if(prevBtn){ prevBtn.addEventListener('click', function(e){ e.preventDefault(); const p = currentPage; if(p>1) goToPage(p-1); }); }
+    if(nextBtn){ nextBtn.addEventListener('click', function(e){ e.preventDefault(); const p = currentPage; goToPage(p+1); }); }
+    (function ensureCols(){
+        const url = new URL(window.location.href);
+        const colsParam = parseInt(url.searchParams.get('cols')||'0', 10);
+        if(!colsParam || colsParam<=0){
+            const measured = measureColumns();
+            if(measured){
+                const metaEl = document.getElementById('lib-meta');
+                const p = parseInt((metaEl && metaEl.dataset.page) ? metaEl.dataset.page : '1', 10);
+                const rows = parseInt((metaEl && metaEl.dataset.rows) ? metaEl.dataset.rows : '4', 10);
+                url.searchParams.set('page', String(p));
+                url.searchParams.set('rows', String(rows));
+                url.searchParams.set('cols', String(measured));
+                window.location.replace(url.toString());
+            }
+        }
+    })();
+    let resizeTO;
+    window.addEventListener('resize', function(){
+        clearTimeout(resizeTO);
+        resizeTO = setTimeout(()=>{
+            const url = new URL(window.location.href);
+            const oldCols = parseInt(url.searchParams.get('cols')||'0', 10);
+            const newCols = measureColumns();
+            if(newCols && newCols !== oldCols){
+                const metaEl = document.getElementById('lib-meta');
+                const rows = parseInt((metaEl && metaEl.dataset.rows) ? metaEl.dataset.rows : '4', 10);
+                url.searchParams.set('page','1');
+                url.searchParams.set('rows', String(rows));
+                url.searchParams.set('cols', String(newCols));
+                window.location.replace(url.toString());
+            }
+        }, 250);
+    });
 
     window.deleteSelected = function() {
         const selected = document.querySelectorAll('.book-checkbox:checked');

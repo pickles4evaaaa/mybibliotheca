@@ -38,6 +38,16 @@
     </div>
   </div>
   <div class="mt-4">
+    <h6 class="fw-semibold">Library Defaults</h6>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Default Rows per Page</label>
+        <input type="number" min="1" step="1" name="default_rows_per_page" class="form-control" value="{{ (library_defaults.default_rows_per_page if library_defaults else None) or '' }}" placeholder="e.g. 4" />
+        <small class="text-muted">Admin default number of rows shown per page in the library grid.</small>
+      </div>
+    </div>
+  </div>
+  <div class="mt-4">
     <h6 class="fw-semibold">Background</h6>
     <div class="row g-3">
       <div class="col-md-3">

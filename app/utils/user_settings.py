@@ -93,3 +93,36 @@ def get_effective_reading_defaults(user_id: Optional[str]) -> Tuple[Optional[int
         return ap_i, am_i
     except Exception:
         return None, None
+
+
+def get_effective_rows_per_page(user_id: Optional[str]) -> Optional[int]:
+    """
+    Return the effective default rows-per-page for the library grid for the given user.
+    Precedence: per-user JSON override > admin system_config default > None
+    """
+    try:
+        # Per-user override
+        u = load_user_settings(user_id)
+        val = u.get('library_rows_per_page')
+        try:
+            v_i = int(val) if val not in (None, "") else None
+        except Exception:
+            v_i = None
+        if v_i is not None and v_i >= 1:
+            return v_i
+    except Exception:
+        pass
+
+    # Fallback to admin/system defaults
+    try:
+        from app.admin import load_system_config
+        cfg = load_system_config() or {}
+        lib = cfg.get('library_defaults') or {}
+        dv = lib.get('default_rows_per_page')
+        try:
+            dv_i = int(dv) if dv not in (None, "") else None
+        except Exception:
+            dv_i = None
+        return dv_i if (dv_i is None or dv_i >= 1) else None
+    except Exception:
+        return None

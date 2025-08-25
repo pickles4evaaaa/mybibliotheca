@@ -170,7 +170,7 @@ def save_system_config(config):
         existing_config['server_timezone'] = config.get('server_timezone', 'UTC')
         existing_config['terminology_preference'] = config.get('terminology_preference', 'genre')
         
-        # Update background configuration if provided
+    # Update background configuration if provided
         if 'background_config' in config:
             existing_config['background_config'] = config['background_config']
         # Optional: reading log defaults
@@ -188,6 +188,17 @@ def save_system_config(config):
             existing_config['reading_log_defaults'] = {
                 'default_pages_per_log': dp_i,
                 'default_minutes_per_log': dm_i
+            }
+        # Optional: library defaults
+        if 'library_defaults' in config:
+            lib = config.get('library_defaults') or {}
+            try:
+                dr = lib.get('default_rows_per_page')
+                dr_i = int(dr) if dr not in (None, '',) else None
+            except Exception:
+                dr_i = lib.get('default_rows_per_page') if isinstance(lib.get('default_rows_per_page'), int) else None
+            existing_config['library_defaults'] = {
+                'default_rows_per_page': dr_i
             }
         existing_config['last_updated'] = datetime.now().isoformat()
         
@@ -717,7 +728,10 @@ def settings():
             'server_timezone': server_timezone,
             'terminology_preference': terminology_preference,
             'background_config': background_config,
-            'reading_log_defaults': reading_log_defaults
+            'reading_log_defaults': reading_log_defaults,
+            'library_defaults': {
+                'default_rows_per_page': (request.form.get('default_rows_per_page') or '').strip() or None
+            }
         }
         
         if save_system_config(config):
@@ -854,6 +868,9 @@ def get_admin_settings_context():
         'reading_log_defaults': system_config.get('reading_log_defaults', {
             'default_pages_per_log': None,
             'default_minutes_per_log': None
+        }),
+        'library_defaults': system_config.get('library_defaults', {
+            'default_rows_per_page': None
         })
     }
 

@@ -10,6 +10,11 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
   <div class="row g-3">
     <div class="col-md-4">
+      <label class="form-label">Library Rows per Page</label>
+      <input type="number" min="1" step="1" name="library_rows_per_page" class="form-control" value="{{ settings.library_rows_per_page or '' }}" placeholder="e.g. 4"/>
+      <small class="text-muted">Leave blank to use server default.</small>
+    </div>
+    <div class="col-md-4">
       <label class="form-label">Default Pages per Log</label>
       <input type="number" min="0" step="1" name="default_pages_per_log" class="form-control" value="{{ settings.default_pages_per_log or '' }}" placeholder="e.g. 10"/>
       <small class="text-muted">Leave blank to use server default (if any)</small>

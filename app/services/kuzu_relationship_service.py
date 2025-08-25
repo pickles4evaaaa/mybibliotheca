@@ -690,3 +690,66 @@ class KuzuRelationshipService:
     def get_recently_added_want_to_read_books_sync(self, user_id: str, limit: int = 5) -> List[Book]:
         """Sync wrapper for get_recently_added_want_to_read_books."""
         return run_async(self.get_recently_added_want_to_read_books(user_id, limit))
+
+    # ---------------- Pagination helpers for library -----------------
+    async def get_books_with_user_overlay_paginated(self, user_id: str, limit: int, offset: int, sort: str = 'title_asc') -> List[Dict[str, Any]]:
+        """Fetch a page of books with personal overlay.
+
+        Supports basic sorting by title asc/desc. More complex sorts (author) are handled client-side.
+        """
+        try:
+            sort_clause = 'ORDER BY lower(b.normalized_title) ASC'
+            if sort == 'title_desc':
+                sort_clause = 'ORDER BY lower(b.normalized_title) DESC'
+            # Fallback to title if normalized_title missing
+            query = f"""
+            MATCH (b:Book)
+            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            OPTIONAL MATCH (u:User {{id: $user_id}})-[pm:HAS_PERSONAL_METADATA]->(b)
+            WITH b,
+                 COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {{id: l.id, name: l.name}} ELSE NULL END) as locations,
+                 pm
+            {sort_clause}
+            SKIP $offset LIMIT $limit
+            RETURN b, locations, pm
+            """
+            result = safe_execute_kuzu_query(query, {"user_id": user_id, "offset": offset, "limit": limit})
+            rows = _convert_query_result_to_list(result)
+            books: List[Dict[str, Any]] = []
+            for row in rows:
+                try:
+                    book_data = row.get('col_0')
+                    if not book_data:
+                        # Skip rows without a book payload
+                        continue
+                    if isinstance(book_data, str):
+                        book_data = {'id': book_data}
+                    locations_data = row.get('col_1', []) or []
+                    pm = row.get('col_2') or {}
+                    book = self._create_enriched_book(book_data, {}, locations_data, pm)
+                    books.append(book.__dict__.copy() if hasattr(book, '__dict__') else {
+                        'id': getattr(book, 'id', ''),
+                        'uid': getattr(book, 'id', ''),
+                        'title': getattr(book, 'title', '')
+                    })
+                except Exception:
+                    continue
+            return books
+        except Exception as e:
+            logger.error(f"[RELATIONSHIP_SERVICE] get_books_with_user_overlay_paginated error: {e}")
+            return []
+
+    def get_books_with_user_overlay_paginated_sync(self, user_id: str, limit: int, offset: int, sort: str = 'title_asc') -> List[Dict[str, Any]]:
+        return run_async(self.get_books_with_user_overlay_paginated(user_id, limit, offset, sort))
+
+    def get_total_book_count_sync(self) -> int:
+        try:
+            res = safe_execute_kuzu_query("MATCH (b:Book) RETURN COUNT(b) as c", {})
+            rows = _convert_query_result_to_list(res)
+            if rows:
+                first = rows[0]
+                val = first.get('c') or first.get('col_0') or first.get('result')
+                return int(val) if isinstance(val, (int, float, str)) else 0
+        except Exception as e:
+            logger.warning(f"[RELATIONSHIP_SERVICE] total count error: {e}")
+        return 0
