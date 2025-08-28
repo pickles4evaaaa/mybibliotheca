@@ -405,7 +405,9 @@ def site_config_step():
                 'people_metadata_mode': request.form.get('people_metadata_mode', 'openlibrary'),
                 # Optional reading log defaults (may be omitted or blank)
                 'default_pages_per_log': (request.form.get('default_pages_per_log') or '').strip(),
-                'default_minutes_per_log': (request.form.get('default_minutes_per_log') or '').strip()
+                'default_minutes_per_log': (request.form.get('default_minutes_per_log') or '').strip(),
+                # Library pagination default rows per page (optional)
+                'default_rows_per_page': (request.form.get('default_rows_per_page') or '').strip()
             }
             
             logger.info(f"🔍 ONBOARDING DEBUG: Saving site_config: {site_config}")
@@ -475,12 +477,23 @@ def site_config_step():
     # Get timezone list
     timezones = pytz.common_timezones
     current_config = get_onboarding_data().get('site_config', {})
+    # Create a display copy and prefill defaults from system config if not set yet
+    display_config = dict(current_config) if isinstance(current_config, dict) else {}
+    try:
+        from .admin import load_system_config
+        sys_cfg = load_system_config() or {}
+        lib = sys_cfg.get('library_defaults') or {}
+        drp = lib.get('default_rows_per_page')
+        if drp is not None and 'default_rows_per_page' not in display_config:
+            display_config['default_rows_per_page'] = drp
+    except Exception:
+        pass
     
-    logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 2 template with current_config: {current_config}")
+    logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 2 template with current_config: {display_config}")
     
     return render_template('onboarding/step2_site_config.html',
                          timezones=timezones,
-                         current_config=current_config,
+                         current_config=display_config,
                          step=2,
                          total_steps=5)
 
@@ -1446,6 +1459,15 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 'default_minutes_per_log': _to_int_or_none(dm_raw)
             }
             system_config['reading_log_defaults'] = reading_log_defaults
+            # Include library defaults (pagination rows per page) if provided
+            try:
+                dr_raw = (site_config.get('default_rows_per_page') or '').strip()
+                dr_val = int(dr_raw) if dr_raw not in (None, '') else None
+            except Exception:
+                dr_val = None
+            system_config['library_defaults'] = {
+                'default_rows_per_page': dr_val
+            }
             if save_system_config(system_config):
                 logger.info(f"✅ Applied site configuration to system settings: {system_config}")
             else:
@@ -1887,6 +1909,15 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             system_config['reading_log_defaults'] = {
                 'default_pages_per_log': _to_int_or_none(dp_raw),
                 'default_minutes_per_log': _to_int_or_none(dm_raw)
+            }
+            # Include library defaults (pagination rows per page) if provided
+            try:
+                dr_raw = (site_config.get('default_rows_per_page') or '').strip()
+                dr_val = int(dr_raw) if dr_raw not in (None, '') else None
+            except Exception:
+                dr_val = None
+            system_config['library_defaults'] = {
+                'default_rows_per_page': dr_val
             }
             print(f"🚀 [SETUP] Applying system config: {system_config}")
             if save_system_config(system_config):

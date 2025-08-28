@@ -6,6 +6,14 @@
 
 {% block step_info %}Step 2 of 5: Site Configuration & Backups{% endblock %}
 
+{% block extra_styles %}
+{% include 'partials/_accordion_styles.html' %}
+<style>
+/* Minor spacing tweak for onboarding’s global layout */
+.accordion { --bs-accordion-btn-padding-y: 1rem; --bs-accordion-btn-padding-x: 1.25rem; }
+.accordion-button { padding: var(--bs-accordion-btn-padding-y) var(--bs-accordion-btn-padding-x); width: 100%; display: flex; align-items: center; gap: .5rem; min-height: 3rem; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="form-header">
     <div class="icon-circle" style="background: linear-gradient(135deg, #17a2b8, #138496);">
@@ -16,194 +24,203 @@
 </div>
 
 <form method="POST" class="needs-validation" novalidate>
-    <!-- CSRF Token -->
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-    
-    <!-- Site Name Field -->
-    <div class="form-group">
-        <label for="site_name" class="form-label">
-            <i class="bi bi-house-heart"></i>
-            Site Name
-        </label>
-        <input type="text" 
-               id="site_name" 
-               name="site_name" 
-               class="form-control" 
-               value="{{ current_config.get('site_name', 'MyBibliotheca') }}" 
-               placeholder="e.g., John's Library, Family Library"
-               tabindex="1">
-        <div class="form-text">This will appear as the title of your library</div>
-    </div>
-    
-    <!-- Timezone Field -->
-    <div class="form-group">
-        <label for="timezone" class="form-label">
-            <i class="bi bi-clock me-1"></i>
-            Timezone
-        </label>
-        <select id="timezone" 
-                name="timezone" 
-                class="form-control" 
-                tabindex="2">
-            {% for tz in timezones %}
-                <option value="{{ tz }}" 
-                        {% if tz == current_config.get('timezone', 'UTC') %}selected{% endif %}>
-                    {{ tz }}
-                </option>
-            {% endfor %}
-        </select>
-        <div class="form-text">Used for displaying dates and reading logs</div>
-    </div>
 
-    <!-- Reading Log Defaults (Optional) -->
-    <hr class="my-4">
-    <h4 class="mb-3"><i class="bi bi-journal-plus me-2"></i>Reading Log Defaults <span class="badge bg-secondary" style="font-size: 0.7rem;">Optional</span></h4>
-    <p class="text-muted">You can set default values that will pre-fill new reading log entries and be used during reading history import when a row is missing both values. You can change these anytime in Admin settings.</p>
-    <div class="row g-3 align-items-end mb-2">
-        <div class="col-md-3 col-6">
-            <label for="ob_default_pages" class="form-label">Default Pages per Log</label>
-            <input type="number" id="ob_default_pages" name="default_pages_per_log" class="form-control" min="0" step="1" value="{{ current_config.get('default_pages_per_log') or '' }}" placeholder="e.g., 10">
+    <div class="accordion" id="step2Accordion">
+        <!-- Site Basics -->
+        <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingBasics">
+                <button class="accordion-button bg-primary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseBasics" aria-expanded="true" aria-controls="collapseBasics">
+                    <i class="bi bi-house-heart me-2"></i> Site Basics
+                </button>
+            </h2>
+            <div id="collapseBasics" class="accordion-collapse collapse show" aria-labelledby="headingBasics" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <div class="form-group">
+                        <label for="site_name" class="form-label" data-bs-toggle="tooltip" title="Displayed as your library title across the app.">Site Name</label>
+                        <input type="text" id="site_name" name="site_name" class="form-control" value="{{ current_config.get('site_name', 'MyBibliotheca') }}" placeholder="e.g., John's Library, Family Library" tabindex="1">
+                        <div class="form-text">This will appear as the title of your library</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="timezone" class="form-label" data-bs-toggle="tooltip" title="Used to display dates and reading logs in your local time."><i class="bi bi-clock me-1"></i>Timezone</label>
+                        <select id="timezone" name="timezone" class="form-select" tabindex="2">
+                            {% for tz in timezones %}
+                                <option value="{{ tz }}" {% if tz == current_config.get('timezone', 'UTC') %}selected{% endif %}>{{ tz }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Used for displaying dates and reading logs</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="terminology_preference" class="form-label" data-bs-toggle="tooltip" title="Choose whether to label classifications as Genres or Categories."><i class="bi bi-tags me-1"></i>Book Classification Terminology</label>
+                        <select id="terminology_preference" name="terminology_preference" class="form-select" tabindex="5">
+                            <option value="genre" {% if current_config.get('terminology_preference', 'genre') == 'genre' %}selected{% endif %}>Genres (e.g., "Science Fiction", "Romance", "Mystery")</option>
+                            <option value="category" {% if current_config.get('terminology_preference') == 'category' %}selected{% endif %}>Categories (e.g., "Fiction", "Non-Fiction", "Reference")</option>
+                        </select>
+                        <div class="form-text">This affects how book classifications are displayed throughout the interface</div>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="col-md-3 col-6">
-            <label for="ob_default_minutes" class="form-label">Default Minutes per Log</label>
-            <input type="number" id="ob_default_minutes" name="default_minutes_per_log" class="form-control" min="0" step="1" value="{{ current_config.get('default_minutes_per_log') or '' }}" placeholder="e.g., 20">
+
+        <!-- Library Defaults (Pagination) -->
+        <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingLibrary">
+                <button class="accordion-button collapsed bg-info" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLibrary" aria-expanded="false" aria-controls="collapseLibrary">
+                    <i class="bi bi-grid-3x3-gap-fill me-2"></i> Library Defaults
+                </button>
+            </h2>
+            <div id="collapseLibrary" class="accordion-collapse collapse" aria-labelledby="headingLibrary" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <div class="row g-3 align-items-end mb-2">
+                        <div class="col-md-3 col-6">
+                            <label for="default_rows_per_page" class="form-label" data-bs-toggle="tooltip" title="Library pagination uses rows × columns. Columns are auto-detected based on screen width.">Default Rows per Page</label>
+                            <input type="number" min="1" step="1" id="default_rows_per_page" name="default_rows_per_page" class="form-control" value="{{ current_config.get('default_rows_per_page') or '' }}" placeholder="e.g., 4">
+                            <div class="form-text">Determines pagination in the Library (rows x columns).</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-    </div>
-    
-    <!-- Default Location Field -->
-    <div class="form-group">
-        <label for="location" class="form-label">
-            <i class="bi bi-geo-alt me-1"></i>
-            Default Location 
-            <span class="badge bg-secondary ms-1" style="font-size: 0.7rem;">Optional</span>
-        </label>
-        <input type="text" 
-               id="location" 
-               name="location" 
-               class="form-control" 
-               value="{{ current_config.get('location', '') }}" 
-               placeholder="e.g., Home Library, Study Room"
-               tabindex="3">
-        <div class="form-text">Set a default location for your books and reading logs</div>
-    </div>
-    
-    <!-- Location Auto-assign Checkbox -->
-    <div class="form-group">
-        <div class="form-check">
-            <input type="checkbox" 
-                   class="form-check-input" 
-                   id="location_set_as_default" 
-                   name="location_set_as_default"
-                   {% if current_config.get('location_set_as_default') %}checked{% endif %}
-                   tabindex="4">
-            <label class="form-check-label" for="location_set_as_default">
-                Auto-assign location to new books
-            </label>
-            <div class="form-text">
-                If enabled, this location will be automatically assigned to all books added to your library
+
+    <!-- Reading Log Defaults -->
+    <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingReading">
+                <button class="accordion-button collapsed bg-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseReading" aria-expanded="false" aria-controls="collapseReading">
+                    <i class="bi bi-journal-plus me-2"></i> Reading Log Defaults <span class="badge bg-light text-dark ms-2" style="font-size: 0.7rem;">Optional</span>
+                </button>
+            </h2>
+            <div id="collapseReading" class="accordion-collapse collapse" aria-labelledby="headingReading" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <p class="text-muted">You can set default values that will pre-fill new reading log entries and be used during reading history import when a row is missing both values. You can change these anytime in Admin settings.</p>
+                    <div class="row g-3 align-items-end mb-2">
+                        <div class="col-md-3 col-6">
+                            <label for="ob_default_pages" class="form-label" data-bs-toggle="tooltip" title="If a log entry lacks both pages and minutes, this pages value will be used.">Default Pages per Log</label>
+                            <input type="number" id="ob_default_pages" name="default_pages_per_log" class="form-control" min="0" step="1" value="{{ current_config.get('default_pages_per_log') or '' }}" placeholder="e.g., 10">
+                        </div>
+                        <div class="col-md-3 col-6">
+                            <label for="ob_default_minutes" class="form-label" data-bs-toggle="tooltip" title="If a log entry lacks both pages and minutes, this minutes value will be used.">Default Minutes per Log</label>
+                            <input type="number" id="ob_default_minutes" name="default_minutes_per_log" class="form-control" min="0" step="1" value="{{ current_config.get('default_minutes_per_log') or '' }}" placeholder="e.g., 20">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- Default Location -->
+    <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingLocation">
+                <button class="accordion-button collapsed bg-warning" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLocation" aria-expanded="false" aria-controls="collapseLocation">
+                    <i class="bi bi-geo-alt me-2"></i> Default Location <span class="badge bg-secondary ms-2" style="font-size: 0.7rem;">Optional</span>
+                </button>
+            </h2>
+            <div id="collapseLocation" class="accordion-collapse collapse" aria-labelledby="headingLocation" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                        <div class="form-group" data-bs-toggle="tooltip" title="An optional default location for new books and reading logs.">
+                        <input type="text" id="location" name="location" class="form-control" value="{{ current_config.get('location', '') }}" placeholder="e.g., Home Library, Study Room" tabindex="3">
+                        <div class="form-text">Set a default location for your books and reading logs</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="location_set_as_default" name="location_set_as_default" {% if current_config.get('location_set_as_default') %}checked{% endif %} tabindex="4">
+                            <label class="form-check-label" for="location_set_as_default" data-bs-toggle="tooltip" title="When enabled, this location is automatically applied to newly added books.">Auto-assign location to new books</label>
+                            <div class="form-text">If enabled, this location will be automatically assigned to all books added to your library</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- Automatic Backups -->
+    <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingBackups">
+                <button class="accordion-button collapsed bg-success" type="button" data-bs-toggle="collapse" data-bs-target="#collapseBackups" aria-expanded="false" aria-controls="collapseBackups">
+                    <i class="bi bi-shield-lock me-2"></i> Automatic Backups
+                </button>
+            </h2>
+            <div id="collapseBackups" class="accordion-collapse collapse" aria-labelledby="headingBackups" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <p class="text-muted">Protect your data with daily automatic backups (recommended). You can change these settings later in Admin &gt; Backups.</p>
+                    <div class="row g-3 align-items-end mb-2">
+                        <div class="col-md-2 col-6">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="ob_backup_enabled" name="backup_enabled" {% if current_config.get('backup_settings', {}).get('enabled', True) %}checked{% endif %}>
+                                <label class="form-check-label" for="ob_backup_enabled" data-bs-toggle="tooltip" title="Daily automatic backups are recommended to protect your library.">Enable daily backups</label>
+                            </div>
+                        </div>
+                        <div class="col-md-2 col-6">
+                            <label for="ob_retention" class="form-label" data-bs-toggle="tooltip" title="How long to keep backups before automatic deletion.">Retention (days)</label>
+                            <input type="number" id="ob_retention" name="backup_retention_days" class="form-control" value="{{ current_config.get('backup_settings', {}).get('retention_days', 14) }}" min="1">
+                        </div>
+                        <div class="col-md-2 col-6">
+                            <label for="ob_hour" class="form-label" data-bs-toggle="tooltip" title="Hour of day (24h) to run the backup.">Hour</label>
+                            <input type="number" id="ob_hour" name="backup_scheduled_hour" class="form-control" value="{{ current_config.get('backup_settings', {}).get('scheduled_hour', 2) }}" min="0" max="23">
+                        </div>
+                        <div class="col-md-2 col-6">
+                            <label for="ob_minute" class="form-label" data-bs-toggle="tooltip" title="Minute within the hour to run the backup.">Minute</label>
+                            <input type="number" id="ob_minute" name="backup_scheduled_minute" class="form-control" value="{{ current_config.get('backup_settings', {}).get('scheduled_minute', 30) }}" min="0" max="59">
+                        </div>
+                        <div class="col-md-2 col-6">
+                            <label for="ob_frequency" class="form-label" data-bs-toggle="tooltip" title="How often to perform backups.">Frequency</label>
+                            <select id="ob_frequency" name="backup_frequency" class="form-select">
+                                <option value="daily" {% if current_config.get('backup_settings', {}).get('frequency', 'daily') == 'daily' %}selected{% endif %}>Daily</option>
+                                <option value="weekly" {% if current_config.get('backup_settings', {}).get('frequency') == 'weekly' %}selected{% endif %}>Weekly (future)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <small class="text-muted d-block">A backup runs after imports and at the scheduled time. Backups include database, covers, uploads, and settings.</small>
+                </div>
+            </div>
+        </div>
+
+    <!-- Metadata Providers -->
+    <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingMetadata">
+                <button class="accordion-button collapsed bg-dark" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMetadata" aria-expanded="false" aria-controls="collapseMetadata">
+                    <i class="bi bi-diagram-2 me-2"></i> Metadata Providers
+                </button>
+            </h2>
+            <div id="collapseMetadata" class="accordion-collapse collapse" aria-labelledby="headingMetadata" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <p class="text-muted">Choose which external provider supplies metadata during imports. You can fine-tune every field later in Settings &gt; Server &gt; Metadata.</p>
+                    <div class="row g-3 align-items-end mb-2">
+                        <div class="col-md-4 col-12">
+                            <label class="form-label" for="ob_book_metadata_mode" data-bs-toggle="tooltip" title="Choose which provider(s) supply book metadata during import.">Books Metadata</label>
+                            <select id="ob_book_metadata_mode" name="book_metadata_mode" class="form-select">
+                                <option value="both" selected>Google + OpenLibrary</option>
+                                <option value="google">Google Only</option>
+                                <option value="openlibrary">OpenLibrary Only</option>
+                            </select>
+                            <div class="form-text">When both are used, Google is the initial default (can be changed later).</div>
+                        </div>
+                        <div class="col-md-4 col-12">
+                            <label class="form-label" for="ob_people_metadata_mode" data-bs-toggle="tooltip" title="Choose how to enrich people data (authors, contributors).">People Metadata</label>
+                            <select id="ob_people_metadata_mode" name="people_metadata_mode" class="form-select">
+                                <option value="openlibrary" selected>OpenLibrary</option>
+                                <option value="none">None (skip automatic enrichment)</option>
+                            </select>
+                            <div class="form-text">People enrichment currently relies on OpenLibrary.</div>
+                        </div>
+                    </div>
+                    <small class="text-muted d-block">Field-level priorities (e.g., description vs cover) can be customized later.</small>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Terminology Preference Field -->
-    <div class="form-group">
-        <label for="terminology_preference" class="form-label">
-            <i class="bi bi-tags me-1"></i>
-            Book Classification Terminology
-        </label>
-        <select id="terminology_preference" 
-                name="terminology_preference" 
-                class="form-control" 
-                tabindex="5">
-            <option value="genre" 
-                    {% if current_config.get('terminology_preference', 'genre') == 'genre' %}selected{% endif %}>
-                Genres (e.g., "Science Fiction", "Romance", "Mystery")
-            </option>
-            <option value="category" 
-                    {% if current_config.get('terminology_preference') == 'category' %}selected{% endif %}>
-                Categories (e.g., "Fiction", "Non-Fiction", "Reference")
-            </option>
-        </select>
-        <div class="form-text">This affects how book classifications are displayed throughout the interface</div>
-    </div>
-    
-    <!-- Automatic Backup Settings (moved from former Step 3) -->
-    <hr class="my-4">
-    <h4 class="mb-3"><i class="bi bi-shield-lock me-2"></i>Automatic Backups</h4>
-    <p class="text-muted">Protect your data with daily automatic backups (recommended). You can change these settings later in Admin &gt; Backups.</p>
-    <div class="row g-3 align-items-end mb-2">
-        <div class="col-md-2 col-6">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="ob_backup_enabled" name="backup_enabled" {% if current_config.get('backup_settings', {}).get('enabled', True) %}checked{% endif %}>
-                <label class="form-check-label" for="ob_backup_enabled">Enable daily backups</label>
-            </div>
-        </div>
-        <div class="col-md-2 col-6">
-            <label for="ob_retention" class="form-label">Retention (days)</label>
-            <input type="number" id="ob_retention" name="backup_retention_days" class="form-control" value="{{ current_config.get('backup_settings', {}).get('retention_days', 14) }}" min="1">
-        </div>
-        <div class="col-md-2 col-6">
-            <label for="ob_hour" class="form-label">Hour</label>
-            <input type="number" id="ob_hour" name="backup_scheduled_hour" class="form-control" value="{{ current_config.get('backup_settings', {}).get('scheduled_hour', 2) }}" min="0" max="23">
-        </div>
-        <div class="col-md-2 col-6">
-            <label for="ob_minute" class="form-label">Minute</label>
-            <input type="number" id="ob_minute" name="backup_scheduled_minute" class="form-control" value="{{ current_config.get('backup_settings', {}).get('scheduled_minute', 30) }}" min="0" max="59">
-        </div>
-        <div class="col-md-2 col-6">
-            <label for="ob_frequency" class="form-label">Frequency</label>
-            <select id="ob_frequency" name="backup_frequency" class="form-select">
-                <option value="daily" {% if current_config.get('backup_settings', {}).get('frequency', 'daily') == 'daily' %}selected{% endif %}>Daily</option>
-                <option value="weekly" {% if current_config.get('backup_settings', {}).get('frequency') == 'weekly' %}selected{% endif %}>Weekly (future)</option>
-            </select>
-        </div>
-    </div>
-    <small class="text-muted d-block mb-4">A backup runs after imports and at the scheduled time. Backups include database, covers, uploads, and settings.</small>
-
-    <!-- Metadata Provider Preferences -->
-    <hr class="my-4">
-    <h4 class="mb-3"><i class="bi bi-diagram-2 me-2"></i>Metadata Providers</h4>
-    <p class="text-muted">Choose which external provider supplies metadata during imports. You can fine-tune every field later in Settings &gt; Server &gt; Metadata.</p>
-    <div class="row g-3 align-items-end mb-2">
-        <div class="col-md-4 col-12">
-            <label class="form-label" for="ob_book_metadata_mode">Books Metadata</label>
-            <select id="ob_book_metadata_mode" name="book_metadata_mode" class="form-select">
-                <option value="both" selected>Google + OpenLibrary</option>
-                <option value="google">Google Only</option>
-                <option value="openlibrary">OpenLibrary Only</option>
-            </select>
-            <div class="form-text">When both are used, Google is the initial default (can be changed later).</div>
-        </div>
-        <div class="col-md-4 col-12">
-            <label class="form-label" for="ob_people_metadata_mode">People Metadata</label>
-            <select id="ob_people_metadata_mode" name="people_metadata_mode" class="form-select">
-                <option value="openlibrary" selected>OpenLibrary</option>
-                <option value="none">None (skip automatic enrichment)</option>
-            </select>
-            <div class="form-text">People enrichment currently relies on OpenLibrary.</div>
-        </div>
-    </div>
-    <small class="text-muted d-block mb-4">Field-level priorities (e.g., description vs cover) can be customized later.</small>
-
-    <!-- Navigation Buttons -->
     <div class="navigation-buttons">
-        <a href="{{ url_for('onboarding.step', step_num=1) }}" 
-           class="btn btn-outline-secondary" 
-           tabindex="7">
+        <a href="{{ url_for('onboarding.step', step_num=1) }}" class="btn btn-outline-secondary" tabindex="7">
             <i class="bi bi-arrow-left me-2"></i>Back
         </a>
-        <button type="submit" 
-                class="btn btn-primary" 
-                tabindex="6">
+        <button type="submit" class="btn btn-primary" tabindex="6">
             Continue to Data Options<i class="bi bi-arrow-right ms-2"></i>
         </button>
     </div>
-</form>
+    </form>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Auto-detect timezone
+// Initialize Step 2 behavior (timezone + accordion)
 document.addEventListener('DOMContentLoaded', function() {
     const timezoneSelect = document.getElementById('timezone');
     const currentValue = timezoneSelect.value;
@@ -221,6 +238,78 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (e) {
             console.log('Timezone auto-detection not supported');
         }
+    }
+
+    // Accordion initialization and robustness
+    try {
+        const accordion = document.getElementById('step2Accordion');
+        if (accordion && window.bootstrap && bootstrap.Collapse) {
+            // Ensure all collapse elements are initialized without auto-toggling
+            const collapses = accordion.querySelectorAll('.accordion-collapse');
+            collapses.forEach(el => {
+                bootstrap.Collapse.getOrCreateInstance(el, { toggle: false });
+            });
+
+            // Keep header button state (collapsed class, aria-expanded) in sync with show/hide events
+            accordion.addEventListener('show.bs.collapse', (ev) => {
+                const target = ev.target; // .accordion-collapse
+                const id = target.getAttribute('id');
+                if (!id) return;
+                const btn = accordion.querySelector(`.accordion-button[data-bs-target="#${id}"]`);
+                if (btn) {
+                    btn.classList.remove('collapsed');
+                    btn.setAttribute('aria-expanded', 'true');
+                }
+            });
+            accordion.addEventListener('hide.bs.collapse', (ev) => {
+                const target = ev.target;
+                const id = target.getAttribute('id');
+                if (!id) return;
+                const btn = accordion.querySelector(`.accordion-button[data-bs-target="#${id}"]`);
+                if (btn) {
+                    btn.classList.add('collapsed');
+                    btn.setAttribute('aria-expanded', 'false');
+                }
+            });
+
+            // Programmatic fallback: if the data API doesn't toggle, toggle manually and sync state
+            const buttons = accordion.querySelectorAll('.accordion-button[data-bs-toggle="collapse"][data-bs-target]');
+            buttons.forEach((btn) => {
+                btn.addEventListener('click', function () {
+                    const targetSel = this.getAttribute('data-bs-target');
+                    const target = document.querySelector(targetSel);
+                    if (!target) return;
+                    const before = this.getAttribute('aria-expanded');
+                    setTimeout(() => {
+                        const after = this.getAttribute('aria-expanded');
+                        if (before === after) {
+                            const inst = bootstrap.Collapse.getOrCreateInstance(target, { toggle: false });
+                            const willShow = !target.classList.contains('show');
+                            if (willShow) {
+                                // Hide other open sections if using data-bs-parent
+                                const parentSel = target.getAttribute('data-bs-parent');
+                                if (parentSel) {
+                                    document.querySelectorAll(`${parentSel} .accordion-collapse.show`).forEach((openEl) => {
+                                        if (openEl !== target) {
+                                            bootstrap.Collapse.getOrCreateInstance(openEl, { toggle: false }).hide();
+                                        }
+                                    });
+                                }
+                                inst.show();
+                                this.classList.remove('collapsed');
+                                this.setAttribute('aria-expanded', 'true');
+                            } else {
+                                inst.hide();
+                                this.classList.add('collapsed');
+                                this.setAttribute('aria-expanded', 'false');
+                            }
+                        }
+                    }, 50);
+                }, { capture: true });
+            });
+        }
+    } catch (e) {
+        console.debug('Accordion init/fallback skipped:', e);
     }
 });
 </script>

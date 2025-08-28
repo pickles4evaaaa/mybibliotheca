@@ -675,15 +675,24 @@ def create_app():
                 # Skip for setup route, onboarding routes, static files, and genre taxonomy routes (to allow tests)
                 allowed_when_no_users = [
                     'auth.setup', 'static',
+                    'serve_static', 'serve_covers', 'serve_uploads',
+                    'auth.login',
                     'genre_taxonomy.index',
                     'genre_taxonomy.progress',
                     'genre_taxonomy.api_progress',
                     'genre_taxonomy.start_analysis'
                 ]
-                if (request.endpoint in allowed_when_no_users or 
-                    (request.endpoint and (request.endpoint.startswith('static') or 
-                                            request.endpoint.startswith('onboarding.') or
-                                            request.endpoint.startswith('genre_taxonomy.')))):
+                if (
+                    request.endpoint in allowed_when_no_users or 
+                    (request.endpoint and (
+                        request.endpoint.startswith('static') or 
+                        request.endpoint.startswith('onboarding.') or
+                        request.endpoint.startswith('genre_taxonomy.')
+                    ))
+                    or request.path.startswith('/static/')
+                    or request.path.startswith('/covers/')
+                    or request.path.startswith('/uploads/')
+                ):
                     debug_auth(f"Skipping setup redirect for allowed endpoint: {request.endpoint}")
                     pass
                 else:
@@ -697,12 +706,18 @@ def create_app():
             print(f"Error checking user count: {e}")
             # If we can't check users, be more conservative about redirecting, but still allow genre taxonomy endpoints for tests
             if not (
-                request.endpoint in ['auth.setup', 'static', 'auth.login',
-                                     'genre_taxonomy.index',
-                                     'genre_taxonomy.progress',
-                                     'genre_taxonomy.api_progress',
-                                     'genre_taxonomy.start_analysis']
+                request.endpoint in [
+                    'auth.setup', 'static', 'auth.login',
+                    'serve_static', 'serve_covers', 'serve_uploads',
+                    'genre_taxonomy.index',
+                    'genre_taxonomy.progress',
+                    'genre_taxonomy.api_progress',
+                    'genre_taxonomy.start_analysis'
+                ]
                 or (request.endpoint and request.endpoint.startswith('genre_taxonomy.'))
+                or request.path.startswith('/static/')
+                or request.path.startswith('/covers/')
+                or request.path.startswith('/uploads/')
             ):
                 debug_auth(f"User count check failed, redirecting to setup from: {request.endpoint}")
                 return redirect(url_for('auth.setup'))
@@ -730,13 +745,23 @@ def create_app():
             'migration.run_migration',
             'migration.migration_success',
             'migration.dismiss_migration',
-            'static'
+            'static',
+            'serve_static',
+            'serve_covers',
+            'serve_uploads'
         ]
         
         # Allow API and AJAX requests, and skip for static files and onboarding routes
-        if (request.endpoint in allowed_endpoints or 
-            (request.endpoint and (request.endpoint.startswith('static') or 
-                                 request.endpoint.startswith('onboarding.')))):
+        if (
+            request.endpoint in allowed_endpoints
+            or (request.endpoint and (
+                request.endpoint.startswith('static') or
+                request.endpoint.startswith('onboarding.')
+            ))
+            or request.path.startswith('/static/')
+            or request.path.startswith('/covers/')
+            or request.path.startswith('/uploads/')
+        ):
             return
         
         # Check for migration needs (DISABLED - migration now manual only)
@@ -1037,7 +1062,7 @@ def create_app():
         print("[APP] WSGI request logger installed (MYBIBLIOTHECA_REQUEST_LOG=true)")
 
     # Readiness probe on first request with very visible stdout logs
-    @app.before_first_request
+    @app.before_first_request  # type: ignore[attr-defined]
     def _log_startup_and_check_db():
         verbose_probe = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
         if verbose_probe:

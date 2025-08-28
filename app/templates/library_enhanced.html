@@ -560,15 +560,15 @@
                         <div class="col-lg-2 col-md-3 col-sm-4 col-6 book-item" 
                              data-reading-status="{{ book.reading_status or 'library_only' }}"
                              data-ownership-status="{{ book.ownership_status or 'owned' }}">
-                            <div class="card h-100 book-card shadow-sm" data-book-id="{{ book.uid }}">
+                            <div class="card h-100 book-card shadow-sm position-relative" data-book-id="{{ book.uid or book.id }}">
                                 <!-- Selection checkbox -->
-                                <div class="position-absolute top-0 end-0 p-2" style="z-index: 10;">
-                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book.uid }}">
+                                <div class="position-absolute top-0 end-0 p-2" style="z-index: 10; pointer-events: none;">
+                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book.uid or book.id }}" style="pointer-events: auto;">
                                 </div>
 
                                 <!-- Book Cover -->
                                                                 <!-- Book Cover -->
-                                                                <div class="book-cover-wrapper position-relative" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
+                                                                <div class="book-cover-wrapper position-relative" style="cursor: pointer;">
                                     {% from 'macros/cover_input.html' import render_cover_display %}
                                     {{ render_cover_display(book, css_classes="card-img-top book-cover", style="", img_id="") }}
                                                                         {% if book.media_type and book.media_type|lower == 'audiobook' %}
@@ -579,7 +579,7 @@
                                 </div>
 
                                 <!-- Book Info -->
-                                <div class="card-body p-2" onclick="openBook('{{ book.uid }}')" style="cursor: pointer;">
+                                <div class="card-body p-2" style="cursor: pointer;">
                                     <h6 class="card-title mb-1 book-title">{{ book.title }}</h6>
                                     
                                     <!-- Author (simple display) -->
@@ -622,6 +622,7 @@
                                         </div>
                                     {% endif %}
                                 </div>
+                                <a href="{{ url_for('book.view_book_enhanced', uid=(book.uid or book.id)) }}" class="stretched-link" aria-label="View book"></a>
                             </div>
                         </div>
                     {% endfor %}
@@ -839,6 +840,23 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
+    // Fallback delegated click handler so clicks on cards navigate even if inline handlers fail
+    const booksContainer = document.getElementById('books-container');
+    if (booksContainer) {
+        booksContainer.addEventListener('click', function(e) {
+            // Ignore clicks on selection checkbox or its container
+            if (e.target.closest('.book-checkbox') || e.target.closest('.position-absolute')) {
+                return;
+            }
+            const card = e.target.closest('.book-card');
+            if (!card) return;
+            const uid = card.getAttribute('data-book-id');
+            if (uid && typeof window.openBook === 'function') {
+                window.openBook(uid);
+            }
+        });
+    }
+
     window.openBook = function(uid) {
         if (!uid) {
             console.error('No UID provided for book');
@@ -897,11 +915,14 @@ function applyStatusFilter(filter) {
         }
     });
 
-    // Update book count
-    document.getElementById('book-count').textContent = visibleCount;
+    // Update book count (if present)
+    const bookCountEl = document.getElementById('book-count');
+    if (bookCountEl) {
+        bookCountEl.textContent = visibleCount;
+    }
     
     // Update no books message based on filter
-    if (visibleCount === 0) {
+    if (noBooksText && visibleCount === 0) {
         let message = 'No books found matching your current filter.';
         switch(filter) {
             case 'reading':
@@ -926,11 +947,16 @@ function applyStatusFilter(filter) {
         noBooksText.textContent = message;
     }
     
-    // Show/hide no books message
-    noBooks.style.display = visibleCount === 0 ? 'block' : 'none';
+    // Show/hide no books message (if present)
+    if (noBooks) {
+        noBooks.style.display = visibleCount === 0 ? 'block' : 'none';
+    }
     
-    // Update hidden form field
-    document.getElementById('status_filter').value = filter;
+    // Update hidden form field (if present)
+    const statusFilterInput = document.getElementById('status_filter');
+    if (statusFilterInput) {
+        statusFilterInput.value = filter;
+    }
 }
 
 function updateActiveFilter(filter) {

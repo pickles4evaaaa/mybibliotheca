@@ -329,48 +329,48 @@
 <!-- Configuration Summary -->
 <div class="config-sections-container">
     <div class="config-section">
-        <div class="config-title">
+        <div class="config-title" data-bs-toggle="tooltip" title="The administrator account created during setup. You can manage users later in Admin.">
             <i class="bi bi-person-gear"></i>
             Administrator Account
         </div>
         <div class="config-item">
-            <span class="config-label">Username:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Admin login name.">Username:</span>
             <span class="config-value">{{ onboarding_data.admin.username }}</span>
         </div>
         <div class="config-item">
-            <span class="config-label">Email:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Used for notifications and account recovery.">Email:</span>
             <span class="config-value">{{ onboarding_data.admin.email }}</span>
         </div>
     </div>
 
     <div class="config-section">
-        <div class="config-title">
+        <div class="config-title" data-bs-toggle="tooltip" title="Default settings for how your library is displayed and behaves.">
             <i class="bi bi-gear"></i>
             Site Configuration
         </div>
         <div class="config-item">
-            <span class="config-label">Site Name:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Displayed as your library title across the app.">Site Name:</span>
             <span class="config-value">{{ onboarding_data.site_config.site_name }}</span>
         </div>
         <div class="config-item">
-            <span class="config-label">Timezone:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Used to display dates and reading logs in your local time.">Timezone:</span>
             <span class="config-value">{{ onboarding_data.site_config.timezone }}</span>
         </div>
         {% if onboarding_data.site_config.location %}
         <div class="config-item">
-            <span class="config-label">Default Location:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Default location for new books and reading logs, if set.">Default Location:</span>
             <span class="config-value">{{ onboarding_data.site_config.location }}</span>
         </div>
         {% endif %}
     </div>
 
     <div class="config-section full-width">
-        <div class="config-title">
+        <div class="config-title" data-bs-toggle="tooltip" title="How your initial data will be set up for this installation.">
             <i class="bi bi-database"></i>
             Data Setup
         </div>
         <div class="config-item">
-            <span class="config-label">Option:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Chosen path: start fresh, migrate an existing DB, or import from file.">Option:</span>
             <span class="config-value">
                 {% if onboarding_data.data_options.option == 'fresh' %}
                     Fresh Start - Empty Library
@@ -380,19 +380,19 @@
                     Import Books from File
                 {% endif %}
         <div class="config-section">
-            <div class="config-title"><i class="fas fa-database text-primary"></i> Automatic Backup Settings</div>
+            <div class="config-title" data-bs-toggle="tooltip" title="Daily automated backups help protect your library. You can change these later in Admin."><i class="fas fa-database text-primary"></i> Automatic Backup Settings</div>
             {% set backup = onboarding_data.data_options.backup_settings if onboarding_data.data_options and onboarding_data.data_options.backup_settings is defined else None %}
             {% if backup %}
                 <div class="config-item">
-                    <div class="config-label">Enabled</div>
+                    <div class="config-label" data-bs-toggle="tooltip" title="Whether automatic backups are turned on.">Enabled</div>
                     <div class="config-value">{{ 'Yes' if backup.enabled else 'No' }}</div>
                 </div>
                 <div class="config-item">
-                    <div class="config-label">Retention</div>
+                    <div class="config-label" data-bs-toggle="tooltip" title="How long backups are kept before deletion.">Retention</div>
                     <div class="config-value">{{ backup.retention_days }} days</div>
                 </div>
                 <div class="config-item">
-                    <div class="config-label">Schedule</div>
+                    <div class="config-label" data-bs-toggle="tooltip" title="Time of day and frequency for running backups.">Schedule</div>
                     <div class="config-value">{{ '%02d'|format(backup.scheduled_hour) }}:{{ '%02d'|format(backup.scheduled_minute) }} ({{ backup.frequency|capitalize }})</div>
                 </div>
             {% else %}
@@ -404,14 +404,14 @@
         
         {% if onboarding_data.data_options.option == 'migrate' and onboarding_data.data_options.migration_source %}
         <div class="config-item">
-            <span class="config-label">Source Database:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="Path to the database file being migrated.">Source Database:</span>
             <span class="config-value">{{ onboarding_data.data_options.migration_source | basename }}</span>
         </div>
         {% endif %}
         
         {% if onboarding_data.data_options.option == 'import' and onboarding_data.data_options.import_file %}
         <div class="config-item">
-            <span class="config-label">Import File:</span>
+            <span class="config-label" data-bs-toggle="tooltip" title="The uploaded CSV file used for import.">Import File:</span>
             <span class="config-value">{{ onboarding_data.data_options.import_file | basename }}</span>
         </div>
         {% endif %}

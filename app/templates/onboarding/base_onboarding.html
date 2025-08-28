@@ -12,12 +12,9 @@
     <link href="{{ url_for('serve_static', filename='bootstrap-icons/bootstrap-icons.min.css') }}" rel="stylesheet">
     
     <style>
-        /* Reset and base styles */
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+    /* Base reset: use box-sizing without wiping element margins/padding (preserve Bootstrap styles) */
+    html { box-sizing: border-box; }
+    *, *::before, *::after { box-sizing: inherit; }
         
         html, body {
             height: 100%;
@@ -554,6 +551,13 @@
     
     <!-- Bootstrap JS (local) -->
     <script src="{{ url_for('serve_static', filename='bootstrap.bundle.min.js') }}"></script>
+    <script>
+    // Initialize Bootstrap 5 tooltips globally for onboarding pages
+    document.addEventListener('DOMContentLoaded', function () {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.forEach(function (el) { new bootstrap.Tooltip(el); });
+    });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

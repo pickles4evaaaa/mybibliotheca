@@ -226,7 +226,7 @@
     
     <div class="option-cards">
         <!-- Fresh Start Option -->
-        <div class="option-card" onclick="selectOption('fresh')" data-option="fresh">
+    <div class="option-card" onclick="selectOption('fresh')" data-option="fresh" data-bs-toggle="tooltip" title="Start with an empty library. You can add or import books later.">
             <input type="radio" name="data_option" value="fresh" id="option_fresh" 
                    {% if not data_option or data_option == 'fresh' %}checked{% endif %}>
             <div class="option-icon">
@@ -237,7 +237,7 @@
         </div>
         
         <!-- Migration Option -->
-        <div class="option-card" onclick="selectOption('migrate')" data-option="migrate">
+    <div class="option-card" onclick="selectOption('migrate')" data-option="migrate" data-bs-toggle="tooltip" title="Upgrade from an older MyBibliotheca database on this machine.">
             <input type="radio" name="data_option" value="migrate" id="option_migrate"
                    {% if data_option == 'migrate' %}checked{% endif %}>
             <div class="option-icon">
@@ -248,7 +248,7 @@
         </div>
         
         <!-- Import Option -->
-        <div class="option-card" onclick="selectOption('import')" data-option="import">
+    <div class="option-card" onclick="selectOption('import')" data-option="import" data-bs-toggle="tooltip" title="Bring books in from CSV (Goodreads, StoryGraph, custom).">
             <input type="radio" name="data_option" value="import" id="option_import"
                    {% if data_option == 'import' %}checked{% endif %}>
             <div class="option-icon">
@@ -301,7 +301,7 @@
         {% endif %}
         
         <div class="form-group mt-3">
-            <label for="custom_db_path" class="form-label">
+            <label for="custom_db_path" class="form-label" data-bs-toggle="tooltip" title="Pick a .db/.sqlite file if it wasn't auto-detected.">
                 <i class="bi bi-folder2-open"></i>
                 Or browse for database file
             </label>
@@ -322,7 +322,7 @@
         </div>
         
         <div class="form-group">
-            <label for="import_file" class="form-label">
+            <label for="import_file" class="form-label" data-bs-toggle="tooltip" title="Upload a CSV to import your books.">
                 <i class="bi bi-upload"></i>
                 Choose file to import
             </label>

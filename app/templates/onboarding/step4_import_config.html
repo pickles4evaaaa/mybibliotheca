@@ -180,7 +180,8 @@
     <div class="mapping-section">
         <div style="font-weight: 600; margin-bottom: 1rem; color: #333; display: flex; align-items: center; gap: 0.5rem;">
             <i class="bi bi-arrow-left-right"></i>
-            Column Mapping
+                Column Mapping
+                <div data-bs-toggle="tooltip" title="Map each CSV column to a field or skip it."></div>
         </div>
         <p style="color: #666; margin-bottom: 1.5rem; font-size: 0.9rem;">
             Map the columns from your CSV file to the corresponding book fields in MyBibliotheca.
@@ -190,7 +191,7 @@
         <div class="mapping-row">
             <div class="csv-column">{{ header }}</div>
             <div>
-                <select name="field_mapping_{{ loop.index0 }}" class="field-mapping-select" data-column="{{ header }}">
+                    <select name="field_mapping_{{ loop.index0 }}" class="field-mapping-select" data-column="{{ header }}" data-bs-toggle="tooltip" title="Select the matching field for '{{ header }}' or choose to skip.">
                     <option value="">-- Skip this column --</option>
                     <option value="title" {% if 'title' in header.lower() %}selected{% endif %}>Title</option>
                     <option value="author" {% if 'author' in header.lower() %}selected{% endif %}>Author</option>
@@ -255,7 +256,7 @@
     
     <!-- Import Options -->
     <div class="import-options">
-        <h5 style="color: #1565c0; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <h5 style="color: #1565c0; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;" data-bs-toggle="tooltip" title="Control how duplicate detection and metadata enrichment behave during import.">
             <i class="bi bi-gear"></i>
             Import Options
         </h5>
