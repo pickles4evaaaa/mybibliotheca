@@ -1225,13 +1225,20 @@ def library():
     effective_cols = cols if cols and cols > 0 else 5
     per_page = max(1, rows) * max(1, effective_cols)
 
-    # Use service layer with global book visibility (paginated)
-    offset = (max(1, page) - 1) * per_page
-    user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
+    # Total count first so we can clamp page to a valid range
     try:
         total_books = book_service.get_total_book_count_sync()
     except Exception:
-        total_books = len(user_books)
+        total_books = 0
+
+    # Compute total pages and clamp page
+    import math
+    total_pages = max(1, math.ceil(total_books / per_page)) if per_page > 0 else 1
+    page = max(1, min(page, total_pages))
+
+    # Use service layer with global book visibility (paginated)
+    offset = (page - 1) * per_page
+    user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
@@ -1517,6 +1524,9 @@ def library():
     rows=rows,
     cols=cols,
     total_books=total_books,
+    total_pages=total_pages,
+    has_prev=(page > 1),
+    has_next=(page < total_pages),
         categories=sorted([cat for cat in categories if cat is not None and cat != '']),
         publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
         languages=sorted([lang for lang in languages if lang is not None and lang != '']),

@@ -523,13 +523,13 @@
         <div class="col-12">
             {% if books %}
                 <!-- Pagination controls -->
-                <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
                     <div class="text-muted small">
-                        Page {{ page or 1 }} • Rows {{ rows or 1 }} • Per page {{ per_page or books|length }} • Total {{ (total_books or stats.total_books) if stats else total_books }}
+            Page {{ page or 1 }} of {{ total_pages or 1 }} • Rows {{ rows or 1 }} • Per page {{ per_page or books|length }} • Total {{ (total_books or stats.total_books) if stats else total_books }}
                     </div>
                     <div class="btn-group">
-                        <a id="prevPageBtn" class="btn btn-outline-secondary btn-sm" href="#">&laquo; Prev</a>
-                        <a id="nextPageBtn" class="btn btn-outline-secondary btn-sm" href="#">Next &raquo;</a>
+            <a id="prevPageBtn" class="btn btn-outline-secondary btn-sm {% if not has_prev %}disabled{% endif %}" href="#" aria-disabled="{{ 'true' if not has_prev else 'false' }}">&laquo; Prev</a>
+            <a id="nextPageBtn" class="btn btn-outline-secondary btn-sm {% if not has_next %}disabled{% endif %}" href="#" aria-disabled="{{ 'true' if not has_next else 'false' }}">Next &raquo;</a>
                     </div>
                 </div>
                 <!-- Selection toolbar (hidden by default) -->
@@ -781,8 +781,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const nextBtn = document.getElementById('nextPageBtn');
     const metaEl = document.getElementById('lib-meta');
     const currentPage = parseInt((metaEl && metaEl.dataset.page) ? metaEl.dataset.page : '1', 10);
+    const totalPages = parseInt('{{ total_pages or 1 }}', 10);
+    function updatePagerState(page){
+        if(prevBtn){
+            if(page <= 1){ prevBtn.classList.add('disabled'); prevBtn.setAttribute('aria-disabled','true'); }
+            else { prevBtn.classList.remove('disabled'); prevBtn.setAttribute('aria-disabled','false'); }
+        }
+        if(nextBtn){
+            if(page >= totalPages){ nextBtn.classList.add('disabled'); nextBtn.setAttribute('aria-disabled','true'); }
+            else { nextBtn.classList.remove('disabled'); nextBtn.setAttribute('aria-disabled','false'); }
+        }
+    }
+    updatePagerState(currentPage);
     if(prevBtn){ prevBtn.addEventListener('click', function(e){ e.preventDefault(); const p = currentPage; if(p>1) goToPage(p-1); }); }
-    if(nextBtn){ nextBtn.addEventListener('click', function(e){ e.preventDefault(); const p = currentPage; goToPage(p+1); }); }
+    if(nextBtn){ nextBtn.addEventListener('click', function(e){ e.preventDefault(); const p = currentPage; if(p<totalPages) goToPage(p+1); }); }
     (function ensureCols(){
         const url = new URL(window.location.href);
         const colsParam = parseInt(url.searchParams.get('cols')||'0', 10);
