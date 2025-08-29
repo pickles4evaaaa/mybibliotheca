@@ -42,6 +42,8 @@ docker run -d \
 
 Licensed under the [MIT License](LICENSE).
 
+See [COPYRIGHT_POLICY.md](COPYRIGHT_POLICY.md) for information about acceptable dependencies and copyright requirements.
+
 ---
 
 ## ❤️ Contribute
