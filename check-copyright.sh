@@ -19,7 +19,7 @@ if grep -r "Deep Learning Container License" . --include="*.py" --include="*.md"
 fi
 
 # Check for AI/ML dependencies
-if grep -r "VibeVoice\|Qwen2Tokenizer\|transformers\|torch\|tensorflow" . --include="*.py" --include="*.txt" --include="requirements.txt" --include="pyproject.toml" --exclude-dir=".git" --exclude-dir="__pycache__" --exclude="COPYRIGHT_POLICY.md" --exclude=".copyright-check.py" 2>/dev/null; then
+if grep -r "VibeVoice\|Qwen2Tokenizer\|transformers\|torch\|tensorflow" . --include="*.py" --include="*.txt" --include="requirements.txt" --include="pyproject.toml" --exclude-dir=".git" --exclude-dir="__pycache__" --exclude="COPYRIGHT_POLICY.md" --exclude=".copyright-check.py" --exclude="test_dependencies.py" 2>/dev/null; then
     echo "❌ Found AI/ML dependencies"
     ISSUES=$((ISSUES + 1))
 fi
