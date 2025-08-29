@@ -218,3 +218,6 @@ app/templates/index.html
 
 # MAC-Foo
 .DS_Store
+
+# Copyright and dependency checker (contains patterns that would trigger itself)
+.copyright-check.py
