@@ -175,6 +175,35 @@ class AudiobookshelfImportService:
             simplified.narrator = ', '.join(narrators)
         return simplified
 
+    def _needs_item_detail_for_persons(self, item: Dict[str, Any]) -> bool:
+        """Heuristic to decide if we must fetch expanded item details.
+
+        Some ABS list endpoints include media/metadata but omit contributors
+        (authors/narrators). To correctly create Person contributions, fetch
+        the expanded item when those fields are missing.
+        """
+        try:
+            media = item.get('media') or {}
+            md = media.get('metadata') or {}
+            # If no media/metadata block, we certainly need details
+            if not isinstance(media, dict) or not isinstance(md, dict):
+                return True
+            # If any contributor signal present, we're fine
+            if (isinstance(md.get('authors'), list) and len(md.get('authors') or []) > 0):
+                return False
+            a = md.get('author')
+            if isinstance(a, str) and a.strip():
+                return False
+            if (isinstance(md.get('narrators'), list) and len(md.get('narrators') or []) > 0):
+                return False
+            n = md.get('narrator')
+            if isinstance(n, str) and n.strip():
+                return False
+            # Otherwise, fetch expanded details to try to get contributors
+            return True
+        except Exception:
+            return True
+
     def _extract_categories(self, item: Dict[str, Any]) -> List[str]:
         media = item.get('media') or {}
         md = media.get('metadata') or {}
@@ -394,6 +423,105 @@ class AudiobookshelfImportService:
         except Exception:
             pass
 
+    # -- Contributor helpers -------------------------------------------------
+    def _ensure_person_exists(self, name: str) -> Optional[str]:
+        if not name or str(name).strip().lower() == 'unknown':
+            return None
+        try:
+            from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+            nm = str(name).strip()
+            norm = nm.lower()
+            qr = safe_execute_kuzu_query(
+                """
+                MATCH (p:Person)
+                WHERE toLower(p.normalized_name) = $norm OR toLower(p.name) = $norm
+                RETURN p.id
+                LIMIT 1
+                """,
+                {"norm": norm}
+            )
+            from app.simplified_book_service import _convert_query_result_to_list as _legacy_convert
+            rows = _legacy_convert(qr)
+            if rows:
+                r0 = rows[0]
+                if isinstance(r0, dict):
+                    return r0.get('result') or r0.get('col_0') or r0.get('p.id') or r0.get('id')
+                # If row is a scalar-like, best-effort cast
+                try:
+                    return str(r0)
+                except Exception:
+                    return None
+            # Create
+            pid = str(uuid.uuid4())
+            safe_execute_kuzu_query(
+                """
+                CREATE (p:Person {id: $id, name: $name, normalized_name: toLower($name), created_at: timestamp($ts)})
+                RETURN p.id
+                """,
+                {"id": pid, "name": nm, "ts": datetime.now(timezone.utc).isoformat()}
+            )
+            return pid
+        except Exception:
+            return None
+
+    def _ensure_contributor(self, book_id: str, person_name: str, role: str, order_index: int = 0) -> None:
+        pid = self._ensure_person_exists(person_name)
+        if not pid:
+            return
+        try:
+            from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+            qr = safe_execute_kuzu_query(
+                """
+                MATCH (p:Person {id: $pid})- [r:AUTHORED]-> (b:Book {id: $bid})
+                WHERE r.role = $role
+                RETURN r
+                LIMIT 1
+                """,
+                {"pid": pid, "bid": book_id, "role": role}
+            )
+            from app.simplified_book_service import _convert_query_result_to_list as _legacy_convert
+            rows = _legacy_convert(qr)
+            if rows:
+                r0 = rows[0]
+                if isinstance(r0, dict) and (r0.get('result') or r0.get('col_0') or r0.get('r') or r0.get('b.id') or r0.get('id')):
+                    return  # already exists
+            safe_execute_kuzu_query(
+                """
+                MATCH (p:Person {id: $pid}), (b:Book {id: $bid})
+                CREATE (p)-[:AUTHORED {role: $role, order_index: $ord, created_at: timestamp($ts)}]->(b)
+                RETURN b.id
+                """,
+                {"pid": pid, "bid": book_id, "role": role, "ord": int(order_index), "ts": datetime.now(timezone.utc).isoformat()}
+            )
+        except Exception:
+            return
+
+    def _ensure_contributors_for_book(self, book_id: str, book_data: SimplifiedBook) -> None:
+        try:
+            # Primary author
+            if getattr(book_data, 'author', None) and str(book_data.author).strip().lower() != 'unknown':
+                self._ensure_contributor(book_id, book_data.author, 'authored', 0)
+            # Additional authors (comma-separated)
+            addl = getattr(book_data, 'additional_authors', None)
+            if addl:
+                idx = 1
+                for nm in [s.strip() for s in str(addl).split(',') if s.strip()]:
+                    if nm.lower() == 'unknown':
+                        continue
+                    self._ensure_contributor(book_id, nm, 'authored', idx)
+                    idx += 1
+            # Narrators
+            narr = getattr(book_data, 'narrator', None)
+            if narr:
+                idx = 0
+                for nm in [s.strip() for s in str(narr).split(',') if s.strip()]:
+                    if nm.lower() == 'unknown':
+                        continue
+                    self._ensure_contributor(book_id, nm, 'narrated', idx)
+                    idx += 1
+        except Exception:
+            pass
+
     # Public internal: run test sync using an existing task_id (no thread)
     def _run_test_sync_job(self, task_id: str, library_ids: List[str], limit: int = 5) -> None:
         try:
@@ -436,7 +564,9 @@ class AudiobookshelfImportService:
                 book_data: Optional[SimplifiedBook] = None
                 try:
                     item_id = item.get('id') or item.get('_id') or item.get('itemId')
-                    if item_id:
+                    # Only fetch expanded item if contributors/metadata are missing
+                    need_detail = self._needs_item_detail_for_persons(item)
+                    if item_id and need_detail:
                         detail = self.client.get_item(item_id, expanded=True)
                         if detail.get('ok') and detail.get('item'):
                             item = detail['item']
@@ -455,15 +585,23 @@ class AudiobookshelfImportService:
                         raise RuntimeError('Failed to create book')
                     book_id: Optional[str] = self._resolve_book_id(book_data)
                     if book_id:
+                        # Combine updates to minimize Kuzu roundtrips
+                        updates: Dict[str, Any] = {'media_type': 'audiobook'}
                         try:
                             local_cover = self._cache_cover_with_auth(item)
                             if local_cover:
-                                self.kuzu_book_service.update_book_sync(book_id, {'cover_url': local_cover})
+                                updates['cover_url'] = local_cover
                         except Exception:
                             pass
+                        if updates:
+                            try:
+                                self.kuzu_book_service.update_book_sync(book_id, updates)
+                            except Exception:
+                                pass
                         self._apply_audiobook_fields(book_id, item)
+                        # Ensure contributors are present
                         try:
-                            self.kuzu_book_service.update_book_sync(book_id, {'media_type': 'audiobook'})
+                            self._ensure_contributors_for_book(book_id, book_data)
                         except Exception:
                             pass
                         cats = self._extract_categories(item)
@@ -506,6 +644,11 @@ class AudiobookshelfImportService:
                                             updates['series_volume'] = bd.series_volume
                                     if updates:
                                         self.kuzu_book_service.update_book_sync(book_id, updates)
+                                    # Also ensure contributors now that we have richer metadata
+                                    try:
+                                        self._ensure_contributors_for_book(book_id, bd)
+                                    except Exception:
+                                        pass
                                 except Exception:
                                     pass
                     except Exception:
@@ -576,7 +719,8 @@ class AudiobookshelfImportService:
                         book_data: Optional[SimplifiedBook] = None
                         try:
                             item_id = item.get('id') or item.get('_id') or item.get('itemId')
-                            if item_id:
+                            need_detail = self._needs_item_detail_for_persons(item)
+                            if item_id and need_detail:
                                 detail = self.client.get_item(item_id, expanded=True)
                                 if detail.get('ok') and detail.get('item'):
                                     item = detail['item']
@@ -593,15 +737,22 @@ class AudiobookshelfImportService:
                                 raise RuntimeError('Failed to create book')
                             book_id: Optional[str] = self._resolve_book_id(book_data)
                             if book_id:
+                                updates2: Dict[str, Any] = {'media_type': 'audiobook'}
                                 try:
                                     local_cover = self._cache_cover_with_auth(item)
                                     if local_cover:
-                                        self.kuzu_book_service.update_book_sync(book_id, {'cover_url': local_cover})
+                                        updates2['cover_url'] = local_cover
                                 except Exception:
                                     pass
+                                if updates2:
+                                    try:
+                                        self.kuzu_book_service.update_book_sync(book_id, updates2)
+                                    except Exception:
+                                        pass
                                 self._apply_audiobook_fields(book_id, item)
+                                # Ensure contributors are present
                                 try:
-                                    self.kuzu_book_service.update_book_sync(book_id, {'media_type': 'audiobook'})
+                                    self._ensure_contributors_for_book(book_id, book_data)
                                 except Exception:
                                     pass
                                 cats = self._extract_categories(item)
@@ -643,6 +794,11 @@ class AudiobookshelfImportService:
                                                     updates['series_volume'] = bd.series_volume
                                             if updates:
                                                 self.kuzu_book_service.update_book_sync(book_id, updates)
+                                            # Also ensure contributors now that we have richer metadata
+                                            try:
+                                                self._ensure_contributors_for_book(book_id, bd)
+                                            except Exception:
+                                                pass
                                         except Exception:
                                             pass
                             except Exception:
@@ -827,6 +983,11 @@ class AudiobookshelfImportService:
                             except Exception:
                                 pass
                             self._apply_audiobook_fields(book_id, item)
+                            # Ensure contributors are present
+                            try:
+                                self._ensure_contributors_for_book(book_id, book_data)
+                            except Exception:
+                                pass
                             # Ensure media_type persisted at book level too (defensive)
                             try:
                                 self.kuzu_book_service.update_book_sync(book_id, {'media_type': 'audiobook'})
@@ -991,7 +1152,8 @@ class AudiobookshelfImportService:
                             book_data: Optional[SimplifiedBook] = None
                             try:
                                 item_id = item.get('id') or item.get('_id') or item.get('itemId')
-                                if item_id:
+                                need_detail = self._needs_item_detail_for_persons(item)
+                                if item_id and need_detail:
                                     detail = self.client.get_item(item_id, expanded=True)
                                     if detail.get('ok') and detail.get('item'):
                                         item = detail['item']
@@ -1010,18 +1172,19 @@ class AudiobookshelfImportService:
                                 # Resolve created book id and apply fields
                                 book_id: Optional[str] = self._resolve_book_id(book_data)
                                 if book_id:
-                                    # Attempt to cache cover with ABS auth, then update cover_url if saved
+                                    updates3: Dict[str, Any] = {'media_type': 'audiobook'}
                                     try:
                                         local_cover = self._cache_cover_with_auth(item)
                                         if local_cover:
-                                            self.kuzu_book_service.update_book_sync(book_id, {'cover_url': local_cover})
+                                            updates3['cover_url'] = local_cover
                                     except Exception:
                                         pass
+                                    if updates3:
+                                        try:
+                                            self.kuzu_book_service.update_book_sync(book_id, updates3)
+                                        except Exception:
+                                            pass
                                     self._apply_audiobook_fields(book_id, item)
-                                    try:
-                                        self.kuzu_book_service.update_book_sync(book_id, {'media_type': 'audiobook'})
-                                    except Exception:
-                                        pass
                                     cats = self._extract_categories(item)
                                     if cats:
                                         try:

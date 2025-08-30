@@ -14,6 +14,7 @@ from .debug_utils import debug_route, debug_auth, debug_csrf, debug_session
 from datetime import datetime, timezone
 from typing import cast, Any
 from pathlib import Path
+import os
 
 auth = Blueprint('auth', __name__)
 
@@ -599,21 +600,22 @@ def settings_reading_prefs_partial():
 @login_required
 def api_abs_sync_current_user():
     try:
-        from app.utils.user_settings import load_user_settings
+        # Validate ABS configured
         from app.utils.audiobookshelf_settings import load_abs_settings
         from app.services.audiobookshelf_service import get_client_from_settings
-        # Resolve user ABS username
-        user_settings = load_user_settings(getattr(current_user, 'id', None))
-        abs_username = (user_settings.get('abs_username') or '').strip() if isinstance(user_settings, dict) else ''
-        if not abs_username:
-            return jsonify({'ok': False, 'error': 'missing_abs_username'}), 400
-        abs_global = load_abs_settings()
-        client = get_client_from_settings(abs_global)
+        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+        abs_settings = load_abs_settings()
+        client = get_client_from_settings(abs_settings)
         if not client:
             return jsonify({'ok': False, 'error': 'abs_not_configured'}), 400
-        # Placeholder: no full sync yet; acknowledge and return
-        # Future: fetch listening history for abs_username and write reading logs.
-        return jsonify({'ok': True, 'message': 'Sync started (placeholder).'}), 200
+        # Enqueue listening sessions sync for current user
+        runner = get_abs_sync_runner()
+        try:
+            ps = int(request.args.get('page_size') or request.form.get('page_size') or 200)
+        except Exception:
+            ps = 200
+        runner.enqueue_listening_sync(str(current_user.id), page_size=ps)
+        return jsonify({'ok': True, 'message': 'Listening sync started.'}), 200
     except Exception as e:
         current_app.logger.error(f"ABS sync trigger failed: {e}")
         return jsonify({'ok': False, 'error': 'server_error'}), 500
@@ -937,7 +939,141 @@ def settings_server_partial(panel: str):
         return render_template('settings/partials/server_user_edit.html', user=target_user)
     if panel == 'debug':
         try:
-            return render_template('settings/partials/server_debug.html')
+            import os  # ensure availability in this scope for env and fs ops
+            # Support POST to update .env debug flags
+            if request.method == 'POST':
+                action = request.form.get('action')
+                if action == 'update_debug_env':
+                    try:
+                        # Persist settings to data/.env (volume-backed) for reliability
+                        data_dir = current_app.config.get('DATA_DIR', None)
+                        if not data_dir:
+                            try:
+                                # Fall back to project root /data
+                                import pathlib
+                                data_dir = str(pathlib.Path(current_app.root_path).parent / 'data')
+                            except Exception:
+                                data_dir = 'data'
+                        env_path = os.path.join(data_dir, '.env')
+                        # Keys we manage here
+                        manage_keys = [
+                            'MYBIBLIOTHECA_DEBUG', 'MYBIBLIOTHECA_DEBUG_AUTH', 'MYBIBLIOTHECA_DEBUG_CSRF',
+                            'MYBIBLIOTHECA_DEBUG_SESSION', 'MYBIBLIOTHECA_DEBUG_REQUESTS', 'MYBIBLIOTHECA_VERBOSE_INIT',
+                            'ABS_LISTENING_DEBUG', 'KUZU_DEBUG', 'LOG_LEVEL'
+                        ]
+                        # Build desired values from form (checkbox true/false, plus LOG_LEVEL text)
+                        def _to_str_bool(name: str) -> str:
+                            v = request.form.get(name)
+                            return 'true' if (v in ('on','true','1','yes')) else 'false'
+                        updates = {
+                            'MYBIBLIOTHECA_DEBUG': _to_str_bool('MYBIBLIOTHECA_DEBUG'),
+                            'MYBIBLIOTHECA_DEBUG_AUTH': _to_str_bool('MYBIBLIOTHECA_DEBUG_AUTH'),
+                            'MYBIBLIOTHECA_DEBUG_CSRF': _to_str_bool('MYBIBLIOTHECA_DEBUG_CSRF'),
+                            'MYBIBLIOTHECA_DEBUG_SESSION': _to_str_bool('MYBIBLIOTHECA_DEBUG_SESSION'),
+                            'MYBIBLIOTHECA_DEBUG_REQUESTS': _to_str_bool('MYBIBLIOTHECA_DEBUG_REQUESTS'),
+                            'MYBIBLIOTHECA_VERBOSE_INIT': _to_str_bool('MYBIBLIOTHECA_VERBOSE_INIT'),
+                            'ABS_LISTENING_DEBUG': _to_str_bool('ABS_LISTENING_DEBUG'),
+                            'KUZU_DEBUG': _to_str_bool('KUZU_DEBUG'),
+                            'LOG_LEVEL': (request.form.get('LOG_LEVEL') or os.getenv('LOG_LEVEL') or 'INFO').strip().upper()
+                        }
+                        # Ensure directory exists
+                        os.makedirs(os.path.dirname(env_path), exist_ok=True)
+                        # Use python-dotenv to safely upsert each key
+                        try:
+                            from dotenv import set_key, load_dotenv as _load
+                            for k in manage_keys:
+                                if k in updates:
+                                    # Avoid quote_mode arg for compatibility with older python-dotenv
+                                    set_key(env_path, k, str(updates[k]))
+                            # Reload to reflect file changes; also override current env
+                            _load(dotenv_path=env_path, override=True)
+                        except Exception:
+                            # Fallback simple writer if python-dotenv set_key unavailable
+                            existing = {}
+                            if os.path.exists(env_path):
+                                try:
+                                    with open(env_path, 'r') as rf:
+                                        for line in rf:
+                                            s = line.strip()
+                                            if s and not s.startswith('#') and '=' in s:
+                                                k, v = s.split('=', 1)
+                                                existing[k.strip()] = v.strip()
+                                except Exception:
+                                    existing = {}
+                            existing.update(updates)
+                            tmp_path = env_path + '.tmp'
+                            with open(tmp_path, 'w') as wf:
+                                wf.write('# Debug settings (managed by Admin UI)\n')
+                                for k in manage_keys:
+                                    wf.write(f"{k}={existing.get(k, updates.get(k, ''))}\n")
+                            os.replace(tmp_path, env_path)
+                        # Also apply updates to current process so changes take effect without full restart
+                        try:
+                            import logging as _logging
+                            for k, v in updates.items():
+                                os.environ[k] = str(v)
+                            # Adjust Python logging level dynamically when LOG_LEVEL changes
+                            lvl_name = str(updates.get('LOG_LEVEL', os.getenv('LOG_LEVEL', 'ERROR'))).upper()
+                            lvl = getattr(_logging, lvl_name, _logging.ERROR)
+                            _logging.getLogger().setLevel(lvl)
+                            try:
+                                current_app.logger.setLevel(lvl)
+                            except Exception:
+                                pass
+                        except Exception:
+                            # Best effort; if anything fails, at least .env was updated
+                            pass
+                        flash('Debug environment settings updated. Restart may be required.', 'success')
+                    except Exception as we:
+                        current_app.logger.error(f"Failed updating debug env: {we}")
+                        flash('Failed to update debug environment settings.', 'error')
+                elif action == 'toggle_abs_debug':
+                    try:
+                        from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
+                        toggle_to = (request.form.get('toggle_to') or '').strip().lower()
+                        enabled = True if toggle_to == 'enable' else False
+                        save_abs_settings({'debug_listening_sync': enabled})
+                        flash(f"ABS listening debug {'enabled' if enabled else 'disabled'}.", 'success')
+                    except Exception as te:
+                        current_app.logger.error(f"ABS debug toggle error: {te}")
+                        flash('Failed to toggle ABS listening debug.', 'error')
+                elif action == 'run_abs_listening_sync':
+                    try:
+                        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+                        page_size = request.form.get('page_size')
+                        ps = int(page_size) if page_size else 200
+                        runner = get_abs_sync_runner()
+                        runner.enqueue_listening_sync(str(current_user.id), page_size=ps)
+                        flash('Listening sync started. Check Import Progress for updates.', 'info')
+                    except Exception as re:
+                        current_app.logger.error(f"ABS run sync now error: {re}")
+                        flash('Failed to start listening sync.', 'error')
+            # Build context values
+            def _env_bool(name: str) -> bool:
+                return str(os.getenv(name, 'false')).strip().lower() in ('1','true','yes','on')
+            env_flags = {
+                'MYBIBLIOTHECA_DEBUG': _env_bool('MYBIBLIOTHECA_DEBUG'),
+                'MYBIBLIOTHECA_DEBUG_AUTH': _env_bool('MYBIBLIOTHECA_DEBUG_AUTH'),
+                'MYBIBLIOTHECA_DEBUG_CSRF': _env_bool('MYBIBLIOTHECA_DEBUG_CSRF'),
+                'MYBIBLIOTHECA_DEBUG_SESSION': _env_bool('MYBIBLIOTHECA_DEBUG_SESSION'),
+                'MYBIBLIOTHECA_DEBUG_REQUESTS': _env_bool('MYBIBLIOTHECA_DEBUG_REQUESTS'),
+                'MYBIBLIOTHECA_VERBOSE_INIT': _env_bool('MYBIBLIOTHECA_VERBOSE_INIT'),
+                'ABS_LISTENING_DEBUG': _env_bool('ABS_LISTENING_DEBUG'),
+                'KUZU_DEBUG': _env_bool('KUZU_DEBUG')
+            }
+            log_level = (os.getenv('LOG_LEVEL') or 'INFO').upper()
+            from app.utils.audiobookshelf_settings import load_abs_settings
+            abs_debug = False
+            try:
+                abs_debug = bool(load_abs_settings().get('debug_listening_sync'))
+            except Exception:
+                pass
+            # If this was an HTMX/fetch request, just return the partial; otherwise keep users on full settings page
+            tpl = render_template('settings/partials/server_debug.html', env_flags=env_flags, log_level=log_level, abs_debug_listening=abs_debug)
+            if request.headers.get('HX-Request') or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return tpl
+            # Non-ajax POST/GET: render the partial (settings.html will normally fetch it). Returning partial avoids redirect loop
+            return tpl
         except Exception as e:
             current_app.logger.error(f"Debug panel render error: {e}")
             return '<div class="text-danger small">Error loading debug tools.</div>'

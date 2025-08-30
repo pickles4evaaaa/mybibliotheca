@@ -3,7 +3,8 @@ import secrets
 import platform
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables from .env file(s)
+# 1) Project root .env
 load_dotenv()
 
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -39,6 +40,14 @@ def ensure_data_directory():
 # Initialize data directory
 data_dir = ensure_data_directory()
 
+# 2) Overlay data/.env so settings saved at runtime persist via the mounted volume
+try:
+    data_env_path = os.path.join(basedir, 'data', '.env')
+    if os.path.exists(data_env_path):
+        load_dotenv(dotenv_path=data_env_path, override=True)
+except Exception:
+    pass
+
 # Ensure Flask-Session directory exists
 flask_sessions_dir = os.path.join(data_dir, 'flask_sessions')
 if not os.path.exists(flask_sessions_dir):
@@ -50,6 +59,8 @@ if not os.path.exists(flask_sessions_dir):
             pass
 
 class Config:
+    # Expose data directory path for other modules
+    DATA_DIR = data_dir
     # Security
     SECRET_KEY = os.environ.get('SECRET_KEY')
     if not SECRET_KEY:

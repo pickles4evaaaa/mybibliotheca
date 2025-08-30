@@ -1,13 +1,121 @@
-<div class="card shadow-sm">
+<div class="card shadow-sm mb-3">
   <div class="card-header d-flex align-items-center gap-2">
     <i class="bi bi-bug"></i>
     <strong>Debug Tools</strong>
   </div>
   <div class="card-body">
     <p class="text-muted small">Quick access to diagnostics. Open full debug pages for deeper inspection.</p>
-    <div class="d-flex flex-wrap gap-2">
+    <div class="d-flex flex-wrap gap-2 mb-2">
       <a class="btn btn-outline-info btn-sm" target="_blank" href="{{ url_for('main.download_db') }}"><i class="bi bi-activity"></i> Download DB (Diag)</a>
-      <a class="btn btn-outline-info btn-sm" target="_blank" href="/logs" onclick="event.preventDefault(); alert('Logs viewer not yet implemented inline.');"><i class="bi bi-file-text"></i> View Logs</a>
+      <a class="btn btn-outline-info btn-sm" href="{{ url_for('debug_admin.debug_dashboard') }}" target="_blank"><i class="bi bi-speedometer2"></i> Full Debug Dashboard</a>
+    </div>
+    <div class="small text-muted">Env LOG_LEVEL: <code>{{ log_level }}</code></div>
+  </div>
+  <div class="card-footer small text-muted">Administrative actions can affect all users. Proceed carefully.</div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Audiobookshelf Listening Debug</strong>
+        <span class="badge bg-{{ 'success' if abs_debug_listening else 'secondary' }}">{{ 'ON' if abs_debug_listening else 'OFF' }}</span>
+      </div>
+      <div class="card-body">
+  <form method="post" action="{{ url_for('auth.settings_server_partial', panel='debug') }}" hx-post="{{ url_for('auth.settings_server_partial', panel='debug') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <input type="hidden" name="action" value="toggle_abs_debug" />
+          {% if abs_debug_listening %}
+            <input type="hidden" name="toggle_to" value="disable" />
+            <button type="submit" class="btn btn-warning btn-sm"><i class="bi bi-soundwave"></i> Disable ABS Listening Debug</button>
+          {% else %}
+            <input type="hidden" name="toggle_to" value="enable" />
+            <button type="submit" class="btn btn-outline-warning btn-sm"><i class="bi bi-soundwave"></i> Enable ABS Listening Debug</button>
+          {% endif %}
+        </form>
+        <hr/>
+  <form method="post" action="{{ url_for('auth.settings_server_partial', panel='debug') }}" hx-post="{{ url_for('auth.settings_server_partial', panel='debug') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML" class="d-flex gap-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <input type="hidden" name="action" value="run_abs_listening_sync" />
+          <input type="number" class="form-control form-control-sm" name="page_size" placeholder="Page size (200)" min="1" style="max-width:160px;" />
+        <button type="submit" class="btn btn-outline-success btn-sm"><i class="bi bi-arrow-repeat"></i> Run Listening Sync Now</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><strong>.env Debug Flags</strong></div>
+      <div class="card-body">
+  <form method="post" action="{{ url_for('auth.settings_server_partial', panel='debug') }}" hx-post="{{ url_for('auth.settings_server_partial', panel='debug') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <input type="hidden" name="action" value="update_debug_env"/>
+          <div class="row g-2">
+            {% set flags = env_flags or {} %}
+            <div class="col-12">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="MYBIBLIOTHECA_DEBUG" name="MYBIBLIOTHECA_DEBUG" {% if flags.get('MYBIBLIOTHECA_DEBUG') %}checked{% endif %}>
+                <label class="form-check-label" for="MYBIBLIOTHECA_DEBUG">Master Debug (MYBIBLIOTHECA_DEBUG)</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="MYBIBLIOTHECA_DEBUG_AUTH" name="MYBIBLIOTHECA_DEBUG_AUTH" {% if flags.get('MYBIBLIOTHECA_DEBUG_AUTH') %}checked{% endif %}>
+                <label class="form-check-label" for="MYBIBLIOTHECA_DEBUG_AUTH">Auth</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="MYBIBLIOTHECA_DEBUG_CSRF" name="MYBIBLIOTHECA_DEBUG_CSRF" {% if flags.get('MYBIBLIOTHECA_DEBUG_CSRF') %}checked{% endif %}>
+                <label class="form-check-label" for="MYBIBLIOTHECA_DEBUG_CSRF">CSRF</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="MYBIBLIOTHECA_DEBUG_SESSION" name="MYBIBLIOTHECA_DEBUG_SESSION" {% if flags.get('MYBIBLIOTHECA_DEBUG_SESSION') %}checked{% endif %}>
+                <label class="form-check-label" for="MYBIBLIOTHECA_DEBUG_SESSION">Session</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="MYBIBLIOTHECA_DEBUG_REQUESTS" name="MYBIBLIOTHECA_DEBUG_REQUESTS" {% if flags.get('MYBIBLIOTHECA_DEBUG_REQUESTS') %}checked{% endif %}>
+                <label class="form-check-label" for="MYBIBLIOTHECA_DEBUG_REQUESTS">Requests</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="MYBIBLIOTHECA_VERBOSE_INIT" name="MYBIBLIOTHECA_VERBOSE_INIT" {% if flags.get('MYBIBLIOTHECA_VERBOSE_INIT') %}checked{% endif %}>
+                <label class="form-check-label" for="MYBIBLIOTHECA_VERBOSE_INIT">Verbose Init</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="ABS_LISTENING_DEBUG" name="ABS_LISTENING_DEBUG" {% if flags.get('ABS_LISTENING_DEBUG') %}checked{% endif %}>
+                <label class="form-check-label" for="ABS_LISTENING_DEBUG">ABS Listening Debug (env)</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="KUZU_DEBUG" name="KUZU_DEBUG" {% if flags.get('KUZU_DEBUG') %}checked{% endif %}>
+                <label class="form-check-label" for="KUZU_DEBUG">Kuzu Debug</label>
+              </div>
+            </div>
+            <div class="col-6">
+              <label for="LOG_LEVEL" class="form-label small">LOG_LEVEL</label>
+              <select id="LOG_LEVEL" name="LOG_LEVEL" class="form-select form-select-sm">
+                {% set ll = (log_level or 'INFO').upper() %}
+                {% for lvl in ['DEBUG','INFO','WARNING','ERROR','CRITICAL'] %}
+                <option value="{{ lvl }}" {% if ll == lvl %}selected{% endif %}>{{ lvl }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12">
+              <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save2"></i> Save .env Flags</button>
+              <span class="text-muted small ms-2">May require restart to take effect.</span>
+            </div>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 </div>

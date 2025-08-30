@@ -338,7 +338,7 @@ class SimplifiedBookService:
                     
                     # Use persistent covers directory in data folder (same logic as book_routes.py)
                     from pathlib import Path
-                    import requests
+                    import requests  # type: ignore
                     
                     covers_dir = Path('/app/data/covers')
                     
@@ -496,7 +496,7 @@ class SimplifiedBookService:
                 return person_data
             
             # 2. Create author relationship using clean repository (with auto-fetch)
-            if book_data.author:
+            if book_data.author and str(book_data.author).strip().lower() != 'unknown':
                 try:
                     
                     person_data = create_person_data(book_data.author)
@@ -537,6 +537,8 @@ class SimplifiedBookService:
                 try:
                     additional_authors_list = [name.strip() for name in book_data.additional_authors.split(',') if name.strip()]
                     for index, author_name in enumerate(additional_authors_list):
+                        if not author_name or author_name.strip().lower() == 'unknown':
+                            continue
                         
                         person_data = create_person_data(author_name)
                         author_id = await book_repo._ensure_person_exists(person_data)
@@ -574,6 +576,8 @@ class SimplifiedBookService:
                 try:
                     narrator_list = [name.strip() for name in book_data.narrator.split(',') if name.strip()]
                     for index, narrator_name in enumerate(narrator_list):
+                        if not narrator_name or narrator_name.strip().lower() == 'unknown':
+                            continue
                         
                         person_data = create_person_data(narrator_name)
                         narrator_id = await book_repo._ensure_person_exists(person_data)

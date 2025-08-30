@@ -147,6 +147,29 @@
                         <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#testDebugModal">
                             <i class="bi bi-play-circle"></i> Test Debug Logging
                         </button>
+                        <form method="post" action="{{ url_for('debug_admin.toggle_abs_listening_debug') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            {% if abs_debug_listening %}
+                                <input type="hidden" name="action" value="disable" />
+                                <button type="submit" class="btn btn-warning">
+                                    <i class="bi bi-soundwave"></i> Disable ABS Listening Debug
+                                </button>
+                            {% else %}
+                                <input type="hidden" name="action" value="enable" />
+                                <button type="submit" class="btn btn-outline-warning">
+                                    <i class="bi bi-soundwave"></i> Enable ABS Listening Debug
+                                </button>
+                            {% endif %}
+                        </form>
+                        <form method="post" action="{{ url_for('debug_admin.run_abs_listening_sync_now') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            <div class="input-group">
+                                <input type="number" class="form-control" name="page_size" placeholder="Page size (default 200)" min="1" />
+                                <button type="submit" class="btn btn-outline-success">
+                                    <i class="bi bi-arrow-repeat"></i> Run Listening Sync Now
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>

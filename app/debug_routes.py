@@ -7,6 +7,9 @@ from flask_login import login_required, current_user
 from datetime import datetime, timedelta
 
 from app.debug_system import get_debug_manager, debug_log
+from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
+from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+from app.services.audiobookshelf_service import get_client_from_settings
 
 bp = Blueprint('debug_admin', __name__, url_prefix='/admin/debug')
 
@@ -35,10 +38,14 @@ def debug_dashboard():
     
     # Get recent logs
     recent_logs = debug_manager.get_debug_logs(limit=50)
+    # ABS listening debug setting
+    abs_settings = load_abs_settings()
+    abs_debug = bool(abs_settings.get('debug_listening_sync'))
     
     return render_template('admin/debug_dashboard.html', 
                          debug_status=status, 
-                         recent_logs=recent_logs)
+                         recent_logs=recent_logs,
+                         abs_debug_listening=abs_debug)
 
 
 @bp.route('/toggle', methods=['POST'])
@@ -64,6 +71,48 @@ def toggle_debug_mode():
     else:
         flash('Invalid action.', 'error')
     
+    return redirect(url_for('debug_admin.debug_dashboard'))
+
+
+@bp.route('/abs/toggle-listening-debug', methods=['POST'])
+@login_required
+@admin_required
+def toggle_abs_listening_debug():
+    """Toggle ABS listening sync debug flag stored in settings JSON."""
+    action = request.form.get('action')
+    settings = load_abs_settings()
+    enabled = bool(settings.get('debug_listening_sync'))
+    if action == 'enable':
+        enabled = True
+    elif action == 'disable':
+        enabled = False
+    else:
+        # flip if no explicit action
+        enabled = not enabled
+    ok = save_abs_settings({'debug_listening_sync': enabled})
+    if ok:
+        flash(f"ABS listening debug {'enabled' if enabled else 'disabled' }.", 'success')
+    else:
+        flash('Failed to update ABS listening debug setting.', 'error')
+    return redirect(url_for('debug_admin.debug_dashboard'))
+
+
+@bp.route('/abs/run-listening-sync', methods=['POST'])
+@login_required
+@admin_required
+def run_abs_listening_sync_now():
+    """Enqueue a listening sessions sync job for the current user via background runner."""
+    page_size = request.form.get('page_size')
+    try:
+        ps = int(page_size) if page_size else 200
+    except Exception:
+        ps = 200
+    try:
+        runner = get_abs_sync_runner()
+        task_id = runner.enqueue_listening_sync(str(current_user.id), page_size=ps)
+        flash(f"Listening sync started (task {task_id}). See Import Progress for details.", 'info')
+    except Exception as e:
+        flash(f"Failed to start listening sync: {e}", 'error')
     return redirect(url_for('debug_admin.debug_dashboard'))
 
 
@@ -95,6 +144,68 @@ def view_logs():
                          current_date=date_str,
                          categories=sorted(categories),
                          selected_category=category)
+
+
+@bp.route('/abs/probe', methods=['GET'])
+@login_required
+@admin_required
+def abs_probe():
+    """Probe ABS listening sessions using configured API and return a compact JSON diagnostic.
+
+    Query params (optional):
+      page_size: int (default 5)
+      page: int (default 0)
+      updated_after: str
+      user_id: str (ABS user ID; if omitted uses /api/me)
+    """
+    try:
+        ps = int(request.args.get('page_size', 5))
+        pg = int(request.args.get('page', 0))
+    except Exception:
+        ps, pg = 5, 0
+    updated_after = request.args.get('updated_after') or None
+    user_id = request.args.get('user_id') or ''
+    settings = load_abs_settings()
+    client = get_client_from_settings(settings)
+    if not client:
+        return jsonify({'ok': False, 'error': 'abs_not_configured'}), 400
+    # Resolve user id via /api/me if not supplied
+    if not user_id:
+        me = client.get_me()
+        if me.get('ok'):
+            m = me.get('user') or {}
+            if isinstance(m, dict):
+                user_id = str(m.get('id') or m.get('_id') or m.get('userId') or '')
+    # Try primary sessions
+    res = client.list_user_sessions(user_id=user_id or None, updated_after=updated_after, limit=ps, page=pg)
+    sessions = res.get('sessions') or []
+    total = res.get('total') or 0
+    detail = {}
+    if sessions:
+        first = sessions[0]
+        if isinstance(first, dict):
+            item = first.get('item') or first.get('libraryItem') or {}
+            li_id = first.get('libraryItemId') or first.get('itemId') or item.get('id') or item.get('_id')
+            pos_ms = first.get('positionMs') or first.get('currentTimeMs')
+            pos_sec = first.get('positionSec') or first.get('position_seconds') or first.get('currentTime')
+            upd = first.get('updatedAt') or first.get('updated_at')
+            detail = {
+                'first_session_keys': sorted(list(first.keys())),
+                'libraryItemId': li_id,
+                'positionMs': pos_ms,
+                'positionSec': pos_sec,
+                'updatedAt': upd
+            }
+    return jsonify({
+        'ok': True,
+        'count': len(sessions),
+        'total': total,
+        'page': pg,
+        'page_size': ps,
+        'user_id': user_id or None,
+        'updated_after': updated_after,
+        'detail': detail
+    })
 
 
 @bp.route('/logs/api')

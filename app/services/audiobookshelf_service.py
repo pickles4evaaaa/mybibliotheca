@@ -97,6 +97,8 @@ class AudiobookShelfClient:
             # Attempt 3: alternative param name
             attempts.append((self._url("/api/items"), {"libraryId": library_id, "page": page, "size": size}))
             attempts.append((self._url("/api/items"), {"libraryId": library_id, "limit": size, "offset": (page-1)*size}))
+            # Attempt 4: incremental/updatedAfter variants to avoid full scans when supported
+            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"page": page, "size": size, "sort": "updatedAt", "order": "desc"}))
 
             last_err: Optional[str] = None
             for url, params in attempts:
@@ -171,6 +173,104 @@ class AudiobookShelfClient:
         if not cover_path.startswith('/'):
             cover_path = '/' + cover_path
         return f"{self.base_url}{cover_path}"
+
+    def get_me(self) -> Dict[str, Any]:
+        """Fetch authenticated user info (/api/me). Returns { ok, user?, message? }."""
+        try:
+            resp = requests.get(self._url("/api/me"), headers=self._headers(), timeout=self.timeout)
+            if resp.status_code == 401:
+                return {"ok": False, "message": "Unauthorized"}
+            resp.raise_for_status()
+            data = resp.json() if resp.content else {}
+            if isinstance(data, dict):
+                return {"ok": True, "user": data}
+            return {"ok": False, "message": "Unexpected response"}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    # --- Listening sessions/progress helpers ---
+    def list_user_sessions(self, user_id: Optional[str] = None, updated_after: Optional[str] = None, limit: int = 100, page: int = 0) -> Dict[str, Any]:
+        """Fetch listening sessions or play progress for a user.
+
+        Tries multiple ABS endpoints since API variants differ. Returns { ok, sessions, total }.
+        updated_after: ISO timestamp string if supported by server for incremental syncs.
+        """
+        try:
+            headers = self._headers()
+            base_attempts: List[Tuple[str, Dict[str, Any]]] = []
+            # Prefer "me" endpoints if user_id not specified
+            if not user_id:
+                # Official endpoints
+                base_attempts.append((self._url("/api/me/listening-sessions"), {"itemsPerPage": limit, "page": page}))
+                # Fallbacks (older variants)
+                base_attempts.append((self._url("/api/me/sessions"), {"itemsPerPage": limit, "page": page}))
+            else:
+                base_attempts.append((self._url(f"/api/users/{user_id}/listening-sessions"), {"itemsPerPage": limit, "page": page}))
+                # Admin fallback: global sessions filtered by user
+                base_attempts.append((self._url("/api/sessions"), {"user": user_id, "itemsPerPage": limit, "page": page}))
+
+            # Add updatedAfter filters if provided
+            attempts: List[Tuple[str, Dict[str, Any]]] = []
+            for url, params in base_attempts:
+                attempts.append((url, params))
+                if updated_after:
+                    params2 = params.copy()
+                    # Try various param names
+                    for k in ("updatedAfter", "updated_since", "since"):
+                        params2[k] = updated_after
+                    attempts.append((url, params2))
+
+            last_err: Optional[str] = None
+            def _parse_sessions(data: Any) -> tuple[list, int]:
+                if isinstance(data, list):
+                    return data, len(data)
+                if isinstance(data, dict):
+                    items = data.get('results') or data.get('items') or data.get('sessions') or data.get('progress') or []
+                    total = data.get('total') or data.get('totalItems') or len(items)
+                    return items, int(total) if isinstance(total, (int, float)) else len(items)
+                return [], 0
+
+            for url, params in attempts:
+                try:
+                    resp = requests.get(url, headers=headers, timeout=self.timeout, params=params)
+                    if resp.status_code == 401:
+                        return {"ok": False, "message": "Unauthorized", "sessions": []}
+                    resp.raise_for_status()
+                    data = resp.json() if resp.content else {}
+                    sessions, total = _parse_sessions(data)
+                    if sessions or total:
+                        return {"ok": True, "sessions": sessions, "total": total}
+                except Exception as e:
+                    last_err = str(e)
+                    continue
+            return {"ok": True, "sessions": [], "total": 0, "message": last_err or "No sessions returned"}
+        except Exception as e:
+            return {"ok": False, "message": f"Failed to list sessions: {e}", "sessions": []}
+
+    def get_user_progress_for_item(self, item_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch a user's progress/bookmark for a specific item."""
+        try:
+            attempts: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+            # Primary according to docs
+            attempts.append((self._url(f"/api/me/progress/{item_id}"), None))
+            # Fallbacks seen in some clients
+            attempts.append((self._url(f"/api/me/item/{item_id}/progress"), None))
+            last_err: Optional[str] = None
+            for url, params in attempts:
+                try:
+                    resp = requests.get(url, headers=self._headers(), timeout=self.timeout, params=params)
+                    if resp.status_code == 401:
+                        return {"ok": False, "message": "Unauthorized"}
+                    resp.raise_for_status()
+                    data = resp.json() if resp.content else {}
+                    if isinstance(data, dict) and data:
+                        return {"ok": True, "progress": data}
+                except Exception as e:
+                    last_err = str(e)
+                    continue
+            return {"ok": False, "message": last_err or "No progress found"}
+        except Exception as e:
+            return {"ok": False, "message": f"Failed to get progress: {e}"}
 
 
 def get_client_from_settings(settings: Dict[str, Any]) -> Optional[AudiobookShelfClient]:

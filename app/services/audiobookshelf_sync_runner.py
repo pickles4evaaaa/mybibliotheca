@@ -17,6 +17,7 @@ from flask import current_app
 from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 from app.services.audiobookshelf_service import get_client_from_settings
 from app.services.audiobookshelf_import_service import AudiobookshelfImportService
+from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
 import uuid
 
@@ -114,11 +115,27 @@ class _AbsSyncRunner:
                         except Exception:
                             pass
                         continue
-                    svc = AudiobookshelfImportService(payload['user_id'], client)
-                    if payload.get('kind') == 'test':
-                        svc._run_test_sync_job(task_id, payload.get('library_ids') or [], int(payload.get('limit') or 5))
+                    kind = payload.get('kind')
+                    if kind == 'listen':
+                        listener = AudiobookshelfListeningSync(payload['user_id'], client)
+                        listener.sync(page_size=int(payload.get('page_size') or 200))
+                        try:
+                            save_abs_settings({'last_listening_sync': time.time()})
+                        except Exception:
+                            pass
+                        # mark job completed
+                        try:
+                            safe_update_import_job(payload['user_id'], task_id, {
+                                'status': 'completed', 'processed': 0, 'total': 0
+                            })
+                        except Exception:
+                            pass
                     else:
-                        svc._run_full_sync_job(task_id, payload.get('library_ids') or [], int(payload.get('page_size') or 50))
+                        svc = AudiobookshelfImportService(payload['user_id'], client)
+                        if kind == 'test':
+                            svc._run_test_sync_job(task_id, payload.get('library_ids') or [], int(payload.get('limit') or 5))
+                        else:
+                            svc._run_full_sync_job(task_id, payload.get('library_ids') or [], int(payload.get('page_size') or 50))
                 except Exception:
                     # Errors recorded inside service methods
                     pass
@@ -164,6 +181,46 @@ class _AbsSyncRunner:
             save_abs_settings({'last_library_sync': now})
         except Exception:
             pass
+        # Also run listening sessions sync if due
+        listen_hours = int(settings.get('listening_sync_every_hours') or 12)
+        last_listen = settings.get('last_listening_sync')
+        listen_due = False
+        try:
+            if last_listen:
+                if isinstance(last_listen, (int, float)):
+                    listen_due = (now - float(last_listen)) >= (listen_hours * 3600)
+                else:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(str(last_listen).replace('Z', '+00:00'))
+                    listen_due = (datetime.now(timezone.utc) - dt).total_seconds() >= (listen_hours * 3600)
+            else:
+                listen_due = True
+        except Exception:
+            listen_due = True
+        if listen_due:
+            # Execute small listening sync inline (fast, read-mostly + personal metadata updates)
+            try:
+                client = get_client_from_settings(settings)
+                if client:
+                    listener = AudiobookshelfListeningSync(user_id, client)
+                    listener.sync(page_size=200)
+                    try:
+                        save_abs_settings({'last_listening_sync': time.time()})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    def enqueue_listening_sync(self, user_id: str, page_size: int = 200) -> str:
+        """Enqueue a listening sessions sync for a specific user."""
+        task_id = f"abs_listen_{uuid.uuid4().hex[:8]}"
+        self._create_job(user_id, task_id, 'abs_listen_sync', total=0)
+        self.ensure_started()
+        with self._lock:
+            self._queue.append((task_id, {
+                'kind': 'listen', 'user_id': user_id, 'page_size': page_size
+            }))
+        return task_id
 
 
 _runner_singleton = _AbsSyncRunner()
