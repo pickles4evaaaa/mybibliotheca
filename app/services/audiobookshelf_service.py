@@ -276,7 +276,8 @@ class AudiobookShelfClient:
 def get_client_from_settings(settings: Dict[str, Any]) -> Optional[AudiobookShelfClient]:
     base_url = (settings or {}).get('base_url') or ''
     api_key = (settings or {}).get('api_key') or ''
-    if not base_url or not api_key:
+    if not base_url:
         return None
+    # Return a client even if api_key is missing; callers may override with per-user keys.
     return AudiobookShelfClient(base_url=base_url, api_key=api_key)
 

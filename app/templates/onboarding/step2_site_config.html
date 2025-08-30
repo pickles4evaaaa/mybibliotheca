@@ -62,6 +62,37 @@
             </div>
         </div>
 
+        <!-- Audiobookshelf (ABS) -->
+        <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingABS">
+                <button class="accordion-button collapsed bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapseABS" aria-expanded="false" aria-controls="collapseABS">
+                    <i class="bi bi-soundwave me-2"></i> Audiobookshelf (Optional)
+                </button>
+            </h2>
+            <div id="collapseABS" class="accordion-collapse collapse" aria-labelledby="headingABS" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <div class="row g-3 align-items-end mb-2">
+                        <div class="col-md-4 col-12">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="ob_abs_enabled" name="abs_enabled" {% if abs_settings and abs_settings.enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="ob_abs_enabled">Enable Audiobookshelf sync</label>
+                            </div>
+                        </div>
+                        <div class="col-md-8 col-12">
+                            <label class="form-label" for="ob_abs_base">Base URL</label>
+                            <input type="url" id="ob_abs_base" name="abs_base_url" class="form-control" placeholder="http://localhost:13378" value="{{ abs_settings.base_url if abs_settings else '' }}">
+                            <div class="form-text">Your Audiobookshelf server root URL (no trailing slash). No API key needed here—users add their own later.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="ob_abs_libs">Library IDs</label>
+                            <input type="text" id="ob_abs_libs" name="abs_library_ids" class="form-control" placeholder="e.g., Main, Kids" value="{% if abs_settings and abs_settings.library_ids is iterable and abs_settings.library_ids is not string %}{{ abs_settings.library_ids | join(', ') }}{% else %}{{ abs_settings.library_ids or '' }}{% endif %}">
+                            <div class="form-text">Comma-separated list of ABS library IDs to sync. You can change this later in Settings → Server → Audiobookshelf.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Library Defaults (Pagination) -->
         <div class="accordion-item shadow-sm mb-2">
             <h2 class="accordion-header" id="headingLibrary">

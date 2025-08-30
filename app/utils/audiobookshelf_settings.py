@@ -12,6 +12,7 @@ from flask import current_app
 
 
 DEFAULTS: Dict[str, Any] = {
+    'enabled': False,
     'base_url': '',
     'api_key': '',
     'library_ids': [],
@@ -25,6 +26,8 @@ DEFAULTS: Dict[str, Any] = {
     'last_listening_sync': None,
     # Debug flag to enable verbose listening sync logs
     'debug_listening_sync': False,
+    # Enforce job order: books first, then listening
+    'enforce_book_first': True,
 }
 
 
@@ -58,7 +61,7 @@ def load_abs_settings() -> Dict[str, Any]:
                             return val.strip().lower() in ('1', 'true', 'yes', 'on')
                         return False
                     # Apply to known boolean keys
-                    for key in ('auto_sync_enabled', 'debug_listening_sync'):
+                    for key in ('enabled','auto_sync_enabled', 'debug_listening_sync','enforce_book_first'):
                         if key in merged:
                             merged[key] = _to_bool(merged.get(key))
                     return merged
@@ -98,7 +101,7 @@ def save_abs_settings(update: Dict[str, Any]) -> bool:
             if isinstance(val, str):
                 return val.strip().lower() in ('1', 'true', 'yes', 'on')
             return False
-        for key in ('auto_sync_enabled', 'debug_listening_sync'):
+        for key in ('enabled','auto_sync_enabled', 'debug_listening_sync','enforce_book_first'):
             if key in update:
                 update[key] = _to_bool(update.get(key))
         current.update(update or {})

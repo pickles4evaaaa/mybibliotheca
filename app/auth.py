@@ -577,7 +577,6 @@ def settings_reading_prefs_partial():
         rows_raw = (request.form.get('library_rows_per_page') or '').strip()
         dp_raw = (request.form.get('default_pages_per_log') or '').strip()
         dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
-        abs_username = (request.form.get('abs_username') or '').strip()
         def _to_int_or_none(v: str):
             try:
                 return int(v) if v not in (None, '',) else None
@@ -586,8 +585,7 @@ def settings_reading_prefs_partial():
         payload = {
             'library_rows_per_page': _to_int_or_none(rows_raw),
             'default_pages_per_log': _to_int_or_none(dp_raw),
-            'default_minutes_per_log': _to_int_or_none(dm_raw),
-            'abs_username': abs_username
+            'default_minutes_per_log': _to_int_or_none(dm_raw)
         }
         ok = save_user_settings(getattr(current_user, 'id', None), payload)
         flash('Reading preferences saved.' if ok else 'Failed to save preferences.', 'success' if ok else 'error')
@@ -595,30 +593,33 @@ def settings_reading_prefs_partial():
     settings = load_user_settings(getattr(current_user, 'id', None))
     return render_template('settings/partials/reading_prefs.html', settings=settings)
 
-# Trigger sync from Audiobookshelf for the current user (listening history)
-@auth.route('/api/audiobookshelf/sync', methods=['POST'])
+# New: Personal Audiobookshelf partial (per-user ABS settings)
+@auth.route('/settings/partial/personal_abs', methods=['GET', 'POST'])
 @login_required
-def api_abs_sync_current_user():
-    try:
-        # Validate ABS configured
-        from app.utils.audiobookshelf_settings import load_abs_settings
-        from app.services.audiobookshelf_service import get_client_from_settings
-        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
-        abs_settings = load_abs_settings()
-        client = get_client_from_settings(abs_settings)
-        if not client:
-            return jsonify({'ok': False, 'error': 'abs_not_configured'}), 400
-        # Enqueue listening sessions sync for current user
-        runner = get_abs_sync_runner()
-        try:
-            ps = int(request.args.get('page_size') or request.form.get('page_size') or 200)
-        except Exception:
-            ps = 200
-        runner.enqueue_listening_sync(str(current_user.id), page_size=ps)
-        return jsonify({'ok': True, 'message': 'Listening sync started.'}), 200
-    except Exception as e:
-        current_app.logger.error(f"ABS sync trigger failed: {e}")
-        return jsonify({'ok': False, 'error': 'server_error'}), 500
+def settings_personal_abs_partial():
+    from app.utils.user_settings import load_user_settings, save_user_settings
+    from app.utils.audiobookshelf_settings import load_abs_settings
+    abs_settings = load_abs_settings()
+    if request.method == 'POST':
+        abs_username = (request.form.get('abs_username') or '').strip()
+        abs_api_key = (request.form.get('abs_api_key') or '').strip()
+        abs_sync_books = True if request.form.get('abs_sync_books') in ('on','true','1') else False
+        abs_sync_listening = True if request.form.get('abs_sync_listening') in ('on','true','1') else False
+        payload = {
+            'abs_username': abs_username,
+            'abs_api_key': abs_api_key,
+            'abs_sync_books': abs_sync_books,
+            'abs_sync_listening': abs_sync_listening
+        }
+        ok = save_user_settings(getattr(current_user, 'id', None), payload)
+        if ok:
+            flash('ABS settings saved.', 'success')
+        else:
+            flash('Failed to save ABS settings.', 'error')
+    settings = load_user_settings(getattr(current_user, 'id', None))
+    return render_template('settings/partials/personal_abs.html', settings=settings, abs_settings=abs_settings)
+
+# Note: User-triggered ABS sync is disabled; only admins can trigger ABS sync from Server settings.
 
 @auth.route('/settings/partial/data/<string:panel>')
 @login_required
@@ -1179,8 +1180,8 @@ def settings_server_partial(panel: str):
                 payload = {}
                 if 'base_url' in request.form:
                     payload['base_url'] = (request.form.get('base_url') or '').strip()
-                if 'api_key' in request.form:
-                    payload['api_key'] = (request.form.get('api_key') or '').strip()
+                # Global toggles (treat absence as False)
+                payload['enabled'] = True if request.form.get('enabled') else False
                 libs_raw = (request.form.get('library_ids') or '').strip()
                 if libs_raw:
                     try:
@@ -1206,6 +1207,8 @@ def settings_server_partial(panel: str):
                         payload['listening_sync_every_hours'] = int(request.form.get('listening_sync_every_hours') or 12)
                     except Exception:
                         payload['listening_sync_every_hours'] = 12
+                # Enforce order field (treat absence as False)
+                payload['enforce_book_first'] = True if request.form.get('enforce_book_first') else False
             ok = save_abs_settings(payload)
             if ok:
                 settings = load_abs_settings()

@@ -37,7 +37,14 @@ def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
     try:
         with open(path, 'r') as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        # Ensure known ABS fields exist with defaults
+        if isinstance(data, dict):
+            data.setdefault('abs_username', '')
+            data.setdefault('abs_api_key', '')
+            data.setdefault('abs_sync_books', False)
+            data.setdefault('abs_sync_listening', False)
+            return data
+        return {}
     except Exception:
         return {}
 

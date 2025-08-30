@@ -117,11 +117,12 @@
         </div>
 
     <div class="settings-section" id="personalSection">
-            <div class="row g-3 mb-3" id="personalActionBar">
-                <div class="col-6 col-md-3"><button data-personal-panel="profile" data-color="primary" class="btn btn-primary w-100 personal-nav"><i class="bi bi-person"></i> Profile</button></div>
-                <div class="col-6 col-md-3"><button data-personal-panel="password" data-color="warning" class="btn btn-warning w-100 personal-nav"><i class="bi bi-lock"></i> Password</button></div>
-                <div class="col-6 col-md-3"><button data-personal-panel="privacy" data-color="info" class="btn btn-info w-100 personal-nav"><i class="bi bi-shield-check"></i> Privacy</button></div>
-                <div class="col-6 col-md-3"><button data-personal-panel="reading_prefs" data-color="secondary" class="btn btn-secondary w-100 personal-nav"><i class="bi bi-journal-plus"></i> Reading Defaults</button></div>
+            <div class="d-flex flex-wrap gap-2 mb-3" id="personalActionBar">
+                <button data-personal-panel="profile" data-color="primary" class="btn btn-primary personal-nav flex-fill"><i class="bi bi-person"></i> Profile</button>
+                <button data-personal-panel="password" data-color="warning" class="btn btn-warning personal-nav flex-fill"><i class="bi bi-lock"></i> Password</button>
+                <button data-personal-panel="privacy" data-color="info" class="btn btn-info personal-nav flex-fill"><i class="bi bi-shield-check"></i> Privacy</button>
+                <button data-personal-panel="reading_prefs" data-color="secondary" class="btn btn-secondary personal-nav flex-fill"><i class="bi bi-journal-plus"></i> Reading Defaults</button>
+                <button data-personal-panel="personal_abs" data-color="primary" class="btn btn-outline-primary personal-nav flex-fill"><i class="bi bi-soundwave"></i> Audiobookshelf</button>
             </div>
             <div id="personalDynamicContainer" class="mb-3"></div>
             <div class="alert alert-light border small mb-0" role="alert">
@@ -547,6 +548,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'password': "{{ url_for('auth.settings_password_partial') }}",
                 'privacy': "{{ url_for('auth.settings_privacy_partial') }}",
                 'reading_prefs': "{{ url_for('auth.settings_reading_prefs_partial') }}",
+                'personal_abs': "{{ url_for('auth.settings_personal_abs_partial') }}",
                 'activity': "{{ url_for('auth.my_activity') }}" // fallback link
             };
             if(panel==='activity'){

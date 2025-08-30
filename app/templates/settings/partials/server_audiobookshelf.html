@@ -11,19 +11,28 @@
     <form id="absSettingsForm" method="post" action="{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
       <div class="row g-3">
-        <div class="col-md-6">
+        <div class="col-12">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="absEnabled" name="enabled" {% if settings and settings.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="absEnabled">Enable Audiobookshelf sync (global)</label>
+          </div>
+        </div>
+        <div class="col-12">
           <label class="form-label">Base URL</label>
           <input type="url" name="base_url" class="form-control" placeholder="http://localhost:13378" value="{{ (settings.base_url or '') if settings else '' }}" required>
           <div class="form-text">Your Audiobookshelf server root URL (no trailing slash)</div>
-        </div>
-        <div class="col-md-6">
-          <label class="form-label">API Key</label>
-          <input type="password" name="api_key" class="form-control" value="{{ (settings.api_key or '') if settings else '' }}" autocomplete="off">
         </div>
         <div class="col-12">
           <label class="form-label">Library IDs</label>
           <input type="text" name="library_ids" class="form-control" placeholder="lib1, lib2" value="{{ (settings.library_ids | join(', ')) if settings and settings.library_ids is iterable and settings.library_ids is not string else (settings.library_ids or '') }}">
           <div class="form-text">Comma-separated list of ABS library IDs to sync.</div>
+        </div>
+        <div class="col-12">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="absEnforceBooksFirst" name="enforce_book_first" {% if settings and settings.enforce_book_first %}checked{% endif %}>
+            <label class="form-check-label" for="absEnforceBooksFirst">Enforce order: import/update books first, then listening</label>
+          </div>
+          <div class="form-text">When enabled, user-triggered syncs run book import before listening sessions to avoid duplicates and ensure item IDs exist.</div>
         </div>
       </div>
       <div class="mt-3 d-flex gap-2">

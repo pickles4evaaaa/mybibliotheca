@@ -15,7 +15,7 @@ from typing import Deque, Dict, Any, Optional, Tuple
 from flask import current_app
 
 from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
-from app.services.audiobookshelf_service import get_client_from_settings
+from app.services.audiobookshelf_service import get_client_from_settings, AudiobookShelfClient
 from app.services.audiobookshelf_import_service import AudiobookshelfImportService
 from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
@@ -52,6 +52,15 @@ class _AbsSyncRunner:
             self._queue.append((task_id, {
                 'kind': 'test', 'user_id': user_id, 'library_ids': library_ids, 'limit': limit
             }))
+        return task_id
+    
+    def enqueue_user_composite_sync(self, user_id: str, page_size: int = 50) -> str:
+        """Enqueue a user composite sync (books first then listening) using per-user ABS API key if present."""
+        task_id = f"abs_user_{uuid.uuid4().hex[:8]}"
+        self._create_job(user_id, task_id, 'abs_user_composite', total=0)
+        self.ensure_started()
+        with self._lock:
+            self._queue.append((task_id, {'kind': 'user_composite', 'user_id': user_id, 'page_size': page_size}))
         return task_id
 
     def enqueue_full_sync(self, user_id: str, library_ids: list[str], page_size: int = 50) -> str:
@@ -128,6 +137,32 @@ class _AbsSyncRunner:
                             safe_update_import_job(payload['user_id'], task_id, {
                                 'status': 'completed', 'processed': 0, 'total': 0
                             })
+                        except Exception:
+                            pass
+                    elif kind == 'user_composite':
+                        # Optional per-user API key override
+                        try:
+                            from app.utils.user_settings import load_user_settings
+                            u = load_user_settings(payload['user_id'])
+                        except Exception:
+                            u = {}
+                        base_url = settings.get('base_url') or ''
+                        user_api_key = (u.get('abs_api_key') or '').strip() if isinstance(u, dict) else ''
+                        eff_client = client
+                        if base_url and user_api_key:
+                            eff_client = AudiobookShelfClient(base_url, user_api_key)
+                        do_books = bool(u.get('abs_sync_books')) if isinstance(u, dict) else False
+                        do_listen = bool(u.get('abs_sync_listening')) if isinstance(u, dict) else False
+                        enforce_order = bool(settings.get('enforce_book_first', True))
+                        # Always run books first when enabled
+                        if do_books:
+                            svc = AudiobookshelfImportService(payload['user_id'], eff_client)
+                            svc._run_full_sync_job(task_id, settings.get('library_ids') or [], int(payload.get('page_size') or 50))
+                        if do_listen:
+                            listener = AudiobookshelfListeningSync(payload['user_id'], eff_client)
+                            listener.sync(page_size=int(payload.get('page_size') or 200))
+                        try:
+                            safe_update_import_job(payload['user_id'], task_id, {'status': 'completed'})
                         except Exception:
                             pass
                     else:

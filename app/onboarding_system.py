@@ -411,6 +411,24 @@ def site_config_step():
             }
             
             logger.info(f"🔍 ONBOARDING DEBUG: Saving site_config: {site_config}")
+
+            # Persist Audiobookshelf basics (no API key) from onboarding step 2
+            try:
+                from .utils.audiobookshelf_settings import save_abs_settings
+                abs_enabled = 'abs_enabled' in request.form
+                abs_base_url = (request.form.get('abs_base_url') or '').strip()
+                # Normalize base URL: strip trailing slash
+                if abs_base_url.endswith('/'):
+                    abs_base_url = abs_base_url.rstrip('/')
+                abs_library_ids_raw = (request.form.get('abs_library_ids') or '').strip()
+                save_abs_settings({
+                    'enabled': abs_enabled,
+                    'base_url': abs_base_url,
+                    'library_ids': abs_library_ids_raw,
+                })
+                logger.info("🔍 ONBOARDING DEBUG: Applied Audiobookshelf settings from onboarding step 2")
+            except Exception as abs_err:
+                logger.warning(f"⚠️ ONBOARDING DEBUG: Failed to apply ABS settings during onboarding: {abs_err}")
             
             # Use direct session assignment for better reliability
             if 'onboarding_data' not in session:
@@ -490,10 +508,19 @@ def site_config_step():
         pass
     
     logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 2 template with current_config: {display_config}")
-    
+
+    # Load ABS settings for template prefill
+    abs_settings = None
+    try:
+        from .utils.audiobookshelf_settings import load_abs_settings
+        abs_settings = load_abs_settings()
+    except Exception as e:
+        logger.warning(f"⚠️ ONBOARDING DEBUG: Could not load ABS settings for template: {e}")
+
     return render_template('onboarding/step2_site_config.html',
                          timezones=timezones,
                          current_config=display_config,
+                         abs_settings=abs_settings,
                          step=2,
                          total_steps=5)
 
