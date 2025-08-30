@@ -87,18 +87,15 @@ class AudiobookShelfClient:
                 return [], 0
 
             attempts = []
-            # Attempt 1: documented library items endpoint
-            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"page": page, "size": size}))
-            # Try limit/offset variant
-            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "offset": (page-1)*size}))
-            # Attempt 2: global items endpoint filtered by library
-            attempts.append((self._url("/api/items"), {"library": library_id, "page": page, "size": size}))
-            attempts.append((self._url("/api/items"), {"library": library_id, "limit": size, "offset": (page-1)*size}))
-            # Attempt 3: alternative param name
-            attempts.append((self._url("/api/items"), {"libraryId": library_id, "page": page, "size": size}))
-            attempts.append((self._url("/api/items"), {"libraryId": library_id, "limit": size, "offset": (page-1)*size}))
-            # Attempt 4: incremental/updatedAfter variants to avoid full scans when supported
-            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"page": page, "size": size, "sort": "updatedAt", "order": "desc"}))
+            # Attempt 1: documented library items endpoint with sort by updatedAt desc and minified objects
+            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "page": max(0, page-1), "sort": "updatedAt", "desc": 1, "minified": 1}))
+            # Attempt 1b: same but using size param name
+            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"size": size, "page": page, "sort": "updatedAt", "desc": 1, "minified": 1}))
+            # Attempt 2: without sort fallback
+            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "page": max(0, page-1), "minified": 1}))
+            # Attempt 3: global items endpoint filtered by library
+            attempts.append((self._url("/api/items"), {"library": library_id, "limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
+            attempts.append((self._url("/api/items"), {"libraryId": library_id, "limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
 
             last_err: Optional[str] = None
             for url, params in attempts:

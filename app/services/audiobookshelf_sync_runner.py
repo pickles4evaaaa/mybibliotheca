@@ -54,13 +54,19 @@ class _AbsSyncRunner:
             }))
         return task_id
     
-    def enqueue_user_composite_sync(self, user_id: str, page_size: int = 50) -> str:
-        """Enqueue a user composite sync (books first then listening) using per-user ABS API key if present."""
+    def enqueue_user_composite_sync(self, user_id: str, page_size: int = 50, *, force_books: bool = False, force_listening: bool = False) -> str:
+        """Enqueue a user composite sync (books first then listening).
+
+        If force_books/force_listening are True, override per-user preferences.
+        """
         task_id = f"abs_user_{uuid.uuid4().hex[:8]}"
         self._create_job(user_id, task_id, 'abs_user_composite', total=0)
         self.ensure_started()
         with self._lock:
-            self._queue.append((task_id, {'kind': 'user_composite', 'user_id': user_id, 'page_size': page_size}))
+            self._queue.append((task_id, {
+                'kind': 'user_composite', 'user_id': user_id, 'page_size': page_size,
+                'force_books': bool(force_books), 'force_listening': bool(force_listening)
+            }))
         return task_id
 
     def enqueue_full_sync(self, user_id: str, library_ids: list[str], page_size: int = 50) -> str:
@@ -83,6 +89,12 @@ class _AbsSyncRunner:
             'processed': 0,
             'total': total,
             'total_books': total,
+            # Running counters for accurate, uncapped totals in progress UI
+            'success': 0,
+            'merged': 0,
+            'errors': 0,
+            'skipped': 0,
+            'unmatched': 0,
             'success_titles': [],
             'error_messages': [],
             'processed_books': []
@@ -151,8 +163,10 @@ class _AbsSyncRunner:
                         eff_client = client
                         if base_url and user_api_key:
                             eff_client = AudiobookShelfClient(base_url, user_api_key)
-                        do_books = bool(u.get('abs_sync_books')) if isinstance(u, dict) else False
-                        do_listen = bool(u.get('abs_sync_listening')) if isinstance(u, dict) else False
+                        force_books = bool(payload.get('force_books'))
+                        force_listening = bool(payload.get('force_listening'))
+                        do_books = force_books or (bool(u.get('abs_sync_books')) if isinstance(u, dict) else False)
+                        do_listen = force_listening or (bool(u.get('abs_sync_listening')) if isinstance(u, dict) else False)
                         enforce_order = bool(settings.get('enforce_book_first', True))
                         # Always run books first when enabled
                         if do_books:
@@ -208,9 +222,26 @@ class _AbsSyncRunner:
         lib_ids = settings.get('library_ids') or []
         if isinstance(lib_ids, str):
             lib_ids = [s.strip() for s in lib_ids.split(',') if s.strip()]
-        # Owner of scheduled job: use system or first available admin in future
-        user_id = '__system__'
-        self.enqueue_full_sync(user_id, lib_ids, page_size=50)
+        # Fan out to all users so per-user credentials and preferences are respected
+        try:
+            from app.services import user_service, run_async
+            users = run_async(user_service.get_all_users(limit=1000))  # type: ignore[attr-defined]
+        except Exception:
+            users = []
+        queued = 0
+        if users:
+            for u in users:
+                try:
+                    if not getattr(u, 'is_active', True):
+                        continue
+                    self.enqueue_user_composite_sync(str(getattr(u, 'id')))
+                    queued += 1
+                except Exception:
+                    continue
+        else:
+            # Fallback: run a single job under a system context (imports may still proceed without per-user prefs)
+            user_id = '__system__'
+            self.enqueue_full_sync(user_id, lib_ids, page_size=50)
         # Update last sync time
         try:
             save_abs_settings({'last_library_sync': now})
@@ -233,16 +264,22 @@ class _AbsSyncRunner:
         except Exception:
             listen_due = True
         if listen_due:
-            # Execute small listening sync inline (fast, read-mostly + personal metadata updates)
+            # Fan out listening syncs to all users
             try:
-                client = get_client_from_settings(settings)
-                if client:
-                    listener = AudiobookshelfListeningSync(user_id, client)
-                    listener.sync(page_size=200)
-                    try:
-                        save_abs_settings({'last_listening_sync': time.time()})
-                    except Exception:
-                        pass
+                if not users:
+                    from app.services import user_service, run_async  # type: ignore[attr-defined]
+                    users = run_async(user_service.get_all_users(limit=1000))
+            except Exception:
+                users = []
+            for u in users or []:
+                try:
+                    if not getattr(u, 'is_active', True):
+                        continue
+                    self.enqueue_listening_sync(str(getattr(u, 'id')))
+                except Exception:
+                    continue
+            try:
+                save_abs_settings({'last_listening_sync': time.time()})
             except Exception:
                 pass
 

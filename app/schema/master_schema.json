@@ -1,5 +1,4 @@
 {
-  "$schema": "https://example.com/mybibliotheca/kuzu-schema-v1.json",
   "version": 1,
   "generated_at": "2025-08-17T00:00:00Z",
   "nodes": {
@@ -61,7 +60,8 @@
   "media_format": "STRING",
   "audiobookshelf_id": "STRING",
   "audio_duration_ms": "INT64",
-  "media_type": "STRING"
+  "media_type": "STRING",
+  "audiobookshelf_updated_at": "STRING"
       },
       "primary_key": "id"
     },

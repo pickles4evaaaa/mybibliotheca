@@ -155,6 +155,7 @@
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="ai" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-robot"></i> AI</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="audiobookshelf" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-soundwave"></i> Audiobookshelf</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="debug" data-color="info" class="btn btn-outline-info w-100 server-nav"><i class="bi bi-bug"></i> Debug</button></div>
+                <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="jobs" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-activity"></i> Jobs</button></div>
             </div>
             <div id="serverDynamicContainer" class="mb-3"></div>
             <div class="alert alert-warning small mb-0" role="alert">
@@ -264,12 +265,123 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(panel==='ai') endpoint = "{{ url_for('auth.settings_server_partial', panel='ai') }}";
                 if(panel==='audiobookshelf') endpoint = "{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}";
                 if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";
+                if(panel==='jobs') endpoint = "{{ url_for('auth.settings_server_partial', panel='jobs') }}";
                 if(!endpoint){ serverContainer.innerHTML = '<div class="text-danger small">Unknown panel.</div>'; return; }
                 serverContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
                 fetch(endpoint)
                     .then(r=>r.text())
                     .then(html=> { 
                         serverContainer.innerHTML = html; 
+                                                // Re-bind scripts for panels whose inline <script> won't auto-run after fetch
+                                                if(panel==='audiobookshelf'){
+                                                        try {
+                                                                if(!window.__initAudiobookshelfPanel){
+                                                                        window.__initAudiobookshelfPanel = function(){
+                                                                                const root = serverContainer;
+                                                                                const form = root.querySelector('#absSettingsForm');
+                                                                                const status = root.querySelector('#absStatus');
+                                                                                const testBtn = root.querySelector('#absTestBtn');
+                                                                                const syncTestBtn = root.querySelector('#absSyncTestBtn');
+                                                                                const fullSyncBtn = root.querySelector('#absFullSyncBtn');
+                                                                                const schedForm = root.querySelector('#absSchedulerForm');
+                                                                                const schedStatus = root.querySelector('#absSchedulerStatus');
+                                                                                function getCsrf(){
+                                                                                        const m = document.querySelector('meta[name="csrf-token"]');
+                                                                                        return m && m.content ? m.content : '';
+                                                                                }
+                                                                                function startInlineProgressPolling(taskInfo){
+                                                                                        try { if (window.__absProgressPoll) { clearInterval(window.__absProgressPoll); } } catch(e){}
+                                                                                        if (!taskInfo || !taskInfo.api_progress_url) return;
+                                                                                        const startedAt = Date.now();
+                                                                                        window.__absProgressPoll = setInterval(async () => {
+                                                                                            try {
+                                                                                                const r = await fetch(taskInfo.api_progress_url, { credentials: 'same-origin' });
+                                                                                                if (!r.ok) return;
+                                                                                                const j = await r.json();
+                                                                                                const processed = j.processed || 0;
+                                                                                                const total = j.total || j.total_books || 0;
+                                                                                                const st = (j.status || '').toLowerCase();
+                                                                                                if (status) {
+                                                                                                    const pct = total > 0 ? Math.min(100, Math.round((processed/total)*100)) : 0;
+                                                                                                    let line = `Running: ${processed}/${total}${total?` (${pct}%)`:''}. `;
+                                                                                                    if (taskInfo.progress_url) { line += `<a href="${taskInfo.progress_url}" class="link-primary">View progress</a>`; }
+                                                                                                    status.innerHTML = line;
+                                                                                                }
+                                                                                                if (st === 'completed' || st === 'failed' || (total > 0 && processed >= total)) {
+                                                                                                    clearInterval(window.__absProgressPoll);
+                                                                                                    if (status) {
+                                                                                                        const doneLine = `${st === 'failed' ? 'Failed' : 'Completed'}: ${processed}/${total}.` + (taskInfo.progress_url?` <a href="${taskInfo.progress_url}" class="link-primary">Details</a>`:'');
+                                                                                                        status.innerHTML = doneLine;
+                                                                                                    }
+                                                                                                }
+                                                                                                if (Date.now() - startedAt > 15*60*1000) { clearInterval(window.__absProgressPoll); }
+                                                                                            } catch(e) { /* ignore */ }
+                                                                                        }, 1500);
+                                                                                }
+                                                                                if (form) {
+                                                                                        form.addEventListener('submit', function(ev){
+                                                                                            ev.preventDefault(); if(status) status.textContent='Saving...';
+                                                                                            const fd = new FormData(form);
+                                                                                                                                            fetch(form.action, { method:'POST', body: fd, credentials: 'same-origin' })
+                                                                                                                                                .then(r=>r.text()).then(html=>{ serverContainer.innerHTML = html; if (window.__initAudiobookshelfPanel) window.__initAudiobookshelfPanel(); })
+                                                                                                .catch(()=>{ if(status) status.textContent='Save failed'; });
+                                                                                        });
+                                                                                }
+                                                                                if (schedForm) {
+                                                                                        schedForm.addEventListener('submit', function(ev){
+                                                                                            ev.preventDefault(); if(schedStatus) schedStatus.textContent='Saving scheduler...';
+                                                                                            const fd = new FormData(schedForm);
+                                                                                            if (!fd.get('auto_sync_enabled')) fd.set('auto_sync_enabled', '');
+                                                                                                                                            fetch(schedForm.action, { method:'POST', body: fd, credentials:'same-origin' })
+                                                                                                                                                .then(r=>r.text()).then(html=>{ serverContainer.innerHTML = html; if (window.__initAudiobookshelfPanel) window.__initAudiobookshelfPanel(); })
+                                                                                                .catch(()=>{ if(schedStatus) schedStatus.textContent='Save failed'; });
+                                                                                        });
+                                                                                }
+                                                                                if (testBtn) {
+                                                                                        testBtn.addEventListener('click', function(){
+                                                                                            if(status) status.textContent='Testing...';
+                                                                                            const headers = {}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
+                                                                                            fetch("{{ url_for('auth.test_audiobookshelf_connection') }}", { method:'POST', credentials:'same-origin', headers })
+                                                                                                .then(r=>r.json()).then(j=>{
+                                                                                                    if(status) status.textContent=(j.ok?'OK: ':'Fail: ')+(j.message||'');
+                                                                                        fetch("{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}?test=1", { credentials:'same-origin' })
+                                                                                            .then(r=>r.text()).then(html=>{ serverContainer.innerHTML = html; if (window.__initAudiobookshelfPanel) window.__initAudiobookshelfPanel(); });
+                                                                                                }).catch(()=>{ if(status) status.textContent='Test failed'; });
+                                                                                        });
+                                                                                }
+                                                                                if (syncTestBtn) {
+                                                                                        syncTestBtn.addEventListener('click', async function(){
+                                                                                            if(status) status.textContent='Starting test sync...';
+                                                                                            const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
+                                                                                            try {
+                                                                                                const resp = await fetch("{{ url_for('auth.audiobookshelf_test_sync') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5})});
+                                                                                                const j = await resp.json();
+                                                                                                if(j.ok){ try{ startInlineProgressPolling(j); }catch(e){}
+                                                                                                    const to = j.progress_url || j.api_progress_url || '#'; if(to && to !== '#'){ setTimeout(()=>{ window.location.assign(to); }, 150); }
+                                                                                                    else if(status){ status.innerHTML = 'Sync started. <a href="'+(j.progress_url||'#')+'" class="link-primary">View progress</a>'; }
+                                                                                                } else { if(status) status.textContent = 'Failed: ' + (j.message||''); }
+                                                                                            } catch(e){ if(status) status.textContent='Failed to start test sync'; }
+                                                                                        });
+                                                                                }
+                                                                                if (fullSyncBtn) {
+                                                                                        fullSyncBtn.addEventListener('click', async function(){
+                                                                                            if(status) status.textContent='Starting full sync...';
+                                                                                            const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
+                                                                                            try {
+                                                                                                const resp = await fetch("{{ url_for('auth.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
+                                                                                                const j = await resp.json();
+                                                                                                if(j.ok){ const queued = j.queued || (j.task_ids ? j.task_ids.length : 0);
+                                                                                                    if(status) status.textContent = `Queued ${queued} user job${queued===1?'':'s'}...`;
+                                                                                                    if (j.api_progress_url) { try{ startInlineProgressPolling(j); }catch(e){} setTimeout(()=>{ window.location.assign(j.progress_url); }, 200); }
+                                                                                                } else { if(status) status.textContent = 'Failed: ' + (j.message||''); }
+                                                                                            } catch(e){ if(status) status.textContent='Failed to start full sync'; }
+                                                                                        });
+                                                                                }
+                                                                        };
+                                                                }
+                                                                window.__initAudiobookshelfPanel();
+                                                        } catch(e) { console.warn('ABS panel init failed', e); }
+                                                }
                         if(panel==='config'){
                             if(typeof window.saveServerConfig !== 'function'){
                                 window.saveServerConfig = async function(form){

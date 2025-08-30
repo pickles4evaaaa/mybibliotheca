@@ -137,6 +137,12 @@
                         <div id="statusMessage" class="alert alert-info">
                             <i class="fas fa-info-circle"></i> Import starting...
                         </div>
+                        <div class="d-flex gap-2 align-items-center mt-2">
+                            <button id="cancelJobBtn" class="btn btn-outline-danger btn-sm d-none">
+                                <i class="bi bi-x-circle"></i> Cancel Job
+                            </button>
+                            <small id="cancelNote" class="text-muted d-none">Cancelling…</small>
+                        </div>
                     </div>
                     
                     <div id="completionButtons" class="d-none">
@@ -362,6 +368,14 @@ function updateProgress() {
             
             // Update status
             const jobStatus = document.getElementById('jobStatus');
+            // Toggle cancel visibility depending on status
+            const cancelBtn = document.getElementById('cancelJobBtn');
+            const cancellable = ['running','started','processing','analyzing','pending','cancelling'].includes((data.status||'').toLowerCase());
+            if (cancellable) {
+                cancelBtn.classList.remove('d-none');
+            } else {
+                cancelBtn.classList.add('d-none');
+            }
             if (data.status === 'completed' || data.status === 'completed_with_errors') {
                 jobStatus.textContent = 'Completed';
                 jobStatus.className = data.status === 'completed' ? 'badge bg-success' : 'badge bg-warning';
@@ -434,6 +448,14 @@ function updateProgress() {
                 document.getElementById('statusMessage').className = 'alert alert-danger';
                 
                 return; // Stop polling
+            } else if (data.status === 'cancelled') {
+                jobStatus.textContent = 'Cancelled';
+                jobStatus.className = 'badge bg-secondary';
+                progressBar.className = 'progress-bar bg-secondary';
+                document.getElementById('statusMessage').innerHTML = 
+                    `<i class="bi bi-x-circle"></i> Job was cancelled.`;
+                document.getElementById('statusMessage').className = 'alert alert-secondary';
+                return; // Stop polling
             } else {
                 // Handle different running statuses
                 if (data.status === 'analyzing') {
@@ -489,6 +511,27 @@ setTimeout(updateProgress, 1000);
 // Handle error report download
 document.getElementById('downloadErrorsBtn').addEventListener('click', function() {
     window.location.href = `/api/import/errors/${taskId}`;
+});
+
+// Cancel button handler
+document.getElementById('cancelJobBtn').addEventListener('click', async function() {
+    const btn = this;
+    btn.disabled = true;
+    document.getElementById('cancelNote').classList.remove('d-none');
+    try {
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || document.querySelector('input[name="csrf_token"]').value || '';
+        await fetch(`/api/import/cancel/${taskId}`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': csrf }
+        });
+        // Next poll will reflect cancelling/cancelled
+        setTimeout(updateProgress, 250);
+    } catch (e) {
+        console.error('Cancel failed', e);
+        btn.disabled = false;
+        document.getElementById('cancelNote').classList.add('d-none');
+    }
 });
 </script>
 {% endblock %}

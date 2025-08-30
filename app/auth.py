@@ -731,6 +731,11 @@ def settings_ai_ollama_models():
 @auth.route('/settings/partial/server/<string:panel>', methods=['GET','POST'])
 @login_required
 def settings_server_partial(panel: str):
+    # Normalize panel to avoid subtle whitespace/case mismatches
+    try:
+        panel = (panel or '').strip().lower()
+    except Exception:
+        panel = str(panel)
     if not current_user.is_admin:
         return '<div class="text-danger small">Not authorized.</div>'
     if panel == 'users':
@@ -1271,6 +1276,68 @@ def settings_server_partial(panel: str):
                 return jsonify({'ok': False, 'error': 'save_failed'}), 400
         metadata_settings = get_metadata_settings()
         return render_template('settings/partials/server_metadata.html', metadata_settings=metadata_settings)
+    if panel == 'jobs':
+        # Admin view of all import/sync jobs across users
+        if not current_user.is_admin:
+            return '<div class="text-danger small">Not authorized.</div>'
+        try:
+            from app.utils.safe_import_manager import safe_import_manager, safe_get_import_job
+            # ABS runner health (best effort)
+            runner_alive = False
+            try:
+                from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+                _runner = get_abs_sync_runner()
+                try:
+                    _runner.ensure_started()
+                except Exception:
+                    pass
+                th = getattr(_runner, '_thread', None)
+                runner_alive = bool(th and hasattr(th, 'is_alive') and th.is_alive())
+            except Exception:
+                runner_alive = False
+            # High-level debug map to discover all user_ids and task_ids
+            debug_map = safe_import_manager.get_jobs_for_admin_debug(current_user.id, include_user_data=True)
+            # Collect detailed records for rendering
+            jobs = []
+            jobs_by_user = debug_map.get('jobs_by_user') or {}
+            for uid, tasks in jobs_by_user.items():
+                try:
+                    for tid in tasks.keys():
+                        try:
+                            job = safe_get_import_job(uid, tid) or {}
+                        except Exception:
+                            job = {'task_id': tid, 'user_id': uid, 'status': 'unknown'}
+                        # Normalize fields
+                        entry = {
+                            'task_id': job.get('task_id', tid),
+                            'user_id': job.get('user_id', uid),
+                            'type': job.get('type', job.get('import_type', 'unknown')),
+                            'status': job.get('status', 'unknown'),
+                            'created_at': job.get('created_at', ''),
+                            'updated_at': job.get('updated_at', ''),
+                            'processed': job.get('processed', 0),
+                            'total': job.get('total', job.get('total_books', 0)),
+                            'message': job.get('message') or (job.get('error_messages', [''])[0] if job.get('error_messages') else ''),
+                        }
+                        jobs.append(entry)
+                except Exception:
+                    continue
+            # Sort newest first (fallback to unsorted on parse error)
+            def _ts(j):
+                ts = j.get('updated_at') or j.get('created_at') or ''
+                return str(ts)
+            try:
+                jobs.sort(key=_ts, reverse=True)
+            except Exception:
+                pass
+            # Manager stats for header
+            stats = safe_import_manager.get_statistics()
+            stats['abs_runner_alive'] = runner_alive
+        except Exception as e:
+            current_app.logger.error(f"Jobs panel error: {e}")
+            jobs = []
+            stats = {'total_active_jobs': 0, 'total_users_with_jobs': 0, 'operation_stats': {}, 'abs_runner_alive': False}
+        return render_template('settings/partials/server_jobs.html', jobs=jobs, manager_stats=stats)
     # 'system' panel removed; info moved to overview section
     return '<div class="text-danger small">Unknown panel.</div>'
 
@@ -1331,17 +1398,46 @@ def audiobookshelf_full_sync():
     if not current_user.is_admin:
         return jsonify({'ok': False, 'error': 'not_authorized'}), 403
     try:
+        # Trigger a composite sync for ALL users to respect per-user credentials and prefs
         from app.utils.audiobookshelf_settings import load_abs_settings
         from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+        from app.services import user_service, run_async
+
         settings = load_abs_settings()
-        library_ids = settings.get('library_ids') or []
-        if isinstance(library_ids, str):
-            library_ids = [s.strip() for s in library_ids.split(',') if s.strip()]
+        if not settings.get('enabled'):
+            return jsonify({'ok': False, 'message': 'Audiobookshelf is disabled in settings'}), 400
+
+        # Get users (async service wrapped to sync)
+        try:
+            users = run_async(user_service.get_all_users(limit=1000))  # type: ignore[attr-defined]
+        except Exception as e:
+            current_app.logger.error(f"ABS full sync: failed to load users: {e}")
+            users = []
+        if not users:
+            return jsonify({'ok': False, 'message': 'No users found to sync'}), 400
+
         runner = get_abs_sync_runner()
-        task_id = runner.enqueue_full_sync(str(current_user.id), library_ids or [], page_size=50)
-        progress_url = url_for('import.import_books_progress', task_id=task_id)
-        api_progress_url = url_for('import.api_import_progress', task_id=task_id)
-        return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
+        task_ids = []
+        for u in users:
+            try:
+                if not getattr(u, 'is_active', True):
+                    continue
+                tid = runner.enqueue_user_composite_sync(
+                    str(getattr(u, 'id')),
+                    page_size=50,
+                    force_books=True,
+                    force_listening=True,
+                )
+                task_ids.append(tid)
+            except Exception as e:
+                current_app.logger.error(
+                    f"ABS full sync: failed to enqueue for user {getattr(u, 'id', 'unknown')}: {e}"
+                )
+        current_app.logger.info(f"ABS full sync queued {len(task_ids)} user jobs")
+        # Provide progress URLs for the first task so UI can poll status
+        progress_url = url_for('import.import_books_progress', task_id=task_ids[0]) if task_ids else None
+        api_progress_url = url_for('import.api_import_progress', task_id=task_ids[0]) if task_ids else None
+        return jsonify({'ok': True, 'queued': len(task_ids), 'task_ids': task_ids, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
     except Exception as e:
         current_app.logger.error(f"ABS full sync error: {e}")
         return jsonify({'ok': False, 'message': 'error'}), 500

@@ -1279,14 +1279,20 @@ def library():
             return status
         return getattr(book, 'ownership_status', None)
     
+    # Global status counts (not page-limited)
+    try:
+        global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
+    except Exception:
+        global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
+
     stats = {
         'total_books': total_books,
-        'books_read': len([b for b in user_books if get_reading_status(b) == 'read']),
-        'currently_reading': len([b for b in user_books if get_reading_status(b) in ['reading', 'currently_reading']]),
-        'want_to_read': len([b for b in user_books if get_reading_status(b) == 'plan_to_read']),
-        'on_hold': len([b for b in user_books if get_reading_status(b) == 'on_hold']),
-        'wishlist': len([b for b in user_books if get_ownership_status(b) == 'wishlist']),
-        # Add location stats
+        'books_read': int(global_counts.get('read', 0)),
+        'currently_reading': int(global_counts.get('currently_reading', 0)),
+        'want_to_read': int(global_counts.get('plan_to_read', 0)),
+        'on_hold': int(global_counts.get('on_hold', 0)),
+        'wishlist': int(global_counts.get('wishlist', 0)),
+        # Add location stats (page sample)
         'books_with_locations': books_with_locations,
         'books_without_locations': books_without_locations,
         'location_counts': location_counts

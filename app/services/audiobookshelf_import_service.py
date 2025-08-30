@@ -16,6 +16,7 @@ from app.services.audiobookshelf_service import AudiobookShelfClient
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.services.kuzu_book_service import KuzuBookService
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job, safe_get_import_job
+from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 from pathlib import Path
 import os
 import requests  # type: ignore
@@ -380,6 +381,8 @@ class AudiobookshelfImportService:
         duration = media.get('duration') or md.get('duration')
         if isinstance(duration, (int, float)):
             duration_ms = int(float(duration) * 1000) if duration < 10_000_000 else int(duration)
+        # Extract ABS updated timestamp if available
+        abs_updated_iso = self._extract_abs_updated_at(abs_item)
         updates: Dict[str, Any] = {
             'media_type': 'audiobook',
         }
@@ -417,6 +420,20 @@ class AudiobookshelfImportService:
                     {
                         'book_id': book_id,
                         'dur_ms': int(duration_ms),
+                        'ts': datetime.now(timezone.utc).isoformat()
+                    }
+                )
+            # Persist ABS updated timestamp if we have one
+            if abs_updated_iso:
+                safe_execute_kuzu_query(
+                    """
+                    MATCH (b:Book {id: $book_id})
+                    SET b.audiobookshelf_updated_at = $abs_updated, b.updated_at = timestamp($ts)
+                    RETURN b.id
+                    """,
+                    {
+                        'book_id': book_id,
+                        'abs_updated': abs_updated_iso,
                         'ts': datetime.now(timezone.utc).isoformat()
                     }
                 )
@@ -522,6 +539,90 @@ class AudiobookshelfImportService:
         except Exception:
             pass
 
+    # --- Delta sync helpers -------------------------------------------------
+    def _extract_abs_updated_at(self, item: Dict[str, Any]) -> Optional[str]:
+        """Return an ISO8601 string for the ABS item's last updated timestamp if present.
+
+        Tries common keys and normalizes numeric epochs (s/ms) and string dates.
+        """
+        try:
+            cand = item.get('updatedAt') or item.get('lastUpdate') or item.get('lastUpdated') or item.get('lastModified') or None
+            # Some servers nest under media/ or metadata
+            if cand is None:
+                media = item.get('media') or {}
+                md = media.get('metadata') or {}
+                cand = media.get('updatedAt') or md.get('updatedAt') or md.get('lastModified') or None
+            if cand is None:
+                return None
+            from datetime import datetime, timezone
+            # Numeric epoch
+            if isinstance(cand, (int, float)):
+                # Heuristic: treat values > 10^12 as ms
+                epoch_sec = float(cand) / 1000.0 if float(cand) > 1_000_000_000_000 else float(cand)
+                return datetime.fromtimestamp(epoch_sec, tz=timezone.utc).isoformat()
+            # ISO-like string
+            s = str(cand)
+            try:
+                # Normalize Z suffix
+                if s.endswith('Z'):
+                    return s
+                # Attempt parse/normalize
+                dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+                return dt.astimezone(timezone.utc).isoformat()
+            except Exception:
+                return s  # return raw string as best-effort
+        except Exception:
+            return None
+
+    def _get_local_abs_updated_at(self, abs_id: Optional[str]) -> Optional[str]:
+        if not abs_id:
+            return None
+        try:
+            from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+            from app.services.kuzu_service_facade import _convert_query_result_to_list
+            qr = safe_execute_kuzu_query(
+                """
+                MATCH (b:Book) WHERE b.audiobookshelf_id = $abs_id RETURN b.audiobookshelf_updated_at LIMIT 1
+                """,
+                { 'abs_id': str(abs_id) }
+            )
+            rows = _convert_query_result_to_list(qr)
+            if rows:
+                r0 = rows[0]
+                if isinstance(r0, dict):
+                    return r0.get('result') or r0.get('col_0') or r0.get('b.audiobookshelf_updated_at')
+                try:
+                    return str(r0)
+                except Exception:
+                    return None
+        except Exception:
+            return None
+        return None
+
+    def _should_process_abs_item(self, item: Dict[str, Any]) -> bool:
+        """Return True if item is new or updated compared to local store, else False."""
+        try:
+            abs_id = item.get('id') or item.get('_id') or item.get('itemId')
+            if not abs_id:
+                return True
+            remote_iso = self._extract_abs_updated_at(item)
+            # If no remote timestamp, process only if book is missing locally
+            local_iso = self._get_local_abs_updated_at(abs_id)
+            if remote_iso is None:
+                return local_iso is None
+            if local_iso is None:
+                return True
+            # Compare as ISO; fallback to lexical compare (works for ISO)
+            from datetime import datetime
+            try:
+                rdt = datetime.fromisoformat(remote_iso.replace('Z', '+00:00'))
+                ldt = datetime.fromisoformat(local_iso.replace('Z', '+00:00'))
+                return rdt > ldt
+            except Exception:
+                return str(remote_iso) > str(local_iso)
+        except Exception:
+            return True
+
     # Public internal: run test sync using an existing task_id (no thread)
     def _run_test_sync_job(self, task_id: str, library_ids: List[str], limit: int = 5) -> None:
         try:
@@ -563,6 +664,19 @@ class AudiobookshelfImportService:
                 current_title = 'Unknown'
                 book_data: Optional[SimplifiedBook] = None
                 try:
+                    # Delta check: skip if not new/updated
+                    if not self._should_process_abs_item(item):
+                        processed += 1
+                        current_job = safe_get_import_job(self.user_id, task_id) or {}
+                        pb = list(current_job.get('processed_books') or [])
+                        pb.append({'title': (item.get('media') or {}).get('metadata',{}).get('title') or item.get('title') or 'Unknown', 'status': 'skipped'})
+                        safe_update_import_job(self.user_id, task_id, {
+                            'status': 'running',
+                            'processed': processed,
+                            'skipped': (current_job.get('skipped') or 0) + 1,
+                            'processed_books': pb[-100:],
+                        })
+                        continue
                     item_id = item.get('id') or item.get('_id') or item.get('itemId')
                     # Only fetch expanded item if contributors/metadata are missing
                     need_detail = self._needs_item_detail_for_persons(item)
@@ -621,6 +735,7 @@ class AudiobookshelfImportService:
                     safe_update_import_job(self.user_id, task_id, {
                         'status': 'running',
                         'processed': processed,
+                        'success': (current_job.get('success') or 0) + 1,
                         'processed_books': pb[-100:],
                     })
                 except BookAlreadyExistsError:
@@ -659,6 +774,7 @@ class AudiobookshelfImportService:
                     safe_update_import_job(self.user_id, task_id, {
                         'status': 'running',
                         'processed': processed,
+                        'merged': (current_job.get('merged') or 0) + 1,
                         'success_titles': successes[-10:],
                         'processed_books': pb[-100:],
                     })
@@ -671,6 +787,7 @@ class AudiobookshelfImportService:
                     safe_update_import_job(self.user_id, task_id, {
                         'status': 'running',
                         'processed': processed,
+                        'errors': (current_job.get('errors') or 0) + 1,
                         'error_messages': errors[-10:],
                         'processed_books': pb[-100:],
                     })
@@ -697,6 +814,10 @@ class AudiobookshelfImportService:
             errors: List[str] = []
             success_titles: List[str] = []
             grand_total = 0
+            # Read per-library cutoff timestamps (best-effort)
+            settings = load_abs_settings()
+            last_sync_map = settings.get('last_library_sync_map') or {}
+            latest_seen_map: Dict[str, str] = {}
 
             for lib_id in libs_to_try:
                 meta = self.client.list_library_items(lib_id, page=1, size=page_size)
@@ -709,15 +830,63 @@ class AudiobookshelfImportService:
 
             for lib_id in libs_to_try:
                 page = 1
+                cutoff_iso = None
+                try:
+                    cutoff_iso = last_sync_map.get(lib_id)
+                except Exception:
+                    cutoff_iso = None
                 while True:
+                    # Cancellation check before fetching next page
+                    try:
+                        _job = safe_get_import_job(self.user_id, task_id) or {}
+                        if _job.get('cancelled'):
+                            safe_update_import_job(self.user_id, task_id, {
+                                'status': 'cancelled',
+                                'processed': processed,
+                            })
+                            return
+                    except Exception:
+                        pass
                     res = self.client.list_library_items(lib_id, page=page, size=page_size)
                     items = res.get('items') or []
                     if not items:
                         break
+                    stop_due_to_cutoff = False
                     for item in items:
                         current_title = 'Unknown'
                         book_data: Optional[SimplifiedBook] = None
                         try:
+                            # Track latest updatedAt for this page to aid cutoff persistence
+                            try:
+                                upd = self._extract_abs_updated_at(item)
+                                if upd:
+                                    prev = latest_seen_map.get(lib_id)
+                                    if (not prev) or (str(upd) > str(prev)):
+                                        latest_seen_map[lib_id] = str(upd)
+                            except Exception:
+                                pass
+                            # Delta check: skip if not new/updated
+                            if not self._should_process_abs_item(item):
+                                processed += 1
+                                current_job = safe_get_import_job(self.user_id, task_id) or {}
+                                pb = list(current_job.get('processed_books') or [])
+                                pb.append({'title': (item.get('media') or {}).get('metadata',{}).get('title') or item.get('title') or 'Unknown', 'status': 'skipped'})
+                                safe_update_import_job(self.user_id, task_id, {
+                                    'status': 'running',
+                                    'processed': processed,
+                                    'skipped': (current_job.get('skipped') or 0) + 1,
+                                    'processed_books': pb[-100:],
+                                })
+                                # If sorted by updatedAt desc, once we encounter older than cutoff we can stop paging further
+                                if cutoff_iso:
+                                    try:
+                                        r_iso = self._extract_abs_updated_at(item)
+                                        if r_iso and str(r_iso) <= str(cutoff_iso):
+                                            stop_due_to_cutoff = True
+                                            break
+                                    except Exception:
+                                        pass
+                                continue
                             item_id = item.get('id') or item.get('_id') or item.get('itemId')
                             need_detail = self._needs_item_detail_for_persons(item)
                             if item_id and need_detail:
@@ -824,7 +993,21 @@ class AudiobookshelfImportService:
                                 'error_messages': errors[-10:],
                                 'processed_books': pb[-100:],
                             })
+                    if stop_due_to_cutoff:
+                        break
                     page += 1
+
+            # Persist latest seen per-library timestamps
+            try:
+                if latest_seen_map:
+                    new_map = dict((settings.get('last_library_sync_map') or {}))
+                    for k, v in latest_seen_map.items():
+                        prev = new_map.get(k)
+                        if (not prev) or (str(v) > str(prev)):
+                            new_map[k] = v
+                    save_abs_settings({'last_library_sync_map': new_map, 'last_library_sync': __import__('time').time()})
+            except Exception:
+                pass
 
             safe_update_import_job(self.user_id, task_id, {
                 'status': 'completed',
@@ -889,6 +1072,11 @@ class AudiobookshelfImportService:
             'processed': 0,
             'total': total,
             'total_books': total,  # for progress UI tiles
+            'success': 0,
+            'merged': 0,
+            'errors': 0,
+            'skipped': 0,
+            'unmatched': 0,
             'success_titles': [],
             'error_messages': [],
             'processed_books': []
@@ -948,6 +1136,17 @@ class AudiobookshelfImportService:
                 })
 
                 for item in items[:limit]:
+                    # Cancellation check
+                    try:
+                        _job = safe_get_import_job(self.user_id, task_id) or {}
+                        if _job.get('cancelled'):
+                            safe_update_import_job(self.user_id, task_id, {
+                                'status': 'cancelled',
+                                'processed': processed,
+                            })
+                            return
+                    except Exception:
+                        pass
                     current_title = 'Unknown'
                     book_data: Optional[SimplifiedBook] = None
                     try:
@@ -1011,6 +1210,7 @@ class AudiobookshelfImportService:
                         safe_update_import_job(self.user_id, task_id, {
                             'status': 'running',
                             'processed': processed,
+                            'success': (current_job.get('success') or 0) + 1,
                             'processed_books': pb[-100:],
                         })
                     except BookAlreadyExistsError:
@@ -1047,6 +1247,7 @@ class AudiobookshelfImportService:
                         safe_update_import_job(self.user_id, task_id, {
                             'status': 'running',
                             'processed': processed,
+                            'merged': (current_job.get('merged') or 0) + 1,
                             'success_titles': successes[-10:],
                             'processed_books': pb[-100:],
                         })
@@ -1059,6 +1260,7 @@ class AudiobookshelfImportService:
                         safe_update_import_job(self.user_id, task_id, {
                             'status': 'running',
                             'processed': processed,
+                            'errors': (current_job.get('errors') or 0) + 1,
                             'error_messages': errors[-10:],
                             'processed_books': pb[-100:],
                         })
@@ -1102,6 +1304,11 @@ class AudiobookshelfImportService:
             'processed': 0,
             'total': 0,
             'total_books': 0,
+            'success': 0,
+            'merged': 0,
+            'errors': 0,
+            'skipped': 0,
+            'unmatched': 0,
             'success_titles': [],
             'error_messages': [],
             'processed_books': []
@@ -1142,50 +1349,149 @@ class AudiobookshelfImportService:
 
                 for lib_id in libs_to_try:
                     page = 1
+                    # Per-library cutoff based on last sync
+                    settings_local = load_abs_settings()
+                    cutoff_iso = None
+                    try:
+                        cutoff_iso = (settings_local.get('last_library_sync_map') or {}).get(lib_id)
+                    except Exception:
+                        cutoff_iso = None
+                    latest_seen_for_lib: Optional[str] = None
                     while True:
                         res = self.client.list_library_items(lib_id, page=page, size=page_size)
                         items = res.get('items') or []
                         if not items:
                             break
-                        for item in items:
-                            current_title = 'Unknown'
-                            book_data: Optional[SimplifiedBook] = None
+
+                        # Phase A: parallel network-bound enrichment (item detail + cover)
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+                        def _prepare(item_in: Dict[str, Any]) -> Dict[str, Any]:
+                            loc_item = dict(item_in)
+                            bd: Optional[SimplifiedBook] = None
+                            local_cover: Optional[str] = None
                             try:
-                                item_id = item.get('id') or item.get('_id') or item.get('itemId')
-                                need_detail = self._needs_item_detail_for_persons(item)
-                                if item_id and need_detail:
+                                # Skip early in prepare if not updated; mark sentinel
+                                if not self._should_process_abs_item(loc_item):
+                                    return {'item': loc_item, 'skip': True}
+                                item_id = loc_item.get('id') or loc_item.get('_id') or loc_item.get('itemId')
+                                if item_id and self._needs_item_detail_for_persons(loc_item):
                                     detail = self.client.get_item(item_id, expanded=True)
                                     if detail.get('ok') and detail.get('item'):
-                                        item = detail['item']
-                                book_data = self._map_abs_item_to_simplified(item)
-                                # Pre-cache cover with ABS auth and use local path before creating the book
+                                        loc_item = detail['item']
                                 try:
-                                    pre_local_cover = self._cache_cover_with_auth(item)
-                                    if pre_local_cover:
-                                        book_data.cover_url = pre_local_cover
+                                    local_cover = self._cache_cover_with_auth(loc_item)
+                                except Exception:
+                                    local_cover = None
+                                bd = self._map_abs_item_to_simplified(loc_item)
+                                if local_cover:
+                                    try:
+                                        bd.cover_url = local_cover
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                # Fallback to minimal mapping
+                                try:
+                                    bd = self._map_abs_item_to_simplified(loc_item)
+                                except Exception:
+                                    bd = None
+                            return {'item': loc_item, 'book_data': bd, 'local_cover': local_cover}
+
+                        prepared: list = []
+                        max_workers = 8
+                        try:
+                            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                                futures = [ex.submit(_prepare, it) for it in items]
+                                for fut in as_completed(futures):
+                                    try:
+                                        prepared.append(fut.result())
+                                    except Exception:
+                                        prepared.append({'item': {}, 'book_data': None, 'local_cover': None})
+                        except Exception:
+                            # If thread pool fails, fall back to serial prepare
+                            prepared = [_prepare(it) for it in items]
+
+                        # Phase B: sequential Kuzu writes (respect single-worker constraint)
+                        stop_due_to_cutoff = False
+                        for entry in prepared:
+                            # Cancellation check within page processing
+                            try:
+                                _job = safe_get_import_job(self.user_id, task_id) or {}
+                                if _job.get('cancelled'):
+                                    safe_update_import_job(self.user_id, task_id, {
+                                        'status': 'cancelled',
+                                        'processed': processed,
+                                    })
+                                    return
+                            except Exception:
+                                pass
+                            # Handle skipped entries from prepare
+                            if entry.get('skip'):
+                                # Update latest seen timestamp if present
+                                try:
+                                    upd = self._extract_abs_updated_at(entry.get('item') or {})
+                                    if upd and ((not latest_seen_for_lib) or (str(upd) > str(latest_seen_for_lib))):
+                                        latest_seen_for_lib = str(upd)
                                 except Exception:
                                     pass
-                                current_title = book_data.title or 'Unknown'
+                                processed += 1
+                                current_job = safe_get_import_job(self.user_id, task_id) or {}
+                                pb = list(current_job.get('processed_books') or [])
+                                t = (entry.get('item') or {}).get('title') or ((entry.get('item') or {}).get('media') or {}).get('metadata',{}).get('title') or 'Unknown'
+                                pb.append({'title': t, 'status': 'skipped'})
+                                safe_update_import_job(self.user_id, task_id, {
+                                    'status': 'running',
+                                    'processed': processed,
+                                    'skipped': (current_job.get('skipped') or 0) + 1,
+                                    'processed_books': pb[-100:],
+                                })
+                                # If sorted desc and we hit older/equal to cutoff, we can stop
+                                if cutoff_iso:
+                                    try:
+                                        r_iso = self._extract_abs_updated_at(entry.get('item') or {})
+                                        if r_iso and str(r_iso) <= str(cutoff_iso):
+                                            stop_due_to_cutoff = True
+                                            break
+                                    except Exception:
+                                        pass
+                                continue
+                            obj_item = entry.get('item') or {}
+                            book_data: Optional[SimplifiedBook] = entry.get('book_data')
+                            current_title = 'Unknown'
+                            try:
+                                # Update latest seen timestamp
+                                try:
+                                    upd = self._extract_abs_updated_at(obj_item)
+                                    if upd and ((not latest_seen_for_lib) or (str(upd) > str(latest_seen_for_lib))):
+                                        latest_seen_for_lib = str(upd)
+                                except Exception:
+                                    pass
+                                if not book_data:
+                                    book_data = self._map_abs_item_to_simplified(obj_item)
+                                current_title = getattr(book_data, 'title', None) or 'Unknown'
                                 created = self.simple_books.add_book_to_user_library_sync(book_data, self.user_id, media_type='audiobook')
                                 if not created:
                                     raise RuntimeError('Failed to create book')
-                                # Resolve created book id and apply fields
                                 book_id: Optional[str] = self._resolve_book_id(book_data)
                                 if book_id:
                                     updates3: Dict[str, Any] = {'media_type': 'audiobook'}
-                                    try:
-                                        local_cover = self._cache_cover_with_auth(item)
-                                        if local_cover:
-                                            updates3['cover_url'] = local_cover
-                                    except Exception:
-                                        pass
+                                    # We may already have a cached local cover; prefer that
+                                    local_cover = entry.get('local_cover')
+                                    if local_cover:
+                                        updates3['cover_url'] = local_cover
+                                    else:
+                                        try:
+                                            local_cover2 = self._cache_cover_with_auth(obj_item)
+                                            if local_cover2:
+                                                updates3['cover_url'] = local_cover2
+                                        except Exception:
+                                            pass
                                     if updates3:
                                         try:
                                             self.kuzu_book_service.update_book_sync(book_id, updates3)
                                         except Exception:
                                             pass
-                                    self._apply_audiobook_fields(book_id, item)
-                                    cats = self._extract_categories(item)
+                                    self._apply_audiobook_fields(book_id, obj_item)
+                                    cats = self._extract_categories(obj_item)
                                     if cats:
                                         try:
                                             from app.services.kuzu_service_facade import KuzuServiceFacade
@@ -1201,33 +1507,36 @@ class AudiobookshelfImportService:
                                 safe_update_import_job(self.user_id, task_id, {
                                     'status': 'running',
                                     'processed': processed,
+                                    'success': (current_job.get('success') or 0) + 1,
                                     'processed_books': pb[-100:],
                                 })
                             except BookAlreadyExistsError:
                                 processed += 1
-                                # Update cover for duplicates if possible
+                                # Update cover/backfill metadata for duplicates when possible
                                 try:
-                                    pre_local_cover = self._cache_cover_with_auth(item)
-                                    if pre_local_cover:
-                                        bd: SimplifiedBook = book_data if 'book_data' in locals() and book_data else self._map_abs_item_to_simplified(item)
-                                        book_id = self._resolve_book_id(bd)
-                                        if book_id:
-                                            self.kuzu_book_service.update_book_sync(book_id, {'cover_url': pre_local_cover})
-                                            # Backfill series fields if missing on existing book
+                                    local_cover = entry.get('local_cover')
+                                    bd_dup: SimplifiedBook = book_data or self._map_abs_item_to_simplified(obj_item)
+                                    book_id = self._resolve_book_id(bd_dup)
+                                    if book_id:
+                                        if local_cover:
                                             try:
-                                                existing = self.kuzu_book_service.get_book_by_id_sync(book_id)
-                                                updates: Dict[str, Any] = {}
-                                                if existing and bd:
-                                                    if (not getattr(existing, 'series', None)) and (bd.series):
-                                                        updates['series'] = bd.series
-                                                    if (getattr(existing, 'series_order', None) in (None, 0)) and (bd.series_order is not None):
-                                                        updates['series_order'] = bd.series_order
-                                                    if (not getattr(existing, 'series_volume', None)) and (bd.series_volume):
-                                                        updates['series_volume'] = bd.series_volume
-                                                if updates:
-                                                    self.kuzu_book_service.update_book_sync(book_id, updates)
+                                                self.kuzu_book_service.update_book_sync(book_id, {'cover_url': local_cover})
                                             except Exception:
                                                 pass
+                                        try:
+                                            existing = self.kuzu_book_service.get_book_by_id_sync(book_id)
+                                            updates: Dict[str, Any] = {}
+                                            if existing and bd_dup:
+                                                if (not getattr(existing, 'series', None)) and (bd_dup.series):
+                                                    updates['series'] = bd_dup.series
+                                                if (getattr(existing, 'series_order', None) in (None, 0)) and (bd_dup.series_order is not None):
+                                                    updates['series_order'] = bd_dup.series_order
+                                                if (not getattr(existing, 'series_volume', None)) and (bd_dup.series_volume):
+                                                    updates['series_volume'] = bd_dup.series_volume
+                                            if updates:
+                                                self.kuzu_book_service.update_book_sync(book_id, updates)
+                                        except Exception:
+                                            pass
                                 except Exception:
                                     pass
                                 current_job = safe_get_import_job(self.user_id, task_id) or {}
@@ -1236,6 +1545,7 @@ class AudiobookshelfImportService:
                                 safe_update_import_job(self.user_id, task_id, {
                                     'status': 'running',
                                     'processed': processed,
+                                    'merged': (current_job.get('merged') or 0) + 1,
                                     'success_titles': success_titles[-10:],
                                     'processed_books': pb[-100:],
                                 })
@@ -1248,10 +1558,37 @@ class AudiobookshelfImportService:
                                 safe_update_import_job(self.user_id, task_id, {
                                     'status': 'running',
                                     'processed': processed,
+                                    'errors': (current_job.get('errors') or 0) + 1,
                                     'error_messages': errors[-10:],
                                     'processed_books': pb[-100:],
                                 })
+
+                        if stop_due_to_cutoff:
+                            # Persist per-library timestamp before breaking
+                            try:
+                                if latest_seen_for_lib:
+                                    settings_update = load_abs_settings()
+                                    m = dict((settings_update.get('last_library_sync_map') or {}))
+                                    prev = m.get(lib_id)
+                                    if (not prev) or (str(latest_seen_for_lib) > str(prev)):
+                                        m[lib_id] = latest_seen_for_lib
+                                    save_abs_settings({'last_library_sync_map': m, 'last_library_sync': __import__('time').time()})
+                            except Exception:
+                                pass
+                            break
                         page += 1
+
+                    # Persist after finishing this library
+                    try:
+                        if latest_seen_for_lib:
+                            settings_update = load_abs_settings()
+                            m = dict((settings_update.get('last_library_sync_map') or {}))
+                            prev = m.get(lib_id)
+                            if (not prev) or (str(latest_seen_for_lib) > str(prev)):
+                                m[lib_id] = latest_seen_for_lib
+                            save_abs_settings({'last_library_sync_map': m, 'last_library_sync': __import__('time').time()})
+                    except Exception:
+                        pass
 
                 safe_update_import_job(self.user_id, task_id, {
                     'status': 'completed',

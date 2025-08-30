@@ -21,6 +21,7 @@ _BOOK_COLUMNS: List[Tuple[str, str]] = [
     ("audiobookshelf_id", "STRING"),      # external source id
     ("audio_duration_ms", "INT64"),       # precise duration in ms
     ("media_type", "STRING"),             # print/ebook/audiobook/etc (legacy naming)
+    ("audiobookshelf_updated_at", "STRING"),  # last seen ABS updatedAt (ISO string)
 ]
 
 

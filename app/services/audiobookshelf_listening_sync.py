@@ -197,13 +197,31 @@ class AudiobookshelfListeningSync:
         return None
 
     def _apply_progress(self, book_id: str, position_ms: int, updated_at: Optional[datetime]):
-        """Store progress in personal metadata JSON for the user/book."""
+        """Store progress in personal metadata JSON and set reading_status when appropriate.
+
+        - Always persist progress_ms and last_listened_at
+        - If the book isn't marked finished, set reading_status to 'currently_reading'
+        - Ensure a start_date exists for the user/book
+        """
         updates: Dict[str, Any] = {}
         updates['progress_ms'] = int(position_ms)
         if updated_at:
             updates['last_listened_at'] = updated_at.isoformat()
         try:
-            self._dbg("Apply progress", {"book_id": book_id, "progress_ms": updates.get('progress_ms'), "updated_at": updates.get('last_listened_at')})
+            # Check existing metadata to avoid overriding finished state
+            meta = personal_metadata_service.get_personal_metadata(self.user_id, book_id) or {}
+            rs = (meta.get('reading_status') or '').lower() if isinstance(meta.get('reading_status'), str) else meta.get('reading_status')
+            finished = bool(meta.get('finish_date')) or (rs == 'read')
+            if not finished:
+                updates['reading_status'] = 'currently_reading'
+            # Ensure start date is set once
+            try:
+                if not meta.get('start_date'):
+                    personal_metadata_service.ensure_start_date(self.user_id, book_id, (updated_at or datetime.now(timezone.utc)))
+            except Exception:
+                pass
+
+            self._dbg("Apply progress", {"book_id": book_id, "progress_ms": updates.get('progress_ms'), "updated_at": updates.get('last_listened_at'), "reading_status": updates.get('reading_status')})
             # Use personal metadata JSON blob for arbitrary keys
             personal_metadata_service.update_personal_metadata(
                 self.user_id, book_id, custom_updates=updates, merge=True
@@ -297,7 +315,46 @@ class AudiobookshelfListeningSync:
                                 pos_ms = int(float(v) * 1000)
                                 break
                     updated_at = _parse_iso(s.get('updatedAt') or s.get('updated_at'))
+                    # Detect finished state via flags or duration parity
+                    finished_flag = False
+                    for k in ('isFinished', 'finished', 'completed'):
+                        val = s.get(k)
+                        if isinstance(val, bool) and val:
+                            finished_flag = True
+                            break
+                    # Try to infer using duration
+                    duration_ms = None
+                    for k in ('durationMs', 'duration_ms', 'duration'):
+                        dv = s.get(k)
+                        if isinstance(dv, (int, float)):
+                            duration_ms = int(float(dv))
+                            break
+                    if duration_ms is None:
+                        md = (item.get('media') or {}).get('metadata') or {}
+                        dm = (item.get('media') or {}).get('duration') or md.get('duration')
+                        if isinstance(dm, (int, float)):
+                            # ABS duration typically seconds
+                            duration_ms = int(dm * 1000) if dm < 10_000_000 else int(dm)
+                    if not finished_flag and isinstance(pos_ms, int) and isinstance(duration_ms, int) and duration_ms > 0:
+                        # Consider finished if >= 98% of duration
+                        try:
+                            if pos_ms >= max(duration_ms - 60_000, int(duration_ms * 0.98)):
+                                finished_flag = True
+                        except Exception:
+                            pass
                     if pos_ms is not None:
+                        if finished_flag:
+                            try:
+                                # Mark finished: set finish_date and reading_status='read'
+                                personal_metadata_service.update_personal_metadata(
+                                    self.user_id,
+                                    book_id,
+                                    finish_date=(updated_at or datetime.now(timezone.utc)),
+                                    custom_updates={'reading_status': 'read'},
+                                    merge=True,
+                                )
+                            except Exception:
+                                pass
                         self._apply_progress(book_id, pos_ms, updated_at)
                         self._dbg("Reading log aggregation is disabled in sync; minutes not recorded", {"book_id": book_id})
                         # Approx minutes listened since last update not known from single event; skip aggregation here

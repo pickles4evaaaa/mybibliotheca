@@ -17,6 +17,8 @@ DEFAULTS: Dict[str, Any] = {
     'api_key': '',
     'library_ids': [],
     'last_library_sync': None,
+    # Per-library last sync cutoffs keyed by library_id -> ISO string or epoch seconds
+    'last_library_sync_map': {},
     # Optional ABS user id to scope listening/session syncs; if omitted, use 'me' endpoints
     'abs_user_id': None,
     # Scheduler preferences (UI only; backend scheduler may consume later)

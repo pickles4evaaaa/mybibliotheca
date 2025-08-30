@@ -1104,7 +1104,79 @@ def api_import_progress(task_id):
     enriched['error_details'] = error_details[:1000]  # safety cap
     enriched['skipped_preview'] = skipped_titles[:25]
     enriched['unmatched_preview'] = unmatched_titles[:25]
+
+    # Derive live counters and current book if missing
+    try:
+        pb = list(job.get('processed_books') or [])
+        # Prefer running counters when present; otherwise, fallback to derived counts from previews
+        if isinstance(job.get('success'), int):
+            enriched['success'] = int(job.get('success') or 0)
+        else:
+            enriched['success'] = len(success_titles)
+        if isinstance(job.get('merged'), int):
+            enriched['merged'] = int(job.get('merged') or 0)
+        else:
+            enriched['merged'] = len(merged_titles)
+        if isinstance(job.get('errors'), int):
+            enriched['errors'] = int(job.get('errors') or 0)
+        else:
+            enriched['errors'] = len(deduped_error_titles)
+        if isinstance(job.get('skipped'), int):
+            enriched['skipped'] = int(job.get('skipped') or 0)
+        else:
+            enriched['skipped'] = len(skipped_titles)
+        if isinstance(job.get('unmatched'), int):
+            enriched['unmatched'] = int(job.get('unmatched') or 0)
+        else:
+            enriched['unmatched'] = len(unmatched_titles)
+        # Current book fallback from last processed item
+        cb = job.get('current_book')
+        if not cb:
+            for b in reversed(pb):
+                t = (b or {}).get('title')
+                if t:
+                    cb = t
+                    break
+            if not cb and success_titles:
+                cb = success_titles[-1]
+        if cb:
+            enriched['current_book'] = cb
+        # Populate recent_activity if not present: show last 10 processed events
+        if not job.get('recent_activity') and pb:
+            events = []
+            for b in pb[-10:]:
+                if not isinstance(b, dict):
+                    continue
+                t = b.get('title') or 'Unknown'
+                s = (b.get('status') or 'updated').capitalize()
+                events.append(f"{s}: {t}")
+            enriched['recent_activity'] = events
+    except Exception:
+        pass
     return jsonify(enriched)
+
+@import_bp.route('/api/import/cancel/<task_id>', methods=['POST'])
+@login_required
+def api_import_cancel(task_id):
+    """Request cancellation of a running import/sync job.
+
+    Sets a cancellation flag on the job; workers are expected to check
+    this flag and exit promptly. The job status will move to "cancelling"
+    immediately and to "cancelled" when workers acknowledge.
+    """
+    job = safe_get_import_job(current_user.id, task_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    status = (job.get('status') or '').lower()
+    if status in ('completed','failed','cancelled'):
+        # Nothing to cancel
+        return jsonify({'ok': True, 'status': status})
+    # Mark as cancelling and set flag
+    safe_update_import_job(current_user.id, task_id, {
+        'cancelled': True,
+        'status': 'cancelling'
+    })
+    return jsonify({'ok': True, 'status': 'cancelling'})
 
 @import_bp.route('/api/import/errors/<task_id>')
 @login_required

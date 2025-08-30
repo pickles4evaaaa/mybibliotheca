@@ -301,6 +301,10 @@ class KuzuServiceFacade:
     def get_total_book_count_sync(self) -> int:
         """Total number of Book nodes."""
         return self.relationship_service.get_total_book_count_sync()
+
+    def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
+        """Global reading/ownership status counts for a user across all books."""
+        return self.relationship_service.get_library_status_counts_sync(user_id)
     
     # ==========================================
     # Search Service Methods

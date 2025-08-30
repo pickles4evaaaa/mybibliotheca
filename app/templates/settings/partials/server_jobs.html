@@ -1,0 +1,160 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Jobs: Imports & Syncs</h5>
+    <div>
+      <span class="badge text-bg-secondary me-2" title="Active jobs across all users">Active: {{ manager_stats.total_active_jobs or 0 }}</span>
+      <span class="badge text-bg-secondary" title="Users with any jobs">Users: {{ manager_stats.total_users_with_jobs or 0 }}</span>
+      {% if manager_stats.abs_runner_alive is defined %}
+        {% if manager_stats.abs_runner_alive %}
+          <span class="badge text-bg-success ms-2" title="ABS runner thread status">ABS Runner: Alive</span>
+        {% else %}
+          <span class="badge text-bg-danger ms-2" title="ABS runner thread status">ABS Runner: Stopped</span>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <button id="refreshJobsBtn" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+      <div class="form-check form-switch ms-2">
+        <input class="form-check-input" type="checkbox" id="autoRefreshJobs" checked>
+        <label class="form-check-label" for="autoRefreshJobs">Auto-refresh</label>
+      </div>
+      <small class="text-muted" id="jobsLastRefreshed"></small>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th style="width: 14rem;">Task</th>
+            <th style="width: 8rem;">User</th>
+            <th style="width: 10rem;">Type</th>
+            <th style="width: 10rem;">Status</th>
+            <th style="width: 12rem;">Progress</th>
+            <th style="width: 14rem;">Created</th>
+            <th style="width: 14rem;">Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="jobsTableBody">
+          {% if jobs and jobs|length > 0 %}
+            {% for j in jobs %}
+              <tr data-task-id="{{ j.task_id }}" data-user-id="{{ j.user_id }}">
+                <td>
+                  <code class="small">{{ j.task_id }}</code>
+                  <div class="text-muted small">{{ j.message }}</div>
+                </td>
+                <td><span class="badge text-bg-light">{{ j.user_id }}</span></td>
+                <td><span class="badge text-bg-secondary">{{ j.type }}</span></td>
+                <td>
+                  {% set st = (j.status or '').lower() %}
+                  {% if st == 'completed' %}
+                    <span class="badge text-bg-success">Completed</span>
+                  {% elif st == 'failed' %}
+                    <span class="badge text-bg-danger">Failed</span>
+                  {% elif st == 'started' or st == 'running' %}
+                    <span class="badge text-bg-info">Running</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">{{ j.status }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% set total = j.total or 0 %}
+                  {% set processed = j.processed or 0 %}
+                  {% set pct = (processed * 100 // total) if total > 0 else 0 %}
+                  <div class="progress" style="height: 8px;">
+                    <div class="progress-bar" role="progressbar" data-pct="{{ pct }}" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+                  </div>
+                  <small class="text-muted">{{ processed }}/{{ total }}</small>
+                </td>
+                <td><small class="text-muted">{{ j.created_at }}</small></td>
+                <td><small class="text-muted">{{ j.updated_at or '' }}</small></td>
+                <td>
+                  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('import.import_books_progress', task_id=j.task_id) }}">Details</a>
+                  {% if (j.status or '').lower() in ['started','running','cancelling'] %}
+                    <button class="btn btn-outline-danger btn-sm ms-1 btn-cancel-job" data-task-id="{{ j.task_id }}">Cancel</button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="8" class="text-muted">No jobs yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const container = document.currentScript.closest('.card').parentElement;
+  const bodyEl = container.querySelector('#jobsTableBody');
+  const btn = container.querySelector('#refreshJobsBtn');
+  const auto = container.querySelector('#autoRefreshJobs');
+  const stamp = container.querySelector('#jobsLastRefreshed');
+  const partialUrl = "{{ url_for('auth.settings_server_partial', panel='jobs') }}";
+  const csrfToken = (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || document.querySelector('input[name="csrf_token"]').value || '').trim();
+
+  function refresh(){
+    fetch(partialUrl, { credentials: 'same-origin' })
+      .then(r=> r.text())
+      .then(html=>{
+        // Replace entire card to ensure updated stats and rows
+        document.getElementById('serverDynamicContainer').innerHTML = html;
+      })
+      .catch(()=>{});
+    try{ stamp.textContent = 'Updated ' + new Date().toLocaleTimeString(); }catch(e){}
+  }
+  // Apply progress widths from data attributes
+  function applyWidths(root){
+    const bars = (root||document).querySelectorAll('.progress-bar[data-pct]');
+    bars.forEach(b=>{
+      const pct = parseInt(b.getAttribute('data-pct')||'0',10);
+      b.style.width = (isFinite(pct)?Math.max(0,Math.min(100,pct)):0) + '%';
+    });
+  }
+  applyWidths(container);
+  // If runner is stopped, prompt a refresh hint
+  try{
+    const stopped = JSON.parse('{% if manager_stats.abs_runner_alive is defined and not manager_stats.abs_runner_alive %}true{% else %}false{% endif %}');
+    if(stopped){
+      const note = document.createElement('div');
+      note.className = 'alert alert-warning py-2 small mt-2';
+      note.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i> The ABS runner appears stopped. Triggering a Full Sync or Test Sync should auto-start it. You can also refresh this panel.';
+      container.prepend(note);
+    }
+  }catch(e){}
+  if(btn){ btn.addEventListener('click', refresh); }
+  // Wire cancel buttons
+  bodyEl.addEventListener('click', async (ev)=>{
+    const btn = ev.target.closest('.btn-cancel-job');
+    if(!btn) return;
+    const taskId = btn.getAttribute('data-task-id');
+    if(!taskId) return;
+    btn.disabled = true;
+    try{
+      await fetch(`{{ url_for('import.api_import_cancel', task_id='__TASK__') }}`.replace('__TASK__', taskId), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'X-CSRFToken': csrfToken
+        }
+      });
+    }catch(e){}
+    // Give workers a moment to flip state, then refresh
+    setTimeout(refresh, 400);
+  });
+  let timer = null;
+  function ensureTimer(){
+    if(auto && auto.checked){
+      if(timer) clearInterval(timer);
+      timer = setInterval(refresh, 2500);
+    } else if(timer){
+      clearInterval(timer); timer = null;
+    }
+  }
+  if(auto){ auto.addEventListener('change', ensureTimer); ensureTimer(); }
+})();
+</script>

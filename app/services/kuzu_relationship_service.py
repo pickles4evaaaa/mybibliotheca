@@ -753,3 +753,95 @@ class KuzuRelationshipService:
         except Exception as e:
             logger.warning(f"[RELATIONSHIP_SERVICE] total count error: {e}")
         return 0
+
+    def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
+        """Compute global reading/ownership status counts for a user across the entire library.
+
+        This scans HAS_PERSONAL_METADATA relationships once and derives counts from the JSON blob,
+        then infers plan_to_read by difference using total book count.
+
+        Rules:
+        - read: reading_status == 'read' OR finish_date present
+        - currently_reading: reading_status in ['reading','currently_reading'] OR progress_ms>0, when not read
+        - on_hold: reading_status == 'on_hold'
+        - wishlist: ownership_status == 'wishlist'
+        - plan_to_read: total_books - (read + currently_reading + on_hold)
+        """
+        counts = {
+            'read': 0,
+            'currently_reading': 0,
+            'on_hold': 0,
+            'plan_to_read': 0,
+            'wishlist': 0,
+        }
+        try:
+            total = self.get_total_book_count_sync()
+        except Exception:
+            total = 0
+        try:
+            # Pull only personal metadata JSON once
+            qr = safe_execute_kuzu_query(
+                """
+                MATCH (u:User {id: $uid})-[r:HAS_PERSONAL_METADATA]->(b:Book)
+                RETURN r.personal_custom_fields as j
+                """,
+                {"uid": user_id}
+            )
+            rows = _convert_query_result_to_list(qr)
+            read = 0
+            current = 0
+            on_hold = 0
+            wishlist = 0
+            for row in rows or []:
+                raw = row.get('j') if isinstance(row, dict) else (row[0] if isinstance(row, (list, tuple)) and row else None)
+                blob: Dict[str, Any] = {}
+                if isinstance(raw, str) and raw:
+                    try:
+                        import json as _json
+                        blob = _json.loads(raw) or {}
+                    except Exception:
+                        blob = {}
+                elif isinstance(raw, dict):
+                    blob = raw
+                # Extract fields
+                rs = (blob.get('reading_status') or '').strip().lower() if isinstance(blob.get('reading_status'), str) else blob.get('reading_status')
+                finish_date = blob.get('finish_date')
+                progress_ms = blob.get('progress_ms')
+                ownership_status = blob.get('ownership_status')
+                # Normalize
+                try:
+                    progress_val = int(progress_ms) if progress_ms is not None else 0
+                except Exception:
+                    progress_val = 0
+                rs_str = str(rs).lower() if rs is not None else None
+
+                is_read = False
+                if rs_str == 'read':
+                    is_read = True
+                elif finish_date not in (None, ''):
+                    is_read = True
+
+                if is_read:
+                    read += 1
+                    # Finished trumps other states
+                else:
+                    if rs_str == 'on_hold':
+                        on_hold += 1
+                    elif rs_str in ('reading', 'currently_reading') or progress_val > 0:
+                        current += 1
+
+                if isinstance(ownership_status, str) and ownership_status.lower() == 'wishlist':
+                    wishlist += 1
+
+            counts['read'] = read
+            counts['currently_reading'] = current
+            counts['on_hold'] = on_hold
+            counts['wishlist'] = wishlist
+            # Derive plan_to_read as the remainder (never negative)
+            ptr = max(0, int(total) - (read + current + on_hold))
+            counts['plan_to_read'] = ptr
+        except Exception as e:
+            logger.error(f"[RELATIONSHIP_SERVICE] get_library_status_counts_sync error: {e}")
+            # Fall back to zeros with plan_to_read = total
+            counts['plan_to_read'] = max(0, int(total))
+        return counts
