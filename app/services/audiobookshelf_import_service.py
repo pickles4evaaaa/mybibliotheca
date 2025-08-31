@@ -17,6 +17,7 @@ from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, B
 from app.services.kuzu_book_service import KuzuBookService
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job, safe_get_import_job
 from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
+from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 from pathlib import Path
 import os
 import requests  # type: ignore
@@ -655,9 +656,12 @@ class AudiobookshelfImportService:
                 return
 
             total_local = min(len(items), limit)
+            # Nudge UI and set accurate totals
             safe_update_import_job(self.user_id, task_id, {
+                'status': 'running',
                 'total': total_local,
                 'total_books': total_local,
+                'recent_activity': ['Starting ABS test import...']
             })
 
             for item in items[:limit]:
@@ -666,7 +670,25 @@ class AudiobookshelfImportService:
                 try:
                     # Delta check: skip if not new/updated
                     if not self._should_process_abs_item(item):
+                        # Immediately sync this item's listening progress for the user
+                        try:
+                            listener = AudiobookshelfListeningSync(self.user_id, self.client)
+                            iid = item.get('id') or item.get('_id') or item.get('itemId')
+                            if iid:
+                                listener.sync_item_progress(iid)
+                        except Exception:
+                            pass
+
                         processed += 1
+                        # Try to sync progress for existing item as well
+                        try:
+                            listener = AudiobookshelfListeningSync(self.user_id, self.client)
+                            iid = item.get('id') or item.get('_id') or item.get('itemId')
+                            if iid:
+                                listener.sync_item_progress(iid)
+                        except Exception:
+                            pass
+
                         current_job = safe_get_import_job(self.user_id, task_id) or {}
                         pb = list(current_job.get('processed_books') or [])
                         pb.append({'title': (item.get('media') or {}).get('metadata',{}).get('title') or item.get('title') or 'Unknown', 'status': 'skipped'})
@@ -693,6 +715,13 @@ class AudiobookshelfImportService:
                     except Exception:
                         pass
                     current_title = book_data.title or 'Unknown'
+                    # Surface current title early so UI shows movement
+                    try:
+                        safe_update_import_job(self.user_id, task_id, {
+                            'current_book': current_title
+                        })
+                    except Exception:
+                        pass
 
                     created = self.simple_books.add_book_to_user_library_sync(book_data, self.user_id, media_type='audiobook')
                     if not created:
@@ -737,6 +766,8 @@ class AudiobookshelfImportService:
                         'processed': processed,
                         'success': (current_job.get('success') or 0) + 1,
                         'processed_books': pb[-100:],
+                        'audiobooks_synced': (current_job.get('audiobooks_synced') or 0) + 1,
+                        'recent_activity': (current_job.get('recent_activity') or [])[-9:] + [f"Imported: {current_title}"]
                     })
                 except BookAlreadyExistsError:
                     processed += 1
@@ -777,6 +808,8 @@ class AudiobookshelfImportService:
                         'merged': (current_job.get('merged') or 0) + 1,
                         'success_titles': successes[-10:],
                         'processed_books': pb[-100:],
+                        'audiobooks_synced': (current_job.get('audiobooks_synced') or 0) + 1,
+                        'recent_activity': (current_job.get('recent_activity') or [])[-9:] + [f"Merged: {current_title}"]
                     })
                 except Exception as e:
                     processed += 1
@@ -791,6 +824,29 @@ class AudiobookshelfImportService:
                         'error_messages': errors[-10:],
                         'processed_books': pb[-100:],
                     })
+            # After books, run a listening sync and stream progress so UI moves
+            try:
+                listener = AudiobookshelfListeningSync(self.user_id, self.client)
+                def _ls_cb(snapshot: dict):
+                    try:
+                        safe_update_import_job(self.user_id, task_id, {
+                            'status': 'running',
+                            'listening_sessions': int(snapshot.get('processed') or 0),
+                            'listening_matched': int(snapshot.get('matched') or 0),
+                        })
+                    except Exception:
+                        pass
+                lsum = listener.sync(page_size=100, progress_cb=_ls_cb)
+                current_job = safe_get_import_job(self.user_id, task_id) or {}
+                pb = list(current_job.get('processed_books') or [])
+                pb.append({'title': f"ABS listening sync: processed {lsum.get('processed', 0)}, matched {lsum.get('matched', 0)}", 'status': 'info'})
+                safe_update_import_job(self.user_id, task_id, {
+                    'processed_books': pb[-100:],
+                    'listening_sessions': int(lsum.get('processed', 0)),
+                    'listening_matched': int(lsum.get('matched', 0)),
+                })
+            except Exception:
+                pass
 
             safe_update_import_job(self.user_id, task_id, {
                 'status': 'completed',
@@ -823,9 +879,12 @@ class AudiobookshelfImportService:
                 meta = self.client.list_library_items(lib_id, page=1, size=page_size)
                 lib_total = int(meta.get('total') or 0)
                 grand_total += lib_total
+            # Nudge UI: show totals and mark as running
             safe_update_import_job(self.user_id, task_id, {
+                'status': 'running',
                 'total': grand_total,
                 'total_books': grand_total,
+                'recent_activity': ['Starting ABS full import...']
             })
 
             for lib_id in libs_to_try:
@@ -901,6 +960,13 @@ class AudiobookshelfImportService:
                             except Exception:
                                 pass
                             current_title = book_data.title or 'Unknown'
+                            # Surface current title early so UI shows movement
+                            try:
+                                safe_update_import_job(self.user_id, task_id, {
+                                    'current_book': current_title
+                                })
+                            except Exception:
+                                pass
                             created = self.simple_books.add_book_to_user_library_sync(book_data, self.user_id, media_type='audiobook')
                             if not created:
                                 raise RuntimeError('Failed to create book')
@@ -940,7 +1006,9 @@ class AudiobookshelfImportService:
                             safe_update_import_job(self.user_id, task_id, {
                                 'status': 'running',
                                 'processed': processed,
+                                'audiobooks_synced': (current_job.get('audiobooks_synced') or 0) + 1,
                                 'processed_books': pb[-100:],
+                                'recent_activity': (current_job.get('recent_activity') or [])[-9:] + [f"Imported: {current_title}"]
                             })
                         except BookAlreadyExistsError:
                             processed += 1
@@ -978,8 +1046,10 @@ class AudiobookshelfImportService:
                             safe_update_import_job(self.user_id, task_id, {
                                 'status': 'running',
                                 'processed': processed,
+                                'audiobooks_synced': (current_job.get('audiobooks_synced') or 0) + 1,
                                 'success_titles': success_titles[-10:],
                                 'processed_books': pb[-100:],
+                                'recent_activity': (current_job.get('recent_activity') or [])[-9:] + [f"Merged: {current_title}"]
                             })
                         except Exception as e:
                             processed += 1
@@ -1026,10 +1096,14 @@ class AudiobookshelfImportService:
 
         If no library_ids provided or none match, return all available IDs.
         """
-        # Fetch libraries from ABS
-        ok, libs, _ = self.client.list_libraries()
+        # Fetch libraries from ABS (may be unauthorized for limited tokens)
+        try:
+            ok, libs, _ = self.client.list_libraries()
+        except Exception:
+            ok, libs = False, []
         if not ok:
-            return list(library_ids or [])
+            # Trust provided IDs when listing is unavailable
+            return [str(x).strip() for x in (library_ids or []) if str(x).strip()]
         id_map = {}
         name_map = {}
         for lib in libs:
@@ -1050,7 +1124,7 @@ class AudiobookshelfImportService:
                 resolved.append(name_map[key])
         if not resolved:
             # default to all libraries if none specified/matched
-            resolved = list(id_map.values())
+            resolved = list(id_map.values()) if id_map else [str(x).strip() for x in (library_ids or []) if str(x).strip()]
         # de-dup while preserving order
         seen = set()
         out: List[str] = []
@@ -1135,6 +1209,7 @@ class AudiobookshelfImportService:
                     'total_books': total_local,
                 })
 
+                imported_item_ids: List[str] = []
                 for item in items[:limit]:
                     # Cancellation check
                     try:
@@ -1156,6 +1231,13 @@ class AudiobookshelfImportService:
                             detail = self.client.get_item(item_id, expanded=True)
                             if detail.get('ok') and detail.get('item'):
                                 item = detail['item']
+                            # Track imported ABS item ids for listening seed
+                            try:
+                                iid = item.get('id') or item.get('_id') or item.get('itemId') or item_id
+                                if iid:
+                                    imported_item_ids.append(str(iid))
+                            except Exception:
+                                pass
 
                         book_data = self._map_abs_item_to_simplified(item)
                         # Pre-cache cover with ABS auth and use local path before creating the book
@@ -1250,6 +1332,8 @@ class AudiobookshelfImportService:
                             'merged': (current_job.get('merged') or 0) + 1,
                             'success_titles': successes[-10:],
                             'processed_books': pb[-100:],
+                            'audiobooks_synced': (current_job.get('audiobooks_synced') or 0) + 1,
+                            'recent_activity': (current_job.get('recent_activity') or [])[-9:] + [f"Merged: {current_title}"]
                         })
                     except Exception as e:
                         processed += 1
@@ -1265,6 +1349,33 @@ class AudiobookshelfImportService:
                             'processed_books': pb[-100:],
                         })
 
+                # After mini book import, also run a listening sync to include history in Test Sync
+                try:
+                    listener = AudiobookshelfListeningSync(self.user_id, self.client)
+                    # Pass imported ABS item ids to seed per-item progress if sessions are empty
+                    lsum = listener.sync(page_size=100, seed_item_ids=imported_item_ids[:limit])
+                    # Record a compact summary line in the processed list (non-blocking UI info)
+                    current_job = safe_get_import_job(self.user_id, task_id) or {}
+                    pb = list(current_job.get('processed_books') or [])
+                    pb.append({'title': f"ABS listening sync: processed {lsum.get('processed', 0)}, matched {lsum.get('matched', 0)}", 'status': 'info'})
+                    updates = {
+                        'processed_books': pb[-100:],
+                        'listening_processed': lsum.get('processed', 0),
+                        'listening_matched': lsum.get('matched', 0),
+                        'listening_sessions': lsum.get('processed', 0)
+                    }
+                    safe_update_import_job(self.user_id, task_id, updates)
+                except Exception as le:
+                    # Non-fatal: append an info/error line
+                    try:
+                        current_job = safe_get_import_job(self.user_id, task_id) or {}
+                        pb = list(current_job.get('processed_books') or [])
+                        pb.append({'title': f"ABS listening sync error: {le}", 'status': 'error'})
+                        safe_update_import_job(self.user_id, task_id, {'processed_books': pb[-100:]})
+                    except Exception:
+                        pass
+
+                # Finalize job
                 safe_update_import_job(self.user_id, task_id, {
                     'status': 'completed',
                     'processed': processed,

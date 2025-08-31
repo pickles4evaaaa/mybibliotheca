@@ -138,10 +138,60 @@ class _AbsSyncRunner:
                         continue
                     kind = payload.get('kind')
                     if kind == 'listen':
-                        listener = AudiobookshelfListeningSync(payload['user_id'], client)
-                        listener.sync(page_size=int(payload.get('page_size') or 200))
+                        # Prefer per-user API key override for listening-only jobs as well
+                        eff_client = client
                         try:
-                            save_abs_settings({'last_listening_sync': time.time()})
+                            from app.utils.user_settings import load_user_settings
+                            u = load_user_settings(payload['user_id'])
+                        except Exception:
+                            u = {}
+                        base_url = settings.get('base_url') or ''
+                        user_api_key = (u.get('abs_api_key') or '').strip() if isinstance(u, dict) else ''
+                        if base_url and user_api_key:
+                            eff_client = AudiobookShelfClient(base_url, user_api_key)
+
+                        try:
+                            current_app.logger.info(
+                                f"[ABS Listen] Starting listening job task={task_id} user={payload['user_id']} page_size={int(payload.get('page_size') or 200)}"
+                            )
+                            # Nudge progress UI
+                            safe_update_import_job(payload['user_id'], task_id, {
+                                'status': 'running',
+                                'recent_activity': ['Starting listening sync...']
+                            })
+                        except Exception:
+                            pass
+                        listener = AudiobookshelfListeningSync(payload['user_id'], eff_client)
+                        def _cb(snapshot: dict):
+                            try:
+                                safe_update_import_job(payload['user_id'], task_id, {
+                                    'status': 'running',
+                                    'processed': int(snapshot.get('processed') or 0),
+                                    'total': int(snapshot.get('total') or 0),
+                                    'matched': int(snapshot.get('matched') or 0)
+                                })
+                            except Exception:
+                                pass
+                        summary = listener.sync(page_size=int(payload.get('page_size') or 200), progress_cb=_cb)
+                        try:
+                            current_app.logger.info(
+                                f"[ABS Listen] Finished task={task_id} user={payload['user_id']} processed={summary.get('processed')} matched={summary.get('matched')}"
+                            )
+                            # Surface summary to UI
+                            safe_update_import_job(payload['user_id'], task_id, {
+                                'recent_activity': [
+                                    f"Listening sync complete: processed {summary.get('processed', 0)} sessions; matched {summary.get('matched', 0)} books."
+                                ],
+                                'processed': int(summary.get('processed', 0)),
+                                'total': int(summary.get('total', 0) or 0),
+                                'listening_sessions': int(summary.get('processed', 0)),
+                                'listening_matched': int(summary.get('matched', 0))
+                            })
+                        except Exception:
+                            pass
+                        try:
+                            from datetime import datetime, timezone
+                            save_abs_settings({'last_listening_sync': datetime.now(timezone.utc).isoformat()})
                         except Exception:
                             pass
                         # mark job completed
@@ -174,13 +224,33 @@ class _AbsSyncRunner:
                             svc._run_full_sync_job(task_id, settings.get('library_ids') or [], int(payload.get('page_size') or 50))
                         if do_listen:
                             listener = AudiobookshelfListeningSync(payload['user_id'], eff_client)
-                            listener.sync(page_size=int(payload.get('page_size') or 200))
+                            def _cb(snapshot: dict):
+                                try:
+                                    safe_update_import_job(payload['user_id'], task_id, {
+                                        'status': 'running',
+                                        'listening_sessions': int(snapshot.get('processed') or 0),
+                                        'listening_matched': int(snapshot.get('matched') or 0)
+                                    })
+                                except Exception:
+                                    pass
+                            listener.sync(page_size=int(payload.get('page_size') or 200), progress_cb=_cb)
                         try:
                             safe_update_import_job(payload['user_id'], task_id, {'status': 'completed'})
                         except Exception:
                             pass
                     else:
-                        svc = AudiobookshelfImportService(payload['user_id'], client)
+                        # Prefer per-user API key for test/full as well
+                        eff_client = client
+                        try:
+                            from app.utils.user_settings import load_user_settings
+                            u = load_user_settings(payload['user_id'])
+                        except Exception:
+                            u = {}
+                        base_url = settings.get('base_url') or ''
+                        user_api_key = (u.get('abs_api_key') or '').strip() if isinstance(u, dict) else ''
+                        if base_url and user_api_key:
+                            eff_client = AudiobookShelfClient(base_url, user_api_key)
+                        svc = AudiobookshelfImportService(payload['user_id'], eff_client)
                         if kind == 'test':
                             svc._run_test_sync_job(task_id, payload.get('library_ids') or [], int(payload.get('limit') or 5))
                         else:

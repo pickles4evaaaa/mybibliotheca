@@ -282,6 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                                 const status = root.querySelector('#absStatus');
                                                                                 const testBtn = root.querySelector('#absTestBtn');
                                                                                 const syncTestBtn = root.querySelector('#absSyncTestBtn');
+                                                                                const listenTestBtn = root.querySelector('#absListenTestBtn');
                                                                                 const fullSyncBtn = root.querySelector('#absFullSyncBtn');
                                                                                 const schedForm = root.querySelector('#absSchedulerForm');
                                                                                 const schedStatus = root.querySelector('#absSchedulerStatus');
@@ -361,6 +362,20 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                                                     else if(status){ status.innerHTML = 'Sync started. <a href="'+(j.progress_url||'#')+'" class="link-primary">View progress</a>'; }
                                                                                                 } else { if(status) status.textContent = 'Failed: ' + (j.message||''); }
                                                                                             } catch(e){ if(status) status.textContent='Failed to start test sync'; }
+                                                                                        });
+                                                                                }
+                                                                                if (listenTestBtn) {
+                                                                                        listenTestBtn.addEventListener('click', async function(){
+                                                                                            if(status) status.textContent='Starting listening-only test...';
+                                                                                            const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
+                                                                                            try {
+                                                                                                const resp = await fetch("{{ url_for('auth.audiobookshelf_listen_test') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size: 200})});
+                                                                                                const j = await resp.json();
+                                                                                                if(j.ok){ try{ startInlineProgressPolling(j); }catch(e){}
+                                                                                                    const to = j.progress_url || j.api_progress_url || '#'; if(to && to !== '#'){ setTimeout(()=>{ window.location.assign(to); }, 150); }
+                                                                                                    else if(status){ status.innerHTML = 'Listening sync started. <a href="'+(j.progress_url||'#')+'" class="link-primary">View progress</a>'; }
+                                                                                                } else { if(status) status.textContent = 'Failed: ' + (j.message||''); }
+                                                                                            } catch(e){ if(status) status.textContent='Failed to start listening-only test'; }
                                                                                         });
                                                                                 }
                                                                                 if (fullSyncBtn) {
@@ -481,6 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     const form = container.querySelector('#absSettingsForm');
                                     const testBtn = container.querySelector('#absTestBtn');
                                     const syncTestBtn = container.querySelector('#absSyncTestBtn');
+                                    const listenTestBtn = container.querySelector('#absListenTestBtn');
                                     const status = container.querySelector('#absStatus');
                                     const csrfMeta = document.querySelector('meta[name="csrf-token"]');
                                     const csrf = csrfMeta && csrfMeta.content ? csrfMeta.content : '';
@@ -530,6 +546,20 @@ document.addEventListener('DOMContentLoaded', () => {
                                               .catch(()=>{ if(status) status.textContent = 'Failed to start test sync'; });
                                         });
                                         syncTestBtn.dataset.bound = '1';
+                                    }
+                                    if(listenTestBtn && !listenTestBtn.dataset.bound){
+                                        listenTestBtn.addEventListener('click', function(){
+                                            if(status) status.textContent = 'Starting listening-only test...';
+                                            const headers = csrf ? {'X-CSRFToken': csrf, 'Content-Type':'application/json'} : {'Content-Type':'application/json'};
+                                            fetch("{{ url_for('auth.audiobookshelf_listen_test') }}", { method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size:200}) })
+                                              .then(r=>r.json().catch(()=>({ok:false,message:'bad json'})))
+                                              .then(j=>{
+                                                  if(j.ok && j.progress_url){ if(status) status.innerHTML = 'Listening sync started. <a href="'+j.progress_url+'" class="link-primary">View progress</a>'; }
+                                                  else { if(status) status.textContent = 'Failed: ' + (j.message || ''); }
+                                              })
+                                              .catch(()=>{ if(status) status.textContent = 'Failed to start listening-only test'; });
+                                        });
+                                        listenTestBtn.dataset.bound = '1';
                                     }
                                 };
                             }

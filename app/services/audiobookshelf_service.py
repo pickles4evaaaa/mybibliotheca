@@ -44,22 +44,29 @@ class AudiobookShelfClient:
         if not self.base_url:
             return {"ok": False, "message": "Missing base URL"}
         try:
-            # Try libraries endpoint (common and safe)
-            resp = requests.get(self._url('/api/libraries'), headers=self._headers(), timeout=self.timeout)
-            if resp.status_code == 401:
+            # First, validate token with /api/me (works for non-admin/user tokens)
+            me = requests.get(self._url('/api/me'), headers=self._headers(), timeout=self.timeout)
+            if me.status_code == 401:
                 return {"ok": False, "message": "Unauthorized: API key invalid"}
-            resp.raise_for_status()
-            data = resp.json() if resp.content else {}
-            libraries = data if isinstance(data, list) else data.get('libraries') or []
-            # Normalize items
+            me.raise_for_status()
+            me_data = me.json() if me.content else {}
+            # Best-effort libraries fetch (may require higher privileges; ignore 401)
             libs_norm = []
-            for lib in libraries:
-                if isinstance(lib, dict):
-                    libs_norm.append({
-                        'id': lib.get('id') or lib.get('_id') or lib.get('libraryId') or '',
-                        'name': lib.get('name') or lib.get('title') or 'Unnamed',
-                        'mediaType': lib.get('mediaType') or lib.get('type') or ''
-                    })
+            try:
+                resp = requests.get(self._url('/api/libraries'), headers=self._headers(), timeout=self.timeout)
+                if resp.status_code != 401:
+                    resp.raise_for_status()
+                    data = resp.json() if resp.content else {}
+                    libraries = data if isinstance(data, list) else data.get('libraries') or []
+                    for lib in libraries:
+                        if isinstance(lib, dict):
+                            libs_norm.append({
+                                'id': lib.get('id') or lib.get('_id') or lib.get('libraryId') or '',
+                                'name': lib.get('name') or lib.get('title') or 'Unnamed',
+                                'mediaType': lib.get('mediaType') or lib.get('type') or ''
+                            })
+            except Exception:
+                pass
             return {"ok": True, "message": "Connected", "libraries": libs_norm}
         except Exception as e:
             return {"ok": False, "message": f"Connection failed: {e}"}
@@ -75,7 +82,8 @@ class AudiobookShelfClient:
         Uses ABS endpoint: /api/libraries/{library_id}/items?page=&size=
         """
         if not library_id:
-            return {"ok": False, "message": "Missing library_id", "items": []}
+            # Continue with global fallback below
+            library_id = ''
         try:
             def _parse_items(data: Any) -> tuple[list, int]:
                 if isinstance(data, list):
@@ -88,14 +96,20 @@ class AudiobookShelfClient:
 
             attempts = []
             # Attempt 1: documented library items endpoint with sort by updatedAt desc and minified objects
-            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "page": max(0, page-1), "sort": "updatedAt", "desc": 1, "minified": 1}))
+            if library_id:
+                attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "page": max(0, page-1), "sort": "updatedAt", "desc": 1, "minified": 1}))
             # Attempt 1b: same but using size param name
-            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"size": size, "page": page, "sort": "updatedAt", "desc": 1, "minified": 1}))
+            if library_id:
+                attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"size": size, "page": page, "sort": "updatedAt", "desc": 1, "minified": 1}))
             # Attempt 2: without sort fallback
-            attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "page": max(0, page-1), "minified": 1}))
+            if library_id:
+                attempts.append((self._url(f"/api/libraries/{library_id}/items"), {"limit": size, "page": max(0, page-1), "minified": 1}))
             # Attempt 3: global items endpoint filtered by library
-            attempts.append((self._url("/api/items"), {"library": library_id, "limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
-            attempts.append((self._url("/api/items"), {"libraryId": library_id, "limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
+            if library_id:
+                attempts.append((self._url("/api/items"), {"library": library_id, "limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
+                attempts.append((self._url("/api/items"), {"libraryId": library_id, "limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
+            # Final fallback: global items (no filter) for limited tokens
+            attempts.append((self._url("/api/items"), {"limit": size, "offset": (page-1)*size, "sort": "updatedAt", "desc": 1}))
 
             last_err: Optional[str] = None
             for url, params in attempts:

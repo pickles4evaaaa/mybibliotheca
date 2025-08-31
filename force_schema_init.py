@@ -35,6 +35,17 @@ def force_schema_init():
     try:
         logger.info("🔧 Starting forced schema initialization...")
         
+        # Run additive schema preflight before any checks so new columns are added
+        try:
+            logger.info("Running schema preflight (additive upgrade)...")
+            # Importing runs preflight as a side-effect; force run explicitly too
+            from app.startup.schema_preflight import run_schema_preflight  # type: ignore
+            # Allow forcing even if marker says up-to-date
+            os.environ['SCHEMA_PREFLIGHT_FORCE'] = 'true'
+            run_schema_preflight()
+        except Exception as e:
+            logger.warning(f"Schema preflight phase failed or skipped: {e}")
+
         # Use thread-safe connection instead of deprecated singleton
         from app.utils.safe_kuzu_manager import SafeKuzuManager
         manager = SafeKuzuManager()

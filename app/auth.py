@@ -1221,6 +1221,17 @@ def settings_server_partial(panel: str):
         try:
             if request.args.get('test') == '1':
                 client = get_client_from_settings(settings)
+                # Prefer current user's ABS API key if set
+                try:
+                    from app.utils.user_settings import load_user_settings
+                    us = load_user_settings(getattr(current_user, 'id', None))
+                    base_url = settings.get('base_url') or ''
+                    user_api_key = (us.get('abs_api_key') or '').strip() if isinstance(us, dict) else ''
+                    if base_url and user_api_key:
+                        from app.services.audiobookshelf_service import AudiobookShelfClient
+                        client = AudiobookShelfClient(base_url, user_api_key)
+                except Exception:
+                    pass
                 connection_test = client.test_connection() if client else { 'ok': False, 'message': 'Missing base_url or api_key' }
         except Exception:
             connection_test = { 'ok': False, 'message': 'Connection test failed' }
@@ -1440,6 +1451,35 @@ def audiobookshelf_full_sync():
         return jsonify({'ok': True, 'queued': len(task_ids), 'task_ids': task_ids, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
     except Exception as e:
         current_app.logger.error(f"ABS full sync error: {e}")
+        return jsonify({'ok': False, 'message': 'error'}), 500
+
+# Start a background ABS Listening-only Test (no book import, just sessions/progress)
+@auth.route('/settings/audiobookshelf/listen-test', methods=['POST'])
+@login_required
+def audiobookshelf_listen_test():
+    if not current_user.is_admin:
+        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
+    try:
+        # Optional page_size from body
+        page_size = 200
+        try:
+            payload = request.get_json(silent=True) or {}
+            page_size = int(payload.get('page_size') or 200)
+        except Exception:
+            page_size = 200
+        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+        runner = get_abs_sync_runner()
+        task_id = runner.enqueue_listening_sync(str(current_user.id), page_size=page_size)
+        try:
+            current_app.logger.info(f"[ABS Listen] Enqueued listening-only test task={task_id} user={current_user.id} page_size={page_size}")
+        except Exception:
+            pass
+        from app.routes.import_routes import import_bp  # noqa: F401
+        progress_url = url_for('import.import_books_progress', task_id=task_id)
+        api_progress_url = url_for('import.api_import_progress', task_id=task_id)
+        return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
+    except Exception as e:
+        current_app.logger.error(f"ABS listen test error: {e}")
         return jsonify({'ok': False, 'message': 'error'}), 500
 
 @auth.route('/privacy_settings', methods=['GET', 'POST'])

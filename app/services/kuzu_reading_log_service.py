@@ -217,7 +217,9 @@ class KuzuReadingLogService:
                 
                 if existing_list:
                     # Update existing reading log
-                    return self._update_existing_log(existing_list[0]['col_0'], reading_log)
+                    existing = existing_list[0].get('result') or existing_list[0].get('col_0') or next(iter(existing_list[0].values()), None)
+                    if existing is not None:
+                        return self._update_existing_log(existing, reading_log)
             else:
                 # For bookless logs, check if a general log exists for this user and date
                 existing_query = """
@@ -234,7 +236,9 @@ class KuzuReadingLogService:
                 
                 if existing_list:
                     # Update existing bookless reading log
-                    return self._update_existing_log(existing_list[0]['col_0'], reading_log)
+                    existing = existing_list[0].get('result') or existing_list[0].get('col_0') or next(iter(existing_list[0].values()), None)
+                    if existing is not None:
+                        return self._update_existing_log(existing, reading_log)
             
             # Create new reading log node
             create_log_query = """
@@ -369,7 +373,9 @@ class KuzuReadingLogService:
                 logger.info(f"Updated existing reading log {log_id}")
                 result_list = _convert_query_result_to_list(result)
                 if result_list:
-                    return dict(result_list[0]['col_0'])
+                    node = result_list[0].get('result') or result_list[0].get('col_0') or next(iter(result_list[0].values()), None)
+                    if node is not None:
+                        return dict(node)
                 
             return None
             
@@ -517,8 +523,10 @@ class KuzuReadingLogService:
             })
             
             result_list = _convert_query_result_to_list(result)
-            if result_list and result_list[0].get('col_0'):
-                return dict(result_list[0]['col_0'])
+            if result_list:
+                node = result_list[0].get('result') or result_list[0].get('col_0') or next(iter(result_list[0].values()), None)
+                if node is not None:
+                    return dict(node)
             
             return None
             

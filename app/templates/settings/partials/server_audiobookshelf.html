@@ -3,7 +3,8 @@
     <h5 class="mb-0"><i class="bi bi-soundwave me-2"></i>Audiobookshelf</h5>
     <div class="d-flex gap-2">
       <button id="absFullSyncBtn" class="btn btn-sm btn-outline-danger"><i class="bi bi-cloud-arrow-down"></i> Full Sync</button>
-      <button id="absSyncTestBtn" class="btn btn-sm btn-outline-success"><i class="bi bi-cloud-download"></i> Test Sync (5)</button>
+  <button id="absSyncTestBtn" class="btn btn-sm btn-outline-success"><i class="bi bi-cloud-download"></i> Test Sync (5)</button>
+  <button id="absListenTestBtn" class="btn btn-sm btn-outline-warning"><i class="bi bi-ear"></i> Test Listening Only</button>
       <button id="absTestBtn" class="btn btn-sm btn-outline-primary"><i class="bi bi-wifi"></i> Test Connection</button>
     </div>
   </div>
@@ -96,6 +97,7 @@
   const status = root.querySelector('#absStatus');
   const testBtn = root.querySelector('#absTestBtn');
   const syncTestBtn = root.querySelector('#absSyncTestBtn');
+  const listenTestBtn = root.querySelector('#absListenTestBtn');
   const fullSyncBtn = root.querySelector('#absFullSyncBtn');
   const schedForm = root.querySelector('#absSchedulerForm');
   const schedStatus = root.querySelector('#absSchedulerStatus');
@@ -232,5 +234,39 @@
       }
     });
   }
+  async function startListenTest(){
+    if (status) status.textContent = 'Starting listening-only test...';
+    const csrf = (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || document.querySelector('input[name="csrf_token"]')?.value || '').trim();
+    const headers = {'Content-Type':'application/json'};
+    if (csrf) headers['X-CSRFToken'] = csrf;
+    try {
+      const resp = await fetch("{{ url_for('auth.audiobookshelf_listen_test') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size: 200})});
+      const j = await resp.json();
+      if(j.ok){
+        try { startInlineProgressPolling(j); } catch(e) {}
+        const to = j.progress_url || j.api_progress_url || '#';
+        if (to && to !== '#') {
+          setTimeout(()=>{ window.location.assign(to); }, 150);
+        } else if (status) {
+          status.innerHTML = 'Listening sync started. <a href="'+ (j.progress_url||'#') +'" class="link-primary">View progress</a>';
+        }
+      } else if (status) {
+        status.textContent = 'Failed: ' + (j.message||j.error||'');
+      }
+    } catch(e){
+      if (status) status.textContent = 'Failed to start listening-only test';
+    }
+  }
+  if (listenTestBtn) {
+    listenTestBtn.addEventListener('click', startListenTest);
+  }
+  // Event delegation fallback in case the panel re-renders
+  root.addEventListener('click', function(e){
+    const t = e.target && e.target.closest && e.target.closest('#absListenTestBtn');
+    if (t) {
+      e.preventDefault();
+      startListenTest();
+    }
+  });
 })();
 </script>

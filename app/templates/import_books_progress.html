@@ -228,7 +228,11 @@ function updateProgress() {
             
             // Update progress bar - handle different total counts for different import types
             let totalForProgress = totalBooks;
-            if (data.import_type === 'reading_history') {
+            const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
+            const jobType = (data.type || '').toLowerCase();
+            const isAbsListening = jobType.startsWith('abs_listen');
+            const isAbsImport = jobType === 'abs_test_sync' || jobType === 'abs_full_sync' || jobType === 'abs_user_composite';
+            if (isReadingHistory) {
                 // Prefer new distinct_books_total metric, fallback to legacy total
                 if (data.distinct_books_total) {
                     totalForProgress = data.distinct_books_total;
@@ -236,15 +240,45 @@ function updateProgress() {
                     totalForProgress = data.total;
                 }
                 document.getElementById('totalCount').textContent = totalForProgress;
+            } else if (isAbsListening) {
+                // For listening-only jobs we usually don't have a meaningful total; keep 0 unless provided
+                totalForProgress = (typeof data.total === 'number') ? data.total : 0;
+                document.getElementById('totalCount').textContent = totalForProgress;
             }
             
             // Derive counters with fallbacks for reading history payloads
-            const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
             const processedCount = (typeof data.processed === 'number') ? data.processed : (isReadingHistory ? (data.books_involved || data.success || 0) : 0);
             const successCount = (typeof data.success === 'number') ? data.success : (isReadingHistory ? (data.reading_logs_created || 0) : 0);
             const errorCount = (typeof data.errors === 'number') ? data.errors : (isReadingHistory ? (data.reading_log_errors || 0) : 0);
 
-            let percentage = totalForProgress > 0 ? Math.round((processedCount / totalForProgress) * 100) : 0;
+            // For ABS imports, show progress against audiobooks synced if available
+            let progressPrimary = processedCount; // value used for the progress bar
+            if (isAbsImport) {
+                const booksProcessed = typeof data.processed === 'number' ? data.processed : 0;
+                if (typeof data.total === 'number' && data.total > 0) {
+                    totalForProgress = data.total;
+                }
+                if (typeof data.total_books === 'number' && data.total_books > 0) {
+                    totalForProgress = data.total_books;
+                }
+                // Reflect total in the Total tile for ABS imports
+                document.getElementById('totalCount').textContent = totalForProgress;
+                // Prefer audiobooks_synced counter if present
+                const audiobooksSynced = typeof data.audiobooks_synced === 'number' ? data.audiobooks_synced : booksProcessed;
+                document.getElementById('processedCount').textContent = audiobooksSynced;
+                document.querySelector('[data-status="processed"] small').textContent = 'Audiobooks';
+                progressPrimary = audiobooksSynced; // drive the progress bar from audiobooks synced
+                // Listening sessions (streamed) if present
+                const listening = typeof data.listening_sessions === 'number' ? data.listening_sessions : (data.listening_processed || 0);
+                document.getElementById('mergedCount').textContent = listening;
+                document.querySelector('[data-status="merged"] small').textContent = 'Sessions';
+                // Matched count goes to success tile for visibility
+                const matched = typeof data.listening_matched === 'number' ? data.listening_matched : (data.matched || 0);
+                document.getElementById('successCount').textContent = matched;
+                document.querySelector('[data-status="success"] small').textContent = 'Matched';
+            }
+
+            let percentage = totalForProgress > 0 ? Math.round((progressPrimary / totalForProgress) * 100) : 0;
             if (percentage > 100) percentage = 100; // Cap to 100 to prevent visual overflow
             const progressBar = document.getElementById('progressBar');
             progressBar.style.width = percentage + '%';
@@ -342,6 +376,17 @@ function updateProgress() {
                 // Update global labelMap for toggles after relabel
                 labelMap.merged = 'Matched';
                 labelMap.skipped = 'Created';
+            } else if (isAbsListening) {
+                // Keep counters simple for listening syncs: show processed as the primary signal
+                document.getElementById('processedCount').textContent = processedCount;
+                document.querySelector('[data-status="processed"] small').textContent = 'Sessions';
+                document.getElementById('successCount').textContent = successCount;
+                document.querySelector('[data-status="success"] small').textContent = 'Success';
+                document.getElementById('mergedCount').textContent = data.matched || 0;
+                document.querySelector('[data-status="merged"] small').textContent = 'Matched';
+                document.getElementById('skippedCount').textContent = data.skipped || 0;
+                document.querySelector('[data-status="skipped"] small').textContent = 'Skipped';
+                document.getElementById('errorCount').textContent = errorCount;
             } else {
                 document.getElementById('processedCount').textContent = processedCount;
                 document.getElementById('successCount').textContent = successCount;
@@ -352,7 +397,7 @@ function updateProgress() {
             
             // Update unmatched count - handle different data structures
             let unmatchedCount = 0;
-            if (data.import_type === 'reading_history') {
+            if (isReadingHistory) {
                 // For reading history imports, use the unmatched field or calculate from books_for_matching
                 if (data.unmatched !== undefined) {
                     unmatchedCount = data.unmatched;
@@ -360,7 +405,7 @@ function updateProgress() {
                     // Exclude bookless pseudo-entries from unmatched
                     unmatchedCount = data.books_for_matching.filter(book => !book.matched_book && !book.is_bookless).length;
                 }
-            } else {
+            } else if (!isAbsListening) {
                 // For regular book imports
                 unmatchedCount = data.unmatched_books ? data.unmatched_books.length : 0;
             }
@@ -381,7 +426,6 @@ function updateProgress() {
                 jobStatus.className = data.status === 'completed' ? 'badge bg-success' : 'badge bg-warning';
                 progressBar.className = data.status === 'completed' ? 'progress-bar bg-success' : 'progress-bar bg-warning';
 
-                const isReadingHistory = data.import_type === 'reading_history' || window.location.pathname.includes('reading-history');
                 if (isReadingHistory) {
                     const readingLogsCreated = data.reading_logs_created || 0;
                     const booksMatched = data.books_matched || 0;
@@ -403,6 +447,10 @@ function updateProgress() {
                         `${statusIcon} Reading history import completed! ${successMessage}.${errorMessage}
                          <div class=\"mt-2\">\n                             <a href=\"{{ url_for('reading_logs.my_reading_logs') }}\" class=\"btn btn-primary btn-sm\">\n                                 <i class=\"fas fa-book-reader\"></i> View Reading Log\n                             </a>\n                             <a href=\"{{ url_for('main.library') }}\" class=\"btn btn-secondary btn-sm ms-2\">\n                                 <i class=\"fas fa-books\"></i> Back to Library\n                             </a>\n                         </div>`;
                     document.getElementById('statusMessage').className = alertClass;
+                } else if (isAbsListening) {
+                    document.getElementById('statusMessage').innerHTML = 
+                        `<i class=\"fas fa-check-circle\"></i> Listening sync completed.`;
+                    document.getElementById('statusMessage').className = 'alert alert-success';
                 } else {
                     document.getElementById('statusMessage').innerHTML = 
                         `<i class=\"fas fa-check-circle\"></i> Import completed! Successfully imported ${data.success} books.`;
@@ -473,8 +521,14 @@ function updateProgress() {
                     jobStatus.textContent = 'Running';
                     jobStatus.className = 'badge bg-primary';
                     
-                    document.getElementById('statusMessage').innerHTML = 
-                        `<i class="fas fa-cog fa-spin"></i> Processing books... Current: ${data.current_book || 'Unknown'}`;
+                    // Default running copy, with special-case for listening jobs
+                    if (isAbsListening) {
+                        document.getElementById('statusMessage').innerHTML = 
+                            `<i class=\"fas fa-cog fa-spin\"></i> Processing listening sessions...`;
+            } else {
+                        document.getElementById('statusMessage').innerHTML = 
+                `<i class=\"fas fa-cog fa-spin\"></i> ${isAbsImport ? 'Syncing audiobooks from Audiobookshelf...' : 'Processing books...'} Current: ${data.current_book || 'Unknown'}`;
+                    }
                 }
             }
             

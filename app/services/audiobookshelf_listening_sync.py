@@ -13,7 +13,7 @@ Constraints:
 """
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime, timezone, date
 import logging
 import os
@@ -34,7 +34,11 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(ts.replace('Z', '+00:00'))
     except Exception:
         try:
-            return datetime.utcfromtimestamp(float(ts))
+            # Accept epoch seconds (string/number). If value looks like ms (large), divide.
+            val = float(ts)
+            if val > 10_000_000_000:  # likely ms
+                val = val / 1000.0
+            return datetime.utcfromtimestamp(val).replace(tzinfo=timezone.utc)
         except Exception:
             return None
 
@@ -230,8 +234,8 @@ class AudiobookshelfListeningSync:
         except Exception as e:
             logger.warning(f"Listening progress update failed for {book_id}: {e}")
 
-    def _log_minutes(self, book_id: str, minutes: int, when: Optional[datetime]):
-        """Best-effort: create/update a reading log entry for the day with minutes_read."""
+    def _log_minutes(self, book_id: str, minutes: int, when: Optional[datetime], pages: Optional[int] = None):
+        """Best-effort: create/update a reading log entry for the day with minutes_read (and optional pages_read)."""
         try:
             if not minutes or minutes <= 0:
                 return
@@ -244,37 +248,53 @@ class AudiobookshelfListeningSync:
                 user_id=self.user_id,
                 book_id=book_id,
                 date=d,
-                pages_read=0,
+                pages_read=int(pages or 0),
                 minutes_read=int(minutes),
                 notes=None,
                 created_at=datetime.now(timezone.utc),
             )
-            svc.create_reading_log_sync(rl)
+            created = svc.create_reading_log_sync(rl)
+            if created and self.debug:
+                self._dbg("Reading log created/updated", {"book_id": book_id, "date": d.isoformat(), "minutes": int(minutes), "pages": int(pages or 0)})
         except Exception:
             # Non-critical
             pass
 
-    def sync(self, page_size: int = 100) -> Dict[str, Any]:
+    def sync(self, page_size: int = 100, seed_item_ids: Optional[List[str]] = None, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         """Run an incremental listening sync for the user. Returns small summary dict."""
         settings = load_abs_settings()
         abs_user_id = self._ensure_abs_user_id(settings)
         last = settings.get('last_listening_sync')
-        updated_after = None
-        if last:
-            # Pass through stored ISO or epoch seconds
-            if isinstance(last, (int, float)):
-                updated_after = str(last)
-            else:
-                updated_after = str(last)
-
+        updated_after: Optional[str] = None
+        if last is not None:
+            updated_after = str(last)
         page = 0  # ABS API pages are 0-indexed
         processed = 0
         matched = 0
+        expected_total: Optional[int] = None
+        # Track last seen position per book to compute deltas when ABS doesn't provide listened ms
+        last_pos_ms_by_book: Dict[str, int] = {}
+        # Cache page_count per book to estimate pages during sessions
+        page_count_cache: Dict[str, Optional[int]] = {}
         self._dbg("Start listening sync", {"user_id": self.user_id, "abs_user_id": abs_user_id, "updated_after": updated_after, "page_size": page_size})
         first_page_checked = False
         while True:
             res = self.client.list_user_sessions(user_id=abs_user_id, updated_after=updated_after, limit=page_size, page=page)
             sessions = res.get('sessions') or []
+            try:
+                tot = res.get('total')
+                if isinstance(tot, (int, float)) and (expected_total is None):
+                    expected_total = int(tot)
+            except Exception:
+                pass
+            # Process oldest first for saner delta calculations
+            try:
+                sessions = sorted(
+                    sessions,
+                    key=lambda x: _parse_iso(x.get('updatedAt') or x.get('updated_at')) or datetime.now(timezone.utc)
+                )
+            except Exception:
+                pass
             self._dbg("Fetched sessions page", {"page": page, "count": len(sessions)})
             if not sessions:
                 # If page 0 and we used updated_after, retry once without filter to seed
@@ -284,6 +304,51 @@ class AudiobookshelfListeningSync:
                     updated_after = None
                     page = 0
                     continue
+                # If we have seed item ids and no sessions, try per-item progress as a fallback
+                if seed_item_ids:
+                    try:
+                        for sid in seed_item_ids:
+                            try:
+                                gp = self.client.get_user_progress_for_item(sid)
+                                if not gp.get('ok'):
+                                    continue
+                                prog = gp.get('progress') or {}
+                                # Build a minimal item for mapping by ABS id
+                                item = {"id": sid}
+                                book_id = self._find_book_id_by_abs_item(item)
+                                if not book_id:
+                                    continue
+                                # Normalize progress
+                                pos_ms: Optional[int] = None
+                                for key in ('positionMs', 'position_ms', 'position', 'currentTimeMs'):
+                                    v = prog.get(key)
+                                    if isinstance(v, (int, float)):
+                                        pos_ms = int(v)
+                                        break
+                                if pos_ms is None:
+                                    for key in ('positionSec', 'position_seconds', 'currentTime'):
+                                        v = prog.get(key)
+                                        if isinstance(v, (int, float)):
+                                            pos_ms = int(float(v) * 1000)
+                                            break
+                                updated_at = _parse_iso(prog.get('updatedAt') or prog.get('updated_at') or prog.get('lastUpdate') or prog.get('last_updated'))
+                                # Seed a conservative reading log (position in minutes, at least 1)
+                                if isinstance(pos_ms, int) and pos_ms > 0:
+                                    self._apply_progress(book_id, pos_ms, updated_at)
+                                    minutes = max(1, int(pos_ms // 60000))
+                                    self._log_minutes(book_id, minutes, updated_at)
+                                    matched += 1
+                                    processed += 1
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                # Emit progress snapshot before break
+                if callable(progress_cb):
+                    try:
+                        progress_cb({"processed": processed, "matched": matched, "total": expected_total or 0})
+                    except Exception:
+                        pass
                 break
             for s in sessions:
                 try:
@@ -301,7 +366,7 @@ class AudiobookshelfListeningSync:
                         continue
                     matched += 1
                     # Normalize progress fields
-                    pos_ms = None
+                    pos_ms: Optional[int] = None
                     for key in ('positionMs', 'position_ms', 'position', 'currentTimeMs'):
                         v = s.get(key)
                         if isinstance(v, (int, float)):
@@ -323,7 +388,7 @@ class AudiobookshelfListeningSync:
                             finished_flag = True
                             break
                     # Try to infer using duration
-                    duration_ms = None
+                    duration_ms: Optional[int] = None
                     for k in ('durationMs', 'duration_ms', 'duration'):
                         dv = s.get(k)
                         if isinstance(dv, (int, float)):
@@ -342,6 +407,59 @@ class AudiobookshelfListeningSync:
                                 finished_flag = True
                         except Exception:
                             pass
+                    # Derive minutes listened for ReadingLog
+                    minutes_from_session: Optional[int] = None
+                    for key in ('msPlayed', 'msListened', 'timeListenedMs', 'time_listened_ms', 'playedMs'):
+                        v = s.get(key)
+                        if isinstance(v, (int, float)) and v > 0:
+                            minutes_from_session = max(1, int(v // 60000))
+                            break
+                    if minutes_from_session is None:
+                        for key in ('secondsListened', 'timeListened', 'playedSeconds'):
+                            v = s.get(key)
+                            if isinstance(v, (int, float)) and v > 0:
+                                minutes_from_session = max(1, int(float(v) // 60))
+                                break
+                    if minutes_from_session is None and isinstance(pos_ms, int):
+                        prev = last_pos_ms_by_book.get(book_id)
+                        if isinstance(prev, int):
+                            delta = pos_ms - prev
+                            # Ignore tiny jitter; clamp to a reasonable cap
+                            if delta > 15_000:
+                                minutes_from_session = max(1, min(int(delta // 60000), 240))
+                        # Update last position regardless
+                        last_pos_ms_by_book[book_id] = pos_ms if isinstance(pos_ms, int) else last_pos_ms_by_book.get(book_id, 0)
+                    if minutes_from_session is None and finished_flag and isinstance(duration_ms, int) and duration_ms > 0:
+                        minutes_from_session = max(1, int(duration_ms // 60000))
+
+                    # Estimate pages if we know both duration and page_count
+                    pages_from_session: Optional[int] = None
+                    try:
+                        if (minutes_from_session and minutes_from_session > 0) and isinstance(duration_ms, int) and duration_ms > 0:
+                            # Fetch cached page_count for this book
+                            if book_id not in page_count_cache:
+                                try:
+                                    qr = safe_execute_kuzu_query("MATCH (b:Book) WHERE b.id = $id RETURN b.page_count LIMIT 1", {"id": book_id})
+                                    pc = None
+                                    if isinstance(qr, list) and qr:
+                                        first = qr[0]
+                                        if isinstance(first, dict):
+                                            pc = first.get('result') or first.get('b.page_count') or first.get('col_0')
+                                        elif isinstance(first, (list, tuple)) and first:
+                                            pc = first[0]
+                                    page_count_cache[book_id] = int(pc) if isinstance(pc, (int, float)) else None
+                                except Exception:
+                                    page_count_cache[book_id] = None
+                            pcache = page_count_cache.get(book_id)
+                            if isinstance(pcache, int) and pcache > 0:
+                                total_min = max(1, int(duration_ms // 60000))
+                                pages_from_session = max(0, int(round((minutes_from_session / total_min) * pcache)))
+                    except Exception:
+                        pages_from_session = None
+
+                    if minutes_from_session and minutes_from_session > 0:
+                        self._log_minutes(book_id, minutes_from_session, updated_at, pages_from_session)
+
                     if pos_ms is not None:
                         if finished_flag:
                             try:
@@ -356,12 +474,18 @@ class AudiobookshelfListeningSync:
                             except Exception:
                                 pass
                         self._apply_progress(book_id, pos_ms, updated_at)
-                        self._dbg("Reading log aggregation is disabled in sync; minutes not recorded", {"book_id": book_id})
-                        # Approx minutes listened since last update not known from single event; skip aggregation here
+                        if not minutes_from_session:
+                            self._dbg("No minutes derived from session (skipped logging)", {"book_id": book_id})
                 except Exception as e:
                     logger.exception(f"Skipping session due to error: {e}")
                 finally:
                     processed += 1
+            # Emit progress at end of page
+            if callable(progress_cb):
+                try:
+                    progress_cb({"processed": processed, "matched": matched, "total": expected_total or 0})
+                except Exception:
+                    pass
             page += 1
 
         # Record last sync time
@@ -369,6 +493,72 @@ class AudiobookshelfListeningSync:
             save_abs_settings({'last_listening_sync': datetime.now(timezone.utc).isoformat()})
         except Exception:
             pass
-        summary = {"ok": True, "processed": processed, "matched": matched}
+        summary = {"ok": True, "processed": processed, "matched": matched, "total": expected_total or 0}
         self._dbg("Listening sync complete", summary)
         return summary
+
+    def sync_item_progress(self, item_or_id: Any) -> Dict[str, Any]:
+        """Sync progress for a single ABS item (libraryItemId) for this user.
+
+        - Resolves local Book by audiobookshelf_id/ISBN/title
+        - Fetches per-item progress via /api/me/progress/{item_id}
+        - Applies personal progress and best-effort reading minutes
+
+        Returns a compact summary: { ok, processed, matched }
+        """
+        try:
+            item_id = None
+            if isinstance(item_or_id, dict):
+                item_id = item_or_id.get('id') or item_or_id.get('_id') or item_or_id.get('itemId')
+            else:
+                item_id = str(item_or_id)
+            if not item_id:
+                return {"ok": False, "processed": 0, "matched": 0, "message": "missing item_id"}
+            # Map to local Book
+            book_id = self._find_book_id_by_abs_item({"id": item_id})
+            if not book_id:
+                self._dbg("sync_item_progress: no local match", {"item_id": item_id})
+                return {"ok": True, "processed": 1, "matched": 0}
+            gp = self.client.get_user_progress_for_item(item_id)
+            if not gp.get('ok'):
+                return {"ok": False, "processed": 1, "matched": 0, "message": gp.get('message')}
+            prog = gp.get('progress') or {}
+            # Normalize position
+            pos_ms: Optional[int] = None
+            for key in ('positionMs', 'position_ms', 'position', 'currentTimeMs'):
+                v = prog.get(key)
+                if isinstance(v, (int, float)):
+                    pos_ms = int(v)
+                    break
+            if pos_ms is None:
+                for key in ('positionSec', 'position_seconds', 'currentTime'):
+                    v = prog.get(key)
+                    if isinstance(v, (int, float)):
+                        pos_ms = int(float(v) * 1000)
+                        break
+            updated_at = _parse_iso(prog.get('updatedAt') or prog.get('updated_at') or prog.get('lastUpdate') or prog.get('last_updated'))
+            # Derive minutes from explicit listened time if available; otherwise from position
+            minutes: Optional[int] = None
+            for key in ('msPlayed', 'msListened', 'timeListenedMs', 'time_listened_ms', 'playedMs'):
+                v = prog.get(key)
+                if isinstance(v, (int, float)) and v > 0:
+                    minutes = max(1, int(v // 60000))
+                    break
+            if minutes is None:
+                for key in ('secondsListened', 'timeListened', 'playedSeconds'):
+                    v = prog.get(key)
+                    if isinstance(v, (int, float)) and v > 0:
+                        minutes = max(1, int(float(v) // 60))
+                        break
+            if minutes is None and isinstance(pos_ms, int):
+                minutes = max(1, int(pos_ms // 60000))
+
+            if isinstance(pos_ms, int):
+                self._apply_progress(book_id, pos_ms, updated_at)
+            if isinstance(minutes, int) and minutes > 0:
+                self._log_minutes(book_id, minutes, updated_at)
+            self._dbg("sync_item_progress: applied", {"item_id": item_id, "book_id": book_id, "pos_ms": pos_ms, "minutes": minutes})
+            return {"ok": True, "processed": 1, "matched": 1}
+        except Exception as e:
+            logger.warning(f"sync_item_progress failed: {e}")
+            return {"ok": False, "processed": 0, "matched": 0, "message": str(e)}
