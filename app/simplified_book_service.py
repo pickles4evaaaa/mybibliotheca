@@ -320,8 +320,8 @@ class SimplifiedBookService:
                     series: $series,
                     series_volume: $series_volume,
                     series_order: $series_order,
-                    created_at: timestamp($created_at_str),
-                    updated_at: timestamp($updated_at_str)
+                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END,
+                    updated_at: CASE WHEN $updated_at_str IS NULL OR $updated_at_str = '' THEN NULL ELSE timestamp($updated_at_str) END
                 })
                 RETURN b.id
                 """,
@@ -389,7 +389,8 @@ class SimplifiedBookService:
                     update_cover_result = safe_execute_kuzu_query(
                         """
                         MATCH (b:Book {id: $book_id})
-                        SET b.cover_url = $cover_url, b.updated_at = timestamp($updated_at_str)
+                        SET b.cover_url = $cover_url,
+                            b.updated_at = CASE WHEN $updated_at_str IS NULL OR $updated_at_str = '' THEN b.updated_at ELSE timestamp($updated_at_str) END
                         RETURN b.id
                         """,
                         {
@@ -512,7 +513,7 @@ class SimplifiedBookService:
                             CREATE (p)-[r:AUTHORED {
                                 role: $role,
                                 order_index: $order_index,
-                                created_at: timestamp($created_at_str)
+                                created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                             }]->(b)
                             RETURN r
                             """,
@@ -550,7 +551,7 @@ class SimplifiedBookService:
                                 CREATE (p)-[r:AUTHORED {
                                     role: $role,
                                     order_index: $order_index,
-                                    created_at: timestamp($created_at_str)
+                                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                                 }]->(b)
                                 RETURN r
                                 """,
@@ -589,7 +590,7 @@ class SimplifiedBookService:
                                 CREATE (p)-[r:AUTHORED {
                                     role: $role,
                                     order_index: $order_index,
-                                    created_at: timestamp($created_at_str)
+                                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                                 }]->(b)
                                 RETURN r
                                 """,
@@ -626,7 +627,7 @@ class SimplifiedBookService:
                                 CREATE (p)-[r:AUTHORED {
                                     role: $role,
                                     order_index: $order_index,
-                                    created_at: timestamp($created_at_str)
+                                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                                 }]->(b)
                                 RETURN r
                                 """,
@@ -663,7 +664,7 @@ class SimplifiedBookService:
                                 CREATE (p)-[r:AUTHORED {
                                     role: $role,
                                     order_index: $order_index,
-                                    created_at: timestamp($created_at_str)
+                                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                                 }]->(b)
                                 RETURN r
                                 """,
@@ -700,7 +701,7 @@ class SimplifiedBookService:
                                 CREATE (p)-[r:AUTHORED {
                                     role: $role,
                                     order_index: $order_index,
-                                    created_at: timestamp($created_at_str)
+                                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                                 }]->(b)
                                 RETURN r
                                 """,
@@ -734,7 +735,7 @@ class SimplifiedBookService:
                             """
                             MATCH (b:Book {id: $book_id}), (pub:Publisher {id: $publisher_id})
                             CREATE (b)-[r:PUBLISHED_BY {
-                                created_at: timestamp($created_at_str)
+                                created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                             }]->(pub)
                             RETURN r
                             """,
@@ -770,7 +771,7 @@ class SimplifiedBookService:
                                 """
                                 MATCH (b:Book {id: $book_id}), (c:Category {id: $category_id})
                                 CREATE (b)-[r:CATEGORIZED_AS {
-                                    created_at: timestamp($created_at_str)
+                                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
                                 }]->(c)
                                 RETURN r
                                 """,
@@ -848,7 +849,7 @@ class SimplifiedBookService:
                 MATCH (u:User {id: $user_id}), (b:Book {id: $book_id})
                 CREATE (u)-[r:USER_ANNOTATES {
                     reading_status: $reading_status,
-                    date_added: timestamp($date_added_str),
+                    date_added: CASE WHEN $date_added_str IS NULL OR $date_added_str = '' THEN NULL ELSE timestamp($date_added_str) END,
                     user_rating: $user_rating,
                     personal_notes: $personal_notes,
                     custom_metadata: $custom_metadata

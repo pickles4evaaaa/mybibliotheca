@@ -591,7 +591,7 @@
 
                                     <!-- Reading Status Badge -->
                                     <div class="mb-2">
-                                        {% if book.reading_status == 'reading' %}
+                                        {% if book.reading_status in ['reading', 'currently_reading'] %}
                                             <span class="badge bg-warning text-dark">📖 Reading</span>
                                         {% elif book.reading_status == 'read' %}
                                             <span class="badge bg-success">✅ Read</span>
@@ -690,29 +690,18 @@ document.addEventListener('DOMContentLoaded', function() {
     // Apply initial filter
     applyStatusFilter(currentFilter);
 
-    // Filter button handlers
+    // Filter button handlers -> submit form to server so filtering spans all pages
     document.querySelectorAll('.filter-btn').forEach(button => {
         button.addEventListener('click', function() {
             const filter = this.dataset.filter;
-            
-            // Get the current active filter from URL or default to 'all'
-            const urlParams = new URLSearchParams(window.location.search);
-            const currentActiveFilter = urlParams.get('status_filter') || 'all';
-            
-            // If clicking the same filter that's already active, toggle to 'all'
-            const targetFilter = (filter === currentActiveFilter) ? 'all' : filter;
-            
-            applyStatusFilter(targetFilter);
-            updateActiveFilter(targetFilter);
-            
-            // Update URL without page reload
-            const url = new URL(window.location);
-            if (targetFilter === 'all') {
-                url.searchParams.delete('status_filter');
-            } else {
-                url.searchParams.set('status_filter', targetFilter);
+            const statusInput = document.getElementById('status_filter');
+            if (statusInput) {
+                // Toggle to 'all' when clicking the same active filter
+                const current = statusInput.value || 'all';
+                statusInput.value = (current === filter) ? 'all' : filter;
             }
-            window.history.pushState({}, '', url);
+            const form = document.getElementById('filter-form');
+            if (form) form.submit();
         });
     });
 
@@ -898,12 +887,13 @@ function applyStatusFilter(filter) {
         const ownershipStatus = book.dataset.ownershipStatus;
         let shouldShow = false;
 
-        switch(filter) {
+    switch(filter) {
             case 'all':
                 shouldShow = true;
                 break;
             case 'reading':
-                shouldShow = readingStatus === 'reading';
+        // Handle both legacy 'reading' and new 'currently_reading'
+        shouldShow = (readingStatus === 'reading' || readingStatus === 'currently_reading');
                 break;
             case 'read':
                 shouldShow = readingStatus === 'read';

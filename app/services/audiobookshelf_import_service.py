@@ -401,7 +401,8 @@ class AudiobookshelfImportService:
             safe_execute_kuzu_query(
                 """
                 MATCH (b:Book {id: $book_id})
-                SET b.audiobookshelf_id = $abs_id, b.updated_at = timestamp($ts)
+                SET b.audiobookshelf_id = $abs_id,
+                    b.updated_at = CASE WHEN $ts IS NULL OR $ts = '' THEN b.updated_at ELSE timestamp($ts) END
                 RETURN b.id
                 """,
                 {
@@ -415,7 +416,8 @@ class AudiobookshelfImportService:
                 safe_execute_kuzu_query(
                     """
                     MATCH (b:Book {id: $book_id})
-                    SET b.audio_duration_ms = $dur_ms, b.updated_at = timestamp($ts)
+                    SET b.audio_duration_ms = $dur_ms,
+                        b.updated_at = CASE WHEN $ts IS NULL OR $ts = '' THEN b.updated_at ELSE timestamp($ts) END
                     RETURN b.id
                     """,
                     {
@@ -424,17 +426,18 @@ class AudiobookshelfImportService:
                         'ts': datetime.now(timezone.utc).isoformat()
                     }
                 )
-            # Persist ABS updated timestamp if we have one
-            if abs_updated_iso:
+            # Persist ABS updated timestamp if we have one (stored as STRING in schema)
+            if abs_updated_iso and isinstance(abs_updated_iso, str) and abs_updated_iso.strip() != '':
                 safe_execute_kuzu_query(
                     """
                     MATCH (b:Book {id: $book_id})
-                    SET b.audiobookshelf_updated_at = $abs_updated, b.updated_at = timestamp($ts)
+                    SET b.audiobookshelf_updated_at = $abs_updated,
+                        b.updated_at = CASE WHEN $ts IS NULL OR $ts = '' THEN b.updated_at ELSE timestamp($ts) END
                     RETURN b.id
                     """,
                     {
                         'book_id': book_id,
-                        'abs_updated': abs_updated_iso,
+                        'abs_updated': abs_updated_iso.strip(),
                         'ts': datetime.now(timezone.utc).isoformat()
                     }
                 )
@@ -473,7 +476,7 @@ class AudiobookshelfImportService:
             pid = str(uuid.uuid4())
             safe_execute_kuzu_query(
                 """
-                CREATE (p:Person {id: $id, name: $name, normalized_name: toLower($name), created_at: timestamp($ts)})
+                CREATE (p:Person {id: $id, name: $name, normalized_name: toLower($name), created_at: CASE WHEN $ts IS NULL OR $ts = '' THEN NULL ELSE timestamp($ts) END})
                 RETURN p.id
                 """,
                 {"id": pid, "name": nm, "ts": datetime.now(timezone.utc).isoformat()}
@@ -506,7 +509,7 @@ class AudiobookshelfImportService:
             safe_execute_kuzu_query(
                 """
                 MATCH (p:Person {id: $pid}), (b:Book {id: $bid})
-                CREATE (p)-[:AUTHORED {role: $role, order_index: $ord, created_at: timestamp($ts)}]->(b)
+                CREATE (p)-[:AUTHORED {role: $role, order_index: $ord, created_at: CASE WHEN $ts IS NULL OR $ts = '' THEN NULL ELSE timestamp($ts) END}]->(b)
                 RETURN b.id
                 """,
                 {"pid": pid, "bid": book_id, "role": role, "ord": int(order_index), "ts": datetime.now(timezone.utc).isoformat()}
@@ -1076,6 +1079,30 @@ class AudiobookshelfImportService:
                         if (not prev) or (str(v) > str(prev)):
                             new_map[k] = v
                     save_abs_settings({'last_library_sync_map': new_map, 'last_library_sync': __import__('time').time()})
+            except Exception:
+                pass
+
+            # After books, run a listening sync to reconcile reading status/progress
+            try:
+                listener = AudiobookshelfListeningSync(self.user_id, self.client)
+                def _ls_cb(snapshot: dict):
+                    try:
+                        safe_update_import_job(self.user_id, task_id, {
+                            'status': 'running',
+                            'listening_sessions': int(snapshot.get('processed') or 0),
+                            'listening_matched': int(snapshot.get('matched') or 0),
+                        })
+                    except Exception:
+                        pass
+                lsum = listener.sync(page_size=200, progress_cb=_ls_cb)
+                current_job = safe_get_import_job(self.user_id, task_id) or {}
+                pb = list(current_job.get('processed_books') or [])
+                pb.append({'title': f"ABS listening sync: processed {lsum.get('processed', 0)}, matched {lsum.get('matched', 0)}", 'status': 'info'})
+                safe_update_import_job(self.user_id, task_id, {
+                    'processed_books': pb[-100:],
+                    'listening_sessions': int(lsum.get('processed', 0)),
+                    'listening_matched': int(lsum.get('matched', 0)),
+                })
             except Exception:
                 pass
 
@@ -1700,6 +1727,30 @@ class AudiobookshelfImportService:
                             save_abs_settings({'last_library_sync_map': m, 'last_library_sync': __import__('time').time()})
                     except Exception:
                         pass
+
+                # After finishing all libraries, reconcile listening/progress and stream to UI
+                try:
+                    listener = AudiobookshelfListeningSync(self.user_id, self.client)
+                    def _ls_cb2(snapshot: dict):
+                        try:
+                            safe_update_import_job(self.user_id, task_id, {
+                                'status': 'running',
+                                'listening_sessions': int(snapshot.get('processed') or 0),
+                                'listening_matched': int(snapshot.get('matched') or 0),
+                            })
+                        except Exception:
+                            pass
+                    lsum2 = listener.sync(page_size=200, progress_cb=_ls_cb2)
+                    current_job2 = safe_get_import_job(self.user_id, task_id) or {}
+                    pb2 = list(current_job2.get('processed_books') or [])
+                    pb2.append({'title': f"ABS listening sync: processed {lsum2.get('processed', 0)}, matched {lsum2.get('matched', 0)}", 'status': 'info'})
+                    safe_update_import_job(self.user_id, task_id, {
+                        'processed_books': pb2[-100:],
+                        'listening_sessions': int(lsum2.get('processed', 0)),
+                        'listening_matched': int(lsum2.get('matched', 0)),
+                    })
+                except Exception:
+                    pass
 
                 safe_update_import_job(self.user_id, task_id, {
                     'status': 'completed',

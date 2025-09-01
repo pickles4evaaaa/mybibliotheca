@@ -41,16 +41,7 @@ def _safe_get_row_value(row: Any, index: int) -> Any:
 def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
-    
-    Args:
-        result: QueryResult object from KuzuDB
-        
-    Returns:
-        List of dictionaries representing rows
     """
-    if result is None:
-        return []
-    
     rows = []
     try:
         # Check if result has the iterator interface
@@ -192,7 +183,7 @@ class KuzuRelationshipService:
                         custom_blob = json.loads(custom_blob)
                     for k, v in custom_blob.items():
                         # Promote known keys; keep others as custom_*
-                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date'] and v not in (None, ''):
+                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at'] and v not in (None, ''):
                             combined[k] = v
                 except Exception:
                     pass
@@ -212,6 +203,9 @@ class KuzuRelationshipService:
         setattr(book, 'start_date', combined.get('start_date'))
         setattr(book, 'finish_date', combined.get('finish_date'))
         setattr(book, 'user_rating', combined.get('user_rating'))
+        # Optional progress fields for UI hints
+        setattr(book, 'progress_ms', combined.get('progress_ms'))
+        setattr(book, 'last_listened_at', combined.get('last_listened_at'))
         setattr(book, 'personal_notes', combined.get('personal_notes'))
         setattr(book, 'review', combined.get('user_review') or combined.get('review'))  # Map user_review back to review
         # In universal library mode, "date added" is a global property of the Book (creation time),
@@ -755,93 +749,52 @@ class KuzuRelationshipService:
         return 0
 
     def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
-        """Compute global reading/ownership status counts for a user across the entire library.
+        """Compute global counts aligned with library filters from user overlay data.
 
-        This scans HAS_PERSONAL_METADATA relationships once and derives counts from the JSON blob,
-        then infers plan_to_read by difference using total book count.
-
-        Rules:
-        - read: reading_status == 'read' OR finish_date present
-        - currently_reading: reading_status in ['reading','currently_reading'] OR progress_ms>0, when not read
-        - on_hold: reading_status == 'on_hold'
-        - wishlist: ownership_status == 'wishlist'
-        - plan_to_read: total_books - (read + currently_reading + on_hold)
+        Uses get_all_books_with_user_overlay_sync so that books without a personal
+        record still default to reading_status='plan_to_read' (matching page filters).
         """
-        counts = {
-            'read': 0,
-            'currently_reading': 0,
-            'on_hold': 0,
-            'plan_to_read': 0,
-            'wishlist': 0,
-        }
+        counts = {'read': 0, 'currently_reading': 0, 'on_hold': 0, 'plan_to_read': 0, 'wishlist': 0}
         try:
-            total = self.get_total_book_count_sync()
-        except Exception:
-            total = 0
-        try:
-            # Pull only personal metadata JSON once
-            qr = safe_execute_kuzu_query(
-                """
-                MATCH (u:User {id: $uid})-[r:HAS_PERSONAL_METADATA]->(b:Book)
-                RETURN r.personal_custom_fields as j
-                """,
-                {"uid": user_id}
-            )
-            rows = _convert_query_result_to_list(qr)
-            read = 0
-            current = 0
-            on_hold = 0
-            wishlist = 0
-            for row in rows or []:
-                raw = row.get('j') if isinstance(row, dict) else (row[0] if isinstance(row, (list, tuple)) and row else None)
-                blob: Dict[str, Any] = {}
-                if isinstance(raw, str) and raw:
-                    try:
-                        import json as _json
-                        blob = _json.loads(raw) or {}
-                    except Exception:
-                        blob = {}
-                elif isinstance(raw, dict):
-                    blob = raw
-                # Extract fields
-                rs = (blob.get('reading_status') or '').strip().lower() if isinstance(blob.get('reading_status'), str) else blob.get('reading_status')
-                finish_date = blob.get('finish_date')
-                progress_ms = blob.get('progress_ms')
-                ownership_status = blob.get('ownership_status')
-                # Normalize
+            books = self.get_all_books_with_user_overlay_sync(user_id)
+            for book in books or []:
+                # Support both dicts and objects
+                rs = (book.get('reading_status') if isinstance(book, dict) else getattr(book, 'reading_status', None))
+                owner = (book.get('ownership_status') if isinstance(book, dict) else getattr(book, 'ownership_status', None))
+                rs = rs.strip().lower() if isinstance(rs, str) else rs
+                owner = owner.strip().lower() if isinstance(owner, str) else owner
+
+                # Normalize common synonyms/variants
+                if rs in (None, '', 'unknown'):
+                    rs = 'plan_to_read'
+                if rs in ('reading', 'currently reading'):
+                    rs = 'currently_reading'
+                if rs in ('onhold', 'on-hold', 'paused'):
+                    rs = 'on_hold'
+                if rs in ('finished', 'complete', 'completed'):
+                    rs = 'read'
+                if rs in ('want_to_read', 'wishlist_reading'):
+                    rs = 'plan_to_read'
+
+                if rs == 'read':
+                    counts['read'] += 1
+                elif rs in ('reading', 'currently_reading'):
+                    counts['currently_reading'] += 1
+                elif rs == 'on_hold':
+                    counts['on_hold'] += 1
+                elif rs == 'plan_to_read':
+                    counts['plan_to_read'] += 1
+
+                if owner == 'wishlist':
+                    counts['wishlist'] += 1
+            # Fallback: if we somehow computed all zeros but there are books, assume all plan_to_read
+            if (counts['read'] + counts['currently_reading'] + counts['on_hold'] + counts['plan_to_read']) == 0:
                 try:
-                    progress_val = int(progress_ms) if progress_ms is not None else 0
+                    total = self.get_total_book_count_sync()
+                    if total > 0:
+                        counts['plan_to_read'] = total
                 except Exception:
-                    progress_val = 0
-                rs_str = str(rs).lower() if rs is not None else None
-
-                is_read = False
-                if rs_str == 'read':
-                    is_read = True
-                elif finish_date not in (None, ''):
-                    is_read = True
-
-                if is_read:
-                    read += 1
-                    # Finished trumps other states
-                else:
-                    if rs_str == 'on_hold':
-                        on_hold += 1
-                    elif rs_str in ('reading', 'currently_reading') or progress_val > 0:
-                        current += 1
-
-                if isinstance(ownership_status, str) and ownership_status.lower() == 'wishlist':
-                    wishlist += 1
-
-            counts['read'] = read
-            counts['currently_reading'] = current
-            counts['on_hold'] = on_hold
-            counts['wishlist'] = wishlist
-            # Derive plan_to_read as the remainder (never negative)
-            ptr = max(0, int(total) - (read + current + on_hold))
-            counts['plan_to_read'] = ptr
+                    pass
         except Exception as e:
             logger.error(f"[RELATIONSHIP_SERVICE] get_library_status_counts_sync error: {e}")
-            # Fall back to zeros with plan_to_read = total
-            counts['plan_to_read'] = max(0, int(total))
         return counts

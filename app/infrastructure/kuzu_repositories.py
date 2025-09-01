@@ -48,10 +48,10 @@ class KuzuRepositoryAdapter:
             # Build dynamic CREATE query with timestamp handling
             props = []
             for key, value in node_data.items():
-                if key.endswith('_str') and 'created_at' in key or key.endswith('_str') and 'updated_at' in key:
-                    # Handle timestamp fields specially
+                if (key.endswith('_str') and ('created_at' in key or 'updated_at' in key)):
+                    # Handle timestamp fields specially with empty-string guard
                     timestamp_field = key.replace('_str', '')
-                    props.append(f"{timestamp_field}: timestamp(${key})")
+                    props.append(f"{timestamp_field}: CASE WHEN ${key} IS NULL OR ${key} = '' THEN NULL ELSE timestamp(${key}) END")
                 else:
                     props.append(f"{key}: ${key}")
             
@@ -227,7 +227,7 @@ class KuzuUserRepository:
                 timezone: $timezone,
                 is_admin: $is_admin,
                 is_active: $is_active,
-                created_at: timestamp($created_at_str)
+                created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
             })
             RETURN u.id as id
             """
@@ -473,8 +473,8 @@ class KuzuPersonRepository:
                     website: $website,
                     openlibrary_id: $openlibrary_id,
                     image_url: $image_url,
-                    created_at: timestamp($created_at_str),
-                    updated_at: timestamp($updated_at_str)
+                    created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END,
+                    updated_at: CASE WHEN $updated_at_str IS NULL OR $updated_at_str = '' THEN NULL ELSE timestamp($updated_at_str) END
                 })
                 RETURN p.id as id
             """, person_data)

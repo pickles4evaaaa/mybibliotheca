@@ -266,6 +266,12 @@ class AudiobookShelfClient:
             attempts.append((self._url(f"/api/me/progress/{item_id}"), None))
             # Fallbacks seen in some clients
             attempts.append((self._url(f"/api/me/item/{item_id}/progress"), None))
+            # Admin/user-scoped variants if a user_id is available (some deployments require this)
+            if user_id:
+                attempts.append((self._url(f"/api/users/{user_id}/progress/{item_id}"), None))
+                attempts.append((self._url(f"/api/users/{user_id}/items/{item_id}/progress"), None))
+            # Additional generic fallback sometimes exposed
+            attempts.append((self._url(f"/api/progress/{item_id}"), None))
             last_err: Optional[str] = None
             for url, params in attempts:
                 try:

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "generated_at": "2025-08-17T00:00:00Z",
   "nodes": {
     "User": {
@@ -111,6 +111,8 @@
       "to": "Book",
       "properties": {
         "personal_notes": "STRING",
+  "start_date": "TIMESTAMP",
+  "finish_date": "TIMESTAMP",
         "personal_custom_fields": "STRING",
         "created_at": "TIMESTAMP",
         "updated_at": "TIMESTAMP"

@@ -98,6 +98,20 @@ class AudiobookshelfListeningSync:
                     return str(bid)
             except Exception:
                 pass
+        # If minimal item (only id) and no match yet, try fetching full item details from ABS
+        minimal = bool(abs_id) and not any(k in (item or {}) for k in ('media', 'metadata', 'title'))
+        fetched_item: Optional[Dict[str, Any]] = None
+        if minimal:
+            try:
+                gi = self.client.get_item(str(abs_id))
+                if gi.get('ok') and isinstance(gi.get('item'), dict):
+                    fetched_item = gi.get('item')
+                    # enrich for downstream ISBN/title matching
+                    if isinstance(fetched_item, dict):
+                        item = fetched_item
+                    self._dbg("Fetched item details for matching", {"abs_id": abs_id})
+            except Exception:
+                fetched_item = None
         # ISBN fallback
         md = (item.get('media') or {}).get('metadata') or {}
         for key in ('isbn13', 'isbn', 'isbn10'):
@@ -201,38 +215,84 @@ class AudiobookshelfListeningSync:
         return None
 
     def _apply_progress(self, book_id: str, position_ms: int, updated_at: Optional[datetime]):
-        """Store progress in personal metadata JSON and set reading_status when appropriate.
-
-        - Always persist progress_ms and last_listened_at
-        - If the book isn't marked finished, set reading_status to 'currently_reading'
-        - Ensure a start_date exists for the user/book
-        """
-        updates: Dict[str, Any] = {}
-        updates['progress_ms'] = int(position_ms)
-        if updated_at:
-            updates['last_listened_at'] = updated_at.isoformat()
+        """Deprecated: use _upsert_progress to coalesce writes. Retained for compatibility."""
         try:
-            # Check existing metadata to avoid overriding finished state
-            meta = personal_metadata_service.get_personal_metadata(self.user_id, book_id) or {}
-            rs = (meta.get('reading_status') or '').lower() if isinstance(meta.get('reading_status'), str) else meta.get('reading_status')
-            finished = bool(meta.get('finish_date')) or (rs == 'read')
-            if not finished:
-                updates['reading_status'] = 'currently_reading'
-            # Ensure start date is set once
-            try:
-                if not meta.get('start_date'):
-                    personal_metadata_service.ensure_start_date(self.user_id, book_id, (updated_at or datetime.now(timezone.utc)))
-            except Exception:
-                pass
-
-            self._dbg("Apply progress", {"book_id": book_id, "progress_ms": updates.get('progress_ms'), "updated_at": updates.get('last_listened_at'), "reading_status": updates.get('reading_status')})
-            # Use personal metadata JSON blob for arbitrary keys
-            personal_metadata_service.update_personal_metadata(
-                self.user_id, book_id, custom_updates=updates, merge=True
-            )
-            self._dbg("Progress applied", {"book_id": book_id})
+            self._upsert_progress(book_id, position_ms, updated_at, finished_flag=False)
         except Exception as e:
             logger.warning(f"Listening progress update failed for {book_id}: {e}")
+
+    def _upsert_progress(self, book_id: str, position_ms: int, updated_at: Optional[datetime], finished_flag: bool):
+        """Coalesce personal metadata updates into a single write to reduce conflicts.
+
+        Behavior:
+        - Always persist progress_ms and last_listened_at
+        - If finished_flag, set reading_status='read' and write finish_date
+        - If not finished and a stale finish exists, clear it and set reading_status='currently_reading'
+        - Ensure start_date exists
+        """
+        updates: Dict[str, Any] = {"progress_ms": int(position_ms)}
+        if updated_at:
+            updates['last_listened_at'] = updated_at.isoformat()
+        # Read existing to decide status/clears and start_date
+        meta = {}
+        try:
+            meta = personal_metadata_service.get_personal_metadata(self.user_id, book_id) or {}
+        except Exception:
+            meta = {}
+        # Ensure start date once
+        try:
+            if not meta.get('start_date'):
+                personal_metadata_service.ensure_start_date(self.user_id, book_id, (updated_at or datetime.now(timezone.utc)))
+        except Exception:
+            pass
+        finish_date_arg = None
+        if finished_flag:
+            updates['reading_status'] = 'read'
+            finish_date_arg = (updated_at or datetime.now(timezone.utc))
+        else:
+            # Not finished: if previously marked finished/read, clear it and mark currently_reading
+            rs = (meta.get('reading_status') or '').lower() if isinstance(meta.get('reading_status'), str) else meta.get('reading_status')
+            if meta.get('finish_date') or (rs == 'read'):
+                updates['finish_date'] = None
+                updates['reading_status'] = 'currently_reading'
+            else:
+                # keep current status unless empty, then set currently_reading
+                if not rs:
+                    updates['reading_status'] = 'currently_reading'
+        self._dbg("Upsert progress", {"book_id": book_id, **{k: updates.get(k) for k in ('progress_ms','last_listened_at','reading_status')}})
+        personal_metadata_service.update_personal_metadata(
+            self.user_id,
+            book_id,
+            finish_date=finish_date_arg,
+            custom_updates=updates,
+            merge=True,
+        )
+
+    def _is_finished_from_payload(self, payload: Dict[str, Any], *, position_ms: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
+        """Detect finished strictly from ABS explicit markers.
+
+        Only consider explicit completion booleans, timestamps, or status strings
+        returned by ABS. Do NOT infer from percent or position heuristics so we
+        never mark as finished prematurely.
+        """
+        try:
+            # Direct booleans present in a few ABS payloads
+            for k in ('isFinished', 'finished', 'completed', 'isComplete', 'isCompleted'):
+                v = payload.get(k)
+                if isinstance(v, bool) and v:
+                    return True
+            # Timestamp markers for completion
+            for k in ('completedAt', 'finishedAt', 'completed_at', 'finished_at', 'finishedAtMs', 'completedAtMs'):
+                v = payload.get(k)
+                if v not in (None, '', 0):
+                    return True
+            # Status strings found in some responses
+            status = payload.get('status')
+            if isinstance(status, str) and status.lower() in ('finished', 'complete', 'completed', 'read'):
+                return True
+        except Exception:
+            pass
+        return False
 
     def _log_minutes(self, book_id: str, minutes: int, when: Optional[datetime], pages: Optional[int] = None):
         """Best-effort: create/update a reading log entry for the day with minutes_read (and optional pages_read)."""
@@ -332,9 +392,22 @@ class AudiobookshelfListeningSync:
                                             pos_ms = int(float(v) * 1000)
                                             break
                                 updated_at = _parse_iso(prog.get('updatedAt') or prog.get('updated_at') or prog.get('lastUpdate') or prog.get('last_updated'))
+                                # Try to detect duration for finish heuristic
+                                dur_ms: Optional[int] = None
+                                for dk in ('durationMs', 'duration_ms', 'duration'):
+                                    dv = prog.get(dk)
+                                    if isinstance(dv, (int, float)):
+                                        dur_ms = int(dv if dv > 10_000_000 else dv * 1000)
+                                        break
                                 # Seed a conservative reading log (position in minutes, at least 1)
                                 if isinstance(pos_ms, int) and pos_ms > 0:
-                                    self._apply_progress(book_id, pos_ms, updated_at)
+                                    finished_flag = False
+                                    try:
+                                        finished_flag = self._is_finished_from_payload(prog, position_ms=pos_ms, duration_ms=dur_ms)
+                                    except Exception:
+                                        finished_flag = False
+                                    # Coalesced single write
+                                    self._upsert_progress(book_id, pos_ms, updated_at, finished_flag)
                                     minutes = max(1, int(pos_ms // 60000))
                                     self._log_minutes(book_id, minutes, updated_at)
                                     matched += 1
@@ -381,13 +454,6 @@ class AudiobookshelfListeningSync:
                                 break
                     updated_at = _parse_iso(s.get('updatedAt') or s.get('updated_at'))
                     # Detect finished state via flags or duration parity
-                    finished_flag = False
-                    for k in ('isFinished', 'finished', 'completed'):
-                        val = s.get(k)
-                        if isinstance(val, bool) and val:
-                            finished_flag = True
-                            break
-                    # Try to infer using duration
                     duration_ms: Optional[int] = None
                     for k in ('durationMs', 'duration_ms', 'duration'):
                         dv = s.get(k)
@@ -400,13 +466,7 @@ class AudiobookshelfListeningSync:
                         if isinstance(dm, (int, float)):
                             # ABS duration typically seconds
                             duration_ms = int(dm * 1000) if dm < 10_000_000 else int(dm)
-                    if not finished_flag and isinstance(pos_ms, int) and isinstance(duration_ms, int) and duration_ms > 0:
-                        # Consider finished if >= 98% of duration
-                        try:
-                            if pos_ms >= max(duration_ms - 60_000, int(duration_ms * 0.98)):
-                                finished_flag = True
-                        except Exception:
-                            pass
+                    finished_flag = self._is_finished_from_payload(s, position_ms=pos_ms, duration_ms=duration_ms)
                     # Derive minutes listened for ReadingLog
                     minutes_from_session: Optional[int] = None
                     for key in ('msPlayed', 'msListened', 'timeListenedMs', 'time_listened_ms', 'playedMs'):
@@ -461,19 +521,8 @@ class AudiobookshelfListeningSync:
                         self._log_minutes(book_id, minutes_from_session, updated_at, pages_from_session)
 
                     if pos_ms is not None:
-                        if finished_flag:
-                            try:
-                                # Mark finished: set finish_date and reading_status='read'
-                                personal_metadata_service.update_personal_metadata(
-                                    self.user_id,
-                                    book_id,
-                                    finish_date=(updated_at or datetime.now(timezone.utc)),
-                                    custom_updates={'reading_status': 'read'},
-                                    merge=True,
-                                )
-                            except Exception:
-                                pass
-                        self._apply_progress(book_id, pos_ms, updated_at)
+                        # Single coalesced write for this session
+                        self._upsert_progress(book_id, pos_ms, updated_at, finished_flag)
                         if not minutes_from_session:
                             self._dbg("No minutes derived from session (skipped logging)", {"book_id": book_id})
                 except Exception as e:
@@ -518,10 +567,23 @@ class AudiobookshelfListeningSync:
             book_id = self._find_book_id_by_abs_item({"id": item_id})
             if not book_id:
                 self._dbg("sync_item_progress: no local match", {"item_id": item_id})
-                return {"ok": True, "processed": 1, "matched": 0}
-            gp = self.client.get_user_progress_for_item(item_id)
+                return {"ok": True, "processed": 1, "matched": 0, "item_id": item_id}
+            # Resolve ABS user id for user-scoped progress endpoints if needed
+            abs_user_id = None
+            try:
+                settings = load_abs_settings()
+                abs_user_id = settings.get('abs_user_id') or None
+                if not abs_user_id:
+                    me = self.client.get_me()
+                    if me.get('ok'):
+                        u = me.get('user') or {}
+                        if isinstance(u, dict):
+                            abs_user_id = u.get('id') or u.get('_id') or u.get('userId')
+            except Exception:
+                abs_user_id = None
+            gp = self.client.get_user_progress_for_item(item_id, user_id=abs_user_id)
             if not gp.get('ok'):
-                return {"ok": False, "processed": 1, "matched": 0, "message": gp.get('message')}
+                return {"ok": False, "processed": 1, "matched": 0, "message": gp.get('message'), "item_id": item_id, "book_id": book_id}
             prog = gp.get('progress') or {}
             # Normalize position
             pos_ms: Optional[int] = None
@@ -537,6 +599,13 @@ class AudiobookshelfListeningSync:
                         pos_ms = int(float(v) * 1000)
                         break
             updated_at = _parse_iso(prog.get('updatedAt') or prog.get('updated_at') or prog.get('lastUpdate') or prog.get('last_updated'))
+            # Detect finished for per-item progress and set finish_date
+            dur_ms: Optional[int] = None
+            for dk in ('durationMs', 'duration_ms', 'duration'):
+                dv = prog.get(dk)
+                if isinstance(dv, (int, float)):
+                    dur_ms = int(dv if dv > 10_000_000 else dv * 1000)
+                    break
             # Derive minutes from explicit listened time if available; otherwise from position
             minutes: Optional[int] = None
             for key in ('msPlayed', 'msListened', 'timeListenedMs', 'time_listened_ms', 'playedMs'):
@@ -552,13 +621,24 @@ class AudiobookshelfListeningSync:
                         break
             if minutes is None and isinstance(pos_ms, int):
                 minutes = max(1, int(pos_ms // 60000))
-
+            # Coalesced write for this single-item sync
             if isinstance(pos_ms, int):
-                self._apply_progress(book_id, pos_ms, updated_at)
+                finished_once = False
+                try:
+                    finished_once = self._is_finished_from_payload(prog, position_ms=pos_ms, duration_ms=dur_ms)
+                except Exception:
+                    finished_once = False
+                self._upsert_progress(book_id, pos_ms, updated_at, finished_once)
             if isinstance(minutes, int) and minutes > 0:
                 self._log_minutes(book_id, minutes, updated_at)
             self._dbg("sync_item_progress: applied", {"item_id": item_id, "book_id": book_id, "pos_ms": pos_ms, "minutes": minutes})
-            return {"ok": True, "processed": 1, "matched": 1}
+            # Include finished flag for visibility
+            finished = False
+            try:
+                finished = self._is_finished_from_payload(prog, position_ms=pos_ms, duration_ms=dur_ms)
+            except Exception:
+                finished = False
+            return {"ok": True, "processed": 1, "matched": 1, "item_id": item_id, "book_id": book_id, "finished": finished, "pos_ms": pos_ms}
         except Exception as e:
             logger.warning(f"sync_item_progress failed: {e}")
             return {"ok": False, "processed": 0, "matched": 0, "message": str(e)}

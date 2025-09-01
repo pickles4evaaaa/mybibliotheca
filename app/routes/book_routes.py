@@ -1236,9 +1236,23 @@ def library():
     total_pages = max(1, math.ceil(total_books / per_page)) if per_page > 0 else 1
     page = max(1, min(page, total_pages))
 
-    # Use service layer with global book visibility (paginated)
+    # Decide data retrieval strategy: if any filter is active, pull all then filter across full set
     offset = (page - 1) * per_page
-    user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
+    has_filter = any([
+        status_filter and status_filter != 'all',
+        bool(search_query.strip()) if isinstance(search_query, str) else False,
+        bool(category_filter.strip()) if isinstance(category_filter, str) else False,
+        bool(publisher_filter.strip()) if isinstance(publisher_filter, str) else False,
+        bool(language_filter.strip()) if isinstance(language_filter, str) else False,
+        bool(location_filter.strip()) if isinstance(location_filter, str) else False,
+    ])
+    if has_filter:
+        try:
+            user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+        except Exception:
+            user_books = []
+    else:
+        user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
@@ -1415,8 +1429,16 @@ def library():
         # Default to title A-Z
         filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower())
 
-    # Books are already in the right format for the template
-    books = filtered_books
+    # After filters, paginate across full set when filters are active
+    if has_filter:
+        import math as _math
+        filtered_total = len(filtered_books)
+        total_pages = max(1, _math.ceil(filtered_total / per_page)) if per_page > 0 else 1
+        page = max(1, min(page, total_pages))
+        offset = (page - 1) * per_page
+        books = filtered_books[offset: offset + per_page]
+    else:
+        books = filtered_books
 
     # Convert dictionary books to object-like structures for template compatibility
     converted_books = []
@@ -1457,7 +1479,8 @@ def library():
     books = converted_books
 
     # Get distinct values for filter dropdowns (ideally from all books; fallback to current page sample for now)
-    all_books = user_books
+    # Build dropdown options from the full working set (all when filtering, else current page dataset)
+    all_books = user_books if has_filter else user_books
     
     categories = set()
     publishers = set()
@@ -1525,14 +1548,14 @@ def library():
         'library_enhanced.html',
         books=books,
         stats=stats,
-    page=page,
-    per_page=per_page,
-    rows=rows,
-    cols=cols,
-    total_books=total_books,
-    total_pages=total_pages,
-    has_prev=(page > 1),
-    has_next=(page < total_pages),
+        page=page,
+        per_page=per_page,
+        rows=rows,
+        cols=cols,
+        total_books=(len(filtered_books) if has_filter else total_books),
+        total_pages=total_pages,
+        has_prev=(page > 1),
+        has_next=(page < total_pages),
         categories=sorted([cat for cat in categories if cat is not None and cat != '']),
         publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
         languages=sorted([lang for lang in languages if lang is not None and lang != '']),

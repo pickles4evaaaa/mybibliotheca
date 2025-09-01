@@ -211,7 +211,7 @@ class KuzuReadingLogService:
                 existing_results = safe_execute_kuzu_query(existing_query, {
                     'user_id': reading_log.user_id,
                     'book_id': reading_log.book_id,
-                    'log_date': reading_log.date.isoformat() if reading_log.date else None
+                    'log_date': reading_log.date if reading_log.date else None
                 })
                 existing_list = _convert_query_result_to_list(existing_results)
                 
@@ -230,7 +230,7 @@ class KuzuReadingLogService:
                 
                 existing_results = safe_execute_kuzu_query(existing_query, {
                     'user_id': reading_log.user_id,
-                    'log_date': reading_log.date.isoformat() if reading_log.date else None
+                    'log_date': reading_log.date if reading_log.date else None
                 })
                 existing_list = _convert_query_result_to_list(existing_results)
                 

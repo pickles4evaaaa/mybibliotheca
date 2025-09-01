@@ -36,6 +36,68 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+import threading
+from contextlib import contextmanager
+import hashlib
+
+def _lock_dir() -> Path:
+    base = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
+    d = base.parent / 'locks'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+_pm_locks: Dict[tuple, threading.Lock] = {}
+
+
+@contextmanager
+def _with_pm_lock(user_id: str, book_id: str):
+    key = (user_id, book_id)
+    lock = _pm_locks.get(key)
+    if lock is None:
+        lock = threading.Lock()
+        _pm_locks[key] = lock
+    # Cross-process file lock (best-effort) to reduce write conflicts between workers
+    # File name derived from hash of (user, book)
+    h = hashlib.sha1(f"{user_id}:{book_id}".encode('utf-8')).hexdigest()
+    fpath = _lock_dir() / f"pm_{h}.lock"
+    import time
+    lock.acquire()
+    fh = None
+    try:
+        # Try to acquire an exclusive lock with retries
+        for _ in range(3):
+            try:
+                fh = open(fpath, 'w')
+                try:
+                    # Use fcntl on Unix (macOS/Linux). On Windows this will fail silently and we fallback to in-proc lock only.
+                    import fcntl  # type: ignore
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    pass
+                break
+            except Exception:
+                time.sleep(0.02)
+        yield
+    finally:
+        try:
+            if fh is not None:
+                try:
+                    import fcntl  # type: ignore
+                    try:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+        finally:
+            lock.release()
+
+
 class PersonalMetadataService:
     """Service encapsulating access to HAS_PERSONAL_METADATA relationship."""
 
@@ -303,12 +365,16 @@ CREATE REL TABLE {self.REL_NAME}(
             logger.error(f"Failed to create OWNS migration backup (continuing anyway): {e}")
 
     def _fetch_relationship(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
-        query = f"""
+        query_new = f"""
+        MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
+        RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields, r.created_at, r.updated_at
+        """
+        query_legacy = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
         RETURN r.personal_notes, r.personal_custom_fields, r.created_at, r.updated_at
         """
         try:
-            result = safe_execute_kuzu_query(query, {"user_id": user_id, "book_id": book_id})
+            result = safe_execute_kuzu_query(query_new, {"user_id": user_id, "book_id": book_id})
             rows = []
             # Newer SafeKuzuManager may already return list-like rows
             if result is None:
@@ -324,21 +390,60 @@ CREATE REL TABLE {self.REL_NAME}(
             # Support dict style (col_0, col_1, etc.) or positional
             if isinstance(row, dict):
                 personal_notes = row.get('col_0') or row.get('personal_notes')
-                custom_fields = row.get('col_1') or row.get('personal_custom_fields')
-                created_at = row.get('col_2') or row.get('created_at')
-                updated_at = row.get('col_3') or row.get('updated_at')
+                start_date = row.get('col_1') or row.get('start_date')
+                finish_date = row.get('col_2') or row.get('finish_date')
+                custom_fields = row.get('col_3') or row.get('personal_custom_fields')
+                created_at = row.get('col_4') or row.get('created_at')
+                updated_at = row.get('col_5') or row.get('updated_at')
             else:
                 personal_notes = row[0] if len(row) > 0 else None  # type: ignore[index]
-                custom_fields = row[1] if len(row) > 1 else None  # type: ignore[index]
-                created_at = row[2] if len(row) > 2 else None  # type: ignore[index]
-                updated_at = row[3] if len(row) > 3 else None  # type: ignore[index]
+                start_date = row[1] if len(row) > 1 else None  # type: ignore[index]
+                finish_date = row[2] if len(row) > 2 else None  # type: ignore[index]
+                custom_fields = row[3] if len(row) > 3 else None  # type: ignore[index]
+                created_at = row[4] if len(row) > 4 else None  # type: ignore[index]
+                updated_at = row[5] if len(row) > 5 else None  # type: ignore[index]
             return {
                 "personal_notes": personal_notes,
+                "start_date": start_date,
+                "finish_date": finish_date,
                 "personal_custom_fields": custom_fields,
                 "created_at": created_at,
                 "updated_at": updated_at,
             }
-        except Exception:
+        except Exception as e:
+            # Fallback for older DB without start/finish columns
+            err = str(e).lower()
+            if "cannot find property" in err or "does not exist" in err or "unknown" in err:
+                try:
+                    result = safe_execute_kuzu_query(query_legacy, {"user_id": user_id, "book_id": book_id})
+                    rows = []
+                    if result is None:
+                        return None
+                    if isinstance(result, list):
+                        rows = result
+                    elif hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+                        while result.has_next():  # type: ignore[attr-defined]
+                            rows.append(result.get_next())  # type: ignore[attr-defined]
+                    if not rows:
+                        return None
+                    row = rows[0]
+                    # Safe path: treat result row as dict-like mapping (our SafeKuzuManager normalizes to dicts)
+                    if not isinstance(row, dict):
+                        row = {"col_0": None, "col_1": None, "col_2": None, "col_3": None}
+                    personal_notes = row.get('col_0') or row.get('personal_notes')
+                    custom_fields = row.get('col_1') or row.get('personal_custom_fields')
+                    created_at = row.get('col_2') or row.get('created_at')
+                    updated_at = row.get('col_3') or row.get('updated_at')
+                    return {
+                        "personal_notes": personal_notes,
+                        "start_date": None,
+                        "finish_date": None,
+                        "personal_custom_fields": custom_fields,
+                        "created_at": created_at,
+                        "updated_at": updated_at,
+                    }
+                except Exception:
+                    return None
             return None
 
     def get_personal_metadata(self, user_id: str, book_id: str) -> Dict[str, Any]:
@@ -355,8 +460,9 @@ CREATE REL TABLE {self.REL_NAME}(
         meta = {
             "personal_notes": rel.get("personal_notes") or blob.get("personal_notes"),
             "user_review": blob.get("user_review"),
-            "start_date": blob.get("start_date"),
-            "finish_date": blob.get("finish_date"),
+            # Prefer first-class columns if present; fallback to JSON
+            "start_date": rel.get("start_date") or blob.get("start_date"),
+            "finish_date": rel.get("finish_date") or blob.get("finish_date"),
         }
         # Merge remaining custom keys (excluding ones we already hoisted)
         for k, v in blob.items():
@@ -398,29 +504,142 @@ CREATE REL TABLE {self.REL_NAME}(
             for k, v in custom_updates.items():
                 existing[k] = v
 
-        # Persist (personal_notes kept in column for quick access; rest in JSON)
+        # Persist:
+        # - personal_notes in column
+        # - start_date/finish_date in dedicated columns when available
+        # - keep full JSON blob for remaining/custom keys (also mirror dates into JSON for backward compatibility)
         json_blob = existing.copy()
         column_notes = json_blob.pop("personal_notes", None)
+        # Pull out ISO strings for dates (if explicitly cleared, value may be None)
+        start_raw = json_blob.get("start_date")
+        finish_raw = json_blob.get("finish_date")
+        
+        def _sanitize_ts_param(v: Any) -> Optional[str]:
+            """Return ISO string or None. Treat '', whitespace, and invalid formats as None."""
+            if v is None:
+                return None
+            if isinstance(v, datetime):
+                return v.isoformat()
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return None
+                # Normalize Z suffix
+                s2 = s.replace('Z', '+00:00')
+                try:
+                    return datetime.fromisoformat(s2).isoformat()
+                except Exception:
+                    # Try numeric epoch seconds or ms
+                    try:
+                        val = float(s2)
+                        if val > 10_000_000_000:  # likely ms
+                            val = val / 1000.0
+                        return datetime.fromtimestamp(val, tz=timezone.utc).isoformat()
+                    except Exception:
+                        return None
+            # Unsupported type
+            return None
+
+        start_iso = _sanitize_ts_param(start_raw)
+        finish_iso = _sanitize_ts_param(finish_raw)
+        # Normalize JSON blob to avoid persisting empty strings for dates
+        if start_iso is None:
+            json_blob.pop("start_date", None)
+        else:
+            json_blob["start_date"] = start_iso
+        if finish_iso is None:
+            json_blob.pop("finish_date", None)
+        else:
+            json_blob["finish_date"] = finish_iso
         # Ensure canonical types (convert datetimes to iso)
         for k, v in list(json_blob.items()):
             if isinstance(v, datetime):
                 json_blob[k] = v.isoformat()
-        query = f"""
+        # Cast ISO strings to TIMESTAMP explicitly; preserve NULLs
+        query_new = f"""
+        MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
+        MERGE (u)-[r:{self.REL_NAME}]->(b)
+        SET r.personal_notes = $personal_notes,
+            r.start_date = CASE WHEN $start_date IS NULL OR $start_date = '' THEN NULL ELSE timestamp($start_date) END,
+            r.finish_date = CASE WHEN $finish_date IS NULL OR $finish_date = '' THEN NULL ELSE timestamp($finish_date) END,
+            r.personal_custom_fields = $json_blob
+        RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields
+        """
+        query_legacy = f"""
         MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
         MERGE (u)-[r:{self.REL_NAME}]->(b)
         SET r.personal_notes = $personal_notes,
             r.personal_custom_fields = $json_blob
         RETURN r.personal_notes, r.personal_custom_fields
         """
-        safe_execute_kuzu_query(
-            query,
-            {
-                "user_id": user_id,
-                "book_id": book_id,
-                "personal_notes": column_notes,
-                "json_blob": json.dumps(json_blob) if json_blob else None,
-            },
-    )
+        try:
+            # Retry loop to mitigate transient write-write conflicts
+            attempts = 0
+            last_err: Optional[Exception] = None
+            while attempts < 3:
+                try:
+                    with _with_pm_lock(user_id, book_id):
+                        safe_execute_kuzu_query(
+                            query_new,
+                            {
+                                "user_id": user_id,
+                                "book_id": book_id,
+                                "personal_notes": column_notes,
+                                # Kuzu supports TIMESTAMP nulls; pass ISO if string, else None
+                                "start_date": start_iso,
+                                "finish_date": finish_iso,
+                                "json_blob": json.dumps(json_blob) if json_blob else None,
+                            },
+                        )
+                    last_err = None
+                    break
+                except Exception as _e:
+                    msg = str(_e).lower()
+                    # Detect write-write conflict signatures
+                    if 'write-write conflict' in msg or 'deadlock' in msg:
+                        attempts += 1
+                        last_err = _e
+                        import time
+                        time.sleep(0.05 * attempts)  # simple backoff 50ms, 100ms
+                        continue
+                    else:
+                        raise
+            if last_err is not None:
+                # Exhausted retries; re-raise last error
+                raise last_err
+        except Exception as e:
+            msg = str(e).lower()
+            if "cannot find property" in msg or "does not exist" in msg or "unknown" in msg:
+                # Try legacy path with same retry shim just in case
+                attempts = 0
+                last_err2: Optional[Exception] = None
+                while attempts < 2:
+                    try:
+                        with _with_pm_lock(user_id, book_id):
+                            safe_execute_kuzu_query(
+                                query_legacy,
+                                {
+                                    "user_id": user_id,
+                                    "book_id": book_id,
+                                    "personal_notes": column_notes,
+                                    "json_blob": json.dumps(json_blob) if json_blob else None,
+                                },
+                            )
+                        last_err2 = None
+                        break
+                    except Exception as _e2:
+                        if 'write-write conflict' in str(_e2).lower():
+                            attempts += 1
+                            last_err2 = _e2
+                            import time
+                            time.sleep(0.05 * attempts)
+                            continue
+                        else:
+                            raise
+                if last_err2 is not None:
+                    raise last_err2
+            else:
+                raise
     # If the above failed due to missing table (race condition), attempt one retry
     # NOTE: SafeKuzuManager will have already logged the error; we just inspect logs via exception here
     # (We cannot capture exception because safe_execute_kuzu_query re-raises; so we wrap in try above if needed.)

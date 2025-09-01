@@ -10,6 +10,7 @@ from app.debug_system import get_debug_manager, debug_log
 from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
 from app.services.audiobookshelf_service import get_client_from_settings
+from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 
 bp = Blueprint('debug_admin', __name__, url_prefix='/admin/debug')
 
@@ -206,6 +207,31 @@ def abs_probe():
         'updated_after': updated_after,
         'detail': detail
     })
+
+
+@bp.route('/abs/sync-item', methods=['POST'])
+@login_required
+@admin_required
+def abs_sync_single_item():
+    """Admin helper: sync progress for a single ABS item id for the current user.
+
+    Body: { item_id: string }
+    Returns JSON with the sync result for diagnosis.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        item_id = (data.get('item_id') or '').strip()
+        if not item_id:
+            return jsonify({'ok': False, 'message': 'missing item_id'}), 400
+        settings = load_abs_settings()
+        client = get_client_from_settings(settings)
+        if not client:
+            return jsonify({'ok': False, 'message': 'ABS not configured'}), 400
+        listener = AudiobookshelfListeningSync(str(current_user.id), client)
+        res = listener.sync_item_progress(item_id)
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
 
 
 @bp.route('/logs/api')

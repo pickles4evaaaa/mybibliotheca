@@ -25,6 +25,38 @@
     <div class="row">
         <!-- Main Content - Single Column -->
         <div class="col-12">
+            <!-- Reading Progress Banner -->
+            {% set reading_status = (book.reading_status or 'plan_to_read')|lower %}
+            {% set start_date = book.start_date %}
+            {% set finish_date = book.finish_date %}
+            {% set is_audio = book.media_type and book.media_type|lower == 'audiobook' %}
+            {% set progress_ms = book.progress_ms %}
+            {% set duration_ms = book.audio_duration_ms or book.audio_duration_ms or book.audio_length_minutes %}
+            {% set pct = None %}
+            {% if is_audio and progress_ms and (book.audio_duration_ms) %}
+                {% set pct = (progress_ms / (book.audio_duration_ms|float)) * 100 %}
+            {% endif %}
+            <div class="alert {% if reading_status == 'read' %}alert-success{% elif reading_status in ['currently_reading','reading','in_progress'] %}alert-info{% elif reading_status in ['on_hold','paused'] %}alert-warning{% else %}alert-secondary{% endif %} d-flex align-items-center justify-content-between py-2 px-3 mb-3" role="alert">
+                <div class="d-flex align-items-center gap-3">
+                    <span class="badge bg-dark-subtle text-dark">
+                        <i class="bi bi-book-half me-1"></i>
+                        {{ reading_status.replace('_',' ').title() }}
+                    </span>
+                    {% if start_date %}
+                        <span class="text-muted small">Started: {{ start_date }}</span>
+                    {% endif %}
+                    {% if finish_date %}
+                        <span class="text-muted small">Finished: {{ finish_date }}</span>
+                    {% endif %}
+                    {% if is_audio and progress_ms %}
+                        <span class="text-muted small">
+                            <i class="bi bi-headphones me-1"></i>
+                            {{ (pct or 0)|round(0) }}% listened
+                        </span>
+                    {% endif %}
+                </div>
+                {# Progress bar omitted to avoid inline CSS parsing issues in some environments #}
+            </div>
             <!-- 📇 BOOK CARD SECTION - Essential overview information -->
             <div class="card shadow-sm mb-4 book-card">
                 <div class="card-body position-relative">

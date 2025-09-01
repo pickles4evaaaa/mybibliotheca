@@ -19,7 +19,7 @@ import atexit
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Generator, Iterable
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date as dt_date
 
 logger = logging.getLogger(__name__)
 
@@ -617,9 +617,93 @@ class SafeKuzuManager:
                 print(f"[KUZU] ▶ execute_query op='{operation}' q='{q_snippet}'")
             except Exception:
                 pass
+        # Pre-sanitize parameters: convert empty/invalid date/time strings to proper types
+        # - DATE fields (e.g., rl.date) must remain pure dates (YYYY-MM-DD)
+        # - TIMESTAMP fields should be timezone-aware datetimes when possible
+        def _looks_like_datetime_key(k: str) -> bool:
+            k_lower = (k or '').lower()
+            if k_lower in {
+                'ts','timestamp','created_at','updated_at','created_at_str','updated_at_str','date_added_str',
+                'start_date','finish_date','borrowed_date','borrowed_due_date','loaned_date','loaned_due_date',
+                'rating_date','review_date','last_listened_at','started_at','finished_at','deadline','locked_until',
+                'last_login','password_changed_at','started_time','end_time','expires_at','started_at','completed_at'
+            }:
+                return True
+            return any(s in k_lower for s in ('timestamp','date','time','_at'))
+
+        def _looks_like_date_only_key(k: str) -> bool:
+            """Identify parameters that are DATE-only (not TIMESTAMP) destinations.
+
+            Important: do NOT classify 'start_date'/'finish_date' as DATE-only; in our schema these are TIMESTAMPs.
+            """
+            k_lower = (k or '').lower()
+            # Explicit TIMESTAMP-ish exceptions
+            if k_lower in {'start_date','finish_date','rating_date','review_date','borrowed_date','borrowed_due_date','loaned_date','loaned_due_date'}:
+                return False
+            # Common pure-date fields
+            if k_lower in {'date','log_date','cutoff_date','birth_date','death_date','due_date','publication_date'}:
+                return True
+            # Heuristic: contains 'date' but not these timestamp-ish suffixes
+            return ('date' in k_lower) and not any(s in k_lower for s in ('time', 'timestamp', '_at'))
+
+        def _sanitize_dt_value(k: str, v: Any):
+            from datetime import datetime, timezone, date as _date
+            if v is None:
+                return None
+            # Preserve native types
+            if isinstance(v, datetime):
+                # Leave native datetimes as-is; Kuzu can bind them directly to TIMESTAMP columns
+                return v
+            if isinstance(v, _date):
+                # Leave native dates as-is for DATE columns
+                return v
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return None
+                s2 = s.replace('Z', '+00:00')
+                # If destination is DATE-only, try to coerce to a pure date
+                if _looks_like_date_only_key(k):
+                    # Accept plain YYYY-MM-DD, or trim datetime strings to date part
+                    try:
+                        if len(s2) == 10 and s2[4] == '-' and s2[7] == '-':
+                            return _date.fromisoformat(s2)
+                        # Fall back: parse datetime and take date portion
+                        dtv = datetime.fromisoformat(s2)
+                        return dtv.date()
+                    except Exception:
+                        return None
+                # Otherwise treat as TIMESTAMP-like
+                # Try ISO first
+                try:
+                    return datetime.fromisoformat(s2).isoformat()
+                except Exception:
+                    # Try numeric epoch (seconds or ms)
+                    try:
+                        val = float(s2)
+                        if val > 10_000_000_000:  # ms
+                            val = val / 1000.0
+                        return datetime.fromtimestamp(val, tz=timezone.utc).isoformat()
+                    except Exception:
+                        return None
+            # Leave other types untouched
+            return v
+
+        sanitized_params: Optional[Dict[str, Any]] = None
+        if params:
+            sanitized_params = {}
+            for k, v in params.items():
+                if _looks_like_datetime_key(k):
+                    sanitized_params[k] = _sanitize_dt_value(k, v)
+                else:
+                    sanitized_params[k] = v
+            # Final defensive sweep: convert any empty-string date/time params that slipped through to None
+            for k, v in list(sanitized_params.items()):
+                if _looks_like_datetime_key(k) and isinstance(v, str) and v.strip() == '':
+                    sanitized_params[k] = None
         with self.get_connection(user_id=user_id, operation=operation) as conn:
             t0 = time.time()
-            result = conn.execute(query, params or {})
+            result = conn.execute(query, sanitized_params or params or {})
             dt = time.time() - t0
             # Log completion if query logging is enabled or the query is slow
             if _QUERY_LOG_ENABLED or (dt * 1000) >= _SLOW_QUERY_MS:
