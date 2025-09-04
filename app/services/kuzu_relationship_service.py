@@ -183,7 +183,7 @@ class KuzuRelationshipService:
                         custom_blob = json.loads(custom_blob)
                     for k, v in custom_blob.items():
                         # Promote known keys; keep others as custom_*
-                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at'] and v not in (None, ''):
+                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
                             combined[k] = v
                 except Exception:
                     pass
@@ -207,6 +207,9 @@ class KuzuRelationshipService:
         # Optional progress fields for UI hints
         setattr(book, 'progress_ms', combined.get('progress_ms'))
         setattr(book, 'last_listened_at', combined.get('last_listened_at'))
+        # Expose progress percentage if present
+        if 'progress_percentage' in combined:
+            setattr(book, 'progress_percentage', combined.get('progress_percentage'))
         setattr(book, 'personal_notes', combined.get('personal_notes'))
         setattr(book, 'review', combined.get('user_review') or combined.get('review'))  # Map user_review back to review
         # In universal library mode, "date added" is a global property of the Book (creation time),

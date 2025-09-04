@@ -13,7 +13,7 @@ Constraints:
 """
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, cast
 from datetime import datetime, timezone, date
 import logging
 import os
@@ -221,18 +221,25 @@ class AudiobookshelfListeningSync:
         except Exception as e:
             logger.warning(f"Listening progress update failed for {book_id}: {e}")
 
-    def _upsert_progress(self, book_id: str, position_ms: int, updated_at: Optional[datetime], finished_flag: bool):
+    def _upsert_progress(self, book_id: str, position_ms: int, updated_at: Optional[datetime], finished_flag: bool, *, progress_pct: Optional[float] = None, has_listening_activity: bool = False):
         """Coalesce personal metadata updates into a single write to reduce conflicts.
 
         Behavior:
         - Always persist progress_ms and last_listened_at
-        - If finished_flag, set reading_status='read' and write finish_date
-        - If not finished and a stale finish exists, clear it and set reading_status='currently_reading'
+        - If finished_flag OR progress_pct >= 100, set reading_status='read' and write finish_date
+        - If progress_pct == 0 (or not provided), leave reading_status alone
+        - If not finished and 0 < progress_pct < 100, set reading_status='currently_reading' (and clear finish_date if previously set)
         - Ensure start_date exists
         """
         updates: Dict[str, Any] = {"progress_ms": int(position_ms)}
         if updated_at:
             updates['last_listened_at'] = updated_at.isoformat()
+        # Persist progress percentage when available (rounded to one decimal place)
+        if progress_pct is not None:
+            try:
+                updates['progress_percentage'] = round(float(progress_pct), 1)
+            except Exception:
+                pass
         # Read existing to decide status/clears and start_date
         meta = {}
         try:
@@ -246,19 +253,28 @@ class AudiobookshelfListeningSync:
         except Exception:
             pass
         finish_date_arg = None
-        if finished_flag:
+        # Decide status transitions using explicit finish flag first, otherwise progress percent when known
+        if finished_flag or (isinstance(progress_pct, (int, float)) and float(progress_pct) >= 100.0):
             updates['reading_status'] = 'read'
             finish_date_arg = (updated_at or datetime.now(timezone.utc))
+            # Ensure percentage is 100 when marked finished, even if not provided
+            if updates.get('progress_percentage') is None:
+                updates['progress_percentage'] = 100.0
         else:
-            # Not finished: if previously marked finished/read, clear it and mark currently_reading
             rs = (meta.get('reading_status') or '').lower() if isinstance(meta.get('reading_status'), str) else meta.get('reading_status')
-            if meta.get('finish_date') or (rs == 'read'):
-                updates['finish_date'] = None
-                updates['reading_status'] = 'currently_reading'
+            # If progress percent provided and is exactly 0, don't touch status
+            if isinstance(progress_pct, (int, float)) and float(progress_pct) == 0.0:
+                pass
             else:
-                # keep current status unless empty, then set currently_reading
-                if not rs:
+                # Not finished and progress > 0 OR unknown percent but listening activity: mark currently reading
+                if (isinstance(progress_pct, (int, float)) and float(progress_pct) > 0.0) or (has_listening_activity and not isinstance(progress_pct, (int, float))):
+                    # If previously finished, clear finish_date to reflect active reading
+                    if meta.get('finish_date') or (rs == 'read'):
+                        updates['finish_date'] = None
                     updates['reading_status'] = 'currently_reading'
+                else:
+                    # No progress info — keep current status; if none set, do not force
+                    pass
         self._dbg("Upsert progress", {"book_id": book_id, **{k: updates.get(k) for k in ('progress_ms','last_listened_at','reading_status')}})
         personal_metadata_service.update_personal_metadata(
             self.user_id,
@@ -332,10 +348,14 @@ class AudiobookshelfListeningSync:
         processed = 0
         matched = 0
         expected_total: Optional[int] = None
+
         # Track last seen position per book to compute deltas when ABS doesn't provide listened ms
         last_pos_ms_by_book: Dict[str, int] = {}
         # Cache page_count per book to estimate pages during sessions
         page_count_cache: Dict[str, Optional[int]] = {}
+        # Cache audio duration per book (ms) for percentage fallback
+        duration_ms_cache: Dict[str, Optional[int]] = {}
+
         self._dbg("Start listening sync", {"user_id": self.user_id, "abs_user_id": abs_user_id, "updated_after": updated_after, "page_size": page_size})
         first_page_checked = False
         while True:
@@ -440,6 +460,10 @@ class AudiobookshelfListeningSync:
                     matched += 1
                     # Normalize progress fields
                     pos_ms: Optional[int] = None
+                    updated_at: Optional[datetime] = None
+                    finished_flag: bool = False
+                    progress_pct: Optional[float] = None
+
                     for key in ('positionMs', 'position_ms', 'position', 'currentTimeMs'):
                         v = s.get(key)
                         if isinstance(v, (int, float)):
@@ -452,13 +476,69 @@ class AudiobookshelfListeningSync:
                             if isinstance(v, (int, float)):
                                 pos_ms = int(float(v) * 1000)
                                 break
-                    updated_at = _parse_iso(s.get('updatedAt') or s.get('updated_at'))
+                    # If session lacks position/progress details, try per-item progress API once
+                    if pos_ms is None:
+                        try:
+                            item_id = item.get('id') or item.get('_id') or item.get('itemId')
+                            if item_id:
+                                gp = self.client.get_user_progress_for_item(str(item_id))
+                                prog = gp.get('progress') or {}
+                                # fill pos
+                                for key in ('positionMs', 'position_ms', 'position', 'currentTimeMs'):
+                                    v = prog.get(key)
+                                    if isinstance(v, (int, float)):
+                                        pos_ms = int(v)
+                                        break
+                                if pos_ms is None:
+                                    for key in ('positionSec', 'position_seconds', 'currentTime'):
+                                        v = prog.get(key)
+                                        if isinstance(v, (int, float)):
+                                            pos_ms = int(float(v) * 1000)
+                                            break
+                                # carry forward any explicit percent
+                                if 'progressPercent' in prog:
+                                    _v = prog.get('progressPercent')
+                                    if isinstance(_v, (int, float, str)):
+                                        try:
+                                            progress_pct = float(cast(Any, _v))
+                                        except Exception:
+                                            pass
+                                if progress_pct is None and 'percentComplete' in prog:
+                                    _v = prog.get('percentComplete')
+                                    if isinstance(_v, (int, float, str)):
+                                        try:
+                                            progress_pct = float(cast(Any, _v))
+                                        except Exception:
+                                            pass
+                                if progress_pct is None and 'progress' in prog:
+                                    _v = prog.get('progress')
+                                    if isinstance(_v, (int, float, str)):
+                                        try:
+                                            progress_pct = float(cast(Any, _v))
+                                        except Exception:
+                                            pass
+                                # timestamps
+                                updated_at = _parse_iso(prog.get('updatedAt') or prog.get('updated_at') or prog.get('lastUpdate') or prog.get('last_updated'))
+                                # finished flag from progress payload
+                                try:
+                                    pf = self._is_finished_from_payload(prog)
+                                    finished_flag = bool(finished_flag or pf)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    if updated_at is None:
+                        updated_at = _parse_iso(s.get('updatedAt') or s.get('updated_at'))
                     # Detect finished state via flags or duration parity
                     duration_ms: Optional[int] = None
-                    for k in ('durationMs', 'duration_ms', 'duration'):
+                    for k in ('durationMs', 'duration_ms', 'duration', 'durationSec'):
                         dv = s.get(k)
                         if isinstance(dv, (int, float)):
-                            duration_ms = int(float(dv))
+                            if k in ('durationMs', 'duration_ms'):
+                                duration_ms = int(float(dv))
+                            else:
+                                # duration/durationSec are seconds; convert to ms
+                                duration_ms = int(float(dv) * 1000.0)
                             break
                     if duration_ms is None:
                         md = (item.get('media') or {}).get('metadata') or {}
@@ -466,7 +546,44 @@ class AudiobookshelfListeningSync:
                         if isinstance(dm, (int, float)):
                             # ABS duration typically seconds
                             duration_ms = int(dm * 1000) if dm < 10_000_000 else int(dm)
-                    finished_flag = self._is_finished_from_payload(s, position_ms=pos_ms, duration_ms=duration_ms)
+                    # Fallback to Book.audio_duration_ms if still unknown
+                    if duration_ms is None:
+                        if book_id not in duration_ms_cache:
+                            try:
+                                qr = safe_execute_kuzu_query("MATCH (b:Book) WHERE b.id = $id RETURN b.audio_duration_ms LIMIT 1", {"id": book_id})
+                                val = None
+                                if isinstance(qr, list) and qr:
+                                    first = qr[0]
+                                    if isinstance(first, dict):
+                                        val = first.get('result') or first.get('b.audio_duration_ms') or first.get('col_0')
+                                    elif isinstance(first, (list, tuple)) and first:
+                                        val = first[0]
+                                duration_ms_cache[book_id] = int(val) if isinstance(val, (int, float)) else None
+                            except Exception:
+                                duration_ms_cache[book_id] = None
+                        duration_ms = duration_ms_cache.get(book_id)
+                    # Merge finished flag with session payload
+                    try:
+                        finished_from_session = self._is_finished_from_payload(s, position_ms=pos_ms, duration_ms=duration_ms)
+                        finished_flag = bool(finished_flag or finished_from_session)
+                    except Exception:
+                        pass
+                    # If finished and position unknown, use duration as position for UI correctness
+                    if finished_flag and pos_ms is None and isinstance(duration_ms, int) and duration_ms > 0:
+                        pos_ms = duration_ms
+                    # Compute progress percentage if possible
+                    try:
+                        # Prefer explicit percent fields if present
+                        if progress_pct is None:
+                            for pk in ('progressPercent', 'progress_percentage', 'progress', 'percentComplete', 'percent'):
+                                pv = s.get(pk)
+                                if isinstance(pv, (int, float)):
+                                    progress_pct = float(pv)
+                                    break
+                        if progress_pct is None and isinstance(pos_ms, int) and isinstance(duration_ms, int) and duration_ms > 0:
+                            progress_pct = max(0.0, min(100.0, (float(pos_ms) / float(duration_ms)) * 100.0))
+                    except Exception:
+                        progress_pct = None
                     # Derive minutes listened for ReadingLog
                     minutes_from_session: Optional[int] = None
                     for key in ('msPlayed', 'msListened', 'timeListenedMs', 'time_listened_ms', 'playedMs'):
@@ -522,7 +639,7 @@ class AudiobookshelfListeningSync:
 
                     if pos_ms is not None:
                         # Single coalesced write for this session
-                        self._upsert_progress(book_id, pos_ms, updated_at, finished_flag)
+                        self._upsert_progress(book_id, pos_ms, updated_at, finished_flag, progress_pct=progress_pct, has_listening_activity=bool(minutes_from_session and minutes_from_session > 0))
                         if not minutes_from_session:
                             self._dbg("No minutes derived from session (skipped logging)", {"book_id": book_id})
                 except Exception as e:
@@ -621,6 +738,27 @@ class AudiobookshelfListeningSync:
                         break
             if minutes is None and isinstance(pos_ms, int):
                 minutes = max(1, int(pos_ms // 60000))
+            # If marked finished but position unknown, use duration as position so UI shows 100%
+            finished_probe = False
+            try:
+                finished_probe = self._is_finished_from_payload(prog, position_ms=pos_ms, duration_ms=dur_ms)
+            except Exception:
+                finished_probe = False
+            if finished_probe and pos_ms is None and isinstance(dur_ms, int) and dur_ms > 0:
+                pos_ms = dur_ms
+            # Compute progress percentage if possible
+            progress_pct: Optional[float] = None
+            try:
+                for pk in ('progressPercent', 'progress_percentage', 'progress', 'percentComplete', 'percent'):
+                    pv = prog.get(pk)
+                    if isinstance(pv, (int, float)):
+                        progress_pct = float(pv)
+                        break
+                if progress_pct is None and isinstance(pos_ms, int) and isinstance(dur_ms, int) and dur_ms > 0:
+                    progress_pct = max(0.0, min(100.0, (float(pos_ms) / float(dur_ms)) * 100.0))
+            except Exception:
+                progress_pct = None
+
             # Coalesced write for this single-item sync
             if isinstance(pos_ms, int):
                 finished_once = False
@@ -628,7 +766,7 @@ class AudiobookshelfListeningSync:
                     finished_once = self._is_finished_from_payload(prog, position_ms=pos_ms, duration_ms=dur_ms)
                 except Exception:
                     finished_once = False
-                self._upsert_progress(book_id, pos_ms, updated_at, finished_once)
+                self._upsert_progress(book_id, pos_ms, updated_at, finished_once, progress_pct=progress_pct, has_listening_activity=bool(minutes and minutes > 0))
             if isinstance(minutes, int) and minutes > 0:
                 self._log_minutes(book_id, minutes, updated_at)
             self._dbg("sync_item_progress: applied", {"item_id": item_id, "book_id": book_id, "pos_ms": pos_ms, "minutes": minutes})

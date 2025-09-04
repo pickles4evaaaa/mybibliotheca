@@ -14,7 +14,8 @@ import argparse
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, Tuple, Optional
+import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / 'data'
@@ -39,6 +40,26 @@ def iso_from_epoch(val: Any) -> str:
         return str(val)
 
 
+def _headers(api_key: str) -> Dict[str, str]:
+    h = {"Accept": "application/json"}
+    if api_key:
+        h["Authorization"] = f"Bearer {api_key}"
+    return h
+
+
+def _get_json(url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any, int, str]:
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        code = r.status_code
+        if code == 401:
+            return False, None, code, "Unauthorized"
+        r.raise_for_status()
+        data = r.json() if r.content else None
+        return True, data, code, "OK"
+    except Exception as e:
+        return False, None, 0, str(e)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--limit', type=int, default=100)
@@ -55,17 +76,41 @@ def main():
     base_url = abs_settings.get('base_url')
     api_key = user.get('abs_api_key') or abs_settings.get('api_key') or ''
 
-    from app.services.audiobookshelf_service import AudiobookShelfClient
-    client = AudiobookShelfClient(base_url, api_key)
-
-    me = client.get_me()
-    print('GET /api/me ->', 'ok' if me.get('ok') else 'FAIL', (me.get('user') or {}).get('id'))
+    headers = _headers(api_key)
+    ok, data, code, msg = _get_json(f"{base_url.rstrip('/')}/api/me", headers)
+    user_id = (data or {}).get('id') if isinstance(data, dict) else None
+    print('GET /api/me ->', 'ok' if ok else 'FAIL', user_id, msg)
 
     total_collected = 0
     for page in range(max(1, args.pages)):
-        res = client.list_user_sessions(limit=args.limit, page=page)
-        sessions = res.get('sessions') or []
-        print(f'Page {page}: ok={res.get("ok")} total={res.get("total")} returned={len(sessions)} msg={res.get("message")}')
+        # Try a few endpoints to fetch listening sessions
+        sessions = []
+        total = 0
+        attempts = [
+            (f"{base_url.rstrip('/')}/api/me/listening-sessions", {"itemsPerPage": args.limit, "page": page}),
+            (f"{base_url.rstrip('/')}/api/me/sessions", {"itemsPerPage": args.limit, "page": page}),
+            (f"{base_url.rstrip('/')}/api/sessions", {"itemsPerPage": args.limit, "page": page}),
+        ]
+        last_msg = ''
+        for url, params in attempts:
+            ok, payload, _code, _msg = _get_json(url, headers, params=params)
+            last_msg = _msg
+            if not ok or payload is None:
+                continue
+            # Normalize
+            if isinstance(payload, list):
+                sessions = payload
+                total = len(sessions)
+                break
+            if isinstance(payload, dict):
+                sessions = payload.get('results') or payload.get('items') or payload.get('sessions') or []
+                total = payload.get('total') or payload.get('totalItems') or len(sessions)
+                try:
+                    total = int(total)
+                except Exception:
+                    total = len(sessions)
+                break
+        print(f'Page {page}: ok={(len(sessions)>0)} total={total} returned={len(sessions)} msg={last_msg}')
         if not sessions:
             break
         total_collected += len(sessions)
@@ -78,6 +123,10 @@ def main():
                 'bookId': s.get('bookId'),
                 'startedAt': iso_from_epoch(s.get('startedAt') or s.get('startTime') or s.get('createdAt')),
                 'updatedAt': iso_from_epoch(s.get('updatedAt') or s.get('lastUpdate')),
+                'positionMs': s.get('positionMs') or s.get('currentTimeMs') or s.get('position'),
+                'msPlayed': s.get('msPlayed') or s.get('timeListenedMs') or s.get('playedMs'),
+                'secondsListened': s.get('secondsListened') or s.get('timeListened') or s.get('playedSeconds'),
+                'isFinished?': s.get('isFinished') or s.get('finished') or s.get('completed') or s.get('isCompleted') or s.get('isComplete'),
                 '~minutesFromDuration': mins,
             })
     print('Total sessions collected (capped by pages*limit):', total_collected)

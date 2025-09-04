@@ -304,7 +304,8 @@ class _AbsSyncRunner:
                 try:
                     if not getattr(u, 'is_active', True):
                         continue
-                    self.enqueue_user_composite_sync(str(getattr(u, 'id')))
+                    # When a scheduled run occurs, run both books and listening for the user
+                    self.enqueue_user_composite_sync(str(getattr(u, 'id')), force_books=True, force_listening=True)
                     queued += 1
                 except Exception:
                     continue

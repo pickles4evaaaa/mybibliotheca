@@ -31,10 +31,12 @@
             {% set finish_date = book.finish_date %}
             {% set is_audio = book.media_type and book.media_type|lower == 'audiobook' %}
             {% set progress_ms = book.progress_ms %}
-            {% set duration_ms = book.audio_duration_ms or book.audio_duration_ms or book.audio_length_minutes %}
+            {% set duration_ms = book.audio_duration_ms or book.audio_length_minutes %}
             {% set pct = None %}
             {% if is_audio and progress_ms and (book.audio_duration_ms) %}
                 {% set pct = (progress_ms / (book.audio_duration_ms|float)) * 100 %}
+            {% elif is_audio and book.progress_percentage %}
+                {% set pct = book.progress_percentage|float %}
             {% endif %}
             <div class="alert {% if reading_status == 'read' %}alert-success{% elif reading_status in ['currently_reading','reading','in_progress'] %}alert-info{% elif reading_status in ['on_hold','paused'] %}alert-warning{% else %}alert-secondary{% endif %} d-flex align-items-center justify-content-between py-2 px-3 mb-3" role="alert">
                 <div class="d-flex align-items-center gap-3">
@@ -48,7 +50,7 @@
                     {% if finish_date %}
                         <span class="text-muted small">Finished: {{ finish_date }}</span>
                     {% endif %}
-                    {% if is_audio and progress_ms %}
+                    {% if is_audio and (progress_ms or book.progress_percentage) %}
                         <span class="text-muted small">
                             <i class="bi bi-headphones me-1"></i>
                             {{ (pct or 0)|round(0) }}% listened
