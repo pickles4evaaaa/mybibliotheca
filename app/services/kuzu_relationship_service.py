@@ -198,7 +198,8 @@ class KuzuRelationshipService:
                         combined[k] = v
         except Exception:
             pass
-        setattr(book, 'reading_status', combined.get('reading_status', 'plan_to_read'))
+        # Apply resolved personal fields without forcing defaults
+        setattr(book, 'reading_status', combined.get('reading_status'))
         setattr(book, 'ownership_status', combined.get('ownership_status', 'owned'))
         setattr(book, 'start_date', combined.get('start_date'))
         setattr(book, 'finish_date', combined.get('finish_date'))
@@ -215,8 +216,13 @@ class KuzuRelationshipService:
         except Exception:
             book_created = None
         setattr(book, 'date_added', book_created or combined.get('date_added'))
-        setattr(book, 'want_to_read', relationship_data.get('reading_status') == 'plan_to_read')
-        setattr(book, 'library_only', relationship_data.get('reading_status') == 'library_only')
+
+        # Compute convenience booleans from the resolved reading_status
+        rs_val = (combined.get('reading_status')
+                  if combined.get('reading_status') is not None
+                  else (relationship_data.get('reading_status') if isinstance(relationship_data, dict) else None))
+        setattr(book, 'want_to_read', rs_val == 'plan_to_read')
+        setattr(book, 'library_only', rs_val == 'library_only')
         
         # Handle location information
         locations = [loc for loc in (locations_data or []) if loc and loc.get('id') and loc.get('name')]
@@ -752,9 +758,15 @@ class KuzuRelationshipService:
         """Compute global counts aligned with library filters from user overlay data.
 
         Uses get_all_books_with_user_overlay_sync so that books without a personal
-        record still default to reading_status='plan_to_read' (matching page filters).
+        record remain with empty reading_status (user has not set a personal status).
         """
-        counts = {'read': 0, 'currently_reading': 0, 'on_hold': 0, 'plan_to_read': 0, 'wishlist': 0}
+        counts: Dict[str, int] = {
+            'read': 0,
+            'currently_reading': 0,
+            'on_hold': 0,
+            'plan_to_read': 0,
+            'wishlist': 0,
+        }
         try:
             books = self.get_all_books_with_user_overlay_sync(user_id)
             for book in books or []:
@@ -765,15 +777,15 @@ class KuzuRelationshipService:
                 owner = owner.strip().lower() if isinstance(owner, str) else owner
 
                 # Normalize common synonyms/variants
-                if rs in (None, '', 'unknown'):
-                    rs = 'plan_to_read'
-                if rs in ('reading', 'currently reading'):
+                if rs in (None, '', 'unknown', 'library_only'):
+                    rs = ''  # Empty/default: no personal status set
+                elif rs in ('reading', 'currently reading'):
                     rs = 'currently_reading'
-                if rs in ('onhold', 'on-hold', 'paused'):
+                elif rs in ('onhold', 'on-hold', 'paused'):
                     rs = 'on_hold'
-                if rs in ('finished', 'complete', 'completed'):
+                elif rs in ('finished', 'complete', 'completed'):
                     rs = 'read'
-                if rs in ('want_to_read', 'wishlist_reading'):
+                elif rs in ('want_to_read', 'wishlist_reading'):
                     rs = 'plan_to_read'
 
                 if rs == 'read':
@@ -787,14 +799,7 @@ class KuzuRelationshipService:
 
                 if owner == 'wishlist':
                     counts['wishlist'] += 1
-            # Fallback: if we somehow computed all zeros but there are books, assume all plan_to_read
-            if (counts['read'] + counts['currently_reading'] + counts['on_hold'] + counts['plan_to_read']) == 0:
-                try:
-                    total = self.get_total_book_count_sync()
-                    if total > 0:
-                        counts['plan_to_read'] = total
-                except Exception:
-                    pass
+            # No fallback: empty/default statuses are not counted under plan_to_read
         except Exception as e:
             logger.error(f"[RELATIONSHIP_SERVICE] get_library_status_counts_sync error: {e}")
         return counts

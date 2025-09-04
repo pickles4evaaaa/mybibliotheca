@@ -862,7 +862,7 @@ def import_books_execute():
             flash(f'Error saving template: {str(e)}', 'warning')
             # Continue with import even if template saving fails
     
-    default_reading_status = request.form.get('default_reading_status', 'library_only')
+    default_reading_status = request.form.get('default_reading_status', '')
     duplicate_handling = request.form.get('duplicate_handling', 'skip')
     
     # Create import job with enhanced data
@@ -872,7 +872,7 @@ def import_books_execute():
         'user_id': current_user.id,
         'csv_file_path': csv_file_path,
         'field_mappings': mappings,
-        'default_reading_status': default_reading_status,
+    'default_reading_status': default_reading_status,
         'duplicate_handling': duplicate_handling,
         'custom_fields_enabled': True,  # Flag to enable custom metadata processing
         'status': 'pending',
@@ -916,7 +916,7 @@ def import_books_execute():
         'csv_file_path': csv_file_path,
         'field_mappings': mappings,
         'user_id': current_user.id,
-        'default_reading_status': default_reading_status
+    'default_reading_status': default_reading_status
     }
     
     def run_import():
@@ -1338,7 +1338,7 @@ def direct_import():
             'user_id': current_user.id,
             'csv_file_path': temp_path,
             'field_mappings': mappings,
-            'default_reading_status': 'plan_to_read',
+            'default_reading_status': '',
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
             'format_type': import_type,
@@ -1371,7 +1371,7 @@ def direct_import():
             'csv_file_path': temp_path,
             'field_mappings': mappings,
             'user_id': current_user.id,
-            'default_reading_status': 'plan_to_read',
+            'default_reading_status': '',
             'format_type': import_type,
             'enable_api_enrichment': True
         }
@@ -1559,9 +1559,9 @@ def upload_import():
             return redirect(url_for('import.import_books'))
         
         # Get other form data
-        default_reading_status = request.form.get('default_reading_status', 'library_only')
+        default_reading_status = request.form.get('default_reading_status', '')
         duplicate_handling = request.form.get('duplicate_handling', 'skip')
-        
+
         # Create import job
         task_id = str(uuid.uuid4())
         job_data = {
@@ -1583,7 +1583,7 @@ def upload_import():
             'error_messages': [],
             'recent_activity': []
         }
-        
+
         # Count total rows
         try:
             with open(csv_file_path, 'r', encoding='utf-8') as f:
@@ -1593,10 +1593,10 @@ def upload_import():
         except Exception as e:
             job_data['total'] = 0
             current_app.logger.error(f"Error counting CSV rows: {e}")
-        
+
         # Store job data with user isolation
         safe_create_import_job(current_user.id, task_id, job_data)
-        
+
         # Start the import in background thread
         import_config = {
             'task_id': task_id,
@@ -1606,7 +1606,7 @@ def upload_import():
             'default_reading_status': default_reading_status,
             'duplicate_handling': duplicate_handling
         }
-        
+
         def run_import():
             try:
                 # Import process would go here
@@ -1620,7 +1620,7 @@ def upload_import():
                         'current_book': None
                     }
                     safe_update_import_job(current_user.id, task_id, updates)
-                    
+
                     # Final completion update
                     completion_updates = {
                         'status': 'completed',
@@ -1634,12 +1634,12 @@ def upload_import():
                 }
                 safe_update_import_job(current_user.id, task_id, error_updates)
                 current_app.logger.error(f"Import job {task_id} failed: {e}")
-        
+
         # Start the import process in background
         thread = threading.Thread(target=run_import)
         thread.daemon = True
         thread.start()
-        
+
         return redirect(url_for('import.import_books_progress', task_id=task_id))
         
     except Exception as e:
@@ -1779,7 +1779,7 @@ async def process_simple_import(import_config):
                         continue  # Skip creation attempt
 
                 if not simplified_book.reading_status:
-                    simplified_book.reading_status = import_config.get('default_reading_status', 'plan_to_read')
+                    simplified_book.reading_status = import_config.get('default_reading_status', '')
 
                 merged_applied = False
                 duplicate_existing_id = None
@@ -2261,7 +2261,7 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
         'csv_file_path': csv_file_path,
         'field_mappings': field_mappings,
         'user_id': user_id,
-        'default_reading_status': kwargs.get('default_reading_status', 'plan_to_read'),
+    'default_reading_status': kwargs.get('default_reading_status', ''),
         'enable_api_enrichment': kwargs.get('enable_api_enrichment', True),
         'format_type': kwargs.get('format_type', 'unknown')
     }
@@ -2498,9 +2498,9 @@ def simple_csv_import():
                             continue
                         
                         
-                        # Set default reading status if not provided
+                        # Leave reading status empty if not provided; user can set later
                         if not simplified_book.reading_status:
-                            simplified_book.reading_status = 'plan_to_read'
+                            simplified_book.reading_status = ''
                         
                         # Add to library
                         result = simplified_service.add_book_to_user_library_sync(
@@ -2639,7 +2639,7 @@ def simple_upload():
             'confidence': confidence,
             'filename': file.filename,
             'field_mappings': field_mappings,
-            'default_reading_status': 'plan_to_read',
+            'default_reading_status': '',
             'enable_api_enrichment': request.form.get('enable_api_enrichment', 'true').lower() == 'true'
         }
         

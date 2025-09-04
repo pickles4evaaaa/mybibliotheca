@@ -907,7 +907,7 @@ def import_config_step(data_options: Dict):
                 'csv_file_path': csv_file_path,
                 'field_mappings': field_mappings,
                 'detected_type': detected_type,
-                'default_reading_status': 'library_only',
+                'default_reading_status': '',
                 'duplicate_handling': 'skip',
                 'custom_fields_enabled': True,
                 'import_options': {}
@@ -992,7 +992,7 @@ def import_config_step(data_options: Dict):
             'csv_file_path': csv_file_path,
             'field_mappings': field_mappings,
             'detected_type': detected_type,
-            'default_reading_status': 'library_only',
+            'default_reading_status': '',
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
             'import_options': {}
@@ -2224,7 +2224,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             'user_id': user_id,
             'csv_file_path': import_config.get('csv_file_path'),
             'field_mappings': import_config.get('field_mappings', {}),
-            'default_reading_status': 'library_only',
+            'default_reading_status': '',
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
             'format_type': detected_type,  # Pass the detected format type

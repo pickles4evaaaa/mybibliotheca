@@ -154,7 +154,7 @@ class UserBookAnnotation:
     """User's personal annotations and reading data for a book in universal library."""
     user_id: str
     book_id: str
-    reading_status: str = "plan_to_read"  # User's reading progress
+    reading_status: str = ""  # User's reading progress (empty = not set)
     date_added: Optional[datetime] = None  # When user started tracking this book
     user_rating: Optional[float] = None   # User's personal rating
     personal_notes: Optional[str] = None  # User's notes about the book
@@ -1301,7 +1301,7 @@ class SimplifiedBookService:
         return simplified_book
     
     async def add_book_to_user_library(self, book_data: SimplifiedBook, user_id: str, 
-                                reading_status: str = "plan_to_read",
+                                reading_status: str = "",
                                 ownership_status: str = "owned",
                                 media_type: str = "physical",
                                 user_rating: Optional[float] = None,
@@ -1397,7 +1397,7 @@ class SimplifiedBookService:
             return False
     
     def add_book_to_user_library_sync(self, book_data: SimplifiedBook, user_id: str, 
-                                     reading_status: str = "plan_to_read",
+                                     reading_status: str = "",
                                      ownership_status: str = "owned",
                                      media_type: str = "physical",
                                      user_rating: Optional[float] = None,

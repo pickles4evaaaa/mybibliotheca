@@ -1277,13 +1277,42 @@ def library():
     
     # Calculate statistics for filter buttons - handle both dict and object formats
     def get_reading_status(book):
+        """Get a canonical reading status for a book.
+
+        Normalizes common variants to one of:
+        - 'read'
+        - 'currently_reading'
+        - 'on_hold'
+        - 'plan_to_read'
+        Returns None only if no status can be determined.
+        """
         if isinstance(book, dict):
-            # First try direct field, then nested under ownership, then check for legacy fields
-            status = (book.get('reading_status') or 
-                     book.get('ownership', {}).get('reading_status') or
-                     book.get('status'))  # legacy field
-            return status
-        return getattr(book, 'reading_status', None)
+            # First try direct field, then nested under ownership, then legacy field
+            status = (book.get('reading_status') or
+                      book.get('ownership', {}).get('reading_status') or
+                      book.get('status'))  # legacy field
+        else:
+            status = getattr(book, 'reading_status', None)
+
+        # Normalize
+        if isinstance(status, str):
+            rs = status.strip().lower()
+        else:
+            rs = status
+
+        if rs in (None, '', 'unknown', 'library_only'):
+            # Empty/default status remains empty to reflect no personal status set
+            rs = ''
+        elif rs in ('reading', 'currently reading'):
+            rs = 'currently_reading'
+        elif rs in ('onhold', 'on-hold', 'paused'):
+            rs = 'on_hold'
+        elif rs in ('finished', 'complete', 'completed'):
+            rs = 'read'
+        elif rs in ('want_to_read', 'wishlist_reading'):
+            rs = 'plan_to_read'
+
+        return rs
     
     def get_ownership_status(book):
         if isinstance(book, dict):
@@ -1465,6 +1494,17 @@ def library():
                     ownership = data.get('ownership', {})
                     for key, value in ownership.items():
                         setattr(self, key, value)
+                    # Add normalized fields for template filtering
+                    try:
+                        setattr(self, 'normalized_reading_status', get_reading_status(data) or '')
+                    except Exception:
+                        setattr(self, 'normalized_reading_status', (getattr(self, 'reading_status', None) or ''))
+                    try:
+                        owner = (data.get('ownership_status') or data.get('ownership', {}).get('ownership_status'))
+                        owner = owner.strip().lower() if isinstance(owner, str) else owner
+                        setattr(self, 'normalized_ownership_status', owner or 'owned')
+                    except Exception:
+                        setattr(self, 'normalized_ownership_status', (getattr(self, 'ownership_status', None) or 'owned'))
                 
                 def get_contributors_by_type(self, contribution_type):
                     """Get contributors by type for template compatibility."""
@@ -1474,6 +1514,17 @@ def library():
             
             converted_books.append(BookObj(book))
         else:
+            # Ensure normalized fields exist on object instances too
+            try:
+                setattr(book, 'normalized_reading_status', get_reading_status(book) or '')
+            except Exception:
+                pass
+            try:
+                owner = getattr(book, 'ownership_status', None)
+                owner = owner.strip().lower() if isinstance(owner, str) else owner
+                setattr(book, 'normalized_ownership_status', owner or 'owned')
+            except Exception:
+                pass
             converted_books.append(book)
     
     books = converted_books
@@ -3298,23 +3349,19 @@ def add_book_manual():
     # Use simplified service to avoid complex transaction issues
     try:
         import json
-        
+
         # Get form data
         title = request.form['title'].strip()
         if not title:
             flash('Error: Title is required to add a book.', 'danger')
             return redirect(url_for('main.library'))
-        
+
         # Handle new form structure with contributor JSON data
         contributors_data = {}
         try:
-            # Extract contributor data from JSON fields
             for contrib_type in ['authored', 'narrated', 'edited', 'translated', 'illustrated']:
                 json_field = f'contributors_{contrib_type}'
-                if json_field in request.form:
-                    contributors_data[contrib_type] = json.loads(request.form[json_field])
-                else:
-                    contributors_data[contrib_type] = []
+                contributors_data[contrib_type] = json.loads(request.form[json_field]) if json_field in request.form else []
         except json.JSONDecodeError as e:
             current_app.logger.error(f"Error parsing contributor JSON: {e}")
             contributors_data = {}
@@ -3326,39 +3373,30 @@ def add_book_manual():
             if 'categories' in request.form:
                 category_data = json.loads(request.form['categories'])
                 categories = [cat['name'] for cat in category_data if 'name' in cat]
-            # Hidden field containing raw hierarchical paths
             if 'raw_categories' in request.form and request.form['raw_categories']:
                 try:
                     raw_categories = json.loads(request.form['raw_categories'])
                 except json.JSONDecodeError:
-                    # Accept comma-separated fallback
                     raw_categories = [s.strip() for s in request.form['raw_categories'].split(',') if s.strip()]
         except json.JSONDecodeError as e:
             current_app.logger.error(f"Error parsing categories JSON: {e}")
-            # Fallback to manual categories field
             manual_cats = request.form.get('manual_categories')
             if manual_cats:
                 categories = [cat.strip() for cat in manual_cats.split(',') if cat.strip()]
-        
+
         # Extract primary author from contributors or fallback to form field
-        author = ''
-        if contributors_data.get('authored'):
-            author = contributors_data['authored'][0]['name']
-        else:
-            author = request.form.get('author', '').strip()
-        
+        author = contributors_data['authored'][0]['name'] if contributors_data.get('authored') else request.form.get('author', '').strip()
+
         # Handle additional authors
-        additional_authors_list = []
-        if contributors_data.get('authored') and len(contributors_data['authored']) > 1:
-            additional_authors_list = [contrib['name'] for contrib in contributors_data['authored'][1:]]
+        additional_authors_list = [contrib['name'] for contrib in (contributors_data.get('authored') or [])[1:]] if contributors_data.get('authored') and len(contributors_data['authored']) > 1 else []
         additional_authors_form = ', '.join(additional_authors_list) if additional_authors_list else ''
-        
+
         # Extract other contributor types
         narrator_list = [contrib['name'] for contrib in contributors_data.get('narrated', [])]
         editor_list = [contrib['name'] for contrib in contributors_data.get('edited', [])]
         translator_list = [contrib['name'] for contrib in contributors_data.get('translated', [])]
         illustrator_list = [contrib['name'] for contrib in contributors_data.get('illustrated', [])]
-        
+
         # Basic form fields
         isbn = request.form.get('isbn', '').strip()
         subtitle = request.form.get('subtitle', '').strip()
@@ -3370,55 +3408,48 @@ def add_book_manual():
         published_date_str = request.form.get('published_date', '').strip()
         series = request.form.get('series', '').strip()
         series_volume = request.form.get('series_volume', '').strip()
-        
+
         # Parse page count
         page_count = None
         if page_count_str:
             try:
                 page_count = int(page_count_str)
             except ValueError:
-                pass
-        
-        # Get location
+                page_count = None
+
+        # Get location and ownership details
         location_id = request.form.get('location_id')
-        
-        # Get ownership details
-        reading_status = request.form.get('reading_status', 'plan_to_read')
+        reading_status = request.form.get('reading_status', '')
         ownership_status = request.form.get('ownership_status', 'owned')
         media_type = request.form.get('media_type', 'physical')
-        
-        # Get personal information
+
+        # Personal info
         personal_notes = request.form.get('personal_notes', '').strip()
         review = request.form.get('review', '').strip()
         user_rating = request.form.get('user_rating', '')
         start_date = request.form.get('start_date', '').strip()
         finish_date = request.form.get('finish_date', '').strip()
-        
-        # Additional ISBN fields
+
+        # Additional identifiers
         isbn13_form = request.form.get('isbn13', '').strip()
         isbn10_form = request.form.get('isbn10', '').strip()
         google_books_id_form = request.form.get('google_books_id', '').strip()
-        
+
         # Enhanced ISBN processing with comprehensive field mapping
         isbn13 = None
         isbn10 = None
         api_data = None
         cached_cover_url = None
-        
+
         if isbn:
-            # Import required modules
             import re
-            import requests
             import uuid
             from pathlib import Path
-            
-            # Normalize ISBN with proper conversion
+
             clean_isbn = re.sub(r'[^0-9X]', '', str(isbn).upper())
-            
+
             if len(clean_isbn) == 10:
-                # ISBN10 - validate and convert to ISBN13
                 isbn10 = clean_isbn
-                # Convert ISBN10 to ISBN13
                 isbn13_base = "978" + clean_isbn[:9]
                 check_sum = 0
                 for i, digit in enumerate(isbn13_base):
@@ -3426,7 +3457,6 @@ def add_book_manual():
                 check_digit = (10 - (check_sum % 10)) % 10
                 isbn13 = isbn13_base + str(check_digit)
             elif len(clean_isbn) == 13:
-                # ISBN13 - try to convert to ISBN10 if it starts with 978
                 isbn13 = clean_isbn
                 if clean_isbn.startswith('978'):
                     isbn10_base = clean_isbn[3:12]
@@ -3439,8 +3469,7 @@ def add_book_manual():
                     elif check_digit == 11:
                         check_digit = '0'
                     isbn10 = isbn10_base + str(check_digit)
-            
-            # Enhanced API lookup now uses unified metadata aggregator (Google + OpenLibrary)
+
             normalized_isbn = isbn13 or isbn10
             if normalized_isbn:
                 try:
@@ -3449,7 +3478,6 @@ def add_book_manual():
 
                     print(f"🎯 [MANUAL] Unified API returned: {bool(api_data)} for ISBN {normalized_isbn}")
                     if api_data:
-                        # Use API data to fill in missing form fields
                         if not cover_url and api_data.get('cover_url'):
                             cover_url = api_data['cover_url']
                         if not description and api_data.get('description'):
@@ -3464,106 +3492,81 @@ def add_book_manual():
                         if not categories and api_data.get('categories'):
                             categories = api_data['categories']
 
-                        # Download and cache cover image (unchanged)
                         if cover_url:
                             try:
-                                book_temp_id = str(uuid.uuid4())
-
-                                # Use persistent covers directory in data folder
-                                import os
                                 covers_dir = Path('/app/data/covers')
-
-                                # Fallback to local development path if Docker path doesn't exist
                                 if not covers_dir.exists():
-                                    # Check config for data directory path
                                     data_dir = getattr(current_app.config, 'DATA_DIR', None)
                                     if data_dir:
                                         covers_dir = Path(data_dir) / 'covers'
                                     else:
-                                        # Last resort - use relative path from app root
                                         base_dir = Path(current_app.root_path).parent
                                         covers_dir = base_dir / 'data' / 'covers'
-
                                 covers_dir.mkdir(parents=True, exist_ok=True)
-
-                                # Use unified processing pipeline
                                 cached_cover_url = process_image_from_url(cover_url)
                                 cover_url = cached_cover_url
-
                             except Exception as e:
-                                # If caching fails, use the original URL
                                 print(f"Cover caching failed: {e}")
-                                # cover_url already contains the original URL
                 except Exception as e:
                     print(f"❌ [MANUAL] Unified metadata fetch failed: {e}")
-        
+
         # Process API contributors and merge with form contributors
         additional_authors = None
         editor = None
         translator = None
         narrator = None
         illustrator = None
-        google_books_id = google_books_id_form  # Use form value if provided
+        google_books_id = google_books_id_form
         openlibrary_id = None
-        
-        # Extract Google Books ID from API data if not provided in form
+
         if not google_books_id and api_data and api_data.get('google_books_id'):
             google_books_id = api_data['google_books_id']
             print(f"🎯 [MANUAL] Set Google Books ID from API: {google_books_id}")
-        
-        # Extract OpenLibrary ID from API data  
+
         if api_data and api_data.get('openlibrary_id'):
             openlibrary_id = api_data['openlibrary_id']
             print(f"🎯 [MANUAL] Set OpenLibrary ID: {openlibrary_id}")
-        
-        # Merge API contributors with form contributors
+
         if api_data and api_data.get('contributors'):
             api_contributors = api_data['contributors']
             print(f"🎯 [MANUAL] Processing {len(api_contributors)} contributors from API")
-            
-            # Extract different types of contributors from API
             api_authors = [c['name'] for c in api_contributors if c.get('role') == 'author']
             api_editors = [c['name'] for c in api_contributors if c.get('role') == 'editor']
             api_translators = [c['name'] for c in api_contributors if c.get('role') == 'translator']
             api_narrators = [c['name'] for c in api_contributors if c.get('role') == 'narrator']
             api_illustrators = [c['name'] for c in api_contributors if c.get('role') == 'illustrator']
-            
-            # Merge form contributors with API contributors (form takes precedence)
-            # Only use API data if form is empty for that contributor type
+
             if not author and api_authors:
                 author = api_authors[0]
                 print(f"🎯 [MANUAL] Set primary author from API: {author}")
-            
+
             if not additional_authors_form and api_authors and len(api_authors) > 1:
                 primary_author = author or "Unknown Author"
                 additional_author_names = [a for a in api_authors if a.lower() != primary_author.lower()]
                 if additional_author_names:
                     additional_authors_form = ', '.join(additional_author_names)
                     print(f"🎯 [MANUAL] Set additional_authors from API: {additional_authors_form}")
-            
+
             if not editor_list and api_editors:
                 editor_list = api_editors
                 print(f"🎯 [MANUAL] Set editors from API: {editor_list}")
-            
             if not translator_list and api_translators:
                 translator_list = api_translators
                 print(f"🎯 [MANUAL] Set translators from API: {translator_list}")
-            
             if not narrator_list and api_narrators:
                 narrator_list = api_narrators
                 print(f"🎯 [MANUAL] Set narrators from API: {narrator_list}")
-            
             if not illustrator_list and api_illustrators:
                 illustrator_list = api_illustrators
                 print(f"🎯 [MANUAL] Set illustrators from API: {illustrator_list}")
-        
+
         # Convert contributor lists to strings
         additional_authors = additional_authors_form
         editor = ', '.join(editor_list) if editor_list else None
         translator = ', '.join(translator_list) if translator_list else None
         narrator = ', '.join(narrator_list) if narrator_list else None
         illustrator = ', '.join(illustrator_list) if illustrator_list else None
-        
+
         # Create simplified book data with enhanced API fields including contributors
         book_data = SimplifiedBook(
             title=title,
@@ -3573,13 +3576,12 @@ def add_book_manual():
             subtitle=subtitle,
             description=description,
             publisher=publisher_name,
-            published_date=published_date_str,  # Keep as string - SimplifiedBookService will convert
+            published_date=published_date_str,
             page_count=page_count,
             language=language,
-            cover_url=cover_url,  # This will be the cached URL if available
+            cover_url=cover_url,
             series=series,
             series_volume=series_volume,
-            # Keep SimplifiedBook categories as visual segments for display
             categories=categories,
             additional_authors=additional_authors,
             editor=editor,
@@ -3589,8 +3591,7 @@ def add_book_manual():
             google_books_id=google_books_id,
             openlibrary_id=openlibrary_id
         )
-        
-        # Enhanced debugging for ISBN and cover
+
         print(f"🎯 [MANUAL] Final SimplifiedBook data:")
         print(f"   Title: {book_data.title}")
         print(f"   Author: {book_data.author}")
@@ -3609,8 +3610,7 @@ def add_book_manual():
         print(f"   Page count: {book_data.page_count}")
         print(f"   Google Books ID: {book_data.google_books_id}")
         print(f"   OpenLibrary ID: {book_data.openlibrary_id}")
-        
-        # Use simplified service
+
         service = SimplifiedBookService()
         try:
             success = service.add_book_to_user_library_sync(
@@ -3621,24 +3621,19 @@ def add_book_manual():
                 media_type=media_type,
                 location_id=location_id
             )
-            
+
             if success:
-                # After successful book creation, update with personal information
                 from app.services import book_service
-                
                 try:
-                    # Find the created book to update it with personal information
                     books = book_service.get_user_books_sync(current_user.id)
                     created_book = None
                     for book in books:
-                        # Determine a primary author name fallback
                         book_author_name = None
                         if hasattr(book, 'primary_author') and getattr(book, 'primary_author'):
                             book_author_name = getattr(book, 'primary_author')
                         elif hasattr(book, 'contributors') and book.contributors:
                             try:
                                 first_contrib = book.contributors[0]
-                                # contributor may have person attribute
                                 if hasattr(first_contrib, 'person') and first_contrib.person and hasattr(first_contrib.person, 'name'):
                                     book_author_name = first_contrib.person.name
                                 elif hasattr(first_contrib, 'name'):
@@ -3648,9 +3643,8 @@ def add_book_manual():
                         if book.title == title and (not author or not book_author_name or book_author_name == author):
                             created_book = book
                             break
-                    
+
                     if created_book:
-                        # Update personal information
                         update_data = {}
                         if personal_notes:
                             update_data['personal_notes'] = personal_notes
@@ -3661,43 +3655,31 @@ def add_book_manual():
                                 update_data['user_rating'] = int(user_rating)
                             except ValueError:
                                 pass
-                        
-                        # Handle reading dates
                         if start_date:
                             update_data['start_date'] = start_date
                         if finish_date:
                             update_data['finish_date'] = finish_date
-                        
-                        # Handle additional ISBN fields if provided
                         if isbn13_form and isbn13_form != (isbn13 or ''):
                             update_data['isbn13'] = isbn13_form
                         if isbn10_form and isbn10_form != (isbn10 or ''):
                             update_data['isbn10'] = isbn10_form
-                        
-                        # Also apply hierarchical raw categories after creation to trigger relationship builder
                         if raw_categories:
                             update_data['raw_categories'] = raw_categories
                         if update_data:
-                            # Use sync facade method (previous async call wasn't awaited so data was lost)
                             book_service.update_book_sync(created_book.uid, str(current_user.id), **update_data)
                             print(f"🎯 [MANUAL] Updated book with personal information: {list(update_data.keys())}")
-                    
                 except Exception as update_e:
                     print(f"Warning: Could not update personal information: {update_e}")
-                    # Don't fail the whole operation if personal info update fails
-                
+
                 flash(f'Successfully added "{title}" to your library!', 'success')
                 return redirect(url_for('main.library'))
             else:
                 flash('Failed to add book. Please try again.', 'danger')
-                
         except BookAlreadyExistsError as e:
-            # Book already exists in the communal library, redirect to edit page
             flash(f'This book already exists in the library! Redirecting to edit the existing copy.', 'info')
             return redirect(url_for('book.edit_book', uid=e.book_id))
-            
+
         return redirect(url_for('main.library'))
-        
     except Exception as e:
         flash('Error adding book. Please try again.', 'danger')
         return redirect(url_for('main.library'))

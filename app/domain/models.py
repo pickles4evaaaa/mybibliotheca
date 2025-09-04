@@ -767,6 +767,7 @@ class UserBookRelationship:
     book_id: str
     
     # Reading status
+    # Default empty reading status in overlays; keep enum type optional via Optional[str] in storage layers
     reading_status: ReadingStatus = ReadingStatus.PLAN_TO_READ
     date_added: datetime = field(default_factory=now_utc)
     start_date: Optional[datetime] = None

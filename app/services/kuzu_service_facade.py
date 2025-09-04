@@ -95,15 +95,13 @@ class KuzuServiceFacade:
         
         # Then add it to the user's library
         if book and book.id:
-            success = self.relationship_service.add_book_to_user_library_sync(
+            # Honor empty-as-default; don't auto-mark plan_to_read
+            _ = self.relationship_service.add_book_to_user_library_sync(
                 user_id=user_id,
                 book_id=book.id,
-                reading_status="plan_to_read"
+                reading_status=""
             )
-            if success:
-                return book
-            else:
-                return book
+            return book
         
         return book
     

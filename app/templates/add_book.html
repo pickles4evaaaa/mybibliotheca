@@ -353,7 +353,8 @@
                                         <div class="mb-3">
                                             <label for="reading_status" class="form-label fw-medium">Reading Status</label>
                                             <select class="form-select" id="reading_status" name="reading_status">
-                                                <option value="plan_to_read" {% if request.form.reading_status == 'plan_to_read' or not request.form.reading_status %}selected{% endif %}>📚 Plan to Read</option>
+                                                <option value="" {% if not request.form.reading_status %}selected{% endif %}>📭 Not set</option>
+                                                <option value="plan_to_read" {% if request.form.reading_status == 'plan_to_read' %}selected{% endif %}>📚 Plan to Read</option>
                                                 <option value="reading" {% if request.form.reading_status == 'reading' %}selected{% endif %}>📖 Currently Reading</option>
                                                 <option value="read" {% if request.form.reading_status == 'read' %}selected{% endif %}>✅ Read</option>
                                                 <option value="on_hold" {% if request.form.reading_status == 'on_hold' %}selected{% endif %}>⏸️ On Hold</option>

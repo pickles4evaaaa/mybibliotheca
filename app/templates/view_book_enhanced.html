@@ -26,7 +26,7 @@
         <!-- Main Content - Single Column -->
         <div class="col-12">
             <!-- Reading Progress Banner -->
-            {% set reading_status = (book.reading_status or 'plan_to_read')|lower %}
+            {% set reading_status = (book.reading_status or '')|lower %}
             {% set start_date = book.start_date %}
             {% set finish_date = book.finish_date %}
             {% set is_audio = book.media_type and book.media_type|lower == 'audiobook' %}
@@ -40,7 +40,7 @@
                 <div class="d-flex align-items-center gap-3">
                     <span class="badge bg-dark-subtle text-dark">
                         <i class="bi bi-book-half me-1"></i>
-                        {{ reading_status.replace('_',' ').title() }}
+                        {% if reading_status %}{{ reading_status.replace('_',' ').title() }}{% else %}Not set{% endif %}
                     </span>
                     {% if start_date %}
                         <span class="text-muted small">Started: {{ start_date }}</span>
@@ -336,7 +336,8 @@
                                                     {% elif book.reading_status == 'on_hold' %}⏸️ On Hold
                                                     {% elif book.reading_status == 'did_not_finish' %}❌ Did Not Finish
                                                     {% elif book.reading_status == 'library_only' %}📚 Library Only
-                                                    {% else %}📚 Plan to Read{% endif %}
+                                                    {% elif book.reading_status %}{{ book.reading_status.replace('_',' ').title() }}
+                                                    {% else %}<span class="text-muted">Not set</span>{% endif %}
                                                 </span>
                                             </div>
                                         </div>

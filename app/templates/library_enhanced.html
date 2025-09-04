@@ -557,9 +557,9 @@
                 <!-- Books Grid -->
                 <div class="row g-4" id="books-container">
                     {% for book in books %}
-                        <div class="col-lg-2 col-md-3 col-sm-4 col-6 book-item" 
-                             data-reading-status="{{ book.reading_status or 'library_only' }}"
-                             data-ownership-status="{{ book.ownership_status or 'owned' }}">
+                    <div class="col-lg-2 col-md-3 col-sm-4 col-6 book-item" 
+                             data-reading-status="{{ book.normalized_reading_status if book.normalized_reading_status is not none else (book.reading_status or '') }}"
+                        data-ownership-status="{{ book.normalized_ownership_status or book.ownership_status or 'owned' }}">
                             <div class="card h-100 book-card shadow-sm position-relative" data-book-id="{{ book.uid or book.id }}">
                                 <!-- Selection checkbox -->
                                 <div class="position-absolute top-0 end-0 p-2" style="z-index: 10; pointer-events: none;">

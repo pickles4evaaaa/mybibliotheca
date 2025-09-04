@@ -657,7 +657,8 @@ class KuzuIntegrationService:
             success = await user_book_repo.create_ownership(
                 user_id=user_id,
                 book_id=book_id,
-                reading_status=ReadingStatus(ownership_data.get('reading_status', 'plan_to_read')),
+                # Do not default to plan_to_read; allow empty as default
+                reading_status=ownership_data.get('reading_status', ''),
                 ownership_status=OwnershipStatus(ownership_data.get('ownership_status', 'owned')),
                 media_type=MediaType(ownership_data.get('media_type', 'physical')),
                 location_id=ownership_data.get('location_id'),
