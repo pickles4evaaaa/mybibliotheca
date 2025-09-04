@@ -1,3 +1,4 @@
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, make_response
 """
 Core book management routes for the Bibliotheca application.
 Handles book CRUD operations, library views, and book-specific actions.
@@ -1225,9 +1226,14 @@ def library():
     effective_cols = cols if cols and cols > 0 else 5
     per_page = max(1, rows) * max(1, effective_cols)
 
-    # Total count first so we can clamp page to a valid range
+    # Total count first so we can clamp page to a valid range (cache for short TTL)
     try:
-        total_books = book_service.get_total_book_count_sync()
+        from app.utils.simple_cache import cache_get, cache_set
+        _tc_key = f"total_count:{current_user.id}"
+        total_books = cache_get(_tc_key)
+        if total_books is None:
+            total_books = book_service.get_total_book_count_sync()
+            cache_set(_tc_key, int(total_books or 0), ttl_seconds=300)
     except Exception:
         total_books = 0
 
@@ -1248,11 +1254,28 @@ def library():
     ])
     if has_filter:
         try:
-            user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+            # Use short-lived cache for expensive all-books call
+            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+            version = get_user_library_version(str(current_user.id))
+            cache_key = f"all_books_overlay:{current_user.id}:v{version}"
+            user_books = cache_get(cache_key)
+            if user_books is None:
+                user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+                cache_set(cache_key, user_books, ttl_seconds=120)
         except Exception:
             user_books = []
     else:
-        user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
+        # Cache paginated slice for short TTL
+        try:
+            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+            version = get_user_library_version(str(current_user.id))
+            cache_key = f"books_page:{current_user.id}:{per_page}:{offset}:{sort_option}:v{version}"
+            user_books = cache_get(cache_key)
+            if user_books is None:
+                user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
+                cache_set(cache_key, user_books, ttl_seconds=60)
+        except Exception:
+            user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
@@ -1324,7 +1347,13 @@ def library():
     
     # Global status counts (not page-limited)
     try:
-        global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
+        from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+        _ver = get_user_library_version(str(current_user.id))
+        _sc_key = f"status_counts:{current_user.id}:v{_ver}"
+        global_counts = cache_get(_sc_key)
+        if global_counts is None:
+            global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
+            cache_set(_sc_key, global_counts, ttl_seconds=180)
     except Exception:
         global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
 
@@ -1595,7 +1624,47 @@ def library():
         }
         users.append(type('User', (), user_data))
 
-    return render_template(
+    # Optional JSON output for fast client-side rendering
+    if request.args.get('format') == 'json':
+        # Minimal payload for grid
+        payload = []
+        for b in books:
+            bd = {
+                'uid': getattr(b, 'uid', None) if not isinstance(b, dict) else b.get('uid'),
+                'title': getattr(b, 'title', '') if not isinstance(b, dict) else b.get('title', ''),
+                'author': getattr(b, 'author', '') if not isinstance(b, dict) else b.get('author', ''),
+                'cover_url': getattr(b, 'cover_url', None) if not isinstance(b, dict) else b.get('cover_url'),
+                'average_rating': getattr(b, 'average_rating', None) if not isinstance(b, dict) else b.get('average_rating'),
+                'rating_count': getattr(b, 'rating_count', None) if not isinstance(b, dict) else b.get('rating_count'),
+                'normalized_reading_status': getattr(b, 'normalized_reading_status', '') if not isinstance(b, dict) else (b.get('normalized_reading_status') or ''),
+                'locations': getattr(b, 'locations', []) if not isinstance(b, dict) else b.get('locations', []),
+            }
+            payload.append(bd)
+        # ETag based on user, page/filter/sort, and version
+        from app.utils.simple_cache import get_user_library_version
+        version = get_user_library_version(str(current_user.id))
+        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{search_query}:{sort_option}:v{version}\""
+        if request.headers.get('If-None-Match') == etag:
+            return ('', 304)
+        resp = make_response(jsonify({
+            'items': payload,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': total_pages,
+            'total': (len(filtered_books) if has_filter else total_books)
+        }))
+        resp.headers['ETag'] = etag
+        resp.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=120'
+        return resp
+
+    # ETag for HTML response too
+    from app.utils.simple_cache import get_user_library_version
+    _version = get_user_library_version(str(current_user.id))
+    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{search_query}:{sort_option}:v{_version}\""
+    if request.headers.get('If-None-Match') == _html_etag:
+        return ('', 304)
+
+    resp = make_response(render_template(
         'library_enhanced.html',
         books=books,
         stats=stats,
@@ -1619,7 +1688,29 @@ def library():
         current_search=search_query,
         current_sort=sort_option,
         users=users
-    )
+    ))
+    resp.headers['ETag'] = _html_etag
+    resp.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=120'
+    # Hint the browser to warm the next page JSON in the background
+    try:
+        if page < total_pages:
+            from urllib.parse import urlencode
+            # Preserve existing args but override page and add format=json
+            # request.args may be a MultiDict; use flat values for cleanliness
+            flat_params = {k: request.args.get(k) for k in request.args.keys()}
+            flat_params['page'] = str(page + 1)
+            flat_params['format'] = 'json'
+            next_json_url = f"{request.base_url}?{urlencode(flat_params)}"
+            # Append to existing Link header if present
+            existing_link = resp.headers.get('Link')
+            preload_hint = f"<{next_json_url}>; rel=preload; as=fetch"
+            if existing_link:
+                resp.headers['Link'] = existing_link + ", " + preload_hint
+            else:
+                resp.headers['Link'] = preload_hint
+    except Exception:
+        pass
+    return resp
 
 @book_bp.route('/public-library')
 def public_library():

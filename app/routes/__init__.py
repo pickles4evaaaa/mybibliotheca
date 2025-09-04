@@ -201,6 +201,12 @@ def bulk_delete_books():
     
     if deleted_count > 0:
         flash(f'Successfully deleted {deleted_count} book(s) from your library.', 'success')
+        # Invalidate cached library payloads for this user
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(str(current_user.id))
+        except Exception:
+            pass
     if failed_count > 0:
         flash(f'Failed to delete {failed_count} book(s).', 'error')
     

@@ -24,6 +24,7 @@
 {% if book.cover_url %}
     <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
          class="{{ css_classes }}" style="{{ style }}" {% if img_id %}id="{{ img_id }}"{% endif %}
+         loading="lazy" decoding="async"
          onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">
 {% else %}
     <div class="bg-light rounded d-flex align-items-center justify-content-center shadow-sm {{ css_classes }}" 

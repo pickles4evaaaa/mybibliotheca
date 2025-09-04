@@ -177,6 +177,20 @@
     -webkit-box-orient: vertical;
   }
 
+    /* Reserve cover aspect ratio to reduce CLS */
+    .book-cover-wrapper::before {
+        content: "";
+        display: block;
+        padding-top: 150%; /* ~2:3 aspect */
+        pointer-events: none;
+    }
+    .book-cover-wrapper > img,
+    .book-cover-wrapper > div {
+        position: absolute;
+        inset: 0;
+        margin: auto;
+    }
+
   .filter-btn {
     transition: all 0.2s ease;
     border: 2px solid;
@@ -568,15 +582,15 @@
 
                                 <!-- Book Cover -->
                                                                 <!-- Book Cover -->
-                                                                <div class="book-cover-wrapper position-relative" style="cursor: pointer;">
-                                    {% from 'macros/cover_input.html' import render_cover_display %}
-                                    {{ render_cover_display(book, css_classes="card-img-top book-cover", style="", img_id="") }}
-                                                                        {% if book.media_type and book.media_type|lower == 'audiobook' %}
-                                                                            <span class="position-absolute bottom-0 end-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Audiobook">
-                                                                                <i class="bi bi-soundwave"></i>
-                                                                            </span>
-                                                                        {% endif %}
-                                </div>
+                                                                                                <div class="book-cover-wrapper position-relative" style="cursor: pointer;">
+                                                                                                    {% from 'macros/cover_input.html' import render_cover_display %}
+                                                                                                    {{ render_cover_display(book, css_classes="card-img-top book-cover", style="", img_id="") }}
+                                                                                                    {% if book.media_type and book.media_type|lower == 'audiobook' %}
+                                                                                                        <span class="position-absolute bottom-0 end-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Audiobook">
+                                                                                                            <i class="bi bi-soundwave"></i>
+                                                                                                        </span>
+                                                                                                    {% endif %}
+                                                                                                </div>
 
                                 <!-- Book Info -->
                                 <div class="card-body p-2" style="cursor: pointer;">
@@ -700,6 +714,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 const current = statusInput.value || 'all';
                 statusInput.value = (current === filter) ? 'all' : filter;
             }
+            <!-- Prefetch JS deferred to a separate static file in future to avoid template lint issues -->
+
             const form = document.getElementById('filter-form');
             if (form) form.submit();
         });
@@ -1071,4 +1087,9 @@ function initializeSearchableDropdowns() {
 }
 </script>
 
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script defer src="{{ url_for('serve_static', filename='js/library_perf.js') }}"></script>
 {% endblock %}

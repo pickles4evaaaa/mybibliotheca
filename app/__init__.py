@@ -15,6 +15,10 @@ from flask import Flask, session, request, jsonify, redirect, url_for
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
 from flask_session import Session
+try:
+    from flask_compress import Compress  # type: ignore
+except Exception:
+    Compress = None  # type: ignore
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -378,6 +382,14 @@ def create_app():
     sess.init_app(app)  # Initialize Flask-Session
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'  # type: ignore
+
+    # Enable gzip/br compression if available
+    try:
+        if Compress is not None:
+            Compress(app)
+            app.logger.info("Flask-Compress enabled")
+    except Exception as _e:
+        app.logger.warning(f"Failed to enable Flask-Compress: {_e}")
     login_manager.login_message = 'Please log in to access this page.'
     login_manager.login_message_category = 'info'
 
@@ -799,17 +811,26 @@ def create_app():
         docker_path = os.path.join(docker_static_dir, filename)
         pkg_path = os.path.join(package_static_dir, filename)
 
+        from flask import make_response
+        def _with_cache_headers(resp):
+            try:
+                # Long-lived caching for static assets; rely on filename changes to bust cache
+                resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            except Exception:
+                pass
+            return resp
+
         if os.path.exists(docker_path):
-            return send_from_directory(docker_static_dir, filename)
+            return _with_cache_headers(send_from_directory(docker_static_dir, filename))
         if os.path.exists(pkg_path):
-            return send_from_directory(package_static_dir, filename)
+            return _with_cache_headers(send_from_directory(package_static_dir, filename))
 
         # If neither exists, fall back to whichever directory exists to preserve
         # prior behavior (will 404 from send_from_directory)
         if os.path.isdir(docker_static_dir):
-            return send_from_directory(docker_static_dir, filename)
+            return _with_cache_headers(send_from_directory(docker_static_dir, filename))
         if os.path.isdir(package_static_dir):
-            return send_from_directory(package_static_dir, filename)
+            return _with_cache_headers(send_from_directory(package_static_dir, filename))
         return abort(404)
 
     # Add routes to serve user data files from data directory
@@ -827,8 +848,15 @@ def create_app():
             covers_dir = docker_data_dir
         else:
             covers_dir = local_data_dir
-            
-        return send_from_directory(covers_dir, filename)
+
+        from flask import send_from_directory as _sfd, make_response
+        try:
+            resp = _sfd(covers_dir, filename)
+            # Cache covers moderately; they can change if users update them
+            resp.headers['Cache-Control'] = 'public, max-age=2592000, stale-while-revalidate=604800'
+        except Exception:
+            resp = _sfd(covers_dir, filename)
+        return resp
 
     @app.route('/uploads/<path:filename>')
     def serve_uploads(filename):

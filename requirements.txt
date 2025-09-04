@@ -12,6 +12,7 @@ python-dotenv==0.20.0
 Pillow>=10.4.0
 pytz==2024.1
 email-validator==2.2.0
+Flask-Compress==1.15
 
 # OCR and Barcode Detection Dependencies
 opencv-python==4.10.0.84

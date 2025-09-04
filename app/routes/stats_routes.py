@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, render_template, current_app, request, flash, redirect, url_for
+from flask import Blueprint, jsonify, render_template, current_app, request, flash, redirect, url_for, make_response
 from flask_login import login_required, current_user
 from app.services import book_service, reading_log_service, user_service
 from datetime import datetime, date, timedelta
@@ -376,7 +376,17 @@ def index():
             'total_time_formatted': '0m'
         }
 
-    return render_template('stats.html',
+    # Add simple ETag and Cache-Control for the full HTML
+    try:
+        # Use user id and day marker for a coarse ETag; refine as needed
+        uid = str(getattr(current_user, 'id', 'unknown'))
+        etag = f"W/\"stats:{uid}:{today.isoformat()}\""
+        if request.headers.get('If-None-Match') == etag:
+            return ('', 304)
+    except Exception:
+        etag = None
+
+    resp = make_response(render_template('stats.html',
         books_finished_this_week=books_finished_this_week,
         books_finished_this_month=books_finished_this_month,
         books_finished_this_year=books_finished_this_year,
@@ -391,7 +401,11 @@ def index():
         recent_logs=recent_logs,
         sharing_users=sharing_users,
         reading_log_stats=reading_log_stats
-    )
+    ))
+    if etag:
+        resp.headers['ETag'] = etag
+    resp.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=120'
+    return resp
 
 @stats_bp.route('/community_stats/active-readers')
 @login_required

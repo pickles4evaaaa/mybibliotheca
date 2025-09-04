@@ -212,15 +212,16 @@
                             <!-- Book Cover or Placeholder -->
                             <div class="book-cover-container" style="position: relative;">
                                 {% if item.book.cover_url %}
-                                <img src="{{ item.book.cover_url }}" 
-                                     alt="{{ item.book.title }}" 
-                                     class="book-cover"
-                                     style="width: 60px; 
-                                            height: 80px; 
-                                            object-fit: cover; 
-                                            border-radius: 6px; 
-                                            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-                                            border: 3px solid {{ item.book.status_color }};">
+                    <img src="{{ item.book.cover_url }}" 
+                      alt="{{ item.book.title }}" 
+                      class="book-cover"
+                      style="width: 60px; 
+                          height: 80px; 
+                          object-fit: cover; 
+                          border-radius: 6px; 
+                          box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+                          border: 3px solid {{ item.book.status_color }};"
+                      loading="lazy" decoding="async" fetchpriority="low">
                                 {% else %}
                                 <div class="book-placeholder" 
                                      style="width: 60px; 
