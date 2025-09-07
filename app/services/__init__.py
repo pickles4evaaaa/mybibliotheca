@@ -19,6 +19,7 @@ try:
     from .kuzu_import_mapping_service import KuzuImportMappingService
     from .kuzu_person_service import KuzuPersonService
     from .kuzu_reading_log_service import KuzuReadingLogService
+    from .kuzu_series_service import get_series_service
 
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade
@@ -176,9 +177,10 @@ try:
         'run_async',
         'reset_all_services',  # Service reset function
         # Stub services for compatibility
-        'reading_log_service',
-        'direct_import_service',
-        'job_service'
+    'reading_log_service',
+    'direct_import_service',
+    'job_service',
+    'get_series_service'
     ]
 except ImportError as e:
     # Fallback imports

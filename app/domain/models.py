@@ -231,7 +231,12 @@ class Series:
     name: str = ""
     normalized_name: str = ""
     description: Optional[str] = None
-    total_books: Optional[int] = None
+    # user_cover: explicit custom upload provided by user (preferred if present)
+    user_cover: Optional[str] = None
+    # cover_url: stored first-book cover reference (auto-maintained)
+    cover_url: Optional[str] = None
+    custom_cover: bool = False  # legacy flag; considered True iff user_cover is not None
+    generated_placeholder: bool = False  # retained for backward compatibility; not used in new logic
     created_at: datetime = field(default_factory=now_utc)
     
     def __post_init__(self):

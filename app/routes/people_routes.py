@@ -14,6 +14,7 @@ import re
 
 from app.domain.models import Person
 from app.services import book_service, person_service
+from app.services.kuzu_series_service import get_series_service  # type: ignore
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 
 # Helper function for query result conversion
@@ -173,6 +174,33 @@ def person_details(person_id):
             'person': person,
             'contributions_by_type': converted_books_by_type
         }
+
+        # Series associations: find distinct series for books person contributed to
+        try:
+            series_ids = set()
+            for books in converted_books_by_type.values():
+                for b in books:
+                    sid = None
+                    if b.get('series') and isinstance(b.get('series'), dict):
+                        sid = b['series'].get('id')
+                    elif b.get('series') and hasattr(b.get('series'), 'id'):
+                        sid = b.get('series').id  # type: ignore[attr-defined]
+                    if sid:
+                        series_ids.add(sid)
+            series_objs = []
+            if series_ids:
+                ssvc = get_series_service()
+                for sid in series_ids:
+                    s = ssvc.get_series(sid)
+                    if s:
+                        series_objs.append(s)
+                # Attach to person object for template
+                try:
+                    person.series_associations = series_objs  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         return render_template('person_details.html', 
                              person=person, 

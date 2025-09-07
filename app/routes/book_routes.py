@@ -2065,6 +2065,23 @@ def edit_book(uid):
             traceback.print_exc()
             flash(f'Error updating book: {str(e)}', 'error')
             return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+        # New series relationship handling (autocomplete integration)
+        try:
+            series_id = request.form.get('series_id', '').strip()
+            series_name = request.form.get('series', '').strip()
+            if series_id:
+                from app.services.kuzu_series_service import get_series_service
+                # Attempt attach (volume/order optional)
+                vol = request.form.get('series_volume', '').strip() or None
+                order_raw = request.form.get('series_order', '').strip()
+                order_int = int(order_raw) if order_raw.isdigit() else None
+                get_series_service().attach_book(uid, series_id, volume=vol, order_number=order_int)
+            else:
+                # If no series_id but a series name provided, we preserve legacy string field only (already in update above)
+                pass
+        except Exception as series_err:
+            current_app.logger.warning(f"[SERIES][EDIT_ATTACH_FAIL] uid={uid} err={series_err}")
         
         # Handle location update separately
         location_id = request.form.get('location_id', '').strip()
@@ -2316,6 +2333,38 @@ def view_book_enhanced(uid):
             user_book.isbn10 = isbn10
         if not hasattr(user_book, 'isbn'):
             user_book.isbn = isbn13 or isbn10  # Fallback for any other template expectations
+
+    # Load series relationship for hyperlink
+    try:
+        book_id_rel = getattr(user_book, 'id', None)
+        if book_id_rel:
+            from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+            rel_res = safe_execute_kuzu_query(
+                "MATCH (b:Book {id:$id})-[rel:PART_OF_SERIES]->(s:Series) RETURN s.id, s.name, rel.volume_number, rel.volume_number_double LIMIT 1",
+                {"id": book_id_rel}
+            )
+            if rel_res and hasattr(rel_res, 'has_next') and rel_res.has_next():  # type: ignore[attr-defined]
+                row = rel_res.get_next()  # type: ignore[attr-defined]
+                if row:
+                    sid = row[0] if len(row) > 0 else None  # type: ignore[index]
+                    sname = row[1] if len(row) > 1 else None  # type: ignore[index]
+                    if sid and sname:
+                        class SeriesObj:
+                            def __init__(self, i, n):
+                                self.id = i
+                                self.name = n
+                        user_book.series = SeriesObj(sid, sname)  # type: ignore[attr-defined]
+                    if len(row) > 2 and row[2] is not None:  # type: ignore[index]
+                        user_book.series_volume = row[2]  # type: ignore[index,attr-defined]
+                    if len(row) > 3 and row[3] is not None:  # type: ignore[index]
+                        try:
+                            dblv = float(row[3])  # type: ignore[index]
+                            if abs(dblv - round(dblv)) < 1e-9:
+                                user_book.series_order = int(round(dblv))  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+    except Exception as e:
+        current_app.logger.error(f"Series fetch error for book {uid}: {e}")
 
     # Get book authors
     try:
@@ -3435,397 +3484,141 @@ def search_books_in_library():
 @book_bp.route('/add_book_manual', methods=['POST'])
 @login_required
 def add_book_manual():
-    """Add a book manually from the library page"""
-    # 🔥 SIMPLIFIED ARCHITECTURE INTERCEPT
-    # Use simplified service to avoid complex transaction issues
-    try:
-        import json
-
-        # Get form data
-        title = request.form['title'].strip()
-        if not title:
-            flash('Error: Title is required to add a book.', 'danger')
-            return redirect(url_for('main.library'))
-
-        # Handle new form structure with contributor JSON data
-        contributors_data = {}
-        try:
-            for contrib_type in ['authored', 'narrated', 'edited', 'translated', 'illustrated']:
-                json_field = f'contributors_{contrib_type}'
-                contributors_data[contrib_type] = json.loads(request.form[json_field]) if json_field in request.form else []
-        except json.JSONDecodeError as e:
-            current_app.logger.error(f"Error parsing contributor JSON: {e}")
-            contributors_data = {}
-
-        # Handle categories from JSON (visual chips) and raw hierarchical paths
-        categories = []
-        raw_categories = None
-        try:
-            if 'categories' in request.form:
-                category_data = json.loads(request.form['categories'])
-                categories = [cat['name'] for cat in category_data if 'name' in cat]
-            if 'raw_categories' in request.form and request.form['raw_categories']:
-                try:
-                    raw_categories = json.loads(request.form['raw_categories'])
-                except json.JSONDecodeError:
-                    raw_categories = [s.strip() for s in request.form['raw_categories'].split(',') if s.strip()]
-        except json.JSONDecodeError as e:
-            current_app.logger.error(f"Error parsing categories JSON: {e}")
-            manual_cats = request.form.get('manual_categories')
-            if manual_cats:
-                categories = [cat.strip() for cat in manual_cats.split(',') if cat.strip()]
-
-        # Extract primary author from contributors or fallback to form field
-        author = contributors_data['authored'][0]['name'] if contributors_data.get('authored') else request.form.get('author', '').strip()
-
-        # Handle additional authors
-        additional_authors_list = [contrib['name'] for contrib in (contributors_data.get('authored') or [])[1:]] if contributors_data.get('authored') and len(contributors_data['authored']) > 1 else []
-        additional_authors_form = ', '.join(additional_authors_list) if additional_authors_list else ''
-
-        # Extract other contributor types
-        narrator_list = [contrib['name'] for contrib in contributors_data.get('narrated', [])]
-        editor_list = [contrib['name'] for contrib in contributors_data.get('edited', [])]
-        translator_list = [contrib['name'] for contrib in contributors_data.get('translated', [])]
-        illustrator_list = [contrib['name'] for contrib in contributors_data.get('illustrated', [])]
-
-        # Basic form fields
-        isbn = request.form.get('isbn', '').strip()
-        subtitle = request.form.get('subtitle', '').strip()
-        publisher_name = request.form.get('publisher', '').strip()
-        description = request.form.get('description', '').strip()
-        page_count_str = request.form.get('page_count', '').strip()
-        language = request.form.get('language', '').strip() or 'en'
-        cover_url = request.form.get('cover_url', '').strip()
-        published_date_str = request.form.get('published_date', '').strip()
-        series = request.form.get('series', '').strip()
-        series_volume = request.form.get('series_volume', '').strip()
-
-        # Parse page count
-        page_count = None
-        if page_count_str:
-            try:
-                page_count = int(page_count_str)
-            except ValueError:
-                page_count = None
-
-        # Get location and ownership details
-        location_id = request.form.get('location_id')
-        reading_status = request.form.get('reading_status', '')
-        ownership_status = request.form.get('ownership_status', 'owned')
-        media_type = request.form.get('media_type', 'physical')
-
-        # Personal info
-        personal_notes = request.form.get('personal_notes', '').strip()
-        review = request.form.get('review', '').strip()
-        user_rating = request.form.get('user_rating', '')
-        start_date = request.form.get('start_date', '').strip()
-        finish_date = request.form.get('finish_date', '').strip()
-
-        # Additional identifiers
-        isbn13_form = request.form.get('isbn13', '').strip()
-        isbn10_form = request.form.get('isbn10', '').strip()
-        google_books_id_form = request.form.get('google_books_id', '').strip()
-
-        # Enhanced ISBN processing with comprehensive field mapping
-        isbn13 = None
-        isbn10 = None
-        api_data = None
-        cached_cover_url = None
-
-        if isbn:
-            import re
-            import uuid
-            from pathlib import Path
-
-            clean_isbn = re.sub(r'[^0-9X]', '', str(isbn).upper())
-
-            if len(clean_isbn) == 10:
-                isbn10 = clean_isbn
-                isbn13_base = "978" + clean_isbn[:9]
-                check_sum = 0
-                for i, digit in enumerate(isbn13_base):
-                    check_sum += int(digit) * (1 if i % 2 == 0 else 3)
-                check_digit = (10 - (check_sum % 10)) % 10
-                isbn13 = isbn13_base + str(check_digit)
-            elif len(clean_isbn) == 13:
-                isbn13 = clean_isbn
-                if clean_isbn.startswith('978'):
-                    isbn10_base = clean_isbn[3:12]
-                    check_sum = 0
-                    for i, digit in enumerate(isbn10_base):
-                        check_sum += int(digit) * (10 - i)
-                    check_digit = (11 - (check_sum % 11)) % 11
-                    if check_digit == 10:
-                        check_digit = 'X'
-                    elif check_digit == 11:
-                        check_digit = '0'
-                    isbn10 = isbn10_base + str(check_digit)
-
-            normalized_isbn = isbn13 or isbn10
-            if normalized_isbn:
-                try:
-                    from app.utils.metadata_aggregator import fetch_unified_by_isbn as unified_fetch
-                    api_data = unified_fetch(normalized_isbn) or {}
-
-                    print(f"🎯 [MANUAL] Unified API returned: {bool(api_data)} for ISBN {normalized_isbn}")
-                    if api_data:
-                        if not cover_url and api_data.get('cover_url'):
-                            cover_url = api_data['cover_url']
-                        if not description and api_data.get('description'):
-                            description = api_data['description']
-                        if not publisher_name and api_data.get('publisher'):
-                            publisher_name = api_data['publisher']
-                        if not page_count and api_data.get('page_count'):
-                            page_count = api_data['page_count']
-                        if not published_date_str and api_data.get('published_date'):
-                            published_date_str = api_data['published_date']
-                            print(f"🎯 [MANUAL] Using unified published_date: '{published_date_str}' (type: {type(published_date_str)})")
-                        if not categories and api_data.get('categories'):
-                            categories = api_data['categories']
-
-                        if cover_url:
-                            try:
-                                covers_dir = Path('/app/data/covers')
-                                if not covers_dir.exists():
-                                    data_dir = getattr(current_app.config, 'DATA_DIR', None)
-                                    if data_dir:
-                                        covers_dir = Path(data_dir) / 'covers'
-                                    else:
-                                        base_dir = Path(current_app.root_path).parent
-                                        covers_dir = base_dir / 'data' / 'covers'
-                                covers_dir.mkdir(parents=True, exist_ok=True)
-                                cached_cover_url = process_image_from_url(cover_url)
-                                cover_url = cached_cover_url
-                            except Exception as e:
-                                print(f"Cover caching failed: {e}")
-                except Exception as e:
-                    print(f"❌ [MANUAL] Unified metadata fetch failed: {e}")
-
-        # Process API contributors and merge with form contributors
-        additional_authors = None
-        editor = None
-        translator = None
-        narrator = None
-        illustrator = None
-        google_books_id = google_books_id_form
-        openlibrary_id = None
-
-        if not google_books_id and api_data and api_data.get('google_books_id'):
-            google_books_id = api_data['google_books_id']
-            print(f"🎯 [MANUAL] Set Google Books ID from API: {google_books_id}")
-
-        if api_data and api_data.get('openlibrary_id'):
-            openlibrary_id = api_data['openlibrary_id']
-            print(f"🎯 [MANUAL] Set OpenLibrary ID: {openlibrary_id}")
-
-        if api_data and api_data.get('contributors'):
-            api_contributors = api_data['contributors']
-            print(f"🎯 [MANUAL] Processing {len(api_contributors)} contributors from API")
-            api_authors = [c['name'] for c in api_contributors if c.get('role') == 'author']
-            api_editors = [c['name'] for c in api_contributors if c.get('role') == 'editor']
-            api_translators = [c['name'] for c in api_contributors if c.get('role') == 'translator']
-            api_narrators = [c['name'] for c in api_contributors if c.get('role') == 'narrator']
-            api_illustrators = [c['name'] for c in api_contributors if c.get('role') == 'illustrator']
-
-            if not author and api_authors:
-                author = api_authors[0]
-                print(f"🎯 [MANUAL] Set primary author from API: {author}")
-
-            if not additional_authors_form and api_authors and len(api_authors) > 1:
-                primary_author = author or "Unknown Author"
-                additional_author_names = [a for a in api_authors if a.lower() != primary_author.lower()]
-                if additional_author_names:
-                    additional_authors_form = ', '.join(additional_author_names)
-                    print(f"🎯 [MANUAL] Set additional_authors from API: {additional_authors_form}")
-
-            if not editor_list and api_editors:
-                editor_list = api_editors
-                print(f"🎯 [MANUAL] Set editors from API: {editor_list}")
-            if not translator_list and api_translators:
-                translator_list = api_translators
-                print(f"🎯 [MANUAL] Set translators from API: {translator_list}")
-            if not narrator_list and api_narrators:
-                narrator_list = api_narrators
-                print(f"🎯 [MANUAL] Set narrators from API: {narrator_list}")
-            if not illustrator_list and api_illustrators:
-                illustrator_list = api_illustrators
-                print(f"🎯 [MANUAL] Set illustrators from API: {illustrator_list}")
-
-        # Convert contributor lists to strings
-        additional_authors = additional_authors_form
-        editor = ', '.join(editor_list) if editor_list else None
-        translator = ', '.join(translator_list) if translator_list else None
-        narrator = ', '.join(narrator_list) if narrator_list else None
-        illustrator = ', '.join(illustrator_list) if illustrator_list else None
-
-        # Create simplified book data with enhanced API fields including contributors
-        book_data = SimplifiedBook(
-            title=title,
-            author=author or "Unknown Author",
-            isbn13=isbn13,
-            isbn10=isbn10,
-            subtitle=subtitle,
-            description=description,
-            publisher=publisher_name,
-            published_date=published_date_str,
-            page_count=page_count,
-            language=language,
-            cover_url=cover_url,
-            series=series,
-            series_volume=series_volume,
-            categories=categories,
-            additional_authors=additional_authors,
-            editor=editor,
-            translator=translator,
-            narrator=narrator,
-            illustrator=illustrator,
-            google_books_id=google_books_id,
-            openlibrary_id=openlibrary_id
-        )
-
-        print(f"🎯 [MANUAL] Final SimplifiedBook data:")
-        print(f"   Title: {book_data.title}")
-        print(f"   Author: {book_data.author}")
-        print(f"   Additional Authors: {book_data.additional_authors}")
-        print(f"   Editor: {book_data.editor}")
-        print(f"   Translator: {book_data.translator}")
-        print(f"   Narrator: {book_data.narrator}")
-        print(f"   Illustrator: {book_data.illustrator}")
-        print(f"   ISBN13: {book_data.isbn13}")
-        print(f"   ISBN10: {book_data.isbn10}")
-        print(f"   Cover URL: {book_data.cover_url}")
-        print(f"   Categories: {book_data.categories}")
-        print(f"   Description: {book_data.description[:100] if book_data.description else 'None'}...")
-        print(f"   Publisher: {book_data.publisher}")
-        print(f"   Published Date: '{book_data.published_date}' (type: {type(book_data.published_date)})")
-        print(f"   Page count: {book_data.page_count}")
-        print(f"   Google Books ID: {book_data.google_books_id}")
-        print(f"   OpenLibrary ID: {book_data.openlibrary_id}")
-
-        service = SimplifiedBookService()
-        try:
-            success = service.add_book_to_user_library_sync(
-                book_data=book_data,
-                user_id=current_user.id,
-                reading_status=reading_status,
-                ownership_status=ownership_status,
-                media_type=media_type,
-                location_id=location_id
-            )
-
-            if success:
-                from app.services import book_service
-                try:
-                    books = book_service.get_user_books_sync(current_user.id)
-                    created_book = None
-                    for book in books:
-                        book_author_name = None
-                        if hasattr(book, 'primary_author') and getattr(book, 'primary_author'):
-                            book_author_name = getattr(book, 'primary_author')
-                        elif hasattr(book, 'contributors') and book.contributors:
-                            try:
-                                first_contrib = book.contributors[0]
-                                if hasattr(first_contrib, 'person') and first_contrib.person and hasattr(first_contrib.person, 'name'):
-                                    book_author_name = first_contrib.person.name
-                                elif hasattr(first_contrib, 'name'):
-                                    book_author_name = first_contrib.name
-                            except Exception:
-                                book_author_name = None
-                        if book.title == title and (not author or not book_author_name or book_author_name == author):
-                            created_book = book
-                            break
-
-                    if created_book:
-                        update_data = {}
-                        if personal_notes:
-                            update_data['personal_notes'] = personal_notes
-                        if review:
-                            update_data['review'] = review
-                        if user_rating:
-                            try:
-                                update_data['user_rating'] = int(user_rating)
-                            except ValueError:
-                                pass
-                        if start_date:
-                            update_data['start_date'] = start_date
-                        if finish_date:
-                            update_data['finish_date'] = finish_date
-                        if isbn13_form and isbn13_form != (isbn13 or ''):
-                            update_data['isbn13'] = isbn13_form
-                        if isbn10_form and isbn10_form != (isbn10 or ''):
-                            update_data['isbn10'] = isbn10_form
-                        if raw_categories:
-                            update_data['raw_categories'] = raw_categories
-                        if update_data:
-                            book_service.update_book_sync(created_book.uid, str(current_user.id), **update_data)
-                            print(f"🎯 [MANUAL] Updated book with personal information: {list(update_data.keys())}")
-                except Exception as update_e:
-                    print(f"Warning: Could not update personal information: {update_e}")
-
-                flash(f'Successfully added "{title}" to your library!', 'success')
-                return redirect(url_for('main.library'))
-            else:
-                flash('Failed to add book. Please try again.', 'danger')
-        except BookAlreadyExistsError as e:
-            flash(f'This book already exists in the library! Redirecting to edit the existing copy.', 'info')
-            return redirect(url_for('book.edit_book', uid=e.book_id))
-
-        return redirect(url_for('main.library'))
-    except Exception as e:
-        flash('Error adding book. Please try again.', 'danger')
-        return redirect(url_for('main.library'))
-    
-    # ORIGINAL FUNCTION BELOW (kept as fallback, but should never be reached)
-    # Validate required fields
-    title = request.form['title'].strip()
+    """Manual add with series autocomplete integration (simplified)."""
+    import json
+    title = (request.form.get('title') or '').strip()
     if not title:
-        flash('Error: Title is required to add a book.', 'danger')
+        flash('Title is required', 'danger')
         return redirect(url_for('main.library'))
 
-    # Extract all form fields
-    isbn = request.form.get('isbn', '').strip()
-    author = request.form.get('author', '').strip()
-    subtitle = request.form.get('subtitle', '').strip()
-    publisher_name = request.form.get('publisher', '').strip()
-    page_count_str = request.form.get('page_count', '').strip()
-    language = request.form.get('language', '').strip() or 'en'
-    cover_url = request.form.get('cover_url', '').strip()
-    published_date_str = request.form.get('published_date', '').strip()
-    series = request.form.get('series', '').strip()
-    series_volume = request.form.get('series_volume', '').strip()
-    series_order_str = request.form.get('series_order', '').strip()
-    genres = request.form.get('genres', '').strip()  # Changed from 'genre' to 'genres'
-    reading_status = request.form.get('reading_status', '').strip()
-    ownership_status = request.form.get('ownership_status', '').strip()
-    media_type = request.form.get('media_type', '').strip()
-    location_id = request.form.get('location_id', '').strip()
-    user_rating_str = request.form.get('user_rating', '').strip()
-    personal_notes = request.form.get('personal_notes', '').strip()
-    user_tags = request.form.get('user_tags', '').strip()
-    description = request.form.get('description', '').strip()
-    
-    # Convert numeric fields
+    def _load_json_list(field):
+        if field not in request.form: return []
+        try:
+            return json.loads(request.form[field])
+        except Exception:
+            return []
+
+    contrib = {k: _load_json_list(f'contributors_{k}') for k in ['authored','narrated','edited','translated','illustrated']}
+    author = (contrib['authored'][0]['name'].strip() if contrib.get('authored') else (request.form.get('author') or '').strip()) or 'Unknown Author'
+    additional_authors = ', '.join([c['name'] for c in (contrib.get('authored') or [])[1:]]) or None
+    narrator = ', '.join([c['name'] for c in contrib.get('narrated', [])]) or None
+    editor = ', '.join([c['name'] for c in contrib.get('edited', [])]) or None
+    translator = ', '.join([c['name'] for c in contrib.get('translated', [])]) or None
+    illustrator = ', '.join([c['name'] for c in contrib.get('illustrated', [])]) or None
+
+    # Categories
+    categories = []
+    if 'categories' in request.form:
+        try:
+            categories = [c.get('name') for c in json.loads(request.form['categories']) if c.get('name')]
+        except Exception:
+            pass
+    raw_categories = None
+    raw_cat_val = request.form.get('raw_categories')
+    if raw_cat_val:
+        try:
+            raw_categories = json.loads(raw_cat_val)
+        except Exception:
+            raw_categories = [s.strip() for s in raw_cat_val.split(',') if s.strip()]
+
+    # Scalars
+    isbn_raw = (request.form.get('isbn') or '').upper()
+    subtitle = (request.form.get('subtitle') or '').strip()
+    publisher_name = (request.form.get('publisher') or '').strip()
+    description = (request.form.get('description') or '').strip()
     page_count = None
-    if page_count_str:
+    pcs = (request.form.get('page_count') or '').strip()
+    if pcs:
+        try: page_count = int(pcs)
+        except ValueError: pass
+    language = (request.form.get('language') or 'en').strip() or 'en'
+    cover_url = (request.form.get('cover_url') or '').strip()
+    published_date = (request.form.get('published_date') or '').strip()
+    series = (request.form.get('series') or '').strip()
+    series_volume = (request.form.get('series_volume') or '').strip()
+    series_id = (request.form.get('series_id') or '').strip()
+
+    isbn10 = isbn13 = None
+    import re
+    clean = re.sub(r'[^0-9X]', '', isbn_raw)
+    if len(clean)==10: isbn10 = clean
+    elif len(clean)==13: isbn13 = clean
+
+    book_data = SimplifiedBook(
+        title=title,
+        author=author,
+        isbn13=isbn13,
+        isbn10=isbn10,
+        subtitle=subtitle,
+        description=description,
+        publisher=publisher_name,
+        published_date=published_date,
+        page_count=page_count,
+        language=language,
+        cover_url=cover_url,
+        series=series,
+        series_volume=series_volume,
+        categories=categories,
+        additional_authors=additional_authors,
+        editor=editor,
+        translator=translator,
+        narrator=narrator,
+        illustrator=illustrator,
+        google_books_id=(request.form.get('google_books_id') or '').strip() or None,
+        openlibrary_id=None
+    )
+
+    added = SimplifiedBookService().add_book_to_user_library_sync(
+        book_data=book_data,
+        user_id=current_user.id,
+        reading_status=request.form.get('reading_status',''),
+        ownership_status=request.form.get('ownership_status','owned'),
+        media_type=request.form.get('media_type','physical'),
+        location_id=request.form.get('location_id')
+    )
+    if not added:
+        flash('Failed to add book','danger')
+        return redirect(url_for('main.library'))
+
+    # Find created book to apply personal metadata & attach series
+    created = None
+    try:
+        for b in book_service.get_user_books_sync(current_user.id):
+            if b.title == title:
+                created = b; break
+    except Exception:
+        created = None
+
+    if created and series_id:
         try:
-            page_count = int(page_count_str)
-        except ValueError:
-            pass
-    
-    series_order = None
-    if series_order_str:
-        try:
-            series_order = int(series_order_str)
-        except ValueError:
-            pass
-    
-    user_rating = None
-    if user_rating_str:
-        try:
-            user_rating = float(user_rating_str)
-        except ValueError:
-            pass
-    
+            from app.services.kuzu_series_service import get_series_service
+            bid = getattr(created,'id',None) or getattr(created,'uid',None)
+            if bid:
+                get_series_service().attach_book(bid, series_id, volume=series_volume)
+        except Exception as serr:
+            current_app.logger.warning(f"[SERIES][ATTACH_FAIL] {serr}")
+
+    if created:
+        updates = {}
+        pn = (request.form.get('personal_notes') or '').strip()
+        if pn: updates['personal_notes']=pn
+        rv = (request.form.get('review') or '').strip()
+        if rv: updates['review']=rv
+        ur = (request.form.get('user_rating') or '').strip()
+        if ur:
+            try: updates['user_rating']=int(ur)
+            except ValueError: pass
+        sd = (request.form.get('start_date') or '').strip()
+        if sd: updates['start_date']=sd
+        fd = (request.form.get('finish_date') or '').strip()
+        if fd: updates['finish_date']=fd
+        if raw_categories: updates['raw_categories']=raw_categories
+        if updates:
+            try: book_service.update_book_sync(created.uid, str(current_user.id), **updates)
+            except Exception: pass
+
+    flash(f'Added "{title}"','success')
+    return redirect(url_for('main.library'))
     # Convert date fields
     published_date = None
     if published_date_str:

@@ -401,7 +401,9 @@ class KuzuGraphDB:
                     name STRING,
                     normalized_name STRING,
                     description STRING,
-                    total_books INT64,
+                    cover_url STRING,
+                    custom_cover BOOLEAN,
+                    generated_placeholder BOOLEAN,
                     created_at TIMESTAMP,
                     PRIMARY KEY(id)
                 )
@@ -652,6 +654,7 @@ class KuzuGraphDB:
                 CREATE REL TABLE PART_OF_SERIES(
                     FROM Book TO Series,
                     volume_number INT64,
+                    volume_number_double DOUBLE,
                     series_order INT64,
                     created_at TIMESTAMP
                 )

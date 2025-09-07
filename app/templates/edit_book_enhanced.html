@@ -459,16 +459,24 @@
                                         {% from 'macros/cover_input.html' import render_cover_input %}
                                         {{ render_cover_input(book) }}
                                         
-                                        <!-- Series Information -->
+                                        <!-- Series Information (with autocomplete create/search) -->
                                         <div class="row">
                                             <div class="col-md-6">
-                                                <div class="mb-3">
-                                                    <label for="series" class="form-label fw-medium">
+                                                <div class="mb-3 position-relative">
+                                                    <label for="series_input_edit" class="form-label fw-medium">
                                                         <i class="bi bi-collection me-1"></i>Series
                                                     </label>
-                                                    <input type="text" class="form-control" id="series" name="series" 
-                                                           value="{{ book.series.name if book.series and book.series.name else book.series or '' }}" 
-                                                           placeholder="Series name (if part of a series)">
+                                                    <div id="series-autocomplete-wrapper-edit" class="position-relative">
+                                                        <span id="series-debug-indicator" style="position:absolute; top:-0.75rem; right:0; font-size:0.65rem; background:#0d6efd; color:#fff; padding:2px 4px; border-radius:3px; opacity:0.85;">JS</span>
+                                                        <input type="text" class="form-control" id="series_input_edit" name="series" autocomplete="off"
+                                                               value="{{ book.series.name if book.series and book.series.name else book.series or '' }}"
+                                                               placeholder="Type to search or press Enter to create">
+                                                        <div id="series-autocomplete-dropdown-edit" class="list-group shadow-sm" style="position:absolute; top:100%; left:0; right:0; z-index:1030; max-height:260px; overflow-y:auto; display:none;"></div>
+                                                        <input type="hidden" name="series_id" id="series_id" value="{{ book.series.id if book.series and book.series.id else '' }}">
+                                                    </div>
+                                                    <div class="form-text" id="series-help-edit">
+                                                        Start typing to search existing series. Press Enter to create a new one if no match appears.
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div class="col-md-3">
@@ -904,8 +912,8 @@
 let searchTimeout;
 let activeDropdown = null;
 
-// Initialize contributor autocomplete
-document.addEventListener('DOMContentLoaded', function() {
+// Initialize contributor & series autocomplete (fire immediately if DOM already loaded)
+function initEditPageEnhancements(){
     const contributorInputs = document.querySelectorAll('.contributor-input');
     const categoryInputs = document.querySelectorAll('.category-input');
     
@@ -943,7 +951,14 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize accordion behavior
     initializeAccordion();
-});
+    initializeSeriesAutocompleteEdit();
+    console.debug('[EditPageInit] Enhancements initialized');
+}
+if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', initEditPageEnhancements);
+} else {
+    initEditPageEnhancements();
+}
 
 function initializeAccordion() {
     // Bootstrap accordion should handle this automatically with data-bs-parent,
@@ -967,6 +982,65 @@ function initializeAccordion() {
         });
     });
 }
+
+// ----- Series Autocomplete (Edit Form) -----
+function initializeSeriesAutocompleteEdit() {
+    const input = document.getElementById('series_input_edit');
+    const hiddenId = document.getElementById('series_id');
+    const dropdown = document.getElementById('series-autocomplete-dropdown-edit');
+    if(!input || !dropdown){ console.warn('[SeriesAutocomplete][Edit] missing elements'); return; }
+    let lastQuery='';
+    let pending=null; let results=[]; let activeIndex=-1;
+    const csrf = (document.querySelector('meta[name="csrf-token"]')||{}).content || '';
+
+    function clearDropdown(){ dropdown.innerHTML=''; dropdown.style.display='none'; results=[]; activeIndex=-1; }
+    function escapeHtml(str){return (str||'').replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s]));}
+    function render(list, query){
+        if(!list.length && !query){ clearDropdown(); return; }
+        if(!list.length && query){
+            dropdown.innerHTML = `<button type="button" class="list-group-item list-group-item-action" data-create="1">Create new series \"${escapeHtml(query)}\"</button>`;
+            dropdown.style.display='block'; return;
+        }
+        dropdown.innerHTML = list.map((it,i)=>`
+            <button type="button" class="list-group-item list-group-item-action${i===activeIndex?' active':''}" data-id="${it.id}" data-name="${escapeHtml(it.name)}">
+              <div class='d-flex justify-content-between align-items-center'>
+                <span>${escapeHtml(it.name)}</span>
+                <small class='text-muted'>${it.book_count||0} book${(it.book_count||0)===1?'':'s'}</small>
+              </div>
+            </button>`).join('');
+        if(query && !list.find(i=>i.name.toLowerCase()===query.toLowerCase())){
+            dropdown.innerHTML += `<button type="button" class="list-group-item list-group-item-action" data-create="1">Create new series \"${escapeHtml(query)}\"</button>`;
+        }
+        dropdown.style.display='block';
+    }
+    function debouncedFetch(q){
+        if(pending) clearTimeout(pending);
+        if(!q){ clearDropdown(); hiddenId.value=''; return; }
+        pending=setTimeout(()=>{
+            fetch(`/series/search?q=${encodeURIComponent(q)}`,{headers:{'Accept':'application/json'}})
+              .then(r=>r.ok?r.json():Promise.reject())
+              .then(data=>{ console.debug('[SeriesSearch][Edit]',data); if(!data) return; if(data.success){ results=data.results||[]; } else if(Array.isArray(data)){ results=data; } else { results=[]; } activeIndex=-1; render(results,q); })
+              .catch(err=>{ console.warn('[SeriesSearch][Edit] error',err); results=[]; render(results,q); });
+        },200);
+    }
+    function selectResult(r){ hiddenId.value=r.id; input.value=r.name; clearDropdown(); }
+    function createSeries(name){ if(!name) return; fetch('/series/create',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRFToken':csrf},body:JSON.stringify({name})})
+        .then(r=>r.ok?r.json():Promise.reject())
+        .then(data=>{ console.debug('[SeriesCreate][Edit]',data); if(data.success && data.series){ hiddenId.value=data.series.id; input.value=data.series.name; clearDropdown(); } })
+        .catch(err=>{ console.warn('[SeriesCreate][Edit] error',err); }); }
+    input.addEventListener('input', e=>{ hiddenId.value=''; lastQuery=e.target.value.trim(); if(lastQuery.length<2){ clearDropdown(); return; } debouncedFetch(lastQuery); });
+    input.addEventListener('keydown', e=>{
+        if(e.key==='ArrowDown'){ if(dropdown.style.display==='none') return; e.preventDefault(); const count=Math.max(results.length,1); activeIndex=(activeIndex+1)%count; render(results,lastQuery); }
+        else if(e.key==='ArrowUp'){ if(dropdown.style.display==='none') return; e.preventDefault(); const count=Math.max(results.length,1); activeIndex=activeIndex<=0?count-1:activeIndex-1; render(results,lastQuery); }
+        else if(e.key==='Enter'){ if(dropdown.style.display==='none') return; e.preventDefault(); if(activeIndex>=0 && results[activeIndex]) selectResult(results[activeIndex]); else if(!results.find(r=>r.name.toLowerCase()===lastQuery.toLowerCase())) createSeries(lastQuery); }
+        else if(e.key==='Escape'){ clearDropdown(); }
+    });
+    dropdown.addEventListener('click', e=>{ const btn=e.target.closest('button'); if(!btn) return; if(btn.dataset.create==='1'){ createSeries(lastQuery); return; } const id=btn.dataset.id; const name=btn.dataset.name; if(id && name){ hiddenId.value=id; input.value=name; clearDropdown(); }});
+    document.addEventListener('click', e=>{ if(!dropdown.contains(e.target) && e.target!==input) clearDropdown(); });
+    // Expose manual trigger for debugging
+    window.__seriesDebugSearch = (q)=>{ input.value=q; const evt=new Event('input'); input.dispatchEvent(evt); };
+}
+function getCsrfToken(){ const m=document.querySelector('meta[name="csrf-token"]'); return (m&&m.getAttribute('content'))||document.querySelector('input[name="csrf_token"]').value; }
 
 function handleInput(e) {
     const input = e.target;

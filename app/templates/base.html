@@ -1,6 +1,9 @@
 <!doctype html>
 <html lang="en" data-theme="{{ current_theme }}">
-<head>
+  <head>
+    {% if not self._TemplateReference__context.get('csrf_meta_injected') %}
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    {% endif %}
   <meta charset="utf-8">
   <title>{% block title %}{{ site_name }}{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -109,6 +112,18 @@
       padding: clamp(12px, 3vw, 40px);
       color: var(--text-color);
     }
+
+   /* ------------------------------------------------------
+     Series & Book Cover Aspect Ratio Helpers
+     Bootstrap ships preset ratios (1x1, 4x3, 16x9, 21x9) but not 2x3.
+     We define 2x3 (portrait) for book/series covers here.
+     --bs-aspect-ratio expects (height / width * 100%). For 2:3 (w:h), h/w = 1.5 => 150%.
+     ------------------------------------------------------ */
+   .ratio.ratio-2x3 { --bs-aspect-ratio: 150%; }
+   .ratio.ratio-2x3 img { width:100%; height:100%; object-fit:cover; }
+   /* Ensure flex centering wrapper doesn't collapse height before ratio applies */
+   .ratio.ratio-2x3.d-flex { display:block !important; position:relative; }
+   .ratio.ratio-2x3.d-flex > img { position:absolute; top:0; left:0; }
     
     /* Responsive design improvements */
     @media (max-width: 768px) {
@@ -893,6 +908,7 @@
               <a class="btn btn-outline-info me-2" href="{{ url_for('main.people') }}">People</a>
               <a class="btn btn-outline-secondary me-2" href="{{ genre_url_for('index') }}">{{ get_genre_term_plural() }}</a>
               <a class="btn btn-outline-success me-2" href="{{ url_for('main.stats') }}">Stats</a>
+              <a class="btn btn-outline-primary me-2" href="{{ url_for('series.list_series') }}">Series</a>
               <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
               <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>
               <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#readingLogModal">
@@ -1610,5 +1626,9 @@
     });
   </script>
   {% endif %}
+  {# Injection point for page-specific modal/dialog markup placed outside main container #}
+  {% block extra_modals %}{% endblock %}
+  {# Injection point for page-specific scripts that must run after global utilities #}
+  {% block scripts %}{% endblock %}
 </body>
 </html>

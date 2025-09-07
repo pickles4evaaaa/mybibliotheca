@@ -1,0 +1,463 @@
+{% extends 'base.html' %}
+{% block title %}{{ series_obj.name }} - Series{% endblock %}
+{% block content %}
+<div class="container mt-4">
+  <style>
+    .contributor-badge-role-authored { background:#e8f0fe; color:#1b3d63; }
+    .contributor-badge-role-narrated { background:#f5e7ff; color:#3f1d64; }
+    .contributor-badge-role-edited { background:#ffeacc; color:#4a3300; }
+    .contributor-badge-role-translated { background:#e7f8e8; color:#1f4a24; }
+    .contributor-badge-role-illustrated { background:#fff7cc; color:#574400; }
+    [data-theme="dark"] .contributor-badge-role-authored { background:#2b3a4e; color:#d6e2f2; }
+    [data-theme="dark"] .contributor-badge-role-narrated { background:#341d4d; color:#e6d6fa; }
+    [data-theme="dark"] .contributor-badge-role-edited { background:#4a2f00; color:#ffe7c2; }
+    [data-theme="dark"] .contributor-badge-role-translated { background:#1e3a25; color:#cfe9d2; }
+    [data-theme="dark"] .contributor-badge-role-illustrated { background:#4d3f00; color:#ffefb3; }
+  .contributor-badge-role-authored, .contributor-badge-role-narrated, .contributor-badge-role-edited,
+  .contributor-badge-role-translated, .contributor-badge-role-illustrated { font-size:0.60rem; font-weight:600; letter-spacing:.3px; }
+  /* Unified cover styling (match library) */
+  .series-cover-wrapper { position:relative; height:340px; padding:0.75rem; background:#f8f9fa; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  .series-cover-wrapper::before { content:""; display:block; position:absolute; inset:0; padding-top:150%; pointer-events:none; }
+  .series-cover-wrapper img, .series-cover-wrapper span { position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain; border-radius:10px; box-shadow:0 3px 10px rgba(0,0,0,0.18); }
+  [data-theme="dark"] .series-cover-wrapper { background:#2d2d2d; }
+  /* Book row thumbnails */
+  .book-thumb-wrapper { position:relative; width:165px; height:248px; padding:0.5rem; background:#f8f9fa; overflow:hidden; border-radius:8px; display:flex; align-items:center; justify-content:center; }
+  .book-thumb-wrapper::before { content:""; position:absolute; inset:0; padding-top:150%; pointer-events:none; }
+    .book-thumb-wrapper img, .book-thumb-wrapper span { position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; }
+    /* Responsive: scale thumbnails back on very small screens */
+    @media (max-width: 576px) {
+      .book-thumb-wrapper { width:120px; height:180px; }
+    }
+  [data-theme="dark"] .book-thumb-wrapper { background:#2d2d2d; }
+  .book-meta { padding-left:0.5rem; }
+  /* Cover edit button group visibility */
+  .cover-action-group { backdrop-filter: blur(4px); background:rgba(0,0,0,0.35); padding:2px 4px; border-radius:4px; }
+  .cover-action-group .btn { border-color:rgba(255,255,255,0.6)!important; color:#fff!important; }
+  .cover-action-group .btn:hover { background:rgba(255,255,255,0.15)!important; }
+  .cover-action-group .btn i { filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
+  [data-theme="dark"] .cover-action-group { background:rgba(0,0,0,0.55); }
+  /* Slight upward nudge so book list aligns with top of left card */
+  .series-books-col { /* default margin; will be overridden dynamically */ margin-top:0; }
+  @media (max-width: 576px){ .series-books-col { margin-top:0 !important; } }
+  .btn-plain.btn-xs { padding:2px 6px; font-size:.65rem; line-height:1; }
+  dialog.series-dialog[open] { animation: dialogFade .18s ease-out; }
+  @keyframes dialogFade { from { opacity:0; transform:translateY(-6px) scale(.98);} to {opacity:1; transform:translateY(0) scale(1);} }
+  /* Removed previous negative-margin alignment hack to keep columns naturally aligned */
+  </style>
+  <div class="row">
+    <div class="col-md-4 mb-3">
+      <div class="d-flex flex-column h-100">
+        <h2 class="h4 d-flex align-items-center justify-content-between series-column-header mb-3" style="line-height:1.2;">
+          <span>{{ series_obj.name }}</span>
+          <button class="series-modal-btn btn-plain" data-target="#editNameModal" title="Rename series" style="font-size:.9rem; display:inline-flex; align-items:center; gap:4px; padding:.35rem .5rem;">
+            <i class="bi bi-pencil"></i>
+          </button>
+        </h2>
+        <div id="seriesCoverCard" class="card shadow-sm flex-grow-1">
+        <div class="position-relative">
+      {# Replaced anchor with div so action buttons (clear/delete/upload) fire without navigation swallowing click #}
+      <div class="series-cover-wrapper" data-cover-wrapper title="Series cover">
+            {% set effective_cover = series_obj.user_cover or series_obj.cover_url %}
+            {% if effective_cover %}
+              <img id="series-cover" src="{{ effective_cover }}" alt="{{ series_obj.name }} cover" data-effective-cover="1">
+            {% else %}
+              <span id="series-cover-fallback" class="text-muted small text-center px-2">{{ series_obj.name }}</span>
+            {% endif %}
+            <div class="position-absolute top-0 end-0 m-1 cover-action-group">
+              <div class="btn-group btn-group-sm">
+        <button type="button" class="btn btn-outline-secondary series-modal-btn" data-target="#uploadCoverModal" title="Upload Cover" data-action="upload-cover"><i class="bi bi-upload"></i></button>
+        <button type="button" class="btn btn-outline-secondary" id="clearCoverBtn" title="Remove custom cover and revert" data-action="clear-cover"><i class="bi bi-x-circle"></i></button>
+        <button type="button" class="btn btn-outline-danger" id="deleteSeriesBtn" title="Delete series" data-action="delete-series"><i class="bi bi-trash"></i></button>
+              </div>
+            </div>
+      </div>
+        </div>
+        <div class="card-body pt-3">
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small text-muted mb-0">Description</label>
+              <button class="series-modal-btn btn-plain btn-xs" data-target="#editDescriptionModal" title="Edit description"><i class="bi bi-pencil"></i></button>
+            </div>
+            <div class="small" id="series-description-view">{{ series_obj.description or 'No description added.' }}</div>
+          </div>
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small text-muted mb-0">Personal Notes</label>
+              <button class="series-modal-btn btn-plain btn-xs" data-target="#editNotesModal" title="Edit personal notes"><i class="bi bi-pencil"></i></button>
+            </div>
+            <div class="small" id="series-notes-view">{{ user_notes or 'No notes yet.' }}</div>
+          </div>
+          <p class="small text-muted mb-0">Books: {{ book_count }}</p>
+        </div>
+      </div>
+    </div>
+    </div> <!-- FIX: close col-md-4 column wrapper so next column is sibling -->
+    <div id="seriesBooksCol" class="col-md-8 series-books-col">
+      <h2 class="h4 d-flex align-items-center justify-content-between series-column-header mb-3">
+        <span>Books</span>
+        <button class="btn btn-sm btn-outline-secondary series-modal-btn" data-target="#sortingModal" title="Change Sorting"><i class="bi bi-sort-alpha-down"></i></button>
+      </h2>
+      <div class="list-group">
+        {% for b in books %}
+        <div class="list-group-item py-3">
+          <div class="d-flex align-items-start flex-wrap">
+            <a href="{{ url_for('book.view_book_enhanced', uid=b.id) }}" class="text-decoration-none me-3 mb-2 mb-sm-0">
+              <div class="book-thumb-wrapper">
+                {% if b.cover_url %}
+                  <img src="{{ b.cover_url }}" alt="{{ b.title }} cover">
+                {% else %}
+                  <span class="text-muted small text-center px-1">{{ b.title }}</span>
+                {% endif %}
+              </div>
+            </a>
+            <div class="flex-grow-1 book-meta">
+              <div class="d-flex justify-content-between flex-wrap">
+                <div class="me-2 mb-1">
+                  <a href="{{ url_for('book.view_book_enhanced', uid=b.id) }}" class="fw-semibold text-decoration-none">{{ b.title }}</a>
+                  <div class="small text-muted">{% if b.published_date %}{{ b.published_date }}{% endif %}</div>
+                  {% if b.contributors %}
+                  {% set groups = {'authored': [], 'narrated': [], 'edited': [], 'translated': [], 'illustrated': []} %}
+                  {% for c in b.contributors %}
+                    {% set role = c.role.lower() %}
+                    {% if role.startswith('author') %}{% set _ = groups['authored'].append(c) %}
+                    {% elif role.startswith('narrat') %}{% set _ = groups['narrated'].append(c) %}
+                    {% elif role.startswith('edit') %}{% set _ = groups['edited'].append(c) %}
+                    {% elif role.startswith('translat') %}{% set _ = groups['translated'].append(c) %}
+                    {% elif role.startswith('illustrat') %}{% set _ = groups['illustrated'].append(c) %}
+                    {% else %}{% set _ = groups.setdefault(role, []).append(c) %}{% endif %}
+                  {% endfor %}
+                  <div class="mt-1 small">
+                    {% for gk, items in groups.items() if items %}
+                      <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
+                        <span class="badge bg-secondary text-light text-uppercase" style="font-size:0.55rem; letter-spacing:.5px;">{{ gk.replace('_',' ') }}</span>
+                        {% for c in items %}
+                          <a href="{{ url_for('people.person_details', person_id=c.id) }}" class="badge contributor-badge-role-{{ gk }} text-decoration-none">{{ c.name }}</a>
+                        {% endfor %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                </div>
+                <div class="text-end ms-auto" style="min-width:70px;">
+                  {# Unified badge logic: prefer explicit volume; if both exist and equal show once; if only order show order badge #}
+                  {% set vol = b.series_volume %}
+                  {% set ordernum = b.series_order %}
+                  {% if vol and ordernum and (vol|string) == (ordernum|string) %}
+                    <div class="badge bg-primary">Vol {{ vol }}</div>
+                  {% elif vol %}
+                    <div class="badge bg-primary">Vol {{ vol }}</div>
+                  {% elif ordernum %}
+                    <div class="badge bg-secondary">#{{ ordernum }}</div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% else %}
+          <p class="text-muted m-2">No books linked.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+<!-- Removed duplicate scripts block (consolidated later) -->
+
+{% block extra_modals %}
+<style>
+  dialog.series-dialog { border:none; border-radius:14px; padding:1.1rem 1.2rem 1rem; width:clamp(280px,60vw,520px); box-shadow:0 10px 30px -5px rgba(0,0,0,.35); background:var(--container-background); color:var(--text-color); }
+  dialog.series-dialog::backdrop { background:rgba(0,0,0,.45); backdrop-filter:blur(3px); }
+  .dialog-header { display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.6rem; }
+  .dialog-header h5 { margin:0; font-size:1rem; }
+  .dialog-close { background:transparent; border:none; font-size:1.1rem; line-height:1; cursor:pointer; color:var(--text-color); opacity:.8; }
+  .dialog-close:hover { opacity:1; }
+  .dialog-footer { display:flex; justify-content:flex-end; gap:.5rem; margin-top:.75rem; }
+  .btn-plain { background:var(--overlay-background); border:1px solid var(--border-color); padding:.35rem .75rem; border-radius:6px; cursor:pointer; font-size:.8rem; }
+  .btn-plain.primary { background:#0d6efd; color:#fff; border-color:#0d6efd; }
+  .btn-plain.danger { background:#dc3545; color:#fff; border-color:#dc3545; }
+  .btn-plain:hover { filter:brightness(1.05); }
+  [data-theme="dark"] .btn-plain { background:rgba(255,255,255,0.06); }
+  form.inline-form small.text-muted { display:block; margin-top:.25rem; }
+</style>
+
+<dialog id="sortingModal" class="series-dialog">
+  <div class="dialog-header"><h5>Sorting & Order</h5><button class="dialog-close" data-close>&times;</button></div>
+  <form id="sortingForm" class="inline-form">
+  <div class="mb-2"><label><input type="radio" name="order" value="volume" {% if order=='volume' %}checked{% endif %}> Volume Number</label></div>
+  <div class="mb-2"><label><input type="radio" name="order" value="alpha" {% if order=='alpha' %}checked{% endif %}> Alphabetical</label></div>
+  <div class="mb-2"><label><input type="radio" name="order" value="publication" {% if order=='publication' %}checked{% endif %}> Publication Date</label></div>
+  <div class="mb-2"><label><input type="radio" name="order" value="suggested" {% if order=='suggested' %}checked{% endif %}> Suggested Reading Order</label></div>
+  <small class="text-muted">Suggested: volume first then publication date then title.</small>
+    <div class="dialog-footer">
+      <button type="button" class="btn-plain" data-close>Close</button>
+      <button type="button" class="btn-plain primary" id="applySortingBtn">Apply</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="editNameModal" class="series-dialog">
+  <form method="post" action="{{ url_for('series.rename_series', series_id=series_obj.id) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="dialog-header"><h5>Rename Series</h5><button type="button" class="dialog-close" data-close>&times;</button></div>
+    <div class="mb-3"><label class="form-label">Name</label><input type="text" name="name" class="form-control form-control-sm" value="{{ series_obj.name }}" required></div>
+    <div class="dialog-footer"><button type="button" class="btn-plain" data-close>Cancel</button><button type="submit" class="btn-plain primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="editDescriptionModal" class="series-dialog">
+  <form method="post" action="{{ url_for('series.update_series_description', series_id=series_obj.id) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="dialog-header"><h5>Edit Description</h5><button type="button" class="dialog-close" data-close>&times;</button></div>
+    <textarea name="description" rows="5" class="form-control form-control-sm" placeholder="Enter description...">{{ series_obj.description or '' }}</textarea>
+    <div class="dialog-footer"><button type="button" class="btn-plain" data-close>Cancel</button><button type="submit" class="btn-plain primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="editNotesModal" class="series-dialog">
+  <form method="post" action="{{ url_for('series.update_series_notes', series_id=series_obj.id) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="dialog-header"><h5>Personal Notes</h5><button type="button" class="dialog-close" data-close>&times;</button></div>
+    <textarea name="notes" rows="6" class="form-control form-control-sm" placeholder="Your notes...">{{ user_notes or '' }}</textarea>
+    <small class="text-muted">Notes are personal and only visible to you.</small>
+    <div class="dialog-footer"><button type="button" class="btn-plain" data-close>Cancel</button><button type="submit" class="btn-plain primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="uploadCoverModal" class="series-dialog">
+  <div class="dialog-header"><h5>Upload Series Cover</h5><button type="button" class="dialog-close" data-close>&times;</button></div>
+  <form id="seriesCoverUploadForm" class="inline-form" enctype="multipart/form-data" method="dialog">
+    <div class="mb-3">
+      <input class="form-control form-control-sm" type="file" name="cover_file" accept="image/*" required>
+      <small class="text-muted">JPG / PNG / GIF up to 10MB.</small>
+    </div>
+  </form>
+  <div class="alert alert-danger d-none" id="coverUploadError"></div>
+  <div class="dialog-footer"><button type="button" class="btn-plain" data-close>Close</button><button type="button" class="btn-plain primary" id="uploadCoverSubmit">Upload</button></div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function(){
+  console.debug('[Series Detail] enhancement script executing');
+  // Title now spans full width so columns naturally align; no JS offset needed
+  const applySorting = document.getElementById('applySortingBtn');
+  if(applySorting){
+    applySorting.addEventListener('click', () => {
+      const form = document.getElementById('sortingForm');
+      const fd = new FormData(form);
+      const val = fd.get('order');
+      const url = new URL(window.location.href);
+      if(val){ url.searchParams.set('order', val); } else { url.searchParams.delete('order'); }
+      window.location = url.toString();
+    });
+  }
+  const uploadBtn = document.getElementById('uploadCoverSubmit');
+  const form = document.getElementById('seriesCoverUploadForm');
+  const errorBox = document.getElementById('coverUploadError');
+  const clearBtn = document.getElementById('clearCoverBtn');
+  const deleteBtn = document.getElementById('deleteSeriesBtn');
+  const coverImg = document.getElementById('series-cover');
+  const fallback = document.getElementById('series-cover-fallback');
+  const seriesId = JSON.parse('{{ series_obj.id|tojson|safe }}');
+
+  function showError(msg){
+    if(!errorBox) return;
+    errorBox.textContent = msg;
+    errorBox.classList.remove('d-none');
+  }
+
+  if(uploadBtn){
+    uploadBtn.addEventListener('click', async () => {
+      errorBox.classList.add('d-none');
+      const fd = new FormData(form);
+      // Ensure CSRF token present (fallback if global injector missed)
+      if(!fd.get('csrf_token') && window.csrfToken){ fd.append('csrf_token', window.csrfToken); }
+      try {
+        const resp = await fetch(`/series/${seriesId}/upload_cover`, {method:'POST', body: fd});
+        const data = await resp.json();
+        if(!data.success){
+          showError(data.error || 'Upload failed');
+          return;
+        }
+        if(coverImg){
+          coverImg.src = data.cover_url + '?v=' + Date.now();
+        } else if(fallback){
+          const img = document.createElement('img');
+          img.id = 'series-cover';
+            img.className = 'img-fluid';
+            img.alt = 'Series cover';
+            img.src = data.cover_url;
+            fallback.parentNode.replaceChild(img, fallback);
+        }
+        const modalEl = document.getElementById('uploadCoverModal');
+        if(modalEl){
+          // If using native dialog
+          if(modalEl.nodeName === 'DIALOG' && typeof modalEl.close === 'function'){
+            modalEl.close();
+          } else if(window.bootstrap && window.bootstrap.Modal){
+            let m = bootstrap.Modal.getInstance(modalEl);
+            if(!m) m = new bootstrap.Modal(modalEl);
+            m.hide();
+          } else {
+            modalEl.classList.remove('show');
+            modalEl.style.display='none';
+          }
+        }
+      } catch(e){
+        showError('Unexpected error');
+      }
+    });
+  }
+
+  if(clearBtn){
+    console.debug('[SeriesDetail][Bind] clearCoverBtn found, attaching handler');
+    clearBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.debug('[SeriesDetail][ClearCover] click start');
+      if(!confirm('Remove custom cover and revert to default?')) { console.debug('[SeriesDetail][ClearCover] user cancelled'); return; }
+      try {
+        clearBtn.disabled = true;
+        const headers = { 'X-Requested-With': 'XMLHttpRequest' };
+        if(window.csrfToken){ headers['X-CSRFToken'] = window.csrfToken; }
+        console.debug('[SeriesDetail][ClearCover] sending fetch to clear_cover', {seriesId});
+        const resp = await fetch(`/series/${seriesId}/clear_cover`, {method:'POST', headers});
+        console.debug('[SeriesDetail][ClearCover] response status', resp.status);
+        let data = {};
+        try { data = await resp.json(); } catch(parseErr){ console.warn('[SeriesDetail][ClearCover] failed parse JSON', parseErr); }
+        console.debug('[SeriesDetail][ClearCover] response JSON', data);
+        if(data.success){
+          // Server now returns fallback (first-book) cover_url if present
+          if(data.cover_url){
+            if(coverImg){
+              coverImg.src = data.cover_url + '?v=' + Date.now();
+            } else if(fallback){
+              const img = document.createElement('img');
+              img.id = 'series-cover';
+              img.className = 'img-fluid';
+              img.alt = 'Series cover';
+              img.src = data.cover_url;
+              fallback.parentNode.replaceChild(img, fallback);
+            }
+          } else {
+            // No fallback available -> show text label
+            if(coverImg){
+              const span = document.createElement('span');
+              span.id = 'series-cover-fallback';
+              span.className = 'text-muted small text-center px-2';
+              span.textContent = JSON.parse('{{ series_obj.name|tojson|safe }}');
+              coverImg.parentNode.replaceChild(span, coverImg);
+            }
+          }
+        } else {
+          alert((data && data.error) || 'Failed to clear cover');
+        }
+      } catch(e){
+        console.error('[SeriesDetail][ClearCover] network/error', e);
+        alert('Error clearing cover');
+      } finally {
+        clearBtn.disabled = false;
+      }
+    }, {capture:true});
+  } else {
+    console.warn('[SeriesDetail] clearCoverBtn NOT FOUND at script load');
+  }
+
+  if(deleteBtn){
+    deleteBtn.addEventListener('click', async () => {
+      const warn = 'Delete this series?\n\nThis will detach all books from the series and permanently remove the series record. Books remain unchanged.';
+      if(!confirm(warn)) return;
+      try {
+        deleteBtn.disabled = true;
+        const resp = await fetch(`/series/${seriesId}/delete`, {method:'POST'});
+        const data = await resp.json();
+        if(data.success){
+            window.location = data.redirect || '/series/';
+        } else {
+            alert(data.error || 'Failed to delete series');
+        }
+      } catch(e){
+        alert('Error deleting series');
+      } finally {
+        deleteBtn.disabled = false;
+      }
+    });
+  }
+
+  // Manual modal fallback for buttons if data API not working
+  // Native dialog open / close
+  document.querySelectorAll('.series-modal-btn[data-target]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const sel = btn.getAttribute('data-target');
+      const dlg = document.querySelector(sel);
+      if(dlg && typeof dlg.showModal === 'function') { try { dlg.showModal(); } catch(_) { dlg.setAttribute('open',''); } }
+    });
+  });
+  document.addEventListener('click', e => {
+    if(e.target.matches('[data-close]')){
+      const dlg = e.target.closest('dialog');
+      if(dlg) dlg.close();
+    }
+  });
+  // Focus trap & ESC support
+  function trapFocus(dlg){
+    const sel = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+    const focusables = Array.from(dlg.querySelectorAll(sel)).filter(el=>!el.hasAttribute('disabled'));
+    if(!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length-1];
+    function handler(e){
+      if(e.key === 'Tab'){
+        if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+        else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+      } else if(e.key === 'Escape'){ dlg.close(); }
+    }
+    dlg.addEventListener('keydown', handler);
+    setTimeout(()=>first.focus(), 15);
+  }
+  // Polyfill showModal if missing
+  if(!HTMLDialogElement.prototype.showModal){
+    HTMLDialogElement.prototype.showModal = function(){ this.setAttribute('open',''); trapFocus(this); };
+    HTMLDialogElement.prototype.close = function(ret){ this.removeAttribute('open'); this.returnValue = ret || ''; };
+  } else {
+    const nativeShow = HTMLDialogElement.prototype.showModal;
+    HTMLDialogElement.prototype.showModal = function(){ nativeShow.call(this); trapFocus(this); };
+  }
+  // --- AJAX form submissions for description & notes ---
+  function ajaxifyModalForm(modalId, viewSelector, fieldName){
+    const dlg = document.getElementById(modalId);
+    if(!dlg) return;
+    const form = dlg.querySelector('form');
+    if(!form) return;
+    form.addEventListener('submit', async (e)=>{
+      // If form method standard submit (not intercepted) it would reload; intercept to AJAX
+      e.preventDefault();
+      const fd = new FormData(form);
+      const value = fd.get(fieldName) || '';
+      try {
+        const resp = await fetch(form.action, { method:'POST', body: fd, headers: { 'X-Requested-With':'XMLHttpRequest' }});
+        const data = await resp.json();
+        if(data.success){
+          const viewEl = document.querySelector(viewSelector);
+            if(viewEl){
+              viewEl.textContent = (data[fieldName] || '').trim() || (fieldName==='description' ? 'No description added.' : 'No notes yet.');
+            }
+            dlg.close();
+        } else {
+          alert(data.error || 'Update failed');
+        }
+      } catch(err){
+        alert('Network error updating');
+      }
+    });
+  }
+  ajaxifyModalForm('editDescriptionModal', '#series-description-view', 'description');
+  ajaxifyModalForm('editNotesModal', '#series-notes-view', 'notes');
+})();
+</script>
+{% endblock %}

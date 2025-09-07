@@ -19,6 +19,7 @@ from .genre_routes import genres_bp
 from .reading_log_routes import reading_logs
 from .genre_taxonomy_routes import genre_taxonomy_bp
 from .api_routes import api_bp
+from .series_routes import series_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -360,6 +361,7 @@ def register_blueprints(app):
     
     # Register specific feature blueprints
     app.register_blueprint(book_bp, url_prefix='/books')
+    app.register_blueprint(series_bp, url_prefix='/series')
     app.register_blueprint(people_bp, url_prefix='/people')
     app.register_blueprint(import_bp, url_prefix='/import')
     # Register genres blueprint under both URL prefixes for terminology flexibility

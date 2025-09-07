@@ -317,6 +317,11 @@ def _initialize_default_templates():
 def create_app():
     import os
     import logging
+    # Ensure schema preflight executes (module import side-effect)
+    try:
+        from .startup import schema_preflight  # noqa: F401
+    except Exception as _spf_err:
+        print(f"[APP] Warning: schema_preflight import failed: {_spf_err}")
     
     # Ensure static folder exists and is correctly configured
     static_folder = os.path.join(os.path.dirname(__file__), 'static')
@@ -376,6 +381,14 @@ def create_app():
             app.logger.info("ABS sync runner ensured")
         except Exception as e:
             app.logger.warning(f"Failed to start ABS sync runner: {e}")
+
+        # Run series migration (idempotent)
+        try:
+            from .migrations.series_relationship_migration import run_series_migration
+            mig_summary = run_series_migration(verbose=os.getenv('MYBIBLIOTHECA_VERBOSE_INIT','false').lower()=='true')
+            app.logger.info(f"Series migration summary: {mig_summary}")
+        except Exception as e:
+            app.logger.warning(f"Series migration failed (continuing): {e}")
 
     # Initialize extensions (no SQLAlchemy)
     csrf.init_app(app)

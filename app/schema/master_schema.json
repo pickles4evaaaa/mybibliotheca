@@ -1,7 +1,21 @@
 {
-  "version": 2,
+  "version": 3,
   "generated_at": "2025-08-17T00:00:00Z",
   "nodes": {
+    "Series": {
+      "columns": {
+        "id": "STRING",
+        "name": "STRING",
+        "normalized_name": "STRING",
+        "description": "STRING",
+  "user_cover": "STRING",
+        "cover_url": "STRING",
+        "custom_cover": "BOOLEAN",
+        "generated_placeholder": "BOOLEAN",
+        "created_at": "TIMESTAMP"
+      },
+      "primary_key": "id"
+    },
     "User": {
       "columns": {
         "id": "STRING",
@@ -126,7 +140,8 @@
     "ILLUSTRATED": {"from": "Person", "to": "Book", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
     "PUBLISHED_BY": {"from": "Book", "to": "Publisher", "properties": {"publication_date": "DATE", "created_at": "TIMESTAMP"}},
     "CATEGORIZED_AS": {"from": "Book", "to": "Category", "properties": {"created_at": "TIMESTAMP"}},
-    "PART_OF_SERIES": {"from": "Book", "to": "Series", "properties": {"volume_number": "INT64", "series_order": "INT64", "created_at": "TIMESTAMP"}},
+  "PART_OF_SERIES": {"from": "Book", "to": "Series", "properties": {"volume_number": "INT64", "volume_number_double": "DOUBLE", "series_order": "INT64", "created_at": "TIMESTAMP"}},
+  "HAS_SERIES_NOTES": {"from": "User", "to": "Series", "properties": {"id": "STRING", "notes": "STRING", "created_at": "TIMESTAMP", "updated_at": "TIMESTAMP"}},
     "CONTRIBUTED_TO_SERIES": {"from": "Person", "to": "Series", "properties": {"role": "STRING", "order_index": "INT64", "created_at": "TIMESTAMP"}},
     "LOGGED": {"from": "User", "to": "ReadingLog", "properties": {"book_id": "STRING", "created_at": "TIMESTAMP"}},
     "FOR_BOOK": {"from": "ReadingLog", "to": "Book", "properties": {"created_at": "TIMESTAMP"}},

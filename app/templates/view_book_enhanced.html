@@ -108,7 +108,7 @@
                                 {% if book.series or book.series_volume or book.series_order %}
                                 <div class="mb-3">
                                     <small class="text-muted d-block">Series</small>
-                                    <span class="badge bg-primary me-2">
+                                    <a class="badge bg-primary me-2 text-decoration-none" {% if book.series and book.series.id %}href="{{ url_for('series.series_detail', series_id=book.series.id) }}"{% endif %}>
                                         <i class="bi bi-collection me-1"></i>
                                         {% if book.series %}
                                             {{ book.series.name if book.series.name else book.series }}
@@ -117,7 +117,7 @@
                                         {% endif %}
                                         {% if book.series_volume %} - Vol. {{ book.series_volume }}{% endif %}
                                         {% if book.series_order %} (#{{ book.series_order }}){% endif %}
-                                    </span>
+                                    </a>
                                 </div>
                                 {% endif %}
                                 
@@ -446,13 +446,19 @@
                                         <input type="text" class="form-control" id="edit-subtitle" name="subtitle" value="{{ book.subtitle or '' }}">
                                     </div>
                                     
-                                    <!-- Series Information -->
+                                    <!-- Series Information (with autocomplete) -->
                                     <div class="row">
                                         <div class="col-md-6">
-                                            <div class="mb-3">
+                                            <div class="mb-3 position-relative">
                                                 <label for="edit-series" class="form-label fw-medium">Series</label>
-                                                <input type="text" class="form-control" id="edit-series" name="series" 
-                                                       value="{{ book.series.name if book.series and book.series.name else book.series or '' }}">
+                                                <div id="inline-series-autocomplete-wrapper" class="position-relative">
+                                                    <input type="text" class="form-control" id="edit-series" name="series" autocomplete="off"
+                                                           value="{{ book.series.name if book.series and book.series.name else book.series or '' }}"
+                                                           placeholder="Type to search or press Enter to create">
+                                                    <div id="inline-series-autocomplete-dropdown" class="list-group shadow-sm" style="position:absolute; top:100%; left:0; right:0; z-index:1600; max-height:240px; overflow-y:auto; display:none;"></div>
+                                                    <input type="hidden" name="series_id" id="inline_series_id" value="{{ book.series.id if book.series and book.series.id else '' }}">
+                                                </div>
+                                                <div class="form-text">Start typing to search. Enter to create new if none match.</div>
                                             </div>
                                         </div>
                                         <div class="col-md-3">
@@ -1601,6 +1607,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const customFieldsViewMode = document.querySelector('.custom-fields-view-mode');
     const customFieldsEditMode = document.querySelector('.custom-fields-edit-mode');
     const editCustomFieldsToggle = document.getElementById('editCustomFieldsToggle');
+    // Initialize inline series autocomplete
+    initializeInlineSeriesAutocomplete();
     
     // Helper: POST a form with fetch
     async function postForm(form) {
@@ -1965,6 +1973,57 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize category functionality
     initializeCategories();
 });
+
+// ----- Inline Series Autocomplete (View/Edit Page) -----
+function initializeInlineSeriesAutocomplete(){
+    const input = document.getElementById('edit-series');
+    const hiddenId = document.getElementById('inline_series_id');
+    const dropdown = document.getElementById('inline-series-autocomplete-dropdown');
+    if(!input || !dropdown){ console.warn('[InlineSeries] elements missing'); return; }
+    let pending=null, results=[], activeIndex=-1, lastQuery='';
+    const csrf = (document.querySelector('meta[name="csrf-token"]')||{}).content || '';
+
+    function clear(){ dropdown.innerHTML=''; dropdown.style.display='none'; results=[]; activeIndex=-1; }
+    function esc(s){ return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+    function render(q){
+        if(!results.length){
+            if(q.length>=2){ dropdown.innerHTML=`<button type='button' class='list-group-item list-group-item-action' data-create='1'>Create new series \"${esc(q)}\"</button>`; dropdown.style.display='block'; }
+            else clear();
+            return;
+        }
+        dropdown.innerHTML = results.map((r,i)=>`<button type='button' class='list-group-item list-group-item-action${i===activeIndex?' active':''}' data-id='${r.id}' data-name='${esc(r.name)}'><div class='d-flex justify-content-between'><span>${esc(r.name)}</span><small class='text-muted'>${r.book_count||0} book${(r.book_count||0)===1?'':'s'}</small></div></button>`).join('');
+        if(q && !results.find(r=>r.name.toLowerCase()===q.toLowerCase())) dropdown.innerHTML += `<button type='button' class='list-group-item list-group-item-action' data-create='1'>Create new series \"${esc(q)}\"</button>`;
+        dropdown.style.display='block';
+    }
+    function fetchSeries(q){
+        if(pending) clearTimeout(pending);
+        if(q.length<2){ clear(); hiddenId.value=''; return; }
+        pending=setTimeout(()=>{
+            fetch(`/series/search?q=${encodeURIComponent(q)}`,{headers:{'Accept':'application/json'}})
+              .then(r=>r.ok?r.json():Promise.reject())
+              .then(data=>{ console.debug('[InlineSeries][Search]',data); if(data.success) results=data.results||[]; else if(Array.isArray(data)) results=data; else results=[]; activeIndex=-1; render(q); })
+              .catch(e=>{ console.warn('[InlineSeries][Error]',e); results=[]; render(q); });
+        },200);
+    }
+    function select(r){ hiddenId.value=r.id; input.value=r.name; clear(); }
+    function create(name){ if(!name) return; fetch('/series/create',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRFToken':csrf},body:JSON.stringify({name})})
+          .then(r=>r.ok?r.json():Promise.reject())
+          .then(d=>{ console.debug('[InlineSeries][Create]',d); if(d.success&&d.series){ hiddenId.value=d.series.id; input.value=d.series.name; clear(); } })
+          .catch(e=>console.warn('[InlineSeries][CreateError]',e)); }
+    input.addEventListener('input', e=>{ hiddenId.value=''; lastQuery=e.target.value.trim(); fetchSeries(lastQuery); });
+    input.addEventListener('keydown', e=>{
+        if(dropdown.style.display==='none') return;
+        if(['ArrowDown','ArrowUp','Enter','Escape'].includes(e.key)) e.preventDefault();
+        const count=Math.max(results.length,1);
+        if(e.key==='ArrowDown'){ activeIndex=(activeIndex+1)%count; render(lastQuery); }
+        else if(e.key==='ArrowUp'){ activeIndex=activeIndex<=0?count-1:activeIndex-1; render(lastQuery); }
+        else if(e.key==='Enter'){ if(activeIndex>=0 && results[activeIndex]) select(results[activeIndex]); else if(!results.find(r=>r.name.toLowerCase()===lastQuery.toLowerCase())) create(lastQuery); }
+        else if(e.key==='Escape'){ clear(); }
+    });
+    dropdown.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; if(b.dataset.create==='1'){ create(lastQuery); } else { select({id:b.dataset.id, name:b.dataset.name}); } });
+    document.addEventListener('click', e=>{ if(!dropdown.contains(e.target) && e.target!==input) clear(); });
+    console.debug('[InlineSeries] initialized');
+}
 
 function initializeCoverEditing() {
     // Initialize the cover edit button
