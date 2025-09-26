@@ -41,8 +41,8 @@
                                     </h6>
                                     <div class="input-group mb-3">
                          <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
-                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13"><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
-                                        <button name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
+                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13" autofocus><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
+                                        <button id="fetchBookButton" name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
                                             <i class="bi bi-search me-1"></i>Fetch Book
                                         </button>
                                     </div>
@@ -97,6 +97,7 @@
                 <div class="accordion-body">
                     <form method="post" id="addBookForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <input type="hidden" name="submit_action" id="submitActionField" value="save" />
                         
                         <!-- Cover Preview -->
                         {% if book_data and book_data.cover %}
@@ -531,7 +532,10 @@
                         
                         <!-- Submit Button -->
                         <div class="d-grid gap-2 d-md-flex justify-content-md-end">
-                            <button type="submit" name="add" value="Add Book" class="btn btn-primary btn-lg" id="addBookBtn">
+                            <button type="submit" name="submit_action" value="save_and_new" class="btn btn-outline-primary btn-lg" id="addBookAndContinueBtn" data-loading-text="<i class='bi bi-spinner spin me-1'></i>Saving…">
+                                <i class="bi bi-plus-square me-1"></i>Save &amp; Next
+                            </button>
+                            <button type="submit" name="submit_action" value="save" class="btn btn-primary btn-lg" id="addBookBtn" data-loading-text="<i class='bi bi-spinner spin me-1'></i>Saving…">
                                 <i class="bi bi-plus-circle me-1"></i>Add Book
                             </button>
                         </div>
@@ -714,10 +718,12 @@ function fetchBookData() {
     }
     
     // Show loading state
-    const button = document.querySelector('button[onclick="fetchBookData()"]');
-    const originalText = button.innerHTML;
-    button.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Fetching...';
-    button.disabled = true;
+    const button = document.getElementById('fetchBookButton');
+    const originalText = button ? button.innerHTML : null;
+    if (button) {
+        button.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Fetching...';
+        button.disabled = true;
+    }
     
     // Fetch unified book data by ISBN from the API
     fetch(`/api/v1/books/unified-metadata?isbn=${encodeURIComponent(isbn)}`, {
@@ -765,7 +771,12 @@ function fetchBookData() {
                     }
                 } catch (_) { /* noop */ }
                 populateFormWithBookData(mapped);
-                showMessage('Book data fetched successfully!', 'success');
+                const matchedTitle = data.title ? escapeHtml(String(data.title)) : null;
+                if (matchedTitle) {
+                    showMessage(`Found book: <strong>${matchedTitle}</strong>`, 'success');
+                } else {
+                    showMessage('Book data fetched successfully!', 'success');
+                }
             } else {
                 showMessage('No book data found for this ISBN. You can enter details manually.', 'warning');
             }
@@ -776,8 +787,12 @@ function fetchBookData() {
         })
         .finally(() => {
             // Restore button state
-            button.innerHTML = originalText;
-            button.disabled = false;
+            if (button && originalText !== null) {
+                button.innerHTML = originalText;
+            }
+            if (button) {
+                button.disabled = false;
+            }
         });
 }
 
@@ -1704,6 +1719,7 @@ function addCategory(name, id, color, icon) {
 // Initialize autocomplete functionality when page loads
 let searchTimeout;
 let activeDropdown = null;
+let lastClickedSubmitButton = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize contributor autocomplete for all contributor inputs
@@ -1719,22 +1735,55 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load locations
     loadLocations();
+
+    // Focus ISBN input for quick scanning and select existing text if present
+    const isbnInput = document.getElementById('isbn');
+    if (isbnInput) {
+        isbnInput.focus();
+        isbnInput.select();
+        isbnInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                fetchBookData();
+            }
+        });
+    }
     
     // Handle form submission to collect contributors and categories
     const form = document.getElementById('addBookForm');
     if (form) {
+        const submitButtons = form.querySelectorAll('button[type="submit"]');
+        const submitActionField = document.getElementById('submitActionField');
+        submitButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                lastClickedSubmitButton = button;
+                if (submitActionField) {
+                    const actionValue = button.value || button.getAttribute('value') || 'save';
+                    submitActionField.value = actionValue;
+                }
+            });
+        });
+
         form.addEventListener('submit', function(e) {
-            // Show loading state on submit button
-            const submitBtn = document.getElementById('addBookBtn');
-            const originalText = submitBtn.innerHTML;
-            submitBtn.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Adding Book...';
-            submitBtn.disabled = true;
-            
-            // Collect contributors and categories
+            // Collect contributors and categories before submit
             collectContributorsAndCategories();
-            
-            // Allow form to submit normally
-            // The loading state will be cleared when the page reloads
+
+            const buttons = Array.from(form.querySelectorAll('button[type="submit"]'));
+            let submitter = e.submitter || lastClickedSubmitButton;
+            if (!submitter && buttons.length) {
+                submitter = buttons[buttons.length - 1];
+            }
+
+            buttons.forEach(button => {
+                if (button === submitter) {
+                    const loadingHtml = button.dataset.loadingText || "<i class='bi bi-spinner spin me-1'></i>Saving...";
+                    if (!button.dataset.originalHtml) {
+                        button.dataset.originalHtml = button.innerHTML;
+                    }
+                    button.innerHTML = loadingHtml;
+                }
+                button.disabled = true;
+            });
         });
     }
 });

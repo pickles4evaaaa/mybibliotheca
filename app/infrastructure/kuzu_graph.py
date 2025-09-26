@@ -172,10 +172,13 @@ class KuzuGraphDB:
                         try:
                             _row = result.get_next()
                             _vals = _row if isinstance(_row, (list, tuple)) else list(_row)
-                            user_count = _vals[0] if _vals else 0
+                            try:
+                                user_count = int(_vals[0] if _vals else 0)
+                            except Exception:
+                                user_count = int(str(_vals[0])) if _vals and _vals[0] is not None else 0
                         except Exception:
                             user_count = 0
-                        if user_count > 0:
+                        if int(user_count or 0) > 0:
                             # Database has existing users - ensure all tables exist but preserve data
                             has_existing_users = True
                             logger.info(f"Database contains {user_count} users - will ensure all tables exist")
@@ -749,7 +752,10 @@ class KuzuGraphDB:
                         try:
                             _ur = user_result.get_next()  # type: ignore
                             _urv = _ur if isinstance(_ur, (list, tuple)) else list(_ur)
-                            user_count = _urv[0] if _urv else 0  # type: ignore
+                            try:
+                                user_count = int(_urv[0] if _urv else 0)
+                            except Exception:
+                                user_count = int(str(_urv[0])) if _urv and _urv[0] is not None else 0
                         except Exception:
                             user_count = 0  # type: ignore
                     
@@ -760,20 +766,31 @@ class KuzuGraphDB:
                         try:
                             _br = book_result.get_next()  # type: ignore
                             _brv = _br if isinstance(_br, (list, tuple)) else list(_br)
-                            book_count = _brv[0] if _brv else 0  # type: ignore
+                            try:
+                                book_count = int(_brv[0] if _brv else 0)
+                            except Exception:
+                                book_count = int(str(_brv[0])) if _brv and _brv[0] is not None else 0
                         except Exception:
                             book_count = 0  # type: ignore
                     
-                    owns_result = self._connection.execute("MATCH ()-[r:OWNS]->() RETURN COUNT(r) as count")
-                    if isinstance(owns_result, list) and owns_result:
-                        owns_result = owns_result[0]
-                    if owns_result and owns_result.has_next():  # type: ignore
-                        try:
-                            _or = owns_result.get_next()  # type: ignore
-                            _orv = _or if isinstance(_or, (list, tuple)) else list(_or)
-                            owns_count = _orv[0] if _orv else 0  # type: ignore
-                        except Exception:
-                            owns_count = 0  # type: ignore
+                    try:
+                        owns_enabled = os.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes')
+                    except Exception:
+                        owns_enabled = False
+                    if owns_enabled:
+                        owns_result = self._connection.execute("MATCH ()-[r:OWNS]->() RETURN COUNT(r) as count")
+                        if isinstance(owns_result, list) and owns_result:
+                            owns_result = owns_result[0]
+                        if owns_result and owns_result.has_next():  # type: ignore
+                            try:
+                                _or = owns_result.get_next()  # type: ignore
+                                _orv = _or if isinstance(_or, (list, tuple)) else list(_or)
+                                try:
+                                    owns_count = int(_orv[0] if _orv else 0)
+                                except Exception:
+                                    owns_count = int(str(_orv[0])) if _orv and _orv[0] is not None else 0
+                            except Exception:
+                                owns_count = 0  # type: ignore
                         
                 except Exception as e:
                     print(f"Error getting relationship count: {e}")
@@ -837,17 +854,14 @@ class KuzuGraphDB:
             
             rows = []
             if result:
+                storage = KuzuGraphStorage(self)
                 while result.has_next():  # type: ignore
                     row = result.get_next()  # type: ignore
-                    # Convert row to dict
-                    if len(row) == 1:
-                        # Single column result
-                        rows.append({'result': row[0]})
+                    values = storage._row_values(row)
+                    if len(values) == 1:
+                        rows.append({'result': values[0]})
                     else:
-                        # Multiple columns - create dict with column names
-                        row_dict = {}
-                        for i, value in enumerate(row):
-                            row_dict[f'col_{i}'] = value
+                        row_dict = {f'col_{i}': value for i, value in enumerate(values)}
                         rows.append(row_dict)
             return rows
         except Exception as e:
@@ -942,15 +956,11 @@ class KuzuGraphStorage:
             if result and result.has_next():
                 while result.has_next():
                     row = result.get_next()
-                    # Convert row to dict format expected by services
-                    if len(row) == 1:
-                        # Single column result
-                        rows.append({'result': row[0]})
+                    values = self._row_values(row)
+                    if len(values) == 1:
+                        rows.append({'result': values[0]})
                     else:
-                        # Multiple columns - create dict with generic column names
-                        row_dict = {}
-                        for i, value in enumerate(row):
-                            row_dict[f'col_{i}'] = value
+                        row_dict = {f'col_{i}': value for i, value in enumerate(values)}
                         rows.append(row_dict)
             return rows
             
@@ -1403,8 +1413,17 @@ class KuzuGraphStorage:
             if result:
                 while result.has_next():
                     row = result.get_next()
-                    rel_data = dict(row[0])
-                    to_data = dict(row[1])
+                    vals = self._row_values(row)
+                    rel_raw = vals[0] if len(vals) > 0 else {}
+                    to_raw = vals[1] if len(vals) > 1 else {}
+                    try:
+                        rel_data = dict(rel_raw)
+                    except Exception:
+                        rel_data = {"value": rel_raw}
+                    try:
+                        to_data = dict(to_raw)
+                    except Exception:
+                        to_data = {"value": to_raw}
                     relationships.append({
                         "relationship": rel_data,
                         "target": to_data
@@ -1451,42 +1470,37 @@ class KuzuGraphStorage:
             True if successful, False otherwise
         """
         try:
-            
-            # Step 1: Update the OWNS relationship custom_metadata
-            # First get the current OWNS relationship
-            query_get_owns = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-            RETURN r.custom_metadata as current_metadata
-            """
-            
-            result = self._execute_query(query_get_owns, {"user_id": user_id, "book_id": book_id})
-            current_metadata = {}
-            
-            if result and result.has_next():
-                _row = result.get_next()
-                _vals = self._row_values(_row)
-                metadata_json = _vals[0] if _vals else None
-                if metadata_json:
-                    try:
-                        current_metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
-                    except (json.JSONDecodeError, TypeError):
-                        current_metadata = {}
-            
-            # Update the metadata
-            current_metadata[field_name] = field_value
-            metadata_json_str = json.dumps(current_metadata)
-            
-            # Update the OWNS relationship with new metadata
-            query_update_owns = """
-            MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
-            SET r.custom_metadata = $metadata_json
-            """
-            
-            self.kuzu_conn.execute(query_update_owns, {
-                "user_id": user_id, 
-                "book_id": book_id, 
-                "metadata_json": metadata_json_str
-            })
+            owns_enabled = os.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes')
+            if owns_enabled:
+                try:
+                    query_get_owns = """
+                    MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+                    RETURN r.custom_metadata as current_metadata
+                    """
+                    result = self._execute_query(query_get_owns, {"user_id": user_id, "book_id": book_id})
+                    current_metadata = {}
+                    if result and result.has_next():
+                        _row = result.get_next()
+                        _vals = self._row_values(_row)
+                        metadata_json = _vals[0] if _vals else None
+                        if metadata_json:
+                            try:
+                                current_metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+                            except (json.JSONDecodeError, TypeError):
+                                current_metadata = {}
+                    current_metadata[field_name] = field_value
+                    metadata_json_str = json.dumps(current_metadata)
+                    query_update_owns = """
+                    MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
+                    SET r.custom_metadata = $metadata_json
+                    """
+                    self.kuzu_conn.execute(query_update_owns, {
+                        "user_id": user_id,
+                        "book_id": book_id,
+                        "metadata_json": metadata_json_str
+                    })
+                except Exception:
+                    pass
             
             
             # Step 2: Look for existing CustomField definition by name
@@ -1543,17 +1557,20 @@ class KuzuGraphStorage:
                         'created_at': datetime.now(timezone.utc).isoformat()
                     }
                     
-                    success = self.create_relationship(
-                        'User', user_id, 
-                        'HAS_CUSTOM_FIELD', 
-                        'CustomField', field_definition_id, 
-                        rel_props
-                    )
-                    
-                    if success:
-                        logger.info(f"Created custom field relationship for field {field_definition_id}")
+                    if field_definition_id is None:
+                        logger.error("Cannot create HAS_CUSTOM_FIELD relationship: field_definition_id is None")
                     else:
-                        logger.error(f"Failed to create custom field relationship for field {field_definition_id}")
+                        success = self.create_relationship(
+                            'User', user_id, 
+                            'HAS_CUSTOM_FIELD', 
+                            'CustomField', str(field_definition_id), 
+                            rel_props
+                        )
+                        
+                        if success:
+                            logger.info(f"Created custom field relationship for field {field_definition_id}")
+                        else:
+                            logger.error(f"Failed to create custom field relationship for field {field_definition_id}")
                 else:
                     # Update existing relationship value
                     query_update_rel = """
@@ -1571,7 +1588,7 @@ class KuzuGraphStorage:
                     })
                     
             else:
-                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - metadata stored in OWNS only")
+                print(f"ℹ️ [STORE_CUSTOM_METADATA] No field definition found for '{field_name}' - stored in personal metadata only (OWNS skipped)")
             
             return True
             

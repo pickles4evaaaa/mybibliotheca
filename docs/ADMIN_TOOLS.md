@@ -6,24 +6,45 @@ Bibliotheca includes a comprehensive set of admin tools for managing users and s
 
 ## Available Commands
 
-### 1. Reset Admin Password
-Reset the password for the admin user account.
+### 1. Reset Any User Password (Interactive)
+Reset the password for any account (including admins) using the interactive picker inside the running container.
+
+```bash
+# Launch the guided prompt
+docker exec -it bibliotheca python3 admin_tools.py reset-user-password
+
+# Skip the picker with a username or email
+docker exec -it bibliotheca python3 admin_tools.py reset-user-password --identifier johndoe
+
+# Provide a password non-interactively (less secure, echoed in history)
+docker exec -it bibliotheca python3 admin_tools.py reset-user-password --identifier johndoe --password 'TempPass!234'
+```
+
+**Features:**
+- Interactive roster shows usernames, emails, and role indicators before you choose
+- Works for every user (admins, regular users, inactive accounts) directly inside the container
+- Enforces the full strong-password policy with hidden, double-entry prompts
+- Automatically clears failed login counters and unlocks accounts when a password is reset
+- Optional `--identifier` and `--password` flags support scripted recoveries when interactive access isn't possible
+
+### 2. Reset Admin Password (Quick Shortcut)
+Keep using the dedicated admin command when you already know which admin account needs a reset.
 
 ```bash
 # Interactive password prompt (recommended for security)
 docker exec -it bibliotheca python3 admin_tools.py reset-admin-password
 
 # With specified password (less secure, password visible in history)
-docker exec -it bibliotheca python3 admin_tools.py reset-admin-password --password newpassword123
+docker exec -it bibliotheca python3 admin_tools.py reset-admin-password --password 'TempPass!234'
 ```
 
 **Features:**
-- Password validation (minimum 8 chars, letters + numbers)
-- Interactive password confirmation
-- Secure password input (hidden from terminal)
-- Updates existing admin user
+- Same strong password enforcement (12+ chars, mixed case, numbers, symbols)
+- Interactive confirmation keeps passwords out of shell history
+- Resets the stored hash, unlocks the account, and keeps admin privileges intact
+- Fast path when you only need to target the first admin user
 
-### 2. Create Additional Admin
+### 3. Create Additional Admin
 Create new admin users with full administrative privileges.
 
 ```bash
@@ -43,7 +64,7 @@ docker exec -it bibliotheca python3 admin_tools.py create-admin --force
 - Prevents duplicate admin creation (unless forced)
 - Sets admin privileges automatically
 
-### 3. Promote User to Admin
+### 4. Promote User to Admin
 Grant admin privileges to existing regular users.
 
 ```bash
@@ -55,7 +76,7 @@ docker exec -it bibliotheca python3 admin_tools.py promote-user --username johnd
 - Grants admin privileges
 - Preserves existing user data
 
-### 4. List Users
+### 5. List Users
 Display all users in the system with their details.
 
 ```bash
@@ -68,7 +89,7 @@ docker exec -it bibliotheca python3 admin_tools.py list-users
 - Active status (Yes/No)
 - Account creation date
 
-### 5. System Statistics
+### 6. System Statistics
 Display comprehensive system information and statistics.
 
 ```bash
@@ -85,10 +106,12 @@ docker exec -it bibliotheca python3 admin_tools.py system-stats
 
 ### Password Requirements
 All passwords must meet these security requirements:
-- Minimum 8 characters long
-- At least one letter (a-z or A-Z)
-- At least one number (0-9)
-- No common passwords accepted
+- At least 12 characters long
+- Includes at least one uppercase letter (A-Z)
+- Includes at least one lowercase letter (a-z)
+- Includes at least one number (0-9)
+- Includes at least one special character (!@#$%^&*()_+-=[]{};':"\|,.<>/?)
+- Not present in the common password blacklist
 
 ### Input Validation
 - All user inputs are validated and sanitized
@@ -178,9 +201,9 @@ docker exec -it bibliotheca python3 admin_tools.py list-users
 ```
 
 **"Password does not meet requirements"**
-- Ensure password has minimum 8 characters
-- Include at least one letter and one number
-- Avoid common passwords
+- Ensure the password is at least 12 characters long
+- Include uppercase, lowercase, numbers, and special characters
+- Avoid common or reused passwords
 
 ### Debug Information
 For troubleshooting, check:

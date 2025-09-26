@@ -32,7 +32,8 @@ except ImportError as e:
 
 def validate_password(password):
     """Validate password meets security requirements"""
-    return User.is_password_strong(password), "Password meets security requirements" if User.is_password_strong(password) else "Password does not meet security requirements"
+    is_valid = User.is_password_strong(password)
+    return is_valid, "Password meets security requirements" if is_valid else "Password does not meet security requirements"
 
 def get_secure_password(prompt="Enter new password: "):
     """Get a password from user input with validation"""
@@ -60,6 +61,22 @@ def get_secure_password(prompt="Enter new password: "):
             continue
             
         return password
+
+
+def update_user_password(user: User, password: str) -> User:
+    """Set a new password for the given user and persist it."""
+    user.set_password(password)
+    try:
+        user.reset_failed_login()
+    except AttributeError:
+        pass
+    user.is_active = True
+    user.password_must_change = False
+
+    updated_user = user_service.update_user_sync(user)
+    if not updated_user:
+        raise RuntimeError("Password update failed to persist.")
+    return updated_user
 
 def reset_admin_password(args):
     """Reset the admin user password"""
@@ -93,26 +110,120 @@ def reset_admin_password(args):
         
         # Update password
         try:
-            updated_user = User(
-                id=admin_user.id,
-                username=admin_user.username,
-                email=admin_user.email,
-                is_admin=admin_user.is_admin,
-                is_active=admin_user.is_active,
-                password_hash=User.hash_password(password),
-                created_at=admin_user.created_at,
-                last_login=admin_user.last_login
-            )
-            
-            user_service.update_user_sync(updated_user)
-            
+            update_user_password(admin_user, password)
+
             print(f"✅ Password reset successful for admin user: {admin_user.username}")
             print(f"📧 Email: {admin_user.email}")
             print("🔒 Please store the new password securely")
-            
+
             return True
         except Exception as e:
-            print(f"❌ Password validation failed: {e}")
+            print(f"❌ Failed to reset admin password: {e}")
+            return False
+
+
+def reset_user_password(args):
+    """Reset the password for any user (admin or regular)."""
+    app = create_app()
+
+    with app.app_context():
+        all_users = user_service.get_all_users_sync()
+        if not all_users:
+            print("❌ No users found in the system")
+            return False
+
+        sorted_users = sorted(
+            all_users,
+            key=lambda u: u.created_at if u.created_at else datetime.min,
+            reverse=True
+        )
+
+        def resolve_identifier(identifier: str):
+            identifier = identifier.strip()
+            if not identifier:
+                return None
+            lower_value = identifier.lower()
+            for candidate in sorted_users:
+                if candidate.username and candidate.username.lower() == lower_value:
+                    return candidate
+                if candidate.email and candidate.email.lower() == lower_value:
+                    return candidate
+            # Fall back to service lookups in case new user added concurrently
+            user = user_service.get_user_by_username_sync(identifier)
+            if user:
+                return user
+            return user_service.get_user_by_email_sync(identifier)
+
+        selected_user = None
+
+        if args.identifier:
+            selected_user = resolve_identifier(args.identifier)
+            if not selected_user:
+                print(f"❌ No user found matching '{args.identifier}'")
+                return False
+        else:
+            print("👥 Available users:")
+            for idx, user in enumerate(sorted_users, start=1):
+                badges = []
+                if user.is_admin:
+                    badges.append('admin')
+                if not user.is_active:
+                    badges.append('inactive')
+                badge_text = f" ({', '.join(badges)})" if badges else ''
+                email_text = user.email or '—'
+                print(f"  [{idx}] {user.username:<20} {email_text:<30}{badge_text}")
+            print()
+
+            while not selected_user:
+                choice = input("Select a user by number or enter username/email: ").strip()
+                if not choice:
+                    continue
+                if choice.isdigit():
+                    idx = int(choice)
+                    if 1 <= idx <= len(sorted_users):
+                        selected_user = sorted_users[idx - 1]
+                        break
+                    print("❌ Invalid selection. Try again.")
+                    continue
+                selected_user = resolve_identifier(choice)
+                if not selected_user:
+                    print(f"❌ No user found for '{choice}'. Try again.")
+
+        if not selected_user:
+            return False
+
+        was_locked = False
+        try:
+            was_locked = selected_user.is_locked()
+        except Exception:
+            was_locked = False
+
+        print(
+            f"\n🔧 Resetting password for: {selected_user.username}"
+            f" ({selected_user.email or 'no email on file'})"
+        )
+
+        if args.password:
+            password = args.password
+            is_valid, message = validate_password(password)
+            if not is_valid:
+                print(f"❌ {message}")
+                return False
+        else:
+            password = get_secure_password(
+                prompt=f"Enter new password for {selected_user.username}: "
+            )
+
+        try:
+            update_user_password(selected_user, password)
+            print(f"✅ Password reset successful for user: {selected_user.username}")
+            if selected_user.is_admin:
+                print("ℹ️ This user has admin privileges.")
+            if was_locked:
+                print("🔓 Account lock cleared.")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to reset password: {e}")
             return False
 
 def create_admin(args):
@@ -313,6 +424,7 @@ def main():
         epilog="""
 Examples:
   python3 admin_tools.py reset-admin-password
+    python3 admin_tools.py reset-user-password
   python3 admin_tools.py reset-admin-password --password newpass123
   python3 admin_tools.py create-admin --username newadmin --email admin@example.com
   python3 admin_tools.py promote-user --username johndoe
@@ -326,6 +438,11 @@ Examples:
     # Reset admin password
     reset_parser = subparsers.add_parser('reset-admin-password', help='Reset admin user password')
     reset_parser.add_argument('--password', help='New password (if not provided, will prompt securely)')
+
+    # Reset any user password
+    reset_user_parser = subparsers.add_parser('reset-user-password', help='Reset password for any user (interactive by default)')
+    reset_user_parser.add_argument('--identifier', help='Username or email to reset (optional)')
+    reset_user_parser.add_argument('--password', help='New password (if not provided, will prompt securely)')
     
     # Create admin
     create_parser = subparsers.add_parser('create-admin', help='Create a new admin user')
@@ -354,6 +471,7 @@ Examples:
     try:
         command_map = {
             'reset-admin-password': reset_admin_password,
+            'reset-user-password': reset_user_password,
             'create-admin': create_admin,
             'promote-user': promote_user,
             'list-users': list_users,

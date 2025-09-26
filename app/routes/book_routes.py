@@ -15,6 +15,7 @@ import csv
 import io
 from pathlib import Path
 from io import BytesIO
+from typing import Optional
 
 from app.services import book_service, reading_log_service, custom_field_service, user_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
@@ -3486,6 +3487,7 @@ def search_books_in_library():
 def add_book_manual():
     """Manual add with series autocomplete integration (simplified)."""
     import json
+    submit_action = request.form.get('submit_action', 'save')
     title = (request.form.get('title') or '').strip()
     if not title:
         flash('Title is required', 'danger')
@@ -3523,14 +3525,18 @@ def add_book_manual():
 
     # Scalars
     isbn_raw = (request.form.get('isbn') or '').upper()
+    isbn10_form = (request.form.get('isbn_10') or request.form.get('isbn10') or '').upper()
+    isbn13_form = (request.form.get('isbn_13') or request.form.get('isbn13') or '').upper()
     subtitle = (request.form.get('subtitle') or '').strip()
     publisher_name = (request.form.get('publisher') or '').strip()
     description = (request.form.get('description') or '').strip()
     page_count = None
     pcs = (request.form.get('page_count') or '').strip()
     if pcs:
-        try: page_count = int(pcs)
-        except ValueError: pass
+        try:
+            page_count = int(pcs)
+        except ValueError:
+            pass
     language = (request.form.get('language') or 'en').strip() or 'en'
     cover_url = (request.form.get('cover_url') or '').strip()
     published_date = (request.form.get('published_date') or '').strip()
@@ -3540,9 +3546,54 @@ def add_book_manual():
 
     isbn10 = isbn13 = None
     import re
-    clean = re.sub(r'[^0-9X]', '', isbn_raw)
-    if len(clean)==10: isbn10 = clean
-    elif len(clean)==13: isbn13 = clean
+    preferred_isbn = isbn13_form or isbn10_form or isbn_raw
+    clean = re.sub(r'[^0-9X]', '', preferred_isbn)
+    if len(clean) == 10:
+        isbn10 = clean
+    elif len(clean) == 13:
+        isbn13 = clean
+    if not isbn10 and isbn10_form:
+        c10 = re.sub(r'[^0-9X]', '', isbn10_form)
+        if len(c10) == 10:
+            isbn10 = c10
+    if not isbn13 and isbn13_form:
+        c13 = re.sub(r'[^0-9X]', '', isbn13_form)
+        if len(c13) == 13:
+            isbn13 = c13
+
+    def _isbn10_to_13(i10: str) -> str:
+        base = "978" + i10[:9]
+        total = 0
+        for idx, ch in enumerate(base):
+            total += int(ch) * (1 if idx % 2 == 0 else 3)
+        check_digit = (10 - (total % 10)) % 10
+        return base + str(check_digit)
+
+    def _isbn13_to_10(i13: str) -> Optional[str]:
+        if not i13.startswith('978'):
+            return None
+        base = i13[3:12]
+        total = 0
+        for idx, ch in enumerate(base):
+            total += int(ch) * (10 - idx)
+        check_digit = (11 - (total % 11)) % 11
+        if check_digit == 10:
+            check_char = 'X'
+        elif check_digit == 11:
+            check_char = '0'
+        else:
+            check_char = str(check_digit)
+        return base + check_char
+
+    try:
+        if isbn10 and not isbn13:
+            isbn13 = _isbn10_to_13(isbn10)
+        elif isbn13 and not isbn10:
+            maybe10 = _isbn13_to_10(isbn13)
+            if maybe10:
+                isbn10 = maybe10
+    except Exception:
+        pass
 
     book_data = SimplifiedBook(
         title=title,
@@ -3568,14 +3619,22 @@ def add_book_manual():
         openlibrary_id=None
     )
 
-    added = SimplifiedBookService().add_book_to_user_library_sync(
-        book_data=book_data,
-        user_id=current_user.id,
-        reading_status=request.form.get('reading_status',''),
-        ownership_status=request.form.get('ownership_status','owned'),
-        media_type=request.form.get('media_type','physical'),
-        location_id=request.form.get('location_id')
-    )
+    try:
+        added = SimplifiedBookService().add_book_to_user_library_sync(
+            book_data=book_data,
+            user_id=current_user.id,
+            reading_status=request.form.get('reading_status',''),
+            ownership_status=request.form.get('ownership_status','owned'),
+            media_type=request.form.get('media_type','physical'),
+            location_id=request.form.get('location_id')
+        )
+    except BookAlreadyExistsError as dup:
+        flash('That book already exists. Taking you to it.', 'info')
+        existing_id = getattr(dup, 'book_id', None)
+        if existing_id:
+            return redirect(url_for('book.view_book_enhanced', uid=existing_id))
+        return redirect(url_for('main.library'))
+
     if not added:
         flash('Failed to add book','danger')
         return redirect(url_for('main.library'))
@@ -3617,7 +3676,18 @@ def add_book_manual():
             try: book_service.update_book_sync(created.uid, str(current_user.id), **updates)
             except Exception: pass
 
-    flash(f'Added "{title}"','success')
+    try:
+        from app.utils.simple_cache import bump_user_library_version
+        bump_user_library_version(str(current_user.id))
+    except Exception:
+        pass
+
+    message = f'Added "{title}"'
+    if submit_action == 'save_and_new':
+        flash(f'{message}. Ready for the next book!', 'success')
+        return redirect(url_for('book.add_book'))
+
+    flash(message, 'success')
     return redirect(url_for('main.library'))
     # Convert date fields
     published_date = None
