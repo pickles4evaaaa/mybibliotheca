@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -9,13 +10,15 @@ import re
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .kuzu_async_helper import run_async
 from .opds_probe_service import opds_probe_service, OPDSProbeService
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
+from ..domain.models import BookContribution, ContributionType, Person
+from ..location_service import LocationService
 from ..utils.image_processing import process_image_from_url
 from ..utils.safe_kuzu_manager import safe_get_connection
 from flask import current_app, has_app_context
@@ -26,6 +29,94 @@ EBOOK_HINTS = {"epub", "pdf", "ebook", "html", "txt", "text"}
 
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_title(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text or None
+
+
+def _serialize_for_hash(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_serialize_for_hash(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_serialize_for_hash(item) for item in value)
+    if isinstance(value, dict):
+        return {str(k): _serialize_for_hash(v) for k, v in value.items()}
+    if isinstance(value, set):
+        return sorted(_serialize_for_hash(item) for item in value)
+    return value
+
+
+_HASH_EXCLUDED_KEYS = {"raw_links", "entry"}
+
+
+def _compute_entry_hash(entry: Dict[str, Any]) -> str:
+    payload: Dict[str, Any] = {}
+    for key in sorted(entry.keys()):
+        if key in _HASH_EXCLUDED_KEYS:
+            continue
+        payload[key] = _serialize_for_hash(entry[key])
+    marshalled = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(marshalled.encode("utf-8")).hexdigest()
+
+
+def _normalize_timestamp(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        reference = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return reference.astimezone(timezone.utc).isoformat()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        candidate = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            return text
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    return str(value)
+
+
+def _to_kuzu_date(value: Any) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        candidate = text.replace("Z", "+00:00")
+        try:
+            parsed_dt = datetime.fromisoformat(candidate)
+            return parsed_dt.date()
+        except ValueError:
+            try:
+                return date.fromisoformat(text[:10])
+            except ValueError:
+                return None
+    return None
+
+
+def _build_set_clause(alias: str, properties: Dict[str, Any], *, prefix: str) -> Tuple[str, Dict[str, Any]]:
+    assignments: List[str] = []
+    params: Dict[str, Any] = {}
+    for key, value in properties.items():
+        param_key = f"{prefix}_{key}"
+        assignments.append(f"{alias}.{key} = ${param_key}")
+        params[param_key] = value
+    return ", ".join(assignments), params
 
 
 def _infer_media_type(detected_formats: Iterable[str]) -> str:
@@ -325,6 +416,7 @@ class OPDSSyncService:
         self._probe_service = probe_service or opds_probe_service
         self._max_sync = int(os.getenv("OPDS_SYNC_MAX_ENTRIES", "50"))
         self._book_repo = KuzuBookRepository()
+        self._location_service: Optional[LocationService] = None
 
     async def quick_probe_sync(
         self,
@@ -335,6 +427,7 @@ class OPDSSyncService:
         user_agent: Optional[str] = None,
         mapping: Optional[Dict[str, str]] = None,
         max_samples: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         probe = await self._probe_service.probe(
             base_url,
@@ -345,7 +438,20 @@ class OPDSSyncService:
         )
         entries = apply_mapping_to_samples(probe.get("samples", []), mapping)
         flask_app = current_app._get_current_object() if has_app_context() else None  # type: ignore[attr-defined]
-        sync_result = await asyncio.to_thread(self._apply_entries, entries[: self._max_sync], flask_app)
+        cover_auth: Optional[Tuple[str, str]] = None
+        if username is not None and password is not None:
+            cover_auth = (username, password)
+        headers: Optional[Dict[str, str]] = None
+        if user_agent:
+            headers = {"User-Agent": user_agent}
+        sync_result = await asyncio.to_thread(
+            self._apply_entries,
+            entries[: self._max_sync],
+            flask_app,
+            cover_auth=cover_auth,
+            cover_headers=headers,
+            user_id=user_id,
+        )
         return {
             "probe": probe,
             "sync": {
@@ -358,6 +464,11 @@ class OPDSSyncService:
 
     def quick_probe_sync_sync(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         return run_async(self.quick_probe_sync(*args, **kwargs))
+
+    def _get_location_service(self) -> LocationService:
+        if self._location_service is None:
+            self._location_service = LocationService()
+        return self._location_service
 
     async def test_sync(
         self,
@@ -397,25 +508,39 @@ class OPDSSyncService:
     # Database upsert helpers
     # ------------------------------------------------------------------
 
-    def _apply_entries(self, entries: List[Dict[str, Any]], flask_app=None) -> SyncResult:
+    def _apply_entries(
+        self,
+        entries: List[Dict[str, Any]],
+        flask_app=None,
+        *,
+        cover_auth: Optional[Tuple[str, str]] = None,
+        cover_headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
+    ) -> SyncResult:
         created = 0
         updated = 0
         skipped = 0
         book_ids: List[str] = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        location_service: Optional[LocationService] = None
+        default_location_id: Optional[str] = None
+        location_checked = False
+        location_user_id = user_id or "__system__"
 
         context_manager = flask_app.app_context() if flask_app is not None else nullcontext()
 
         with context_manager:
             with safe_get_connection(operation="opds_sync") as conn:
                 for entry in entries:
+                    entry["opds_source_entry_hash"] = _compute_entry_hash(entry)
+                    entry["opds_source_updated_at"] = _normalize_timestamp(entry.get("updated") or entry.get("published"))
                     oid = entry.get("opds_source_id")
                     if not oid:
                         skipped += 1
                         continue
                     book_id = self._find_book_id(conn, oid)
                     if book_id:
-                        self._cache_cover_if_needed(entry, book_id)
+                        self._cache_cover_if_needed(entry, book_id, cover_auth=cover_auth, cover_headers=cover_headers)
                         success = self._update_book(conn, book_id, entry, now)
                         if success:
                             updated += 1
@@ -424,11 +549,15 @@ class OPDSSyncService:
                                 self._sync_relationships(book_id, entry)
                             except Exception:
                                 logger.exception("Failed to reconcile relationships for updated OPDS book %s", book_id)
+                            try:
+                                self._sync_contributors(book_id, entry)
+                            except Exception:
+                                logger.exception("Failed to reconcile contributors for updated OPDS book %s", book_id)
                         else:
                             skipped += 1
                     else:
                         new_id = str(uuid.uuid4())
-                        self._cache_cover_if_needed(entry, new_id)
+                        self._cache_cover_if_needed(entry, new_id, cover_auth=cover_auth, cover_headers=cover_headers)
                         success = self._create_book(conn, new_id, entry, now)
                         if success:
                             created += 1
@@ -437,6 +566,32 @@ class OPDSSyncService:
                                 self._sync_relationships(new_id, entry)
                             except Exception:
                                 logger.exception("Failed to create relationships for new OPDS book %s", new_id)
+                            try:
+                                self._sync_contributors(new_id, entry)
+                            except Exception:
+                                logger.exception("Failed to create contributors for new OPDS book %s", new_id)
+                            if not location_checked or not default_location_id:
+                                try:
+                                    location_service = location_service or self._get_location_service()
+                                    default_location = location_service.get_default_location()
+                                    if not default_location:
+                                        try:
+                                            location_service.setup_default_locations()
+                                            default_location = location_service.get_default_location()
+                                        except Exception:
+                                            logger.exception("Failed to initialize default location for OPDS book %s", new_id)
+                                    default_location_id = getattr(default_location, "id", None) if default_location else None
+                                except Exception:
+                                    logger.exception("Failed to resolve default location for OPDS book %s", new_id)
+                                    default_location_id = None
+                                location_checked = True
+                            if default_location_id:
+                                assigned = self._assign_default_location(conn, new_id, default_location_id)
+                                if not assigned and location_service:
+                                    try:
+                                        location_service.add_book_to_location(new_id, default_location_id, location_user_id)
+                                    except Exception:
+                                        logger.exception("Failed to assign default location for OPDS book %s", new_id)
                         else:
                             skipped += 1
         return SyncResult(created=created, updated=updated, skipped=skipped, entries=book_ids)
@@ -522,7 +677,14 @@ class OPDSSyncService:
             "preview": preview,
         }
 
-    def _cache_cover_if_needed(self, entry: Dict[str, Any], book_id: str) -> None:
+    def _cache_cover_if_needed(
+        self,
+        entry: Dict[str, Any],
+        book_id: str,
+        *,
+        cover_auth: Optional[Tuple[str, str]] = None,
+        cover_headers: Optional[Dict[str, str]] = None,
+    ) -> None:
         cover_url = entry.get("cover_url")
         if not cover_url:
             return
@@ -531,7 +693,13 @@ class OPDSSyncService:
         if not has_app_context():
             return
         try:
-            cached_url = process_image_from_url(str(cover_url))
+            try:
+                cached_url = process_image_from_url(str(cover_url), auth=cover_auth, headers=cover_headers)
+            except TypeError as exc:
+                if "unexpected keyword argument" in str(exc):
+                    cached_url = process_image_from_url(str(cover_url))
+                else:
+                    raise
         except Exception:
             logger.exception("Failed to cache cover for OPDS book %s", book_id)
             return
@@ -563,39 +731,42 @@ class OPDSSyncService:
                 return None
         return None
 
-    def _create_book(self, conn, book_id: str, entry: Dict[str, Any], now: str) -> bool:  # type: ignore[no-untyped-def]
+    def _create_book(self, conn, book_id: str, entry: Dict[str, Any], now: datetime) -> bool:  # type: ignore[no-untyped-def]
         raw_categories_value = entry.get("raw_categories")
         normalized_raw_categories = self._normalize_categories(raw_categories_value)
         if normalized_raw_categories is None:
             normalized_raw_categories = self._normalize_categories(entry.get("categories"))
-        if normalized_raw_categories is None:
-            raw_categories_json = json.dumps([])
-        else:
-            raw_categories_json = json.dumps(normalized_raw_categories)
+        raw_categories_json = json.dumps(normalized_raw_categories or [])
 
+        title_value = entry.get("title")
+        published_date_value = _to_kuzu_date(entry.get("published_date") or entry.get("published"))
         props = {
-            "id": book_id,
-            "title": entry.get("title"),
-            "normalized_title": (entry.get("title") or "").strip().lower(),
+            "title": title_value,
+            "normalized_title": _normalize_title(title_value),
+            "subtitle": entry.get("subtitle"),
             "description": entry.get("description"),
             "language": self._normalize_language(entry.get("language")),
             "cover_url": entry.get("cover_url"),
             "opds_source_id": entry.get("opds_source_id"),
+            "opds_source_updated_at": entry.get("opds_source_updated_at"),
+            "opds_source_entry_hash": entry.get("opds_source_entry_hash"),
             "media_type": entry.get("media_type"),
             "page_count": entry.get("page_count"),
             "series": entry.get("series"),
             "series_order": entry.get("series_order"),
             "average_rating": entry.get("average_rating"),
-            "published_date": _to_date_str(entry.get("published_date") or entry.get("published")),
+            "published_date": published_date_value,
             "created_at": now,
             "updated_at": now,
             "raw_categories": raw_categories_json,
         }
+        set_clause, params = _build_set_clause("b", props, prefix="create")
+        params["book_id"] = book_id
+        query = "CREATE (b:Book {id: $book_id})"
+        if set_clause:
+            query = f"{query} SET {set_clause}"
         try:
-            conn.execute(
-                "CREATE (b:Book) SET b += $props",
-                {"props": props},
-            )
+            conn.execute(query, params)
             return True
         except Exception:
             return False
@@ -639,34 +810,183 @@ class OPDSSyncService:
                 except Exception:
                     logger.exception("Failed to create publisher relationship for book %s", book_id)
 
-    def _update_book(self, conn, book_id: str, entry: Dict[str, Any], now: str) -> bool:  # type: ignore[no-untyped-def]
+    def _sync_contributors(self, book_id: str, entry: Dict[str, Any]) -> None:
+        """Rebuild contributor relationships for the given book based on the entry payload."""
+
+        def _resolve_contribution_type(raw_value: Any) -> ContributionType:
+            if isinstance(raw_value, ContributionType):
+                return raw_value
+            if isinstance(raw_value, str):
+                normalized = raw_value.strip().lower().replace(" ", "_")
+                for member in ContributionType:
+                    if member.value == normalized or member.name.lower() == normalized:
+                        return member
+            return ContributionType.AUTHORED
+
+        def _extract_person(payload: Dict[str, Any], fallback_name: Optional[str]) -> Optional[Person]:
+            name = (payload.get("name") or fallback_name or "").strip()
+            if not name:
+                return None
+
+            person_id = payload.get("id") or payload.get("person_id")
+            if person_id is not None:
+                person_id = str(person_id)
+
+            person = Person(
+                id=person_id,
+                name=name,
+            )
+
+            optional_fields = (
+                "normalized_name",
+                "birth_date",
+                "death_date",
+                "birth_year",
+                "death_year",
+                "birth_place",
+                "bio",
+                "website",
+                "openlibrary_id",
+                "wikidata_id",
+                "imdb_id",
+                "fuller_name",
+                "title",
+                "alternate_names",
+                "official_links",
+                "image_url",
+            )
+            for field_name in optional_fields:
+                value = payload.get(field_name)
+                if value is not None:
+                    setattr(person, field_name, value)
+
+            return person
+
+        contributors_payload = entry.get("contributors") or []
+
+        try:
+            safe_execute_kuzu_query(
+                "MATCH (p:Person)-[r:AUTHORED]->(b:Book {id: $book_id}) DELETE r",
+                {"book_id": book_id},
+                operation="opds_sync_clear_contributors",
+            )
+        except Exception:
+            logger.exception("Failed to clear contributor relationships for book %s", book_id)
+
+        prepared_contributions: List[BookContribution] = []
+        for raw in contributors_payload:
+            if isinstance(raw, BookContribution):
+                prepared = raw
+            else:
+                if isinstance(raw, dict):
+                    payload = raw
+                else:
+                    payload = getattr(raw, "__dict__", None) or {}
+
+                person_payload = payload.get("person")
+                person_obj: Optional[Person]
+                if isinstance(person_payload, Person):
+                    person_obj = person_payload
+                elif isinstance(person_payload, dict):
+                    person_obj = _extract_person(person_payload, payload.get("name"))
+                elif person_payload is None:
+                    person_obj = _extract_person(payload, payload.get("name"))
+                else:
+                    person_obj = _extract_person(getattr(person_payload, "__dict__", {}) or {}, payload.get("name"))
+
+                if not person_obj:
+                    continue
+
+                contribution_type = payload.get("contribution_type") or payload.get("role")
+                contribution_enum = _resolve_contribution_type(contribution_type)
+                order_value = payload.get("order")
+                notes = payload.get("notes")
+
+                prepared = BookContribution(
+                    person_id=str(person_obj.id or ""),
+                    book_id=book_id,
+                    contribution_type=contribution_enum,
+                    order=order_value,
+                    notes=notes,
+                    person=person_obj,
+                )
+                auto_fetch = payload.get("auto_fetch_metadata")
+                if auto_fetch is not None:
+                    setattr(prepared, "auto_fetch_metadata", bool(auto_fetch))
+
+            prepared_contributions.append(prepared)
+
+        for index, contribution in enumerate(prepared_contributions):
+            if contribution.order is None:
+                contribution.order = index
+            if getattr(contribution, "auto_fetch_metadata", None) is None:
+                setattr(contribution, "auto_fetch_metadata", True)
+            try:
+                run_async(self._book_repo._create_contributor_relationship(book_id, contribution, contribution.order))
+            except Exception:
+                contributor_name = getattr(getattr(contribution, "person", None), "name", "<unknown>")
+                logger.exception(
+                    "Failed to create contributor relationship for book %s (contributor %s)",
+                    book_id,
+                    contributor_name,
+                )
+
+    def _assign_default_location(self, conn, book_id: str, location_id: str) -> bool:  # type: ignore[no-untyped-def]
+        try:
+            conn.execute(
+                """
+                MATCH (b:Book {id: $book_id}), (l:Location {id: $location_id})
+                MERGE (b)-[rel:STORED_AT]->(l)
+                ON CREATE SET rel.created_at = $created_at
+                """,
+                {
+                    "book_id": book_id,
+                    "location_id": location_id,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "Failed to assign default location via direct query for OPDS book %s", book_id
+            )
+            return False
+
+    def _update_book(self, conn, book_id: str, entry: Dict[str, Any], now: datetime) -> bool:  # type: ignore[no-untyped-def]
+        raw_categories_value = entry.get("raw_categories")
+        normalized_raw_categories = self._normalize_categories(raw_categories_value)
+        if normalized_raw_categories is None:
+            normalized_raw_categories = self._normalize_categories(entry.get("categories"))
+        raw_categories_json = json.dumps(normalized_raw_categories or [])
+
+        title_value = entry.get("title")
+        published_date_value = _to_kuzu_date(entry.get("published_date") or entry.get("published"))
         update_fields = {
-            "title": entry.get("title"),
+            "title": title_value,
+            "normalized_title": _normalize_title(title_value),
+            "subtitle": entry.get("subtitle"),
             "description": entry.get("description"),
             "language": self._normalize_language(entry.get("language")),
             "cover_url": entry.get("cover_url"),
             "opds_source_id": entry.get("opds_source_id"),
+            "opds_source_updated_at": entry.get("opds_source_updated_at"),
+            "opds_source_entry_hash": entry.get("opds_source_entry_hash"),
             "media_type": entry.get("media_type"),
             "page_count": entry.get("page_count"),
             "series": entry.get("series"),
             "series_order": entry.get("series_order"),
             "average_rating": entry.get("average_rating"),
-            "published_date": _to_date_str(entry.get("published_date") or entry.get("published")),
+            "published_date": published_date_value,
             "updated_at": now,
+            "raw_categories": raw_categories_json,
         }
-        raw_categories_value = entry.get("raw_categories")
-        normalized_raw_categories = self._normalize_categories(raw_categories_value)
-        if normalized_raw_categories is None:
-            normalized_raw_categories = self._normalize_categories(entry.get("categories"))
-        if normalized_raw_categories is None:
-            update_fields["raw_categories"] = json.dumps([])
-        else:
-            update_fields["raw_categories"] = json.dumps(normalized_raw_categories)
+        set_clause, params = _build_set_clause("b", update_fields, prefix="update")
+        if not set_clause:
+            return True
+        params["book_id"] = book_id
+        query = f"MATCH (b:Book {{id: $book_id}}) SET {set_clause}"
         try:
-            conn.execute(
-                "MATCH (b:Book {id: $id}) SET b += $props",
-                {"id": book_id, "props": update_fields},
-            )
+            conn.execute(query, params)
             return True
         except Exception:
             return False

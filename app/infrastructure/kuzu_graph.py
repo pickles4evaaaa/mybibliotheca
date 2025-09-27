@@ -283,6 +283,20 @@ class KuzuGraphDB:
                                 logger.info("Added opds_source_id column to Book table")
                         except Exception as alter_e:
                             print(f"Note: Could not add opds_source_id to Book table: {alter_e}")
+
+                # Add OPDS metadata columns if missing
+                for column_name in ("opds_source_updated_at", "opds_source_entry_hash"):
+                    try:
+                        if self._connection:
+                            self._connection.execute(f"MATCH (b:Book) RETURN b.{column_name} LIMIT 1")
+                    except Exception as e:
+                        if "Cannot find property" in str(e) and column_name in str(e):
+                            try:
+                                if self._connection:
+                                    self._connection.execute(f"ALTER TABLE Book ADD {column_name} STRING")
+                                    logger.info("Added %s column to Book table", column_name)
+                            except Exception as alter_e:
+                                print(f"Note: Could not add {column_name} to Book table: {alter_e}")
                         
             else:
                 logger.info("🔧 Creating new database schema...")
@@ -333,6 +347,8 @@ class KuzuGraphDB:
                     google_books_id STRING,
                     openlibrary_id STRING,
                     opds_source_id STRING,
+                    opds_source_updated_at STRING,
+                    opds_source_entry_hash STRING,
                     average_rating DOUBLE,
                     rating_count INT64,
                     series STRING,

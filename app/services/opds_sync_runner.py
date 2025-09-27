@@ -267,6 +267,7 @@ class _OpdsSyncRunner:
                 user_agent=user_agent,
                 mapping=mapping,
                 max_samples=max_samples,
+                user_id=user_id,
             )
             sync_result = result.get("sync", {})
             created = int(sync_result.get("created", 0))
@@ -277,6 +278,9 @@ class _OpdsSyncRunner:
                 "status": "completed",
                 "processed": processed,
                 "total": processed,
+                "success": created + updated,
+                "skipped": skipped,
+                "errors": 0,
                 "recent_activity": [
                     f"Sync complete: created {created}, updated {updated}, skipped {skipped}."
                 ],

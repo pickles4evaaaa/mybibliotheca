@@ -5,6 +5,8 @@ import time
 from urllib.parse import urlparse
 from pathlib import Path
 import uuid
+from typing import Any, Dict, Optional
+
 import requests
 from PIL import Image, ImageOps
 from flask import current_app
@@ -96,7 +98,12 @@ def process_image_bytes_and_store(image_bytes: bytes, filename_hint: str | None 
     return f"/covers/{filename}"
 
 
-def process_image_from_url(url: str) -> str:
+def process_image_from_url(
+    url: str,
+    *,
+    auth: Optional[Any] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> str:
     """Download image from URL, process and store, return relative URL.
 
     Adds safety to prevent deadlock when a single Gunicorn worker tries to HTTP GET its own /covers/* resource.
@@ -127,7 +134,12 @@ def process_image_from_url(url: str) -> str:
     current_app.logger.info(f"[COVER][DL] Start url={url}")
     dl_start = time.perf_counter()
     # Shorter timeout to avoid long hangs; retries could be added later
-    resp = requests.get(url, timeout=6, stream=True)
+    request_kwargs: Dict[str, Any] = {"timeout": 6, "stream": True}
+    if auth is not None:
+        request_kwargs["auth"] = auth
+    if headers:
+        request_kwargs["headers"] = headers
+    resp = requests.get(url, **request_kwargs)
     resp.raise_for_status()
     dl_time = time.perf_counter() - dl_start
     buf = BytesIO()

@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "generated_at": "2025-03-01T00:00:00Z",
   "nodes": {
     "Series": {
@@ -60,6 +60,8 @@
   "google_books_id": "STRING",
   "openlibrary_id": "STRING",
   "opds_source_id": "STRING",
+    "opds_source_updated_at": "STRING",
+    "opds_source_entry_hash": "STRING",
         "average_rating": "DOUBLE",
         "rating_count": "INT64",
         "series": "STRING",

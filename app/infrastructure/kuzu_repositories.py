@@ -782,7 +782,8 @@ class KuzuBookRepository:
                 return
             
             # Create or find the person
-            person_id = await self._ensure_person_exists(person)
+            auto_fetch_metadata = getattr(contribution, 'auto_fetch_metadata', True)
+            person_id = await self._ensure_person_exists(person, auto_fetch=auto_fetch_metadata)
             if not person_id:
                 logger.warning(f"⚠️ Could not create/find person: {getattr(person, 'name', 'unknown')}")
                 return
@@ -833,7 +834,7 @@ class KuzuBookRepository:
         except Exception as e:
             logger.error(f"❌ Failed to create contributor relationship: {e}")
     
-    async def _ensure_person_exists(self, person: Any) -> Optional[str]:
+    async def _ensure_person_exists(self, person: Any, *, auto_fetch: bool = True) -> Optional[str]:
         """Ensure a person exists in the database, create if necessary."""
         try:
             person_name = getattr(person, 'name', '')
@@ -873,7 +874,7 @@ class KuzuBookRepository:
             
             # Auto-fetch OpenLibrary metadata if not already provided
             logger.info(f"🔍 [DEBUG] Checking auto-fetch conditions for {person_name}: openlibrary_id={openlibrary_id}, bio='{bio}', birth_year={birth_year}, image_url={image_url}")
-            if not openlibrary_id and not bio and not birth_year and not image_url:
+            if auto_fetch and not openlibrary_id and not bio and not birth_year and not image_url:
                 try:
                     from ..utils import search_author_by_name, fetch_author_data
                     logger.info(f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}")

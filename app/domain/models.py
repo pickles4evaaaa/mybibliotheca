@@ -439,6 +439,8 @@ class Book:
     google_books_id: Optional[str] = None
     openlibrary_id: Optional[str] = None
     opds_source_id: Optional[str] = None
+    opds_source_updated_at: Optional[str] = None
+    opds_source_entry_hash: Optional[str] = None
     
     # Global metadata (not user-specific)
     average_rating: Optional[float] = None
