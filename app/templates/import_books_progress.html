@@ -155,6 +155,9 @@
                             <button id="downloadErrorsBtn" class="btn btn-outline-danger d-none">
                                 <i class="fas fa-download"></i> Download Error Report
                             </button>
+                            <button id="downloadFailedIsbnsBtn" class="btn btn-outline-warning d-none">
+                                <i class="fas fa-barcode"></i> Download Failed ISBNs
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -453,11 +456,28 @@ function updateProgress() {
                     document.getElementById('statusMessage').className = 'alert alert-success';
                 } else {
                     document.getElementById('statusMessage').innerHTML = 
-                        `<i class=\"fas fa-check-circle\"></i> Import completed! Successfully imported ${data.success} books.`;
+                        `<i class="fas fa-check-circle"></i> Import completed! Successfully imported ${data.success} books.`;
                     document.getElementById('statusMessage').className = 'alert alert-success';
                     document.getElementById('completionButtons').classList.remove('d-none');
-                    if (data.errors > 0) {
-                        document.getElementById('downloadErrorsBtn').classList.remove('d-none');
+                    const errorsBtn = document.getElementById('downloadErrorsBtn');
+                    if (errorsBtn) {
+                        if ((data.errors || 0) > 0) {
+                            errorsBtn.classList.remove('d-none');
+                        } else {
+                            errorsBtn.classList.add('d-none');
+                        }
+                    }
+                    const failedIsbnBtn = document.getElementById('downloadFailedIsbnsBtn');
+                    if (failedIsbnBtn) {
+                        const failedCount = data.failed_isbn_count || 0;
+                        if (failedCount > 0) {
+                            failedIsbnBtn.classList.remove('d-none');
+                            const label = `${failedCount} failed ISBN${failedCount === 1 ? '' : 's'}`;
+                            failedIsbnBtn.setAttribute('aria-label', label);
+                            failedIsbnBtn.setAttribute('title', label);
+                        } else {
+                            failedIsbnBtn.classList.add('d-none');
+                        }
                     }
                 }
                 return; // Stop polling
@@ -566,6 +586,13 @@ setTimeout(updateProgress, 1000);
 document.getElementById('downloadErrorsBtn').addEventListener('click', function() {
     window.location.href = `/api/import/errors/${taskId}`;
 });
+
+const failedIsbnBtn = document.getElementById('downloadFailedIsbnsBtn');
+if (failedIsbnBtn) {
+    failedIsbnBtn.addEventListener('click', function() {
+        window.location.href = `/api/import/failed-isbns/${taskId}`;
+    });
+}
 
 // Cancel button handler
 document.getElementById('cancelJobBtn').addEventListener('click', async function() {

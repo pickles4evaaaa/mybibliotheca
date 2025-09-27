@@ -48,6 +48,16 @@
     </div>
   </div>
   <div class="mt-4">
+    <h6 class="fw-semibold">Import &amp; Metadata</h6>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Metadata Fetch Concurrency</label>
+        <input type="number" min="1" step="1" name="metadata_concurrency" class="form-control" value="{{ (import_settings.metadata_concurrency if import_settings else None) or '' }}" placeholder="e.g. 4" />
+        <small class="text-muted">Controls parallel ISBN lookups during import. Leave blank to use environment defaults.</small>
+      </div>
+    </div>
+  </div>
+  <div class="mt-4">
     <h6 class="fw-semibold">Background</h6>
     <div class="row g-3">
       <div class="col-md-3">

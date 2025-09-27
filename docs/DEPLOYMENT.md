@@ -47,7 +47,11 @@ WORKERS=4  # Adjust based on CPU cores
 
 # Optional Performance Tuning
 READING_STREAK_OFFSET=0
+# Set import concurrency only if you need a fixed fallback; the admin settings UI overrides this at runtime.
+IMPORT_METADATA_CONCURRENCY=4
 ```
+
+> **Tip:** Once the app is running you can adjust metadata fetch concurrency from the Admin → Settings → Server Configuration panel without touching the environment file. Leaving the field blank reverts to the environment fallback shown above.
 
 #### Secure File Permissions
 ```bash

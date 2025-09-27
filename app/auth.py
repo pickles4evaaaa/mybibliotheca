@@ -1119,6 +1119,13 @@ def settings_server_partial(panel: str):
                 'default_pages_per_log': _to_int_or_none(dp_raw),
                 'default_minutes_per_log': _to_int_or_none(dm_raw)
             }
+            metadata_concurrency_raw = (request.form.get('metadata_concurrency') or '').strip()
+            try:
+                metadata_concurrency = int(metadata_concurrency_raw)
+                if metadata_concurrency < 1:
+                    metadata_concurrency = 1
+            except Exception:
+                metadata_concurrency = None if metadata_concurrency_raw == '' else None
             # Handle optional image upload
             if 'background_image_file' in request.files:
                 file = request.files['background_image_file']
@@ -1150,7 +1157,10 @@ def settings_server_partial(panel: str):
                 'server_timezone': server_timezone,
                 'terminology_preference': terminology_preference,
                 'background_config': background_config,
-                'reading_log_defaults': reading_log_defaults
+                'reading_log_defaults': reading_log_defaults,
+                'import_settings': {
+                    'metadata_concurrency': metadata_concurrency
+                }
             }
             if save_system_config(config):
                 flash('System settings saved.', 'success')

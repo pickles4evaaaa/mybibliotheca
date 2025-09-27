@@ -200,6 +200,27 @@ def save_system_config(config):
             existing_config['library_defaults'] = {
                 'default_rows_per_page': dr_i
             }
+        if 'import_settings' in config:
+            existing_import_settings = existing_config.get('import_settings', {}).copy()
+            import_settings = config.get('import_settings') or {}
+            metadata_concurrency_val = import_settings.get('metadata_concurrency')
+            try:
+                if metadata_concurrency_val in (None, '',):
+                    metadata_concurrency_int = None
+                else:
+                    metadata_concurrency_int = int(metadata_concurrency_val)
+                    if metadata_concurrency_int < 1:
+                        metadata_concurrency_int = 1
+            except Exception:
+                metadata_concurrency_int = None
+            if metadata_concurrency_int is None:
+                existing_import_settings.pop('metadata_concurrency', None)
+            else:
+                existing_import_settings['metadata_concurrency'] = metadata_concurrency_int
+            if existing_import_settings:
+                existing_config['import_settings'] = existing_import_settings
+            elif 'import_settings' in existing_config:
+                existing_config.pop('import_settings', None)
         existing_config['last_updated'] = datetime.now().isoformat()
         
         # Save updated config
@@ -256,6 +277,12 @@ def load_system_config():
         'reading_log_defaults': {
             'default_pages_per_log': None,
             'default_minutes_per_log': None
+        },
+        'library_defaults': {
+            'default_rows_per_page': None
+        },
+        'import_settings': {
+            'metadata_concurrency': None
         }
     }
 
@@ -722,6 +749,15 @@ def settings():
             'default_minutes_per_log': _to_int_or_none(dm_raw)
         }
 
+        # Metadata/import configuration
+        metadata_concurrency_raw = (request.form.get('metadata_concurrency') or '').strip()
+        try:
+            metadata_concurrency = int(metadata_concurrency_raw)
+            if metadata_concurrency < 1:
+                metadata_concurrency = 1
+        except Exception:
+            metadata_concurrency = None if metadata_concurrency_raw == '' else None
+
         # Save system configuration to .env file
         config = {
             'site_name': site_name,
@@ -731,6 +767,9 @@ def settings():
             'reading_log_defaults': reading_log_defaults,
             'library_defaults': {
                 'default_rows_per_page': (request.form.get('default_rows_per_page') or '').strip() or None
+            },
+            'import_settings': {
+                'metadata_concurrency': metadata_concurrency
             }
         }
         
@@ -871,6 +910,9 @@ def get_admin_settings_context():
         }),
         'library_defaults': system_config.get('library_defaults', {
             'default_rows_per_page': None
+        }),
+        'import_settings': system_config.get('import_settings', {
+            'metadata_concurrency': None
         })
     }
 

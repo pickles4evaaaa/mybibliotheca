@@ -1092,6 +1092,30 @@ def api_import_progress(task_id):
             seen.add(t)
             deduped_error_titles.append(t)
 
+    # Summarize failed ISBNs (exclude duplicate-related errors)
+    failed_isbn_preview = []
+    failed_isbn_count = 0
+    try:
+        errors = job.get('error_messages') or []
+        seen_failed = set()
+        for err in errors:
+            error_type = str(err.get('error_type') or '').lower()
+            if 'duplicate' in error_type:
+                continue
+            isbn_val = (err.get('isbn') or err.get('raw_isbn') or '').strip()
+            if not isbn_val or isbn_val in seen_failed:
+                continue
+            seen_failed.add(isbn_val)
+            failed_isbn_preview.append({
+                'isbn': isbn_val,
+                'title': err.get('title') or '',
+                'message': err.get('message') or ''
+            })
+        failed_isbn_count = len(seen_failed)
+    except Exception:
+        failed_isbn_preview = []
+        failed_isbn_count = 0
+
     enriched = dict(job)
     enriched['success_titles'] = success_titles
     enriched['error_titles'] = deduped_error_titles
@@ -1104,6 +1128,8 @@ def api_import_progress(task_id):
     enriched['error_details'] = error_details[:1000]  # safety cap
     enriched['skipped_preview'] = skipped_titles[:25]
     enriched['unmatched_preview'] = unmatched_titles[:25]
+    enriched['failed_isbn_count'] = failed_isbn_count
+    enriched['failed_isbn_preview'] = failed_isbn_preview[:25]
 
     # Derive live counters and current book if missing
     try:
@@ -1216,6 +1242,51 @@ def api_import_errors(task_id):
     csv_content = '\n'.join(rows) + '\n'
     return Response(csv_content, mimetype='text/csv', headers={
         'Content-Disposition': f'attachment; filename="import_errors_{task_id}.csv"'
+    })
+
+@import_bp.route('/api/import/failed-isbns/<task_id>')
+@login_required
+def api_import_failed_isbns(task_id):
+    """Download CSV containing only failed ISBNs (duplicates excluded)."""
+    job = safe_get_import_job(current_user.id, task_id)
+    if not job:
+        return Response(json.dumps({'error': 'Job not found'}), status=404, mimetype='application/json')
+
+    errors = job.get('error_messages') or []
+    header = ['isbn', 'title', 'row_number', 'message']
+
+    def _escape(value: str) -> str:
+        if value is None:
+            value = ''
+        value = str(value)
+        if any(c in value for c in [',', '"', '\n', '\r']):
+            value = '"' + value.replace('"', '""') + '"'
+        return value
+
+    seen = set()
+    rows = [','.join(header)]
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        error_type = str(err.get('error_type') or err.get('type') or '').lower()
+        if 'duplicate' in error_type:
+            continue
+        isbn_val = (err.get('isbn') or err.get('raw_isbn') or '').strip()
+        if not isbn_val or isbn_val in seen:
+            continue
+        seen.add(isbn_val)
+        row_number = err.get('row_number')
+        row = [
+            isbn_val,
+            (err.get('title') or '').strip(),
+            row_number if row_number is not None else '',
+            (err.get('message') or err.get('error') or '').replace('\n', ' ').replace('\r', ' ').strip()
+        ]
+        rows.append(','.join(_escape(v) for v in row))
+
+    csv_content = '\n'.join(rows) + '\n'
+    return Response(csv_content, mimetype='text/csv', headers={
+        'Content-Disposition': f'attachment; filename="failed_isbns_{task_id}.csv"'
     })
 
 @import_bp.route('/debug/import-jobs')
@@ -1709,9 +1780,20 @@ async def process_simple_import(import_config):
             if _META_DEBUG_FLAG:
                 logger.debug(f"[IMPORT][ISBN_COLLECT] dedup_size={len(uniq)} values={uniq}")
             if uniq:
-                book_metadata = batch_fetch_book_metadata(uniq[:50])
+                max_batch_size = 50
+                aggregated_metadata = {}
+                for start in range(0, len(uniq), max_batch_size):
+                    batch = uniq[start:start + max_batch_size]
+                    if not batch:
+                        continue
+                    if _META_DEBUG_FLAG:
+                        logger.debug(f"[IMPORT][METADATA][BATCH_EXEC] offset={start} size={len(batch)} sample={batch[:3]}")
+                    chunk_metadata = batch_fetch_book_metadata(batch)
+                    if chunk_metadata:
+                        aggregated_metadata.update(chunk_metadata)
+                book_metadata = aggregated_metadata
                 if _META_DEBUG_FLAG:
-                    logger.debug(f"[IMPORT][POST_BATCH] metadata_keys={list(book_metadata.keys())}")
+                    logger.debug(f"[IMPORT][POST_BATCH] requested={len(uniq)} fetched={len(book_metadata)} keys={list(book_metadata.keys())}")
 
         source_filename = os.path.basename(csv_file_path)
         for row_num, row in enumerate(rows_list, 1):
@@ -2288,7 +2370,9 @@ def batch_fetch_book_metadata(isbns):
     if _META_DEBUG_FLAG:
         logger.debug(f"[IMPORT][METADATA][BATCH_START] size={len(isbns)} isbns={isbns}")
 
-    from app.utils.unified_metadata import fetch_unified_by_isbn, fetch_unified_by_isbn_detailed
+    from app.utils.unified_metadata import fetch_unified_by_isbn_detailed
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import os
     import time
     import random
 
@@ -2323,47 +2407,114 @@ def batch_fetch_book_metadata(isbns):
         cleaned = _re.sub(r'[^0-9Xx]', '', raw.strip())
         return _valid_isbn10(cleaned) or _valid_isbn13(cleaned)
 
-    for i, isbn in enumerate(isbns):
-        if not isbn:
+    valid_entries = []
+    for i, raw_isbn in enumerate(isbns):
+        if not raw_isbn:
             continue
+        isbn = raw_isbn.strip()
         if not _is_valid_isbn(isbn):
             if _META_DEBUG_FLAG:
-                logger.debug(f"[IMPORT][METADATA][SKIP_INVALID] idx={i} isbn={isbn}")
+                logger.debug(f"[IMPORT][METADATA][SKIP_INVALID] idx={i} isbn={isbn or raw_isbn}")
             continue
-        if _META_DEBUG_FLAG:
-            logger.debug(f"[IMPORT][METADATA][FETCH_START] idx={i} isbn={isbn}")
-        try:
-            # Gentle delay to avoid API rate limits
-            if i > 0:
-                time.sleep(random.uniform(0.25, 0.6))
+        valid_entries.append((i, isbn))
 
-            # Perform detailed fetch first so we always have provider diagnostics
+    if not valid_entries:
+        if _META_DEBUG_FLAG:
+            logger.debug("[IMPORT][METADATA][BATCH_COMPLETE] success=0 failed=0 rate=0.0% keys=[]")
+        return metadata
+
+    def _read_int_env(name, default):
+        try:
+            raw = os.getenv(name)
+            return int(raw) if raw not in (None, '') else default
+        except ValueError:
+            return default
+
+    def _read_float_env(name, default):
+        try:
+            raw = os.getenv(name)
+            return float(raw) if raw not in (None, '') else default
+        except ValueError:
+            return default
+
+    def _normalize_int(value):
+        try:
+            if value in (None, '',):
+                return None
+            parsed = int(value)
+            if parsed < 1:
+                parsed = 1
+            return parsed
+        except Exception:
+            return None
+
+    def _read_admin_concurrency():
+        try:
+            from app.admin import load_system_config
+            cfg = load_system_config() or {}
+            import_settings = cfg.get('import_settings') or {}
+            return _normalize_int(import_settings.get('metadata_concurrency'))
+        except Exception:
+            return None
+
+    env_default_workers = _read_int_env('IMPORT_METADATA_WORKERS', 4)
+    env_override_workers = _read_int_env('IMPORT_METADATA_CONCURRENCY', env_default_workers)
+    admin_override_workers = _read_admin_concurrency()
+    configured_workers = admin_override_workers if admin_override_workers is not None else env_override_workers
+    max_workers = max(1, min(configured_workers, len(valid_entries)))
+
+    jitter_min = max(0.0, _read_float_env('IMPORT_METADATA_JITTER_MIN', 0.05))
+    jitter_max = max(0.0, _read_float_env('IMPORT_METADATA_JITTER_MAX', 0.2))
+    if jitter_max < jitter_min:
+        jitter_max = jitter_min
+
+    def _fetch_single(idx, isbn):
+        if _META_DEBUG_FLAG:
+            logger.debug(f"[IMPORT][METADATA][FETCH_START] idx={idx} isbn={isbn}")
+        # Apply tiny jitter to reduce thundering herd against providers
+        if jitter_max > 0 or jitter_min > 0:
+            delay = random.uniform(jitter_min, jitter_max) if jitter_max > jitter_min else jitter_min
+            if delay > 0:
+                time.sleep(delay)
+        try:
             data, provider_errors = fetch_unified_by_isbn_detailed(isbn)
+            return idx, isbn, data, provider_errors, None
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            return idx, isbn, None, None, exc
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_fetch_single, idx, isbn) for idx, isbn in valid_entries]
+        for future in as_completed(futures):
+            idx, isbn, data, provider_errors, exc = future.result()
+            if exc is not None:
+                logger.error(
+                    f"[IMPORT][METADATA] Exception fetching ISBN {isbn}: {exc}",
+                    exc_info=(type(exc), exc, exc.__traceback__)
+                )
+                failed_isbns.append(isbn)
+                continue
+
             if _META_DEBUG_FLAG:
                 logger.debug(f"[IMPORT][METADATA][PROVIDERS] isbn={isbn} providers={provider_errors}")
+
             if data:
                 metadata[isbn] = {
                     'data': data,
                     'source': 'unified',
                     'provider_errors': provider_errors
                 }
-                # Canonicalize: if provider returned a distinct ISBN13, promote it as primary key
                 try:
                     alt13 = data.get('isbn13')
                     alt10 = data.get('isbn10')
-                    if alt13 and alt13 != isbn:
-                        # Promote alt13 entry (keep original as alias for safety)
-                        if alt13 not in metadata:
-                            metadata[alt13] = metadata[isbn]
+                    if alt13 and alt13 != isbn and alt13 not in metadata:
+                        metadata[alt13] = metadata[isbn]
                         if _META_DEBUG_FLAG:
                             logger.debug(f"[IMPORT][METADATA][CANON] promoted_isbn13={alt13} original_query={isbn}")
-                    # Index 10-digit alias if not present
                     for alt in [alt10]:
                         if alt and alt not in metadata:
                             metadata[alt] = metadata[isbn]
-                    if alt13 and alt10 and alt13 != alt10:
-                        if _META_DEBUG_FLAG:
-                            logger.debug(f"[IMPORT][METADATA][ALT_INDEX] isbn_query={isbn} alt13={alt13} alt10={alt10}")
+                    if alt13 and alt10 and alt13 != alt10 and _META_DEBUG_FLAG:
+                        logger.debug(f"[IMPORT][METADATA][ALT_INDEX] isbn_query={isbn} alt13={alt13} alt10={alt10}")
                 except Exception:
                     pass
                 if _META_DEBUG_FLAG:
@@ -2371,11 +2522,6 @@ def batch_fetch_book_metadata(isbns):
             else:
                 logger.warning(f"[IMPORT][METADATA] No metadata for ISBN {isbn}")
                 failed_isbns.append(isbn)
-        except Exception as e:
-            # Structured error log with stack trace
-            logger.error(f"[IMPORT][METADATA] Exception fetching ISBN {isbn}: {e}", exc_info=True)
-            failed_isbns.append(isbn)
-            continue
 
     if _META_DEBUG_FLAG:
         success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
