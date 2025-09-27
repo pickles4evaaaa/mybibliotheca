@@ -175,6 +175,7 @@ class KuzuGraphDB:
                             try:
                                 user_count = int(_vals[0] if _vals else 0)
                             except Exception:
+                                # Attempt to coerce string counts
                                 user_count = int(str(_vals[0])) if _vals and _vals[0] is not None else 0
                         except Exception:
                             user_count = 0
@@ -773,6 +774,7 @@ class KuzuGraphDB:
                         except Exception:
                             book_count = 0  # type: ignore
                     
+                    # Only attempt OWNS count when legacy OWNS schema is enabled
                     try:
                         owns_enabled = os.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes')
                     except Exception:
@@ -937,6 +939,8 @@ class KuzuGraphStorage:
         try:
             if isinstance(row, (list, tuple)):
                 return list(row)
+            if isinstance(row, dict):
+                return list(row.values())
             # Some Kuzu row types are iterable but not list/tuple
             return [*row]
         except Exception:
@@ -1455,7 +1459,7 @@ class KuzuGraphStorage:
         Store custom metadata for a user-book relationship.
         
         This method handles the dual storage system:
-        1. Updates OWNS relationship custom_metadata JSON for display
+        1. Updates OWNS relationship custom_metadata JSON for display (if legacy OWNS enabled)
         2. Creates HAS_CUSTOM_FIELD relationships for usage tracking  
         3. Increments usage count on CustomField definitions
         
@@ -1470,9 +1474,11 @@ class KuzuGraphStorage:
             True if successful, False otherwise
         """
         try:
+            # Step 1 (optional): Update the OWNS relationship custom_metadata when legacy OWNS is enabled
             owns_enabled = os.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() in ('1', 'true', 'yes')
             if owns_enabled:
                 try:
+                    # First get the current OWNS relationship
                     query_get_owns = """
                     MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
                     RETURN r.custom_metadata as current_metadata
@@ -1488,8 +1494,10 @@ class KuzuGraphStorage:
                                 current_metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
                             except (json.JSONDecodeError, TypeError):
                                 current_metadata = {}
+                    # Update the metadata
                     current_metadata[field_name] = field_value
                     metadata_json_str = json.dumps(current_metadata)
+                    # Update OWNS rel
                     query_update_owns = """
                     MATCH (u:User {id: $user_id})-[r:OWNS]->(b:Book {id: $book_id})
                     SET r.custom_metadata = $metadata_json
@@ -1500,6 +1508,7 @@ class KuzuGraphStorage:
                         "metadata_json": metadata_json_str
                     })
                 except Exception:
+                    # Skip silently if OWNS schema not present or any error occurs
                     pass
             
             
@@ -1556,7 +1565,6 @@ class KuzuGraphStorage:
                         'field_value': field_value,
                         'created_at': datetime.now(timezone.utc).isoformat()
                     }
-                    
                     if field_definition_id is None:
                         logger.error("Cannot create HAS_CUSTOM_FIELD relationship: field_definition_id is None")
                     else:
@@ -1566,7 +1574,6 @@ class KuzuGraphStorage:
                             'CustomField', str(field_definition_id), 
                             rel_props
                         )
-                        
                         if success:
                             logger.info(f"Created custom field relationship for field {field_definition_id}")
                         else:

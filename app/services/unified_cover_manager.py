@@ -95,9 +95,17 @@ class UnifiedCoverManager:
         """
         # Extract cover URL from book object
         if hasattr(book, 'cover_url'):
-            cover_url = book.cover_url
+            cover_url = getattr(book, 'cover_url')
         elif isinstance(book, dict):
-            cover_url = book.get('cover_url')
+            # Primary key is 'cover_url'; fall back to legacy 'cover'
+            cover_url = book.get('cover_url') or book.get('cover')
+            # Harmonize: if only legacy key present, mirror it so downstream code that mutates dicts
+            # (e.g., templates expecting cover_url) can rely on consistent key without modifying original logic
+            if cover_url and 'cover_url' not in book and 'cover' in book:
+                try:
+                    book['cover_url'] = cover_url  # non-fatal best-effort
+                except Exception:
+                    pass
         else:
             cover_url = None
             

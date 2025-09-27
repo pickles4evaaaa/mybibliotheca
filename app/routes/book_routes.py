@@ -1,4 +1,3 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, make_response
 """
 Core book management routes for the Bibliotheca application.
 Handles book CRUD operations, library views, and book-specific actions.
@@ -1044,6 +1043,47 @@ def search_book_details():
             'message': f'An error occurred while searching: {str(e)}'
         }), 500
 
+@book_bp.route('/cover_candidates', methods=['GET'])
+@login_required
+def cover_candidates():
+    """Return a list of candidate cover images for a given ISBN or title/author.
+
+    Shapes results for the cover selection modal: [{title, authors_list, cover_url, source, size?}].
+    """
+    try:
+        isbn = (request.args.get('isbn') or '').strip()
+        title = (request.args.get('title') or '').strip()
+        author = (request.args.get('author') or '').strip()
+        if not (isbn or title or author):
+            return jsonify({'success': False, 'message': 'Provide isbn or title/author'}), 400
+
+        from app.utils.book_utils import get_cover_candidates, normalize_cover_url
+        cands = get_cover_candidates(isbn=isbn or None, title=title or None, author=author or None) or []
+        results = []
+        for c in cands:
+            url = c.get('url')
+            if not url:
+                continue
+            try:
+                url = normalize_cover_url(url)
+            except Exception:
+                pass
+            results.append({
+                'title': title or '',
+                'authors_list': [a.strip() for a in (author.split(',') if author else []) if a.strip()],
+                'cover_url': url,
+                'source': c.get('provider'),
+                'size': c.get('size'),
+            })
+        return jsonify({
+            'success': bool(results),
+            'results': results,
+            'message': f"Found {len(results)} cover option(s)" if results else 'No cover options found.'
+        })
+    except Exception as e:
+        current_app.logger.error(f"[COVER][CANDIDATES] Failed: {e}")
+        return jsonify({'success': False, 'message': 'Error fetching cover candidates'}), 500
+
 @book_bp.route('/search', methods=['GET', 'POST'])
 @login_required
 def search_books():
@@ -1110,6 +1150,12 @@ def delete_book(uid):
     
     if success:
         flash('Book deleted from your library.')
+        # Invalidate cached library payloads so UI updates immediately
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(str(current_user.id))
+        except Exception:
+            pass
     else:
         flash('Failed to delete book.', 'error')
         
@@ -3290,6 +3336,12 @@ def bulk_delete_books():
     
     if deleted_count > 0:
         flash(f'Successfully deleted {deleted_count} book(s) from your library.', 'success')
+        # Invalidate cached library payloads for this user so UI updates immediately
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(str(current_user.id))
+        except Exception:
+            pass
     if failed_count > 0:
         flash(f'Failed to delete {failed_count} book(s).', 'error')
     
@@ -3524,7 +3576,9 @@ def add_book_manual():
             raw_categories = [s.strip() for s in raw_cat_val.split(',') if s.strip()]
 
     # Scalars
+    # Accept multiple ISBN field names and normalize
     isbn_raw = (request.form.get('isbn') or '').upper()
+    # Accept both snake_case and camelCase field names from templates/forms
     isbn10_form = (request.form.get('isbn_10') or request.form.get('isbn10') or '').upper()
     isbn13_form = (request.form.get('isbn_13') or request.form.get('isbn13') or '').upper()
     subtitle = (request.form.get('subtitle') or '').strip()
@@ -3546,12 +3600,14 @@ def add_book_manual():
 
     isbn10 = isbn13 = None
     import re
-    preferred_isbn = isbn13_form or isbn10_form or isbn_raw
-    clean = re.sub(r'[^0-9X]', '', preferred_isbn)
+    # Prefer explicit fields if present; otherwise use legacy 'isbn'
+    preferred = isbn13_form or isbn10_form or isbn_raw
+    clean = re.sub(r'[^0-9X]', '', preferred)
     if len(clean) == 10:
         isbn10 = clean
     elif len(clean) == 13:
         isbn13 = clean
+    # If one form field held the other type, capture both
     if not isbn10 and isbn10_form:
         c10 = re.sub(r'[^0-9X]', '', isbn10_form)
         if len(c10) == 10:
@@ -3560,7 +3616,7 @@ def add_book_manual():
         c13 = re.sub(r'[^0-9X]', '', isbn13_form)
         if len(c13) == 13:
             isbn13 = c13
-
+    # Derive missing counterpart when possible
     def _isbn10_to_13(i10: str) -> str:
         base = "978" + i10[:9]
         total = 0
@@ -3584,7 +3640,6 @@ def add_book_manual():
         else:
             check_char = str(check_digit)
         return base + check_char
-
     try:
         if isbn10 and not isbn13:
             isbn13 = _isbn10_to_13(isbn10)
@@ -3618,7 +3673,7 @@ def add_book_manual():
         google_books_id=(request.form.get('google_books_id') or '').strip() or None,
         openlibrary_id=None
     )
-
+    # Attempt to add; gracefully handle duplicates
     try:
         added = SimplifiedBookService().add_book_to_user_library_sync(
             book_data=book_data,
@@ -3629,12 +3684,16 @@ def add_book_manual():
             location_id=request.form.get('location_id')
         )
     except BookAlreadyExistsError as dup:
+        # Friendly UX: notify and send user to the existing book page
         flash('That book already exists. Taking you to it.', 'info')
-        existing_id = getattr(dup, 'book_id', None)
+        try:
+            existing_id = getattr(dup, 'book_id', None)
+        except Exception:
+            existing_id = None
         if existing_id:
             return redirect(url_for('book.view_book_enhanced', uid=existing_id))
+        # Fallback if we couldn't resolve ID
         return redirect(url_for('main.library'))
-
     if not added:
         flash('Failed to add book','danger')
         return redirect(url_for('main.library'))
@@ -3676,6 +3735,7 @@ def add_book_manual():
             try: book_service.update_book_sync(created.uid, str(current_user.id), **updates)
             except Exception: pass
 
+    # Invalidate/bump the user's library cache version so the new book shows immediately
     try:
         from app.utils.simple_cache import bump_user_library_version
         bump_user_library_version(str(current_user.id))

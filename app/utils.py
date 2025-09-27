@@ -315,6 +315,17 @@ def get_google_books_cover(isbn, fetch_title_author=False):
             # via app.utils.book_utils.normalize_cover_url and upgrade_google_cover_url.
             # Leave raw Google URL here; downstream logic will normalize/upgrade adaptively.
             
+            # Normalize key naming for downstream consumers: always provide 'cover_url'
+            if isinstance(cover_url, str) and cover_url and 'cover_url' not in locals():
+                pass  # placeholder – kept for clarity
+
+            # Provide consistent structure aligned with book_utils.get_google_books_cover
+            base_payload = {
+                'cover': cover_url,  # legacy
+                'cover_url': cover_url,  # preferred
+                'image_links_all': image_links  # allow candidate expansion if caller wants
+            }
+
             if fetch_title_author:
                 title = volume_info.get('title', '')
                 subtitle = volume_info.get('subtitle', '')
@@ -392,8 +403,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 # Additional metadata
                 google_books_id = items[0].get('id', '')
                 
-                return {
-                    'cover': cover_url,
+                base_payload.update({
                     'title': title,
                     'subtitle': subtitle,
                     'author': authors,  # Keep for backward compatibility
@@ -410,8 +420,9 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                     'isbn13': isbn13,
                     'asin': asin,
                     'google_books_id': google_books_id
-                }
-            return cover_url
+                })
+                return base_payload
+            return base_payload
     except Exception as e:
         current_app.logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {e}")
         return None

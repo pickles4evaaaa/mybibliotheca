@@ -903,8 +903,8 @@ class SimplifiedBookService:
     def find_book_by_isbn(self, isbn: str) -> Optional[str]:
         """Find existing book by ISBN. Returns book_id if found."""
         try:
-            # Normalize ISBN
-            normalized_isbn = ''.join(filter(str.isdigit, isbn))
+            # Normalize ISBN: keep digits and the letter X (uppercase)
+            normalized_isbn = ''.join(c for c in str(isbn).strip().upper() if c.isdigit() or c == 'X')
             
             # Search by ISBN13
             if len(normalized_isbn) == 13:
@@ -1178,8 +1178,8 @@ class SimplifiedBookService:
                     merge('narrator', narrators)
                     merge('illustrator', illustrators)
                 elif book_field == 'isbn':
-                    # Clean and assign ISBN
-                    clean_isbn = ''.join(c for c in str(value) if c.isdigit() or c.upper() == 'X')
+                    # Clean and assign ISBN (preserve uppercase X for check digit)
+                    clean_isbn = ''.join(c for c in str(value).strip().upper() if c.isdigit() or c == 'X')
                     if len(clean_isbn) == 13:
                         book_data['isbn13'] = clean_isbn
                     elif len(clean_isbn) == 10:
@@ -1188,7 +1188,7 @@ class SimplifiedBookService:
                     # Normalize Goodreads format and clean ISBN13
                     normalized_isbn = normalize_goodreads_value(value, 'isbn')
                     if normalized_isbn:
-                        clean_isbn = ''.join(c for c in str(normalized_isbn) if c.isdigit() or c.upper() == 'X')
+                        clean_isbn = ''.join(c for c in str(normalized_isbn).strip().upper() if c.isdigit() or c == 'X')
                         if len(clean_isbn) == 13:
                             book_data['isbn13'] = clean_isbn
                         elif len(clean_isbn) == 10:
@@ -1197,7 +1197,7 @@ class SimplifiedBookService:
                     # Normalize Goodreads format and clean ISBN10
                     normalized_isbn = normalize_goodreads_value(value, 'isbn')
                     if normalized_isbn:
-                        clean_isbn = ''.join(c for c in str(normalized_isbn) if c.isdigit() or c.upper() == 'X')
+                        clean_isbn = ''.join(c for c in str(normalized_isbn).strip().upper() if c.isdigit() or c == 'X')
                         if len(clean_isbn) == 10:
                             book_data['isbn10'] = clean_isbn
                         elif len(clean_isbn) == 13:

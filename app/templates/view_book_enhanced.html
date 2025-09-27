@@ -2055,11 +2055,9 @@ function showCoverEditOptions() {
     const author = '{{ (book.authors[0].name if book.authors else "")|e }}';
     
     dropdown.innerHTML = `
-        ${isbn ? `
         <button class="dropdown-item" type="button" id="searchByISBN">
-            <i class="bi bi-search me-2"></i>Search by ISBN
+            <i class="bi bi-upc-scan me-2"></i>Search by ISBN
         </button>
-        ` : ''}
         ${title && author ? `
         <button class="dropdown-item" type="button" id="searchByTitle">
             <i class="bi bi-search me-2"></i>Search by Title & Author
@@ -2079,14 +2077,20 @@ function showCoverEditOptions() {
     container.appendChild(dropdown);
     
     // Add event listeners to dropdown buttons
-    if (isbn) {
-        const searchISBNBtn = document.getElementById('searchByISBN');
-        if (searchISBNBtn) {
-            searchISBNBtn.addEventListener('click', function() {
-                dropdown.remove();
-                fetchCoverFromAPI(isbn, 'isbn');
-            });
-        }
+    const searchISBNBtn = document.getElementById('searchByISBN');
+    if (searchISBNBtn) {
+        searchISBNBtn.addEventListener('click', function() {
+            dropdown.remove();
+            let queryIsbn = isbn;
+            try { queryIsbn = (queryIsbn || '').toString(); } catch(e) { queryIsbn = ''; }
+            if (!queryIsbn) {
+                // Prompt user for ISBN if not present on the page
+                const input = window.prompt('Enter ISBN-10 or ISBN-13');
+                if (!input) return; // user canceled
+                queryIsbn = input;
+            }
+            fetchCoverFromAPI(queryIsbn, 'isbn');
+        });
     }
     
     if (title && author) {
@@ -2133,8 +2137,9 @@ function fetchCoverFromAPI(query, type) {
     };
     
     if (type === 'isbn') {
-        // Use the existing fetch_book endpoint for ISBN searches
-        endpoint = `{{ url_for('book.fetch_book', isbn='') }}${query}`;
+        // Use new cover candidates endpoint for richer selection when searching by ISBN
+        const cleanIsbn = String(query || '').replace(/[^0-9Xx]/g, '');
+        endpoint = `{{ url_for('book.cover_candidates') }}?isbn=${cleanIsbn}`;
     } else {
         // For title/author searches, use the search_book_details endpoint
         endpoint = `{{ url_for('book.search_book_details') }}`;
@@ -2159,22 +2164,12 @@ function fetchCoverFromAPI(query, type) {
             return response.json();
         })
         .then(data => {
-            if (type === 'isbn') {
-                // For ISBN search, directly apply the cover if found
-                if (data.cover) {
-                    applyCoverUrl(data.cover);
-                    // applyCoverUrl already shows success message
-                } else {
-                    alert('No cover image found for this ISBN.');
-                }
+            // For both paths now, prefer showing a selection modal with candidates
+            if (data && data.success && Array.isArray(data.results) && data.results.length > 0) {
+                showCoverSelectionModal(data.results);
             } else {
-                // For title/author search, show selection modal
-                if (data.success && data.results && data.results.length > 0) {
-                    showCoverSelectionModal(data.results);
-                } else {
-                    const message = data.message || 'No cover options found for this book.';
-                    alert(message);
-                }
+                const message = (data && data.message) ? data.message : (type === 'isbn' ? 'No cover image found for this ISBN.' : 'No cover options found for this book.');
+                alert(message);
             }
         })
         .catch(error => {
