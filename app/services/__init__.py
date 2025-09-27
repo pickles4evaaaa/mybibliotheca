@@ -20,6 +20,9 @@ try:
     from .kuzu_person_service import KuzuPersonService
     from .kuzu_reading_log_service import KuzuReadingLogService
     from .kuzu_series_service import get_series_service
+    from .opds_probe_service import OPDSProbeService
+    from .opds_sync_service import OPDSSyncService
+    from .opds_sync_runner import ensure_opds_sync_runner, get_opds_sync_runner
 
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade
@@ -31,6 +34,8 @@ try:
     _import_mapping_service = None
     _person_service = None
     _reading_log_service = None
+    _opds_probe_service = None
+    _opds_sync_service = None
     
     # Module-level flag to ensure migration executes only once lazily
     _OWNS_MIGRATION_RAN = False
@@ -91,6 +96,21 @@ try:
             _run_migration_once()
             _reading_log_service = KuzuReadingLogService()
         return _reading_log_service
+
+    def _get_opds_probe_service():
+        """Lazy OPDS probe service."""
+        global _opds_probe_service
+        if _opds_probe_service is None:
+            _opds_probe_service = OPDSProbeService()
+        return _opds_probe_service
+
+    def _get_opds_sync_service():
+        """Lazy OPDS sync service."""
+        global _opds_sync_service
+        if _opds_sync_service is None:
+            probe = _get_opds_probe_service()
+            _opds_sync_service = OPDSSyncService(probe_service=probe)
+        return _opds_sync_service
     
     # Create property-like access using classes
     class _LazyService:
@@ -116,14 +136,18 @@ try:
     import_mapping_service = _LazyService(_get_import_mapping_service)
     person_service = _LazyService(_get_person_service)
     reading_log_service = _LazyService(_get_reading_log_service)
+    opds_probe_service = _LazyService(_get_opds_probe_service)
+    opds_sync_service = _LazyService(_get_opds_sync_service)
 
     def reset_all_services():
         """Reset all service instances to force fresh initialization."""
         global _book_service, _user_service, _custom_field_service
         global _import_mapping_service, _person_service, _reading_log_service
+        global _opds_probe_service, _opds_sync_service
         global book_service, user_service, custom_field_service
         global import_mapping_service, person_service, reading_log_service
-        
+        global opds_probe_service, opds_sync_service
+
         # Clear global service instances
         _book_service = None
         _user_service = None
@@ -131,7 +155,9 @@ try:
         _import_mapping_service = None
         _person_service = None
         _reading_log_service = None
-        
+        _opds_probe_service = None
+        _opds_sync_service = None
+
         # Clear lazy service wrapper instances
         book_service._service = None
         user_service._service = None
@@ -139,7 +165,11 @@ try:
         import_mapping_service._service = None
         person_service._service = None
         reading_log_service._service = None
-        
+        if hasattr(opds_probe_service, "_service"):
+            opds_probe_service._service = None  # type: ignore[attr-defined]
+        if hasattr(opds_sync_service, "_service"):
+            opds_sync_service._service = None  # type: ignore[attr-defined]
+
         # Recreate lazy service wrappers completely
         book_service = _LazyService(_get_book_service)
         user_service = _LazyService(_get_user_service)
@@ -147,7 +177,9 @@ try:
         import_mapping_service = _LazyService(_get_import_mapping_service)
         person_service = _LazyService(_get_person_service)
         reading_log_service = _LazyService(_get_reading_log_service)
-        
+        opds_probe_service = _LazyService(_get_opds_probe_service)
+        opds_sync_service = _LazyService(_get_opds_sync_service)
+
         return True
 
     # Placeholder services for compatibility during migration
@@ -177,10 +209,14 @@ try:
         'run_async',
         'reset_all_services',  # Service reset function
         # Stub services for compatibility
-    'reading_log_service',
-    'direct_import_service',
-    'job_service',
-    'get_series_service'
+        'reading_log_service',
+        'direct_import_service',
+        'job_service',
+        'get_series_service',
+        'opds_probe_service',
+        'opds_sync_service',
+        'ensure_opds_sync_runner',
+        'get_opds_sync_runner'
     ]
 except ImportError as e:
     # Fallback imports

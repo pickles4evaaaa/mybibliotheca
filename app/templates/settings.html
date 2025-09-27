@@ -153,6 +153,7 @@
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="users" data-color="danger" class="btn btn-outline-danger w-100 server-nav"><i class="bi bi-people"></i> Users</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="metadata" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-collection"></i> Metadata Providers</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="ai" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-robot"></i> AI</button></div>
+                <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="opds" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-rss"></i> OPDS</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="audiobookshelf" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-soundwave"></i> Audiobookshelf</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="debug" data-color="info" class="btn btn-outline-info w-100 server-nav"><i class="bi bi-bug"></i> Debug</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="jobs" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-activity"></i> Jobs</button></div>
@@ -193,6 +194,437 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Server dynamic panels (AJAX embed)
     const serverContainer = document.getElementById('serverDynamicContainer');
+    if(!window.__initOPDSPanel){
+        window.__initOPDSPanel = function(){
+            const root = document.getElementById('opdsPanelRoot');
+            if(!root) return;
+            const form = root.querySelector('#opdsMainForm');
+            const actionInput = root.querySelector('#opdsActionInput');
+            const statusEl = root.querySelector('#opdsStatus');
+            const mappingJsonField = root.querySelector('#opdsMappingJson');
+            const mappingList = root.querySelector('#opdsMappingList');
+            const fieldSelect = root.querySelector('#opdsFieldSelect');
+            const sourceSelect = root.querySelector('#opdsSourceSelect');
+            const addBtn = root.querySelector('#opdsAddMappingBtn');
+            const saveBtn = root.querySelector('#opdsSaveBtn');
+            const probeBtn = root.querySelector('#opdsProbeBtn');
+            const syncBtn = root.querySelector('#opdsSyncBtn');
+            const testSyncBtn = root.querySelector('#opdsTestSyncBtn');
+            const clearPasswordBtn = root.querySelector('#opdsClearPasswordBtn');
+            const revealPasswordBtn = root.querySelector('#opdsRevealPasswordBtn');
+            const clearPasswordField = root.querySelector('#opdsClearPassword');
+            const passwordInput = root.querySelector('input[name="password"]');
+            const savedPasswordDisplay = root.querySelector('#opdsSavedPasswordDisplay');
+            const suggestionsContainer = root.querySelector('#opdsSuggestionContainer');
+            const sourceSummary = root.querySelector('#opdsSourceSummary');
+            const mappingSeed = document.getElementById('opdsMappingSeed');
+            const suggestionsSeed = document.getElementById('opdsSuggestionsSeed');
+            const jobContainer = root.querySelector('#opdsJobProgressContainer');
+            const parseJSON = (value, fallback) => {
+                try { return value ? JSON.parse(value) : fallback; } catch(err){ return fallback; }
+            };
+            const escapeHtml = (value) => {
+                if(value === null || value === undefined) return '';
+                return String(value).replace(/[&<>"']/g, ch => {
+                    switch(ch){
+                        case '&': return '&amp;';
+                        case '<': return '&lt;';
+                        case '>': return '&gt;';
+                        case '"': return '&quot;';
+                        case "'": return '&#39;';
+                        default: return ch;
+                    }
+                });
+            };
+            const savedPasswordOriginalHtml = savedPasswordDisplay ? savedPasswordDisplay.innerHTML : '';
+            let mapping = parseJSON(root.dataset.mapping, {});
+            if(mappingSeed && mappingSeed.value){ mapping = parseJSON(mappingSeed.value, mapping); }
+            if(!mapping || typeof mapping !== 'object' || Array.isArray(mapping)){ mapping = {}; }
+            let suggestions = parseJSON(root.dataset.suggestions, {});
+            if(suggestionsSeed && suggestionsSeed.value){ suggestions = parseJSON(suggestionsSeed.value, suggestions); }
+            if(!suggestions || typeof suggestions !== 'object' || Array.isArray(suggestions)){ suggestions = {}; }
+            const mappingFields = parseJSON(root.dataset.mappingFields, []);
+            const mappingLabels = parseJSON(root.dataset.mappingLabels, {});
+            const sourceOptions = parseJSON(root.dataset.sourceOptions, []);
+            const pendingJobs = parseJSON(root.dataset.pendingJobs, []);
+
+            if(fieldSelect){
+                fieldSelect.innerHTML = '';
+                mappingFields.forEach(field => {
+                    const opt = document.createElement('option');
+                    opt.value = field;
+                    opt.textContent = mappingLabels[field] || field;
+                    fieldSelect.appendChild(opt);
+                });
+            }
+            if(sourceSelect){
+                sourceSelect.innerHTML = '';
+                sourceOptions.forEach(value => {
+                    const opt = document.createElement('option');
+                    opt.value = value;
+                    opt.textContent = value;
+                    sourceSelect.appendChild(opt);
+                });
+            }
+            const persistMapping = () => {
+                if(mappingJsonField){
+                    mappingJsonField.value = JSON.stringify(mapping || {});
+                }
+                if(sourceSummary){
+                    const total = Object.keys(mapping || {}).length;
+                    sourceSummary.textContent = `${total} mapped · ${sourceOptions.length} sources`;
+                }
+            };
+            const renderSuggestions = () => {
+                if(!suggestionsContainer) return;
+                suggestionsContainer.innerHTML = '';
+                const available = Object.entries(suggestions || {}).filter(([field])=> !mapping || !Object.prototype.hasOwnProperty.call(mapping, field));
+                if(!available.length){
+                    suggestionsContainer.innerHTML = '<span class="text-muted small">No suggestions available.</span>';
+                    return;
+                }
+                const heading = document.createElement('div');
+                heading.className = 'small text-muted mb-1';
+                heading.textContent = 'Suggestions';
+                suggestionsContainer.appendChild(heading);
+                available.forEach(([field, expr])=>{
+                    const row = document.createElement('div');
+                    row.className = 'd-flex align-items-center justify-content-between border rounded px-2 py-1 mb-1 bg-light small';
+                    const info = document.createElement('span');
+                    const strong = document.createElement('strong');
+                    strong.textContent = mappingLabels[field] || field;
+                    const arrow = document.createElement('span');
+                    arrow.className = 'text-muted mx-2';
+                    arrow.textContent = '←';
+                    const code = document.createElement('code');
+                    code.textContent = expr;
+                    info.appendChild(strong);
+                    info.appendChild(arrow);
+                    info.appendChild(code);
+                    row.appendChild(info);
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn btn-sm btn-outline-primary';
+                    btn.textContent = 'Add';
+                    btn.addEventListener('click', ()=>{
+                        mapping[field] = expr;
+                        renderMapping();
+                    });
+                    row.appendChild(btn);
+                    suggestionsContainer.appendChild(row);
+                });
+            };
+            const renderMapping = () => {
+                if(!mappingList) return;
+                mappingList.innerHTML = '';
+                const entries = Object.entries(mapping || {});
+                if(!entries.length){
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item text-muted small';
+                    li.dataset.empty = '1';
+                    li.textContent = 'Configure at least title, stable ID, and contributors.';
+                    mappingList.appendChild(li);
+                } else {
+                    entries.forEach(([field, expr])=>{
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                        li.dataset.field = field;
+                        const span = document.createElement('span');
+                        const strong = document.createElement('strong');
+                        strong.textContent = mappingLabels[field] || field;
+                        const arrow = document.createElement('span');
+                        arrow.className = 'text-muted mx-2';
+                        arrow.textContent = '←';
+                        const code = document.createElement('code');
+                        code.textContent = expr;
+                        span.appendChild(strong);
+                        span.appendChild(arrow);
+                        span.appendChild(code);
+                        li.appendChild(span);
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'btn btn-sm btn-outline-danger';
+                        btn.setAttribute('data-remove-mapping', field);
+                        const icon = document.createElement('i');
+                        icon.className = 'bi bi-x-lg';
+                        btn.appendChild(icon);
+                        li.appendChild(btn);
+                        mappingList.appendChild(li);
+                    });
+                }
+                persistMapping();
+                renderSuggestions();
+            };
+            if(mappingList){
+                mappingList.addEventListener('click', ev=>{
+                    const target = ev.target instanceof Element ? ev.target.closest('[data-remove-mapping]') : null;
+                    if(!target) return;
+                    ev.preventDefault();
+                    const field = target.getAttribute('data-remove-mapping');
+                    if(field && mapping && Object.prototype.hasOwnProperty.call(mapping, field)){
+                        delete mapping[field];
+                        renderMapping();
+                    }
+                });
+            }
+            if(addBtn){
+                addBtn.addEventListener('click', ()=>{
+                    if(!fieldSelect || !sourceSelect) return;
+                    const field = fieldSelect.value;
+                    const source = sourceSelect.value;
+                    if(!field || !source) return;
+                    mapping[field] = source;
+                    renderMapping();
+                });
+            }
+            const setPasswordVisibility = (visible) => {
+                if(!passwordInput) return;
+                passwordInput.setAttribute('type', visible ? 'text' : 'password');
+                if(revealPasswordBtn){
+                    revealPasswordBtn.classList.toggle('active', !!visible);
+                    revealPasswordBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+                }
+            };
+
+            const attachRevealListeners = () => {
+                if(!revealPasswordBtn || !passwordInput) return;
+                const startReveal = (ev) => {
+                    if(ev && ev.type === 'keydown'){
+                        const key = ev.key || ev.code;
+                        if(key !== ' ' && key !== 'Spacebar' && key !== 'Enter' && key !== 'Space') return;
+                        ev.preventDefault();
+                    }
+                    if(ev && (ev.type === 'mousedown' || ev.type === 'touchstart')){
+                        ev.preventDefault();
+                    }
+                    setPasswordVisibility(true);
+                };
+                const stopReveal = () => setPasswordVisibility(false);
+
+                revealPasswordBtn.addEventListener('mousedown', startReveal);
+                revealPasswordBtn.addEventListener('mouseup', stopReveal);
+                revealPasswordBtn.addEventListener('mouseleave', stopReveal);
+                revealPasswordBtn.addEventListener('blur', stopReveal);
+                revealPasswordBtn.addEventListener('keydown', startReveal);
+                revealPasswordBtn.addEventListener('keyup', stopReveal);
+                revealPasswordBtn.addEventListener('touchstart', startReveal, { passive: false });
+                revealPasswordBtn.addEventListener('touchend', stopReveal);
+                revealPasswordBtn.addEventListener('touchcancel', stopReveal);
+            };
+
+            attachRevealListeners();
+            setPasswordVisibility(false);
+
+            if(clearPasswordBtn && clearPasswordField){
+                clearPasswordBtn.addEventListener('click', ()=>{
+                    clearPasswordField.value = '1';
+                    if(passwordInput) passwordInput.value = '';
+                    if(statusEl) statusEl.textContent = 'Password will be cleared on save.';
+                    if(savedPasswordDisplay) savedPasswordDisplay.textContent = 'Saved password will be cleared on save.';
+                    setPasswordVisibility(false);
+                });
+            }
+            if(passwordInput && clearPasswordField){
+                passwordInput.addEventListener('input', ()=>{
+                    clearPasswordField.value = '';
+                    if(savedPasswordDisplay){
+                        if(passwordInput.value){
+                            savedPasswordDisplay.innerHTML = `New password (pending save): <code>${escapeHtml(passwordInput.value)}</code>`;
+                        } else {
+                            savedPasswordDisplay.innerHTML = savedPasswordOriginalHtml || '';
+                        }
+                    }
+                });
+            }
+            const submitPanel = (action) => {
+                if(!form) return;
+                if(actionInput) actionInput.value = action;
+                persistMapping();
+                const targetUrl = form.getAttribute('action') || form.action;
+                if(!targetUrl){
+                    if(statusEl) statusEl.textContent = 'Missing form target.';
+                    return;
+                }
+                const fd = new FormData(form);
+                if(statusEl){
+                    if(action === 'probe') statusEl.textContent = 'Probing feed...';
+                    else if(action === 'sync-now') statusEl.textContent = 'Sync job queuing...';
+                    else if(action === 'test-sync') statusEl.textContent = 'Queuing test sync...';
+                    else statusEl.textContent = 'Saving...';
+                }
+                fetch(targetUrl, { method:'POST', body: fd, credentials:'same-origin' })
+                    .then(r=>{
+                        if(!r.ok){
+                            throw new Error(`HTTP ${r.status}`);
+                        }
+                        return r.text();
+                    })
+                    .then(html=>{
+                        if(serverContainer){
+                            serverContainer.innerHTML = html;
+                        }
+                        if(window.__initOPDSPanel){ window.__initOPDSPanel(); }
+                    })
+                    .catch(err=>{
+                        console.error('OPDS settings request failed', err);
+                        if(statusEl) statusEl.textContent = 'Request failed' + (err && err.message ? `: ${err.message}` : '.');
+                    });
+            };
+            if(form){
+                form.addEventListener('submit', ev=>{
+                    ev.preventDefault();
+                    submitPanel(actionInput ? actionInput.value || 'save-settings' : 'save-settings');
+                });
+            }
+            if(saveBtn){ saveBtn.addEventListener('click', ()=> submitPanel('save-settings')); }
+            if(probeBtn){ probeBtn.addEventListener('click', ()=> submitPanel('probe')); }
+            if(syncBtn){ syncBtn.addEventListener('click', ()=> submitPanel('sync-now')); }
+            if(testSyncBtn){ testSyncBtn.addEventListener('click', ()=> submitPanel('test-sync')); }
+            renderMapping();
+
+            if(window.__opdsPollIntervals){
+                window.__opdsPollIntervals.forEach(handle => clearInterval(handle));
+            }
+            window.__opdsPollIntervals = [];
+            window.__opdsActiveJobs = new Map();
+
+            const scheduleReload = () => {
+                if(window.__opdsReloadScheduled) return;
+                window.__opdsReloadScheduled = true;
+                setTimeout(()=>{
+                    try {
+                        if(typeof loadServerPanel === 'function'){
+                            loadServerPanel('opds');
+                        } else if(serverContainer){
+                            const endpoint = root.dataset.refreshUrl || "{{ url_for('auth.settings_server_partial', panel='opds') }}";
+                            fetch(endpoint, { credentials:'same-origin' })
+                                .then(r=> r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`)))
+                                .then(html=>{
+                                    serverContainer.innerHTML = html;
+                                    if(window.__initOPDSPanel){ window.__initOPDSPanel(); }
+                                })
+                                .catch(err=> console.error('OPDS reload failed', err));
+                        }
+                    } finally {
+                        setTimeout(()=>{ window.__opdsReloadScheduled = false; }, 1500);
+                    }
+                }, 1200);
+            };
+
+            const ensureJobCard = (jobId, job) => {
+                if(!jobContainer) return null;
+                let card = jobContainer.querySelector(`[data-job-card="${jobId}"]`);
+                if(card) return card;
+                card = document.createElement('div');
+                card.className = 'alert alert-info d-flex justify-content-between align-items-center py-2 mb-2';
+                card.dataset.jobCard = jobId;
+                const left = document.createElement('div');
+                const strong = document.createElement('strong');
+                strong.className = 'me-1 text-uppercase small';
+                strong.textContent = (job && job.kind) ? job.kind : 'job';
+                left.appendChild(strong);
+                const statusSpan = document.createElement('span');
+                statusSpan.className = 'small';
+                statusSpan.dataset.jobStatus = '';
+                left.appendChild(statusSpan);
+                card.appendChild(left);
+                const progressSpan = document.createElement('div');
+                progressSpan.className = 'small text-muted';
+                progressSpan.dataset.jobProgress = '';
+                card.appendChild(progressSpan);
+                if(job && job.progress_url){
+                    const link = document.createElement('a');
+                    link.className = 'small';
+                    link.href = job.progress_url;
+                    link.textContent = 'Details';
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    card.appendChild(link);
+                }
+                jobContainer.appendChild(card);
+                return card;
+            };
+
+            const updateJobCard = (jobId, payload, jobMeta) => {
+                if(!jobContainer) return;
+                const card = ensureJobCard(jobId, jobMeta || {});
+                if(!card) return;
+                const statusEl = card.querySelector('[data-job-status]');
+                const progressEl = card.querySelector('[data-job-progress]');
+                if(statusEl && payload.status){
+                    statusEl.textContent = (payload.status || '').toString();
+                }
+                if(progressEl){
+                    const bits = [];
+                    const processed = typeof payload.processed === 'number' ? payload.processed : null;
+                    const total = typeof payload.total === 'number' ? payload.total : null;
+                    if(processed !== null){
+                        if(total && total > 0){
+                            const pct = Math.min(100, Math.round((processed / total) * 100));
+                            bits.push(`${processed}/${total} (${pct}%)`);
+                        } else {
+                            bits.push(`${processed} processed`);
+                        }
+                    }
+                    const recent = Array.isArray(payload.recent_activity) ? payload.recent_activity.slice(-1)[0] : null;
+                    if(recent){
+                        bits.push(recent);
+                    }
+                    if(payload.error_messages && payload.error_messages.length){
+                        bits.push(`Errors: ${payload.error_messages.length}`);
+                    }
+                    progressEl.textContent = bits.join(' · ');
+                }
+                const status = (payload.status || '').toLowerCase();
+                card.classList.remove('alert-info', 'alert-success', 'alert-danger');
+                if(status === 'completed'){
+                    card.classList.add('alert-success');
+                } else if(status.startsWith('fail') || status === 'cancelled'){
+                    card.classList.add('alert-danger');
+                } else {
+                    card.classList.add('alert-info');
+                }
+            };
+
+            const pollJob = (job) => {
+                if(!job || !job.api_progress_url) return;
+                const jobId = job.task_id || job.id;
+                if(!jobId) return;
+                if(window.__opdsActiveJobs.has(jobId)) return;
+                window.__opdsActiveJobs.set(jobId, true);
+                updateJobCard(jobId, { status: job.status || 'queued' }, job);
+                const handler = setInterval(async () => {
+                    try {
+                        const resp = await fetch(job.api_progress_url, { credentials: 'same-origin' });
+                        if(!resp.ok){
+                            if(resp.status === 404){
+                                clearInterval(handler);
+                                window.__opdsActiveJobs.delete(jobId);
+                                return;
+                            }
+                            throw new Error(`HTTP ${resp.status}`);
+                        }
+                        const payload = await resp.json();
+                        updateJobCard(jobId, payload || {}, job);
+                        const status = (payload && payload.status ? payload.status.toLowerCase() : '');
+                        if(status === 'completed' || status.startsWith('fail') || status === 'cancelled'){
+                            clearInterval(handler);
+                            window.__opdsActiveJobs.delete(jobId);
+                            scheduleReload();
+                        }
+                    } catch(err){
+                        console.error('OPDS job polling failed', err);
+                    }
+                }, 4000);
+                window.__opdsPollIntervals.push(handler);
+            };
+
+            if(Array.isArray(pendingJobs)){
+                pendingJobs.forEach(job => pollJob(job));
+            }
+
+        };
+    }
     // Global delegated handlers for user edit actions (robust against non-executed partial scripts)
     function ensureUserEditDelegation(){
         if(!serverContainer) return;
@@ -263,15 +695,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(panel==='users') endpoint = "{{ url_for('auth.settings_server_partial', panel='users') }}";
                 if(panel==='debug') endpoint = "{{ url_for('auth.settings_server_partial', panel='debug') }}";
                 if(panel==='ai') endpoint = "{{ url_for('auth.settings_server_partial', panel='ai') }}";
+                if(panel==='opds') endpoint = "{{ url_for('auth.settings_server_partial', panel='opds') }}";
                 if(panel==='audiobookshelf') endpoint = "{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}";
                 if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";
                 if(panel==='jobs') endpoint = "{{ url_for('auth.settings_server_partial', panel='jobs') }}";
                 if(!endpoint){ serverContainer.innerHTML = '<div class="text-danger small">Unknown panel.</div>'; return; }
                 serverContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
-                fetch(endpoint)
-                    .then(r=>r.text())
+                fetch(endpoint, { credentials:'same-origin' })
+                    .then(r=>{
+                        if(!r.ok){
+                            throw new Error(`HTTP ${r.status}`);
+                        }
+                        return r.text();
+                    })
                     .then(html=> { 
                         serverContainer.innerHTML = html; 
+                        if(panel==='opds' && window.__initOPDSPanel){
+                            try { window.__initOPDSPanel(); } catch(err){ console.error('OPDS init error', err); }
+                        }
                                                 // Re-bind scripts for panels whose inline <script> won't auto-run after fetch
                                                 if(panel==='audiobookshelf'){
                                                         try {
@@ -641,7 +1082,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             try { ensureUserEditDelegation(); } catch(err) {}
                         }
                     })
-                    .catch(()=> serverContainer.innerHTML = '<div class="text-danger small">Failed to load.</div>');
+                    .catch(err=> {
+                        console.error('Server panel load failed', panel, err);
+                        serverContainer.innerHTML = '<div class="text-danger small">Failed to load panel. ' + (err && err.message ? err.message : '') + '</div>';
+                    });
         }
     function normalizeServerButtons(){
         document.querySelectorAll('.server-nav').forEach(b=>{

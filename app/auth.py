@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app, jsonify
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app, jsonify, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from app.domain.models import User
@@ -12,7 +12,8 @@ from .forms import (LoginForm, RegistrationForm, UserProfileForm, ChangePassword
                    PrivacySettingsForm, ForcedPasswordChangeForm, SetupForm, ReadingStreakForm)
 from .debug_utils import debug_route, debug_auth, debug_csrf, debug_session
 from datetime import datetime, timezone
-from typing import cast, Any
+from typing import cast, Any, Optional
+import json
 from pathlib import Path
 import os
 
@@ -1163,6 +1164,462 @@ def settings_server_partial(panel: str):
         ctx = get_admin_settings_context()
         ctx['ai_config'] = load_ai_config()
         return render_template('settings/partials/server_ai.html', **ctx)
+    if panel == 'opds':
+        from app.utils.opds_settings import load_opds_settings, save_opds_settings
+        from app.utils.opds_mapping import clean_mapping, build_source_options, MB_FIELD_WHITELIST, MB_FIELD_LABELS
+        from app.services import opds_probe_service as _opds_probe_service
+        from app.services import ensure_opds_sync_runner, get_opds_sync_runner
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        from markupsafe import Markup, escape
+
+        try:
+            ensure_opds_sync_runner()
+        except Exception as runner_err:
+            try:
+                current_app.logger.debug(f"OPDS runner init skipped: {runner_err}")
+            except Exception:
+                pass
+
+        settings = load_opds_settings()
+        stored_password = settings.get('password') or ''
+        has_password = bool(settings.get('password_present')) or bool(stored_password)
+        field_inventory = session.get('opds_field_inventory') or settings.get('last_field_inventory') or {}
+        mapping = settings.get('mapping') or {}
+        probe_result = None
+        sync_result = None
+        suggestions = None
+        status_message = None
+        error_message = None
+
+        last_test_summary = settings.get('last_test_summary')
+        last_test_preview = settings.get('last_test_preview') or []
+        pending_jobs: list[dict[str, Any]] = []
+        pending_job_ids: set[Any] = set()
+
+        def _build_pending_job(kind: str, status_value: Any, task_id: Any, api_url: Any, progress_url: Any) -> dict[str, Any] | None:
+            if not task_id or not api_url:
+                return None
+            status_norm = str(status_value or '').strip().lower() or 'queued'
+            allowed_prefixes = ('queued', 'running', 'in-progress', 'in progress')
+            if not any(status_norm.startswith(prefix) for prefix in allowed_prefixes):
+                return None
+            return {
+                'task_id': task_id,
+                'api_progress_url': api_url,
+                'progress_url': progress_url,
+                'kind': kind,
+                'status': status_norm,
+            }
+
+        def _append_pending_job(job: dict[str, Any]) -> None:
+            task_id = job.get('task_id')
+            if not task_id or task_id in pending_job_ids:
+                return
+            pending_job_ids.add(task_id)
+            pending_jobs.append(job)
+
+        if request.method == 'POST':
+            form = request.form
+            action = (form.get('action') or '').strip().lower()
+            base_url = (form.get('base_url') or settings.get('base_url') or '').strip()
+            username = (form.get('username') or settings.get('username') or '').strip()
+            user_agent = (form.get('user_agent') or settings.get('user_agent') or '').strip()
+            password_input = form.get('password')
+            clear_password = form.get('clear_password')
+            mapping_json = form.get('mapping_json') or '{}'
+            try:
+                incoming_mapping = _json.loads(mapping_json) if mapping_json else {}
+            except Exception as parse_err:
+                current_app.logger.warning(f"OPDS mapping parse failed: {parse_err}")
+                incoming_mapping = {}
+                error_message = 'Mapping JSON malformed – ignoring submitted mapping.'
+
+            inventory_for_clean = field_inventory or settings.get('last_field_inventory') or {}
+            cleaned_mapping = clean_mapping(incoming_mapping, inventory_for_clean)
+
+            update_payload: dict[str, Any] = {}
+            if base_url:
+                update_payload['base_url'] = base_url
+            if username or settings.get('username'):
+                update_payload['username'] = username
+            if user_agent or settings.get('user_agent'):
+                update_payload['user_agent'] = user_agent
+            if cleaned_mapping is not None:
+                update_payload['mapping'] = cleaned_mapping
+
+            auto_sync_flag = form.get('auto_sync_enabled')
+            if auto_sync_flag is not None:
+                update_payload['auto_sync_enabled'] = str(auto_sync_flag).strip().lower() in ('1', 'true', 'yes', 'on')
+            interval_raw = form.get('auto_sync_every_hours')
+            if interval_raw is not None:
+                update_payload['auto_sync_every_hours'] = interval_raw
+            auto_user_id = form.get('auto_sync_user_id')
+            if auto_user_id is not None:
+                update_payload['auto_sync_user_id'] = auto_user_id.strip()
+
+            password_for_request = stored_password
+            if clear_password:
+                update_payload['password'] = ''
+                password_for_request = ''
+                has_password = False
+            elif password_input:
+                update_payload['password'] = password_input
+                password_for_request = password_input
+                has_password = True
+
+            def _refresh_settings() -> None:
+                nonlocal settings, stored_password, mapping, last_test_summary, last_test_preview
+                settings = load_opds_settings()
+                stored_password = settings.get('password') or ''
+                mapping = settings.get('mapping') or {}
+                last_test_summary = settings.get('last_test_summary')
+                last_test_preview = settings.get('last_test_preview') or []
+
+            if action == 'save-settings':
+                try:
+                    if (
+                        update_payload
+                        and 'password' not in update_payload
+                        and not base_url
+                        and not username
+                        and not user_agent
+                        and incoming_mapping == {}
+                        and auto_sync_flag is None
+                        and interval_raw is None
+                        and auto_user_id is None
+                    ):
+                        status_message = 'No changes detected.'
+                    else:
+                        save_ok = save_opds_settings(update_payload)
+                        if save_ok:
+                            status_message = 'OPDS settings saved.'
+                            _refresh_settings()
+                            field_inventory = settings.get('last_field_inventory') or field_inventory
+                            session['opds_field_inventory'] = field_inventory
+                            has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                        else:
+                            error_message = 'Failed to save OPDS settings.'
+                except Exception as err:
+                    current_app.logger.error(f"OPDS settings save error: {err}")
+                    error_message = 'Unexpected error saving settings.'
+            elif action == 'probe':
+                if not base_url:
+                    error_message = 'Base URL is required for probe.'
+                else:
+                    try:
+                        if update_payload:
+                            save_opds_settings(update_payload)
+                            _refresh_settings()
+                            has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                        probe_result = _opds_probe_service.probe_sync(
+                            base_url,
+                            username=username or None,
+                            password=password_for_request or None,
+                            user_agent=user_agent or None,
+                        )
+                        field_inventory = probe_result.get('field_inventory') or {}
+                        session['opds_field_inventory'] = field_inventory
+                        suggestions = probe_result.get('mapping_suggestions') or {}
+                        status_message = f"Probe complete: {len(probe_result.get('samples', []))} sample entries detected."
+                        save_opds_settings({
+                            'last_field_inventory': field_inventory,
+                            'mapping': cleaned_mapping,
+                            'last_probe_summary': probe_result,
+                        })
+                        _refresh_settings()
+                        has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                    except Exception as err:
+                        current_app.logger.error(f"OPDS probe failed: {err}")
+                        error_message = f"Probe failed: {err}"
+            elif action == 'sync-now':
+                if not base_url:
+                    error_message = 'Base URL is required before syncing.'
+                elif not cleaned_mapping:
+                    error_message = 'At least one field mapping is required before syncing.'
+                else:
+                    try:
+                        if update_payload:
+                            save_opds_settings(update_payload)
+                            _refresh_settings()
+                            has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                        ensure_opds_sync_runner()
+                        runner = get_opds_sync_runner()
+                        limit_raw = form.get('sync_limit')
+                        limit_value = None
+                        if limit_raw:
+                            try:
+                                limit_value = max(1, int(limit_raw))
+                            except Exception:
+                                limit_value = None
+                        job_info = runner.enqueue_sync(str(current_user.id), limit=limit_value)
+                        now_iso = _dt.now(_tz.utc).isoformat()
+                        message_text = 'Sync job queued.'
+                        sync_task_id = None
+                        sync_progress_url = None
+                        sync_api_url = None
+                        if isinstance(job_info, dict):
+                            sync_task_id = job_info.get('task_id')
+                            sync_progress_url = job_info.get('progress_url')
+                            sync_api_url = job_info.get('api_progress_url')
+                            task_id_text = escape(str(sync_task_id or ''))
+                            message_text = f"Sync job queued as task <code>{task_id_text}</code>."
+                            if sync_progress_url:
+                                message_text += f' <a href="{escape(sync_progress_url)}" class="link-primary">View progress</a>'
+                        status_message = Markup(message_text)
+                        save_payload = {
+                            'last_sync_status': 'queued',
+                            'last_sync_at': now_iso,
+                            'last_sync_task_id': sync_task_id,
+                            'last_sync_task_progress_url': sync_progress_url,
+                            'last_sync_task_api_url': sync_api_url,
+                        }
+                        if limit_value:
+                            save_payload['last_sync_summary'] = {'status': 'queued', 'limit': limit_value, 'timestamp': now_iso}
+                        save_opds_settings(save_payload)
+                        _refresh_settings()
+                        has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                        queued_job = _build_pending_job('sync', 'queued', sync_task_id, sync_api_url, sync_progress_url)
+                        if queued_job:
+                            _append_pending_job(queued_job)
+                    except Exception as err:
+                        current_app.logger.error(f"OPDS sync enqueue failed: {err}")
+                        error_message = f"Sync failed: {err}"
+            elif action == 'test-sync':
+                if not base_url:
+                    error_message = 'Base URL is required before running a test sync.'
+                elif not cleaned_mapping:
+                    error_message = 'At least one field mapping is required before testing the sync.'
+                else:
+                    try:
+                        if update_payload:
+                            save_opds_settings(update_payload)
+                            _refresh_settings()
+                            has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                        ensure_opds_sync_runner()
+                        runner = get_opds_sync_runner()
+                        limit_raw = form.get('test_limit') or '10'
+                        try:
+                            limit_value = max(1, min(50, int(limit_raw)))
+                        except Exception:
+                            limit_value = 10
+                        job_info = runner.enqueue_test_sync(str(current_user.id), limit=limit_value)
+                        message_text = f"Test sync queued (limit {limit_value})."
+                        test_task_id = None
+                        test_progress_url = None
+                        test_api_url = None
+                        if isinstance(job_info, dict):
+                            test_task_id = job_info.get('task_id')
+                            test_progress_url = job_info.get('progress_url')
+                            test_api_url = job_info.get('api_progress_url')
+                            task_id_text = escape(str(test_task_id or ''))
+                            if task_id_text:
+                                message_text += f" Task <code>{task_id_text}</code>."
+                            if test_progress_url:
+                                message_text += f' <a href="{escape(test_progress_url)}" class="link-primary">Track progress</a>'
+                        status_message = Markup(message_text)
+                        now_iso = _dt.now(_tz.utc).isoformat()
+                        save_opds_settings({
+                            'last_test_summary': {'status': 'queued', 'limit': limit_value, 'timestamp': now_iso},
+                            'last_test_preview': [],
+                            'last_test_task_id': test_task_id,
+                            'last_test_task_progress_url': test_progress_url,
+                            'last_test_task_api_url': test_api_url,
+                        })
+                        _refresh_settings()
+                        has_password = bool(settings.get('password_present')) or bool(settings.get('password'))
+                        queued_job = _build_pending_job('test', 'queued', test_task_id, test_api_url, test_progress_url)
+                        if queued_job:
+                            _append_pending_job(queued_job)
+                    except Exception as err:
+                        current_app.logger.error(f"OPDS test sync enqueue failed: {err}")
+                        error_message = f"Test sync failed: {err}"
+            else:
+                error_message = 'Unknown action.'
+
+        if probe_result is None:
+            probe_result = settings.get('last_probe_summary')
+        if sync_result is None:
+            sync_result = settings.get('last_sync_summary')
+
+        # Prepare view context (avoid leaking password)
+        settings_view = dict(settings)
+        password_value = stored_password if has_password else ''
+        settings_view.pop('password', None)
+        settings_view['password_present'] = has_password
+        settings_view['password_value'] = password_value
+
+        source_options = build_source_options(field_inventory)
+        if suggestions is None:
+            suggestions = settings.get('mapping_suggestions') or {}
+
+        def _register_pending_job(kind: str, status_value: Any, task_id: Any, api_url: Any, progress_url: Any) -> None:
+            job = _build_pending_job(kind, status_value, task_id, api_url, progress_url)
+            if job:
+                _append_pending_job(job)
+
+        _register_pending_job(
+            'test',
+            (last_test_summary or {}).get('status'),
+            settings.get('last_test_task_id'),
+            settings.get('last_test_task_api_url'),
+            settings.get('last_test_task_progress_url'),
+        )
+        _register_pending_job(
+            'sync',
+            settings.get('last_sync_status'),
+            settings.get('last_sync_task_id'),
+            settings.get('last_sync_task_api_url'),
+            settings.get('last_sync_task_progress_url'),
+        )
+
+        preview_columns = list(mapping.keys()) if mapping else []
+        preview_rows: list[dict[str, Any]] = []
+
+        if not preview_columns and last_test_preview:
+            fallback_priority = [
+                'title',
+                'subtitle',
+                'authors',
+                'opds_source_id',
+                'entry_id',
+                'publisher',
+                'average_rating',
+                'language',
+                'categories',
+                'tags',
+                'series',
+                'series_order',
+                'page_count',
+                'published_date',
+                'cover_url',
+                'media_type',
+            ]
+            discovered_fields: list[str] = []
+            for entry in last_test_preview:
+                if not isinstance(entry, dict):
+                    continue
+                for key in entry.keys():
+                    if key in ('action', 'reason', 'recent_activity', 'summary', 'raw_links'):
+                        continue
+                    if key not in discovered_fields:
+                        discovered_fields.append(key)
+            prioritized = [field for field in fallback_priority if field in discovered_fields]
+            remaining = [field for field in discovered_fields if field not in prioritized]
+            preview_columns = (prioritized + remaining)[:10]
+
+        def _stringify_preview_value(value: Any) -> str:
+            if value is None or value == '':
+                return ''
+            if isinstance(value, list):
+                return ', '.join(str(v) for v in value if v not in (None, ''))
+            if isinstance(value, dict):
+                try:
+                    return _json.dumps(value, ensure_ascii=False)
+                except Exception:
+                    return str(value)
+            return str(value)
+
+        def _build_preview_cell(entry: dict[str, Any], field_name: str) -> dict[str, Any]:
+            entry_payload = entry.get('entry') if isinstance(entry.get('entry'), dict) else {}
+            raw_value: Any
+            if field_name.startswith('contributors.'):
+                role = field_name.split('.', 1)[1].upper() if '.' in field_name else ''
+                contributors = entry.get('contributors') or []
+                if not contributors and isinstance(entry_payload, dict):
+                    contributors = entry_payload.get('contributors') or []
+                names = []
+                for contributor in contributors:
+                    if not isinstance(contributor, dict):
+                        continue
+                    c_role = str(contributor.get('role') or '').upper()
+                    if c_role == role:
+                        name_val = contributor.get('name')
+                        if name_val:
+                            names.append(str(name_val))
+                raw_value = names
+            elif field_name == 'opds_source_id':
+                raw_value = entry.get('opds_source_id') or entry.get('entry_id') or entry.get('id')
+                if raw_value is None and isinstance(entry_payload, dict):
+                    raw_value = entry_payload.get('opds_source_id') or entry_payload.get('id')
+            else:
+                raw_value = entry.get(field_name)
+                if raw_value is None and isinstance(entry_payload, dict):
+                    raw_value = entry_payload.get(field_name)
+            display_text = _stringify_preview_value(raw_value)
+            cell_url = None
+            if isinstance(raw_value, str):
+                lower_value = raw_value.lower()
+                if lower_value.startswith(('http://', 'https://')):
+                    cell_url = raw_value
+                elif field_name == 'cover_url' and raw_value.startswith('/'):
+                    cell_url = raw_value
+            return {
+                'text': display_text or '—',
+                'url': cell_url,
+            }
+
+        def _resolve_entry_link(payload: Optional[dict[str, Any]]) -> Optional[str]:
+            if not isinstance(payload, dict):
+                return None
+            links = payload.get('raw_links')
+            if isinstance(links, list):
+                for link in links:
+                    if not isinstance(link, dict):
+                        continue
+                    rel = str(link.get('rel') or '').lower()
+                    href = link.get('href')
+                    if not isinstance(href, str) or not href:
+                        continue
+                    if rel in {'self', 'alternate'} or rel.endswith('/self'):
+                        return href
+                for link in links:
+                    if not isinstance(link, dict):
+                        continue
+                    href = link.get('href')
+                    if isinstance(href, str) and href:
+                        return href
+            return None
+
+        if preview_columns and last_test_preview:
+            for entry in last_test_preview:
+                if not isinstance(entry, dict):
+                    continue
+                row_values = {field: _build_preview_cell(entry, field) for field in preview_columns}
+                raw_inspect_payload = entry.get('entry')
+                inspect_payload: dict[str, Any] = raw_inspect_payload if isinstance(raw_inspect_payload, dict) else {}
+                entry_link = _resolve_entry_link(inspect_payload)
+                opds_identifier = inspect_payload.get('opds_source_id') if inspect_payload else None
+                if not opds_identifier:
+                    opds_identifier = entry.get('opds_source_id')
+                preview_rows.append({
+                    'action': entry.get('action'),
+                    'reason': entry.get('reason'),
+                    'columns': row_values,
+                    'inspect_payload': inspect_payload,
+                    'inspect_entry_link': entry_link,
+                    'opds_source_id': opds_identifier,
+                })
+
+        return render_template(
+            'settings/partials/server_opds.html',
+            settings=settings_view,
+            mapping=mapping,
+            mapping_fields=MB_FIELD_WHITELIST,
+            mapping_labels=MB_FIELD_LABELS,
+            source_options=source_options,
+            field_inventory=field_inventory,
+            probe_result=probe_result,
+            sync_result=sync_result,
+            status_message=status_message,
+            error_message=error_message,
+            suggestions=suggestions,
+            last_test_summary=last_test_summary,
+            last_test_preview=last_test_preview,
+            preview_columns=preview_columns,
+            preview_rows=preview_rows,
+            pending_jobs=pending_jobs,
+        )
     if panel == 'audiobookshelf':
         # Admin-only ABS settings management
         if not current_user.is_admin:
@@ -1351,6 +1808,134 @@ def settings_server_partial(panel: str):
         return render_template('settings/partials/server_jobs.html', jobs=jobs, manager_stats=stats)
     # 'system' panel removed; info moved to overview section
     return '<div class="text-danger small">Unknown panel.</div>'
+
+
+@auth.route('/settings/opds/preview/<int:row_index>')
+@login_required
+def opds_preview_detail(row_index: int):
+    if not current_user.is_admin:
+        abort(403)
+    from app.utils.opds_settings import load_opds_settings
+    from app.utils.opds_mapping import MB_FIELD_LABELS
+
+    settings = load_opds_settings()
+    preview_list = settings.get('last_test_preview') or []
+    if not isinstance(preview_list, list) or row_index < 0 or row_index >= len(preview_list):
+        abort(404)
+
+    entry_obj = preview_list[row_index]
+    entry_payload = entry_obj if isinstance(entry_obj, dict) else {}
+    mapped_payload = entry_payload.get('entry') if isinstance(entry_payload, dict) else {}
+    if not isinstance(mapped_payload, dict):
+        mapped_payload = entry_payload if isinstance(entry_payload, dict) else {}
+
+    opds_id = None
+    if isinstance(entry_payload, dict):
+        opds_id = entry_payload.get('opds_source_id') or mapped_payload.get('opds_source_id')
+    raw_links = mapped_payload.get('raw_links') if isinstance(mapped_payload, dict) else None
+    inspect_link = None
+    if isinstance(raw_links, list):
+        for link in raw_links:
+            if not isinstance(link, dict):
+                continue
+            href = link.get('href')
+            if not isinstance(href, str) or not href:
+                continue
+            rel = str(link.get('rel') or '').lower()
+            if rel in {'self', 'alternate'} or rel.endswith('/self'):
+                inspect_link = href
+                break
+        if not inspect_link:
+            for link in raw_links:
+                if not isinstance(link, dict):
+                    continue
+                href = link.get('href')
+                if isinstance(href, str) and href:
+                    inspect_link = href
+                    break
+
+    summary = settings.get('last_test_summary') or {}
+    payload_json = json.dumps(mapped_payload, indent=2, ensure_ascii=False)
+
+    column_map_obj = entry_payload.get('columns') if isinstance(entry_payload, dict) else None
+    column_map = column_map_obj if isinstance(column_map_obj, dict) else {}
+
+    mapping_raw = settings.get('mapping')
+    mapping_config = mapping_raw if isinstance(mapping_raw, dict) else {}
+    mapped_field_order: list[str] = []
+    for key in mapping_config.keys():
+        field_name = str(key)
+        if field_name and field_name not in mapped_field_order:
+            mapped_field_order.append(field_name)
+    for field_name in column_map.keys():
+        if field_name not in mapped_field_order:
+            mapped_field_order.append(field_name)
+
+    def _stringify_detail_value(value: Any) -> str:
+        if value is None or value == "":
+            return ""
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value if item not in (None, ""))
+        if isinstance(value, dict):
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    mapped_fields: list[dict[str, Any]] = []
+    for field_name in mapped_field_order:
+        cell = column_map.get(field_name) if isinstance(column_map, dict) else None
+        raw_value = mapped_payload.get(field_name) if isinstance(mapped_payload, dict) else None
+        text_value: str
+        link_url: Optional[str] = None
+        if isinstance(cell, dict):
+            text_value = cell.get('text') or ''
+            link_url = cell.get('url') if isinstance(cell.get('url'), str) else None
+        else:
+            if field_name.startswith('contributors.') and isinstance(mapped_payload.get('contributors'), list):
+                role = field_name.split('.', 1)[1].upper() if '.' in field_name else ''
+                contributor_names = []
+                for contributor in mapped_payload.get('contributors', []):
+                    if not isinstance(contributor, dict):
+                        continue
+                    c_role = str(contributor.get('role') or '').upper()
+                    if c_role == role and contributor.get('name'):
+                        contributor_names.append(str(contributor['name']))
+                text_value = ", ".join(contributor_names)
+            else:
+                text_value = _stringify_detail_value(raw_value)
+            if isinstance(raw_value, str) and raw_value.lower().startswith(('http://', 'https://', '/')):
+                link_url = raw_value
+        if not text_value:
+            text_value = '—'
+        elif link_url and text_value == link_url:
+            # Avoid duplicating long URLs as both text and link
+            text_value = link_url
+        friendly_label = MB_FIELD_LABELS.get(field_name)
+        if not friendly_label:
+            friendly_label = field_name.replace('contributors.', 'Contributor · ').replace('_', ' ').title()
+        mapped_fields.append({
+            'name': field_name,
+            'label': friendly_label,
+            'text': text_value,
+            'url': link_url,
+        })
+
+    if request.args.get('format') == 'json':
+        return jsonify(mapped_payload)
+
+    return render_template(
+        'settings/opds_preview_detail.html',
+        row_index=row_index,
+        preview_entry=entry_payload,
+        mapped_payload=mapped_payload,
+        payload_json=payload_json,
+        opds_id=opds_id,
+        inspect_link=inspect_link,
+        summary=summary,
+        mapped_fields=mapped_fields,
+    )
 
 # Lightweight endpoint to test ABS connection via AJAX
 @auth.route('/settings/audiobookshelf/test', methods=['POST'])

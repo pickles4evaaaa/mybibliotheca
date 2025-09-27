@@ -382,6 +382,14 @@ def create_app():
         except Exception as e:
             app.logger.warning(f"Failed to start ABS sync runner: {e}")
 
+        # Ensure OPDS sync runner is started for background jobs and scheduler
+        try:
+            from .services.opds_sync_runner import ensure_opds_sync_runner
+            ensure_opds_sync_runner()
+            app.logger.info("OPDS sync runner ensured")
+        except Exception as e:
+            app.logger.warning(f"Failed to start OPDS sync runner: {e}")
+
         # Run series migration (idempotent)
         try:
             from .migrations.series_relationship_migration import run_series_migration

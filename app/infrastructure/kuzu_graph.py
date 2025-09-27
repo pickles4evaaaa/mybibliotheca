@@ -270,6 +270,19 @@ class KuzuGraphDB:
                         except Exception as alter_e:
                             print(f"Note: Could not add updated_at to ReadingLog table: {alter_e}")
                 # Note: ReadingLog table migration completed
+
+                # Add OPDS column to existing Book nodes if missing
+                try:
+                    if self._connection:
+                        self._connection.execute("MATCH (b:Book) RETURN b.opds_source_id LIMIT 1")
+                except Exception as e:
+                    if "Cannot find property opds_source_id" in str(e):
+                        try:
+                            if self._connection:
+                                self._connection.execute("ALTER TABLE Book ADD opds_source_id STRING")
+                                logger.info("Added opds_source_id column to Book table")
+                        except Exception as alter_e:
+                            print(f"Note: Could not add opds_source_id to Book table: {alter_e}")
                         
             else:
                 logger.info("🔧 Creating new database schema...")
@@ -319,6 +332,7 @@ class KuzuGraphDB:
                     cover_url STRING,
                     google_books_id STRING,
                     openlibrary_id STRING,
+                    opds_source_id STRING,
                     average_rating DOUBLE,
                     rating_count INT64,
                     series STRING,

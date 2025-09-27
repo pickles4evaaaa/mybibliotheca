@@ -1,6 +1,6 @@
 {
-  "version": 3,
-  "generated_at": "2025-08-17T00:00:00Z",
+  "version": 4,
+  "generated_at": "2025-03-01T00:00:00Z",
   "nodes": {
     "Series": {
       "columns": {
@@ -57,8 +57,9 @@
         "page_count": "INT64",
         "language": "STRING",
         "cover_url": "STRING",
-        "google_books_id": "STRING",
-        "openlibrary_id": "STRING",
+  "google_books_id": "STRING",
+  "openlibrary_id": "STRING",
+  "opds_source_id": "STRING",
         "average_rating": "DOUBLE",
         "rating_count": "INT64",
         "series": "STRING",

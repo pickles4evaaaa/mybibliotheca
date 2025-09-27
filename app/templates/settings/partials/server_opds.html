@@ -1,0 +1,299 @@
+<div id="opdsPanelRoot"
+     class="card shadow-sm"
+     data-mapping='{{ mapping|default({})|tojson }}'
+     data-source-options='{{ source_options|default([])|tojson }}'
+     data-field-inventory='{{ field_inventory|default({})|tojson }}'
+     data-suggestions='{{ suggestions|default({})|tojson }}'
+     data-mapping-labels='{{ mapping_labels|default({})|tojson }}'
+  data-mapping-fields='{{ mapping_fields|default([])|tojson }}'
+  data-pending-jobs='{{ pending_jobs|default([])|tojson }}'
+  data-refresh-url='{{ url_for('auth.settings_server_partial', panel='opds') }}'>
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <h5 class="mb-0"><i class="bi bi-rss me-2"></i>OPDS Sync</h5>
+    <div class="d-flex flex-wrap gap-2">
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="opdsProbeBtn"><i class="bi bi-search"></i> Probe</button>
+      <button type="button" class="btn btn-sm btn-outline-success" id="opdsTestSyncBtn"><i class="bi bi-bug"></i> Test Sync</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" id="opdsSyncBtn"><i class="bi bi-arrow-repeat"></i> Sync Now</button>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if error_message %}
+      <div class="alert alert-danger py-2">{{ error_message }}</div>
+    {% endif %}
+    {% if status_message %}
+      <div class="alert alert-success py-2">{{ status_message }}</div>
+    {% endif %}
+
+    <div id="opdsJobProgressContainer" class="mb-3">
+      {% if pending_jobs %}
+        {% for job in pending_jobs %}
+          <div class="alert alert-info d-flex justify-content-between align-items-center py-2 mb-2" data-job-card="{{ job.task_id }}">
+            <div>
+              <strong class="me-1 text-uppercase small">{{ job.kind }}</strong>
+              <span class="small" data-job-status>{{ job.status or 'queued' }}</span>
+            </div>
+            <div class="small text-muted" data-job-progress></div>
+            {% if job.progress_url %}
+              <a class="small" href="{{ job.progress_url }}" target="_blank" rel="noopener">Details</a>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    <form id="opdsMainForm" class="mb-4" method="post" action="{{ url_for('auth.settings_server_partial', panel='opds') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" id="opdsActionInput" value="save-settings">
+      <input type="hidden" name="mapping_json" id="opdsMappingJson" value="">
+      <input type="hidden" name="clear_password" id="opdsClearPassword" value="">
+
+      <div class="row g-3">
+        <div class="col-md-7">
+          <label class="form-label">OPDS Feed Base URL</label>
+          <input type="url" name="base_url" class="form-control" placeholder="https://example.com/opds" value="{{ settings.base_url or '' }}" required>
+          <div class="form-text">Root/catalog URL to your OPDS 1 feed. We'll follow acquisition links during probing.</div>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">Custom User-Agent (optional)</label>
+          <input type="text" name="user_agent" class="form-control" placeholder="MyBibliotheca/1.0" value="{{ settings.user_agent or '' }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">HTTP Username</label>
+          <input type="text" name="username" class="form-control" autocomplete="username" value="{{ settings.username or '' }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">HTTP Password</label>
+          <div class="input-group">
+            <button type="button" class="btn btn-outline-secondary" id="opdsRevealPasswordBtn" aria-label="Hold to reveal password" title="Hold to reveal password"><i class="bi bi-eye"></i></button>
+            <input type="password" name="password" class="form-control" autocomplete="password" placeholder="{% if settings.password_present %}•••••• (unchanged){% else %}Optional{% endif %}" value="{{ settings.password_value or '' }}">
+            {% if settings.password_present %}
+              <button type="button" class="btn btn-outline-secondary" id="opdsClearPasswordBtn"><i class="bi bi-eraser"></i></button>
+            {% endif %}
+          </div>
+          <div class="form-text" id="opdsSavedPasswordDisplay">Leave blank to reuse the stored password.</div>
+        </div>
+      </div>
+      <div class="row g-3 mt-1">
+        <div class="col-md-6">
+          <label class="form-label small text-uppercase text-muted">Auto Sync</label>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="auto_sync_enabled" id="opdsAutoSyncEnabled" value="1" {% if settings.auto_sync_enabled %}checked{% endif %}>
+            <label class="form-check-label" for="opdsAutoSyncEnabled">Enable background sync runner</label>
+          </div>
+          <div class="row g-2 mt-1">
+            <div class="col-sm-6">
+              <label class="form-label">Every (hours)</label>
+              <input type="number" min="1" name="auto_sync_every_hours" class="form-control" value="{{ settings.auto_sync_every_hours or 24 }}">
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label">Run as User ID</label>
+              <input type="text" name="auto_sync_user_id" class="form-control" value="{{ settings.auto_sync_user_id or current_user.id }}">
+              <div class="form-text">Defaults to your account if left blank.</div>
+            </div>
+          </div>
+          <div class="small text-muted mt-2">
+            Last auto sync: {% if settings.last_auto_sync %}{{ settings.last_auto_sync }} ({{ settings.last_auto_sync_status or 'status unknown' }}){% else %}never{% endif %}
+          </div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small text-uppercase text-muted">Manual Sync Limits</label>
+          <div class="row g-2">
+            <div class="col-sm-6">
+              <label class="form-label">Sync Now Limit</label>
+              <input type="number" min="1" name="sync_limit" id="opdsSyncLimitInput" class="form-control" placeholder="All" value="">
+              <div class="form-text">Optional cap for troubleshooting.</div>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label">Test Sync Limit</label>
+              <input type="number" min="1" max="50" name="test_limit" id="opdsTestLimitInput" class="form-control" value="10">
+              <div class="form-text">Preview up to 50 items without importing.</div>
+            </div>
+          </div>
+          <div class="mt-3 d-flex gap-2">
+            <button type="button" class="btn btn-primary" id="opdsSaveBtn"><i class="bi bi-save"></i> Save Settings</button>
+            <span id="opdsStatus" class="align-self-center text-muted small"></span>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <hr class="my-4">
+    <section>
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h6 class="mb-0"><i class="bi bi-diagram-2 me-2"></i>Field Mapping</h6>
+        <div class="small text-muted" id="opdsSourceSummary"></div>
+      </div>
+      <div class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label">MyBibliotheca Field</label>
+          <select class="form-select" id="opdsFieldSelect"></select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">OPDS Source</label>
+          <select class="form-select" id="opdsSourceSelect"></select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label d-none d-md-block">&nbsp;</label>
+          <button type="button" class="btn btn-outline-primary w-100" id="opdsAddMappingBtn"><i class="bi bi-plus-circle"></i> Add</button>
+        </div>
+      </div>
+      <ul class="list-group mt-3" id="opdsMappingList">
+        {% if mapping %}
+          {% for field, expr in mapping.items() %}
+            <li class="list-group-item d-flex justify-content-between align-items-center" data-field="{{ field }}">
+              <span><strong>{{ mapping_labels.get(field, field) }}</strong> <span class="text-muted">&larr;</span> <code>{{ expr }}</code></span>
+              <button type="button" class="btn btn-sm btn-outline-danger" data-remove-mapping="{{ field }}"><i class="bi bi-x-lg"></i></button>
+            </li>
+          {% endfor %}
+        {% else %}
+          <li class="list-group-item text-muted small" data-empty>Configure at least title, source id, and contributors to enable syncing.</li>
+        {% endif %}
+      </ul>
+      <div class="mt-2" id="opdsSuggestionContainer"></div>
+    </section>
+
+    <hr class="my-4">
+    <section class="row g-3">
+      <div class="col-lg-6">
+        <h6 class="mb-2"><i class="bi bi-card-checklist me-2"></i>Field Inventory</h6>
+        {% set entry_fields = field_inventory.get('entry', []) %}
+        {% set link_rels = field_inventory.get('link_rels', []) %}
+        {% set link_types = field_inventory.get('link_types', []) %}
+        {% if entry_fields or link_rels or link_types %}
+          <div class="small">
+            {% if entry_fields %}
+              <div class="mb-2"><strong>Entry tags:</strong>
+                {% for field in entry_fields %}
+                  <span class="badge bg-light text-dark me-1">{{ field }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+            {% if link_rels %}
+              <div class="mb-2"><strong>Link rels:</strong>
+                {% for rel in link_rels %}
+                  <span class="badge bg-light text-dark me-1">{{ rel }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+            {% if link_types %}
+              <div class="mb-2"><strong>Link types:</strong>
+                {% for ltype in link_types %}
+                  <span class="badge bg-light text-dark me-1">{{ ltype }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        {% else %}
+          <p class="text-muted small mb-0">Run a probe to catalog available metadata fields.</p>
+        {% endif %}
+      </div>
+      <div class="col-lg-6">
+        <h6 class="mb-2"><i class="bi bi-info-circle me-2"></i>Latest Probe</h6>
+        {% if probe_result %}
+          {% set diagnostics = probe_result.get('diagnostics', {}) %}
+          <div class="small">
+            <p class="mb-2">Captured {{ probe_result.samples|length }} sample entries across {{ diagnostics.get('attempts', [])|length }} requests.</p>
+            <div class="border rounded bg-light overflow-auto" style="max-height: 260px;">
+              <pre class="small m-0 p-2">{% for sample in probe_result.samples[:3] %}{{ sample|tojson(indent=2) }}{% if not loop.last %}
+---
+{% endif %}{% endfor %}</pre>
+            </div>
+          </div>
+        {% else %}
+          <p class="text-muted small mb-0">No probe yet. Use the Probe button to fetch samples and update mapping suggestions.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if sync_result %}
+      <hr class="my-4">
+      <section>
+        <h6 class="mb-2"><i class="bi bi-arrow-repeat me-2"></i>Last Sync Summary</h6>
+        <ul class="list-inline small mb-0">
+          <li class="list-inline-item badge bg-success">Created {{ sync_result.created or 0 }}</li>
+          <li class="list-inline-item badge bg-info text-dark">Updated {{ sync_result.updated or 0 }}</li>
+          <li class="list-inline-item badge bg-secondary">Skipped {{ sync_result.skipped or 0 }}</li>
+        </ul>
+      </section>
+    {% endif %}
+
+    <hr class="my-4">
+    <section>
+      <h6 class="mb-2"><i class="bi bi-clipboard-data me-2"></i>Test Sync Preview</h6>
+      {% if last_test_summary %}
+        {% if last_test_summary.get('error') %}
+          <div class="alert alert-warning py-2 small mb-2">
+            Last test sync failed at {{ last_test_summary.timestamp or 'unknown time' }} · {{ last_test_summary.error }}
+          </div>
+        {% else %}
+          {% set summary_counts = last_test_summary.summary if last_test_summary.get('summary') else last_test_summary %}
+          <div class="small mb-2">
+            <strong>Last run:</strong> {{ last_test_summary.timestamp or 'unknown time' }}{% if last_test_summary.get('limit') %} · limit {{ last_test_summary.limit }}{% endif %}
+            <div>
+              <span class="text-success">Would create {{ summary_counts.get('would_create', 0) }}</span>,
+              <span class="text-info">update {{ summary_counts.get('would_update', 0) }}</span>,
+              <span class="text-muted">skip {{ summary_counts.get('skipped', 0) }}</span>
+            </div>
+          </div>
+        {% endif %}
+      {% else %}
+        <p class="text-muted small mb-2">No test sync recorded yet. Use “Test Sync” to preview the first few entries without importing.</p>
+      {% endif %}
+      {% if preview_rows %}
+        <div class="table-responsive" style="max-height: 260px;">
+          <table class="table table-sm table-striped table-hover align-middle">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Action</th>
+                <th scope="col">Reason</th>
+                <th scope="col">Inspect</th>
+                {% for field in preview_columns %}
+                  <th scope="col">{{ mapping_labels.get(field, field.replace('contributors.', 'Contributor: ').replace('_', ' ').title()) }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview_rows %}
+                <tr>
+                  <td>
+                    {% if row.action %}
+                      <span class="badge {% if row.action == 'create' %}bg-success{% elif row.action == 'update' %}bg-info text-dark{% else %}bg-secondary{% endif %}">{{ row.action|capitalize }}</span>
+                    {% else %}
+                      <span class="badge bg-secondary">Unknown</span>
+                    {% endif %}
+                  </td>
+                  <td class="small text-muted">{{ row.reason or '—' }}</td>
+                  {% set detail_url = url_for('auth.opds_preview_detail', row_index=loop.index0) %}
+                  <td class="small">
+                    <div class="d-flex flex-column gap-1">
+                      <a href="{{ detail_url }}" class="link-primary">View JSON</a>
+                      {% if row.inspect_entry_link %}
+                        <a href="{{ row.inspect_entry_link }}" target="_blank" rel="noopener">Open feed entry</a>
+                      {% endif %}
+                    </div>
+                  </td>
+                  {% set column_map = row.get('columns', {}) %}
+                  {% for field in preview_columns %}
+                    {% set cell = column_map.get(field) %}
+                    <td class="small">
+                      {% if cell and cell.url %}
+                        <a href="{{ cell.url }}" target="_blank" rel="noopener">{{ cell.text }}</a>
+                      {% else %}
+                        <span class="text-muted">{{ cell.text if cell else '—' }}</span>
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% elif last_test_preview %}
+        <div class="alert alert-info py-2 small">Preview data available but no mapped columns detected. Ensure your mapping includes fields beyond action/reason.</div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+
+<textarea id="opdsMappingSeed" class="d-none">{{ mapping|default({})|tojson }}</textarea>
+<textarea id="opdsSuggestionsSeed" class="d-none">{{ suggestions|default({})|tojson }}</textarea>

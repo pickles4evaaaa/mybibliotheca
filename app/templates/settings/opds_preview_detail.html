@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}OPDS Preview Item {{ row_index + 1 }}{% endblock %}
+{% block content %}
+<div class="container mt-4 mb-5">
+  <div class="mb-3">
+    <a href="{{ url_for('auth.settings') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back to Settings</a>
+  </div>
+
+  <h1 class="h3 mb-3">OPDS Test Sync Preview</h1>
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <dl class="row small mb-0">
+            <dt class="col-sm-4">Preview Item</dt>
+            <dd class="col-sm-8">{{ row_index + 1 }}</dd>
+            <dt class="col-sm-4">Action</dt>
+            <dd class="col-sm-8">{{ preview_entry.get('action', 'unknown')|capitalize }}</dd>
+            <dt class="col-sm-4">Reason</dt>
+            <dd class="col-sm-8">{{ preview_entry.get('reason') or '—' }}</dd>
+            <dt class="col-sm-4">OPDS ID</dt>
+            <dd class="col-sm-8">{{ opds_id or '—' }}</dd>
+            <dt class="col-sm-4">Series</dt>
+            <dd class="col-sm-8">{{ mapped_payload.get('series') or '—' }}</dd>
+            <dt class="col-sm-4">Media Type</dt>
+            <dd class="col-sm-8">{{ mapped_payload.get('media_type') or '—' }}</dd>
+          </dl>
+        </div>
+        <div class="col-md-6">
+          <dl class="row small mb-0">
+            <dt class="col-sm-4">Title</dt>
+            <dd class="col-sm-8">{{ mapped_payload.get('title') or '—' }}</dd>
+            <dt class="col-sm-4">Authors</dt>
+            <dd class="col-sm-8">{{ mapped_payload.get('authors') or '—' }}</dd>
+            <dt class="col-sm-4">Published</dt>
+            <dd class="col-sm-8">{{ mapped_payload.get('published') or mapped_payload.get('published_date') or '—' }}</dd>
+            <dt class="col-sm-4">Detected Formats</dt>
+            <dd class="col-sm-8">{{ mapped_payload.get('detected_formats') or '—' }}</dd>
+            {% if summary %}
+              <dt class="col-sm-4">Last Test Run</dt>
+              <dd class="col-sm-8">{{ summary.get('timestamp') or 'unknown' }}{% if summary.get('limit') %} · limit {{ summary.get('limit') }}{% endif %}</dd>
+            {% endif %}
+          </dl>
+        </div>
+      </div>
+      <div class="mt-3 d-flex flex-wrap gap-2">
+        <a href="{{ url_for('auth.opds_preview_detail', row_index=row_index, format='json') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-filetype-json me-1"></i>Download JSON</a>
+        {% if inspect_link %}
+          <a href="{{ inspect_link }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary"><i class="bi bi-box-arrow-up-right me-1"></i>Open feed entry</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if mapped_fields %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span class="fw-semibold"><i class="bi bi-table me-2"></i>Mapped Fields</span>
+      <span class="small text-muted">All mapping targets with their current values</span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <tbody>
+            {% for field in mapped_fields %}
+              <tr>
+                <th scope="row" class="text-muted small" style="min-width: 180px;">
+                  {{ field.label }}
+                  <div class="fw-normal text-muted" style="font-size: 0.7rem;">{{ field.name }}</div>
+                </th>
+                <td class="small" style="white-space: pre-wrap; word-break: break-word;">
+                  {% if field.url %}
+                    <a href="{{ field.url }}" target="_blank" rel="noopener">{{ field.text }}</a>
+                  {% else %}
+                    {{ field.text }}
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span class="fw-semibold"><i class="bi bi-code me-2"></i>Mapped Entry JSON</span>
+      <span class="small text-muted">Values shown reflect current field mapping</span>
+    </div>
+    <div class="card-body">
+      <pre class="small mb-0" style="white-space: pre-wrap; word-break: break-word;">{{ payload_json | e }}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

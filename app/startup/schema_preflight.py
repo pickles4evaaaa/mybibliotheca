@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 _SCHEMA_CACHE: Dict[str, Any] = {}
 _SCHEMA_META: Dict[str, str] = {}
 _PREFLIGHT_RAN = False
+_PREFLIGHT_DB_KEY: str | None = None
 
 LOCK_TIMEOUT_SECONDS = 30
 LOCK_POLL_INTERVAL = 0.25
@@ -277,15 +278,28 @@ def _apply_relationship_alters(conn, props: List[Tuple[str, str, str]]):
             raise
 
 def run_schema_preflight() -> None:
-    global _PREFLIGHT_RAN
-    if _PREFLIGHT_RAN:
-        logger.debug("Schema preflight already executed in this process; skipping duplicate run")
-        return
+    global _PREFLIGHT_RAN, _PREFLIGHT_DB_KEY
+    current_db_key = str(_get_data_root().resolve())
+    force = os.getenv("SCHEMA_PREFLIGHT_FORCE", "false").lower() in ("1","true","yes")
+
+    if _PREFLIGHT_RAN and not force:
+        if _PREFLIGHT_DB_KEY and _PREFLIGHT_DB_KEY != current_db_key:
+            logger.info(
+                "Schema preflight: database path changed (was %s, now %s); rerunning to ensure columns are present",
+                _PREFLIGHT_DB_KEY,
+                current_db_key,
+            )
+            _PREFLIGHT_RAN = False  # allow rerun in this invocation
+        else:
+            logger.debug("Schema preflight already executed in this process; skipping duplicate run")
+            return
+
     if os.getenv("DISABLE_SCHEMA_PREFLIGHT", "false").lower() in ("1", "true", "yes"):
         logger.info("Schema preflight disabled via DISABLE_SCHEMA_PREFLIGHT (early exit)")
         _PREFLIGHT_RAN = True
+        _PREFLIGHT_DB_KEY = current_db_key
         return
-    force = os.getenv("SCHEMA_PREFLIGHT_FORCE", "false").lower() in ("1","true","yes")
+
     marker = _load_marker()
 
     # Load schema early to compare hashes
@@ -301,6 +315,7 @@ def run_schema_preflight() -> None:
             f"Schema preflight skip: up-to-date (version={ver}, sha256={short_hash}…) — set SCHEMA_PREFLIGHT_FORCE=1 to force"
         )
         _PREFLIGHT_RAN = True
+        _PREFLIGHT_DB_KEY = current_db_key
         return
 
     # Cross-process lock: only one process performs modifications
@@ -311,6 +326,7 @@ def run_schema_preflight() -> None:
         if marker_after.get("sha256") != _SCHEMA_META.get("sha256"):
             logger.warning("Schema preflight lock timeout and marker hash mismatch – potential race; proceeding without changes")
         _PREFLIGHT_RAN = True
+        _PREFLIGHT_DB_KEY = current_db_key
         return
     logger.info("🔍 Running schema preflight check for additive node + relationship upgrades...")
     # Version/hash logging (schema already loaded)
@@ -384,6 +400,7 @@ def run_schema_preflight() -> None:
             raise
     logger.info("Schema preflight finished at %s", datetime.utcnow().isoformat())
     _PREFLIGHT_RAN = True
+    _PREFLIGHT_DB_KEY = current_db_key
     _write_marker(_SCHEMA_META)
     if got_lock:
         _release_lock()
