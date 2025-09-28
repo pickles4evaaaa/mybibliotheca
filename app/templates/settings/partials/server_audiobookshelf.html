@@ -106,7 +106,12 @@
       ev.preventDefault();
       status.textContent = 'Saving...';
       const fd = new FormData(form);
-      fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' })
+      fetch(form.action, {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      })
         .then(r => r.text())
         .then(html => { document.getElementById('serverDynamicContainer').innerHTML = html; })
         .catch(() => { status.textContent = 'Save failed'; });
@@ -119,7 +124,12 @@
       const fd = new FormData(schedForm);
       // Normalize boolean
       if (!fd.get('auto_sync_enabled')) fd.set('auto_sync_enabled', '');
-      fetch(schedForm.action, { method:'POST', body: fd, credentials:'same-origin' })
+      fetch(schedForm.action, {
+        method:'POST',
+        body: fd,
+        credentials:'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      })
         .then(r=>r.text())
         .then(html=>{
           document.getElementById('serverDynamicContainer').innerHTML = html;

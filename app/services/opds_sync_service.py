@@ -414,7 +414,7 @@ PreviewRow = Dict[str, Any]
 class OPDSSyncService:
     def __init__(self, probe_service: Optional[OPDSProbeService] = None) -> None:
         self._probe_service = probe_service or opds_probe_service
-        self._max_sync = int(os.getenv("OPDS_SYNC_MAX_ENTRIES", "50"))
+        self._max_sync = self._parse_sync_limit(os.getenv("OPDS_SYNC_MAX_ENTRIES"))
         self._book_repo = KuzuBookRepository()
         self._location_service: Optional[LocationService] = None
 
@@ -429,14 +429,21 @@ class OPDSSyncService:
         max_samples: Optional[int] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        requested_limit = self._normalize_limit(max_samples)
+        effective_limit = self._resolve_effective_limit(requested_limit)
+        probe_limit = effective_limit if effective_limit is not None else 0
         probe = await self._probe_service.probe(
             base_url,
             username=username,
             password=password,
             user_agent=user_agent,
-            max_samples=max_samples,
+            max_samples=probe_limit,
         )
         entries = apply_mapping_to_samples(probe.get("samples", []), mapping)
+        if effective_limit is not None:
+            entries_to_apply = entries[:effective_limit]
+        else:
+            entries_to_apply = entries
         flask_app = current_app._get_current_object() if has_app_context() else None  # type: ignore[attr-defined]
         cover_auth: Optional[Tuple[str, str]] = None
         if username is not None and password is not None:
@@ -446,7 +453,7 @@ class OPDSSyncService:
             headers = {"User-Agent": user_agent}
         sync_result = await asyncio.to_thread(
             self._apply_entries,
-            entries[: self._max_sync],
+            entries_to_apply,
             flask_app,
             cover_auth=cover_auth,
             cover_headers=headers,
@@ -464,6 +471,35 @@ class OPDSSyncService:
 
     def quick_probe_sync_sync(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         return run_async(self.quick_probe_sync(*args, **kwargs))
+
+    @staticmethod
+    def _parse_sync_limit(raw_value: Optional[str]) -> Optional[int]:
+        if raw_value is None:
+            return None
+        text = raw_value.strip()
+        if not text:
+            return None
+        try:
+            candidate = int(text)
+        except (TypeError, ValueError):
+            return None
+        return candidate if candidate > 0 else None
+
+    @staticmethod
+    def _normalize_limit(value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            return None
+        return candidate if candidate > 0 else None
+
+    def _resolve_effective_limit(self, requested_limit: Optional[int]) -> Optional[int]:
+        limit = requested_limit if requested_limit is not None and requested_limit > 0 else None
+        if self._max_sync is not None:
+            limit = min(limit, self._max_sync) if limit is not None else self._max_sync
+        return limit
 
     def _get_location_service(self) -> LocationService:
         if self._location_service is None:

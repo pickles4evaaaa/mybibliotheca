@@ -1639,6 +1639,10 @@ def settings_server_partial(panel: str):
         import json as _json
         settings = load_abs_settings()
         connection_test = None
+        expects_partial = bool(
+            request.headers.get('HX-Request')
+            or (request.headers.get('X-Requested-With') or '').lower() in {'xmlhttprequest', 'fetch'}
+        )
         # Handle POST to save settings
         if request.method == 'POST':
             payload: dict[str, Any] = {}
@@ -1684,6 +1688,12 @@ def settings_server_partial(panel: str):
             ok = save_abs_settings(payload)
             if ok:
                 settings = load_abs_settings()
+            if not expects_partial and not request.is_json:
+                flash(
+                    'Audiobookshelf settings saved.' if ok else 'Failed to save Audiobookshelf settings.',
+                    'success' if ok else 'error',
+                )
+                return redirect(url_for('auth.settings', section='server', panel='audiobookshelf'))
         # Optionally test connection if query flag present
         try:
             if request.args.get('test') == '1':

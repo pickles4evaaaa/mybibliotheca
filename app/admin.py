@@ -978,13 +978,13 @@ def update_ai_settings():
             return render_template('settings/partials/server_ai.html', **ctx)
         ref = request.referrer or ''
         if '/settings' in ref and '/admin/settings' not in ref:
-            return redirect(url_for('auth.settings'))
-        return redirect(url_for('admin.settings'))
+            return redirect(url_for('auth.settings', section='server', panel='ai'))
+        return redirect(url_for('admin.settings', section='ai'))
         
     except Exception as e:
         current_app.logger.error(f"Error updating AI settings: {e}")
-        flash('Error updating AI settings. Please try again.', 'danger')
-        return redirect(url_for('admin.settings'))
+    flash('Error updating AI settings. Please try again.', 'danger')
+    return redirect(url_for('admin.settings', section='ai'))
 
 @admin.route('/test-ai-connection', methods=['POST'])
 @login_required

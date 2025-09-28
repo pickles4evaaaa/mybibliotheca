@@ -931,6 +931,26 @@ document.addEventListener('DOMContentLoaded', function() {
     toggleProviderSettings();
     toggleBackgroundOptions();
     updateBackgroundPreview();
+
+    try {
+        const params = new URLSearchParams(window.location.search);
+        if ((params.get('section') || '').toLowerCase() === 'ai') {
+            const aiCollapse = document.getElementById('collapseAIConfig');
+            if (aiCollapse && typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
+                const instance = bootstrap.Collapse.getOrCreateInstance(aiCollapse, { toggle: false });
+                instance.show();
+                setTimeout(() => {
+                    try {
+                        aiCollapse.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    } catch (err) {
+                        console.debug('AI collapse scroll failed', err);
+                    }
+                }, 250);
+            }
+        }
+    } catch (err) {
+        console.debug('AI collapse init failed', err);
+    }
 });
 
 // Background configuration functions

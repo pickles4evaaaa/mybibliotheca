@@ -25,7 +25,7 @@ DCTERMS_NS = "{http://purl.org/dc/terms/}"
 @dataclass
 class ProbeConfig:
     max_depth: int
-    max_samples: int
+    max_samples: Optional[int]
     timeout: float
 
 
@@ -175,9 +175,22 @@ class OPDSProbeService:
         max_depth: Optional[int] = None,
         max_samples: Optional[int] = None,
     ) -> Dict[str, Any]:
+        normalized_max_samples: Optional[int]
+        if max_samples is None:
+            normalized_max_samples = self._default_config.max_samples
+        else:
+            try:
+                candidate = int(max_samples)
+            except (TypeError, ValueError):
+                candidate = self._default_config.max_samples or 0
+            if candidate <= 0:
+                normalized_max_samples = None
+            else:
+                normalized_max_samples = candidate
+
         config = ProbeConfig(
             max_depth=max_depth if max_depth is not None else self._default_config.max_depth,
-            max_samples=max_samples if max_samples is not None else self._default_config.max_samples,
+            max_samples=normalized_max_samples,
             timeout=self._default_config.timeout,
         )
         return await asyncio.to_thread(
@@ -270,7 +283,7 @@ class OPDSProbeService:
         }
 
         try:
-            while queue and len(content_samples) < config.max_samples:
+            while queue and (config.max_samples is None or len(content_samples) < config.max_samples):
                 url, depth = queue.pop(0)
                 if url in visited or depth > config.max_depth:
                     continue
@@ -330,12 +343,12 @@ class OPDSProbeService:
                         continue
                     seen_identifiers.add(identifier)
                     if self._entry_has_acquisition(entry):
-                        if len(content_samples) < config.max_samples:
+                        if config.max_samples is None or len(content_samples) < config.max_samples:
                             content_samples.append(entry)
                     else:
-                        if len(navigation_samples) < (config.max_samples * 2):
+                        if config.max_samples is not None and len(navigation_samples) < (config.max_samples * 2):
                             navigation_samples.append(entry)
-                    if len(content_samples) >= config.max_samples:
+                    if config.max_samples is not None and len(content_samples) >= config.max_samples:
                         break
 
                 if depth < config.max_depth:
@@ -350,8 +363,11 @@ class OPDSProbeService:
         finally:
             session.close()
 
-        remaining_capacity = max(0, config.max_samples - len(content_samples))
-        combined_navigation = navigation_samples[:remaining_capacity]
+        if config.max_samples is None:
+            combined_navigation: List[Dict[str, Any]] = []
+        else:
+            remaining_capacity = max(0, config.max_samples - len(content_samples))
+            combined_navigation = navigation_samples[:remaining_capacity]
         all_samples = content_samples + combined_navigation
         mapping_suggestions = self._suggest_mapping(field_inventory)
 
