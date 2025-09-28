@@ -485,6 +485,32 @@
                                     </div>
                                 </div>
                                 <div class="col-md-3">
+                                    <label for="media_type" class="form-label">Format</label>
+                                    <div class="dropdown-search-wrapper">
+                                        <input type="hidden" name="media_type" value="{{ current_media_type }}">
+                                        <div class="dropdown">
+                                            <button class="btn btn-outline-secondary dropdown-toggle w-100 text-start dropdown-search-btn" 
+                                                    type="button" data-bs-toggle="dropdown" data-field="media_type">
+                                                <span class="selected-text">
+                                                    {% if current_media_type %}
+                                                        {{ media_type_labels.get(current_media_type, current_media_type|replace('_', ' ')|title) }}
+                                                    {% else %}
+                                                        All Formats
+                                                    {% endif %}
+                                                </span>
+                                            </button>
+                                            <ul class="dropdown-menu w-100 dropdown-search-menu" data-field="media_type">
+                                                <li><input type="text" class="form-control dropdown-search-input" placeholder="Search formats..."></li>
+                                                <li><hr class="dropdown-divider"></li>
+                                                <li><a class="dropdown-item" href="#" data-value="">All Formats</a></li>
+                                                {% for media in media_types %}
+                                                    <li><a class="dropdown-item" href="#" data-value="{{ media.value }}">{{ media.label }}</a></li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
                                     <label for="location" class="form-label">Location</label>
                                     <div class="dropdown-search-wrapper">
                                         <input type="hidden" name="location" value="{{ current_location }}">

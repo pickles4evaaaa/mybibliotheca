@@ -14,7 +14,7 @@ import csv
 import io
 from pathlib import Path
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Any, Dict, List
 
 from app.services import book_service, reading_log_service, custom_field_service, user_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
@@ -22,7 +22,7 @@ from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data
 from app.utils.book_utils import get_best_cover_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
-from app.domain.models import Book as DomainBook
+from app.domain.models import Book as DomainBook, MediaType
 
 # Quiet mode for book routes; enable with VERBOSE=true or IMPORT_VERBOSE=true
 import os as _os_for_verbose
@@ -1257,6 +1257,8 @@ def library():
     publisher_filter = request.args.get('publisher', '')
     language_filter = request.args.get('language', '')
     location_filter = request.args.get('location', '')
+    media_type_filter_raw = request.args.get('media_type', '')
+    media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
     search_query = request.args.get('search', '')
     sort_option = request.args.get('sort', 'title_asc')  # Default to title A-Z
 
@@ -1298,6 +1300,7 @@ def library():
         bool(publisher_filter.strip()) if isinstance(publisher_filter, str) else False,
         bool(language_filter.strip()) if isinstance(language_filter, str) else False,
         bool(location_filter.strip()) if isinstance(location_filter, str) else False,
+        bool(media_type_filter.strip()) if isinstance(media_type_filter, str) else False,
     ])
     if has_filter:
         try:
@@ -1419,6 +1422,51 @@ def library():
     
     # Apply status filter first
     filtered_books = user_books
+
+    def _resolve_media_type_value(book_obj):
+        value = book_obj.get('media_type') if isinstance(book_obj, dict) else getattr(book_obj, 'media_type', None)
+        if value is None:
+            return None
+        if hasattr(value, 'value'):
+            value = value.value
+        try:
+            raw = str(value).strip().lower()
+        except Exception:
+            return None
+        if not raw:
+            return None
+
+        simplified = ' '.join(raw.replace('-', ' ').replace('_', ' ').split())
+        alias_map = {
+            'physical': 'physical',
+            'physical book': 'physical',
+            'physicalbook': 'physical',
+            'print': 'physical',
+            'print book': 'physical',
+            'printbook': 'physical',
+            'paperback': 'physical',
+            'hardcover': 'physical',
+            'hard cover': 'physical',
+            'ebook': 'ebook',
+            'e book': 'ebook',
+            'e-book': 'ebook',
+            'digital': 'ebook',
+            'digital book': 'ebook',
+            'kindle': 'kindle',
+            'audio book': 'audiobook',
+            'audio-book': 'audiobook',
+            'audiobook': 'audiobook',
+            'audible': 'audiobook',
+        }
+        if simplified in alias_map:
+            return alias_map[simplified]
+
+        collapsed = simplified.replace(' ', '')
+        if collapsed in alias_map:
+            return alias_map[collapsed]
+
+        return raw
+
     if status_filter and status_filter != 'all':
         if status_filter == 'wishlist':
             filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
@@ -1469,6 +1517,12 @@ def library():
                 category_filter.lower() in (cat.get('name', '') if isinstance(cat, dict) else getattr(cat, 'name', '')).lower() 
                 for cat in (book.get('categories', []) if isinstance(book, dict) else getattr(book, 'categories', []))
             )
+        ]
+
+    if media_type_filter:
+        filtered_books = [
+            book for book in filtered_books
+            if (_resolve_media_type_value(book) or '') == media_type_filter
         ]
 
     # Apply sorting
@@ -1613,6 +1667,7 @@ def library():
     publishers = set()
     languages = set()
     locations = set()
+    media_types = set()
 
     for book in all_books:
         # Handle categories
@@ -1658,6 +1713,39 @@ def library():
                 else:
                     locations.add(str(loc))
 
+        mt_value = _resolve_media_type_value(book)
+        if mt_value:
+            media_types.add(mt_value)
+
+    declared_media_types = {mt.value.lower() for mt in MediaType}
+    all_media_type_values = sorted(
+        declared_media_types.union(media_types),
+        key=lambda val: val.replace('_', ' ') if isinstance(val, str) else ''
+    )
+
+    friendly_media_labels = {
+        'physical': 'Physical Book',
+        'ebook': 'E-book',
+        'audiobook': 'Audiobook',
+        'kindle': 'Kindle'
+    }
+
+    def _format_media_type_label(val: str) -> str:
+        normalized = (val or '').strip().lower()
+        if normalized in friendly_media_labels:
+            return friendly_media_labels[normalized]
+        base = normalized.replace('_', ' ')
+        return base.title() if base else ''
+
+    media_type_options = [
+        {
+            'value': val,
+            'label': _format_media_type_label(val)
+        }
+        for val in all_media_type_values
+    ]
+    media_type_labels = {opt['value']: opt['label'] for opt in media_type_options}
+
     # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync() or []
     
@@ -1690,7 +1778,7 @@ def library():
         # ETag based on user, page/filter/sort, and version
         from app.utils.simple_cache import get_user_library_version
         version = get_user_library_version(str(current_user.id))
-        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{search_query}:{sort_option}:v{version}\""
+        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{search_query}:{sort_option}:v{version}\""
         if request.headers.get('If-None-Match') == etag:
             return ('', 304)
         resp = make_response(jsonify({
@@ -1707,7 +1795,7 @@ def library():
     # ETag for HTML response too
     from app.utils.simple_cache import get_user_library_version
     _version = get_user_library_version(str(current_user.id))
-    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{search_query}:{sort_option}:v{_version}\""
+    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{search_query}:{sort_option}:v{_version}\""
     if request.headers.get('If-None-Match') == _html_etag:
         return ('', 304)
 
@@ -1727,13 +1815,16 @@ def library():
         publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
         languages=sorted([lang for lang in languages if lang is not None and lang != '']),
         locations=sorted([loc for loc in locations if loc is not None and loc != '']),
+        media_types=media_type_options,
         current_status_filter=status_filter,
         current_category=category_filter,
         current_publisher=publisher_filter,
         current_language=language_filter,
         current_location=location_filter,
+        current_media_type=media_type_filter,
         current_search=search_query,
         current_sort=sort_option,
+        media_type_labels=media_type_labels,
         users=users
     ))
     resp.headers['ETag'] = _html_etag
@@ -1769,6 +1860,119 @@ def public_library():
     books = []
     
     return render_template('public_library.html', books=books, filter_status=filter_status)
+
+
+@book_bp.route('/book/<uid>/raw', methods=['GET'])
+@login_required
+def view_book_raw(uid: str):
+    """Return the raw graph representation of a book and related personal metadata."""
+    user_id = str(current_user.id)
+
+    # Ensure the requester has access to the book (reuses overlay service for authorization)
+    book_exists = book_service.get_book_by_uid_sync(uid, user_id)
+    if not book_exists:
+        abort(404)
+
+    from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+
+    raw_query = """
+    MATCH (b:Book {id: $book_id})
+    OPTIONAL MATCH (b)-[rel_out]->(target_out)
+    WITH b,
+         COLLECT(DISTINCT CASE
+             WHEN target_out IS NULL THEN NULL
+             ELSE {
+                 direction: 'OUT',
+                 relationship: rel_out,
+                 target: target_out
+             }
+         END) AS outgoing_rels_raw
+    OPTIONAL MATCH (source_in)-[rel_in]->(b)
+    WITH b,
+         outgoing_rels_raw,
+         COLLECT(DISTINCT CASE
+             WHEN source_in IS NULL THEN NULL
+             ELSE {
+                 direction: 'IN',
+                 relationship: rel_in,
+                 source: source_in
+             }
+         END) AS incoming_rels_raw
+    OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
+    RETURN b AS book_node,
+        labels(b) AS book_labels,
+           outgoing_rels_raw,
+           incoming_rels_raw,
+        CASE WHEN pm IS NULL THEN NULL ELSE pm END AS personal_metadata
+    """
+
+    raw_result = safe_execute_kuzu_query(raw_query, {
+        "book_id": uid,
+        "user_id": user_id
+    })
+
+    raw_payload: Dict[str, Any] = {}
+    if raw_result:
+        try:
+            column_names: List[str] = []
+            get_column_names = getattr(raw_result, 'get_column_names', None)
+            if callable(get_column_names):
+                try:
+                    column_names = list(get_column_names())  # type: ignore[call-arg]
+                except TypeError:
+                    column_names = list(get_column_names) if isinstance(get_column_names, (list, tuple)) else []
+
+            rows: List[Any] = []
+            has_next = getattr(raw_result, 'has_next', None)
+            get_next = getattr(raw_result, 'get_next', None)
+
+            if callable(has_next) and callable(get_next):
+                while has_next():  # type: ignore[misc]
+                    row = get_next()
+                    if column_names and isinstance(row, (list, tuple)):
+                        rows.append({column_names[i]: row[i] for i in range(min(len(column_names), len(row)))})
+                    else:
+                        rows.append(row)
+            else:
+                rows = list(raw_result)  # type: ignore[arg-type]
+
+            if rows:
+                first_row = rows[0]
+                if isinstance(first_row, dict):
+                    raw_payload = first_row
+                elif column_names and isinstance(first_row, (list, tuple)):
+                    raw_payload = {column_names[i]: first_row[i] for i in range(min(len(column_names), len(first_row)))}
+        except Exception as conversion_error:
+            current_app.logger.error("Failed to convert raw book payload: %s", conversion_error)
+            raw_payload = {}
+
+    # Provide a minimal enriched snapshot for quick comparison (dict only)
+    enriched_snapshot = book_exists if isinstance(book_exists, dict) else {}
+
+    raw_outgoing = raw_payload.get('outgoing_rels_raw')
+    raw_incoming = raw_payload.get('incoming_rels_raw')
+
+    outgoing_iter = raw_outgoing if isinstance(raw_outgoing, list) else []
+    incoming_iter = raw_incoming if isinstance(raw_incoming, list) else []
+
+    outgoing_rels = [rel for rel in outgoing_iter if rel]
+    incoming_rels = [rel for rel in incoming_iter if rel]
+
+    response = {
+        'book_id': uid,
+        'user_id': user_id,
+        'book_node': raw_payload.get('book_node'),
+        'book_labels': raw_payload.get('book_labels', []),
+        'outgoing_relationships': outgoing_rels,
+        'incoming_relationships': incoming_rels,
+        'personal_metadata_relationship': raw_payload.get('personal_metadata'),
+        'enriched_overlay_snapshot': enriched_snapshot
+    }
+
+    return jsonify(response)
+
+
+@book_bp.route('/book/<uid>/edit', methods=['GET', 'POST'])
 
 @book_bp.route('/book/<uid>/edit', methods=['GET', 'POST'])
 @login_required
@@ -3401,6 +3605,8 @@ def search_books_in_library():
     publisher_filter = request.args.get('publisher', '')
     language_filter = request.args.get('language', '')
     location_filter = request.args.get('location', '')
+    media_type_filter_raw = request.args.get('media_type', '')
+    media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
     search_query = request.args.get('search', '')
 
     # Use service layer with global book visibility
@@ -3408,7 +3614,51 @@ def search_books_in_library():
     
     # Apply filters in Python (Kuzu doesn't have complex querying like SQL)
     filtered_books = user_books
-    
+
+    def _resolve_media_type_value(book_obj):
+        value = book_obj.get('media_type') if isinstance(book_obj, dict) else getattr(book_obj, 'media_type', None)
+        if value is None:
+            return None
+        if hasattr(value, 'value'):
+            value = value.value
+        try:
+            raw = str(value).strip().lower()
+        except Exception:
+            return None
+        if not raw:
+            return None
+
+        simplified = ' '.join(raw.replace('-', ' ').replace('_', ' ').split())
+        alias_map = {
+            'physical': 'physical',
+            'physical book': 'physical',
+            'physicalbook': 'physical',
+            'print': 'physical',
+            'print book': 'physical',
+            'printbook': 'physical',
+            'paperback': 'physical',
+            'hardcover': 'physical',
+            'hard cover': 'physical',
+            'ebook': 'ebook',
+            'e book': 'ebook',
+            'e-book': 'ebook',
+            'digital': 'ebook',
+            'digital book': 'ebook',
+            'kindle': 'kindle',
+            'audio book': 'audiobook',
+            'audio-book': 'audiobook',
+            'audiobook': 'audiobook',
+            'audible': 'audiobook',
+        }
+        if simplified in alias_map:
+            return alias_map[simplified]
+
+        collapsed = simplified.replace(' ', '')
+        if collapsed in alias_map:
+            return alias_map[collapsed]
+
+        return raw
+
     if search_query:
         search_lower = search_query.lower()
         filtered_books = [
@@ -3445,6 +3695,11 @@ def search_books_in_library():
                 if (cat.get('name', '') if isinstance(cat, dict) else getattr(cat, 'name', ''))
             )
         ]
+    if media_type_filter:
+        filtered_books = [
+            book for book in filtered_books
+            if (_resolve_media_type_value(book) or '') == media_type_filter
+        ]
 
     # Books are already in the right format for the template
     books = filtered_books
@@ -3456,6 +3711,7 @@ def search_books_in_library():
     publishers = set()
     languages = set()
     locations = set()
+    media_types = set()
 
     for book in all_books:
         book_categories = book.get('categories', []) if isinstance(book, dict) else getattr(book, 'categories', [])
@@ -3490,6 +3746,35 @@ def search_books_in_library():
                     locations.add(loc.get('name'))
                 elif hasattr(loc, 'name') and getattr(loc, 'name', None):
                     locations.add(getattr(loc, 'name'))
+        mt_value = _resolve_media_type_value(book)
+        if mt_value:
+            media_types.add(mt_value)
+
+    declared_media_types = {mt.value.lower() for mt in MediaType}
+    all_media_type_values = sorted(declared_media_types.union(media_types), key=lambda val: val.replace('_', ' '))
+
+    friendly_labels = {
+        'physical': 'Physical Book',
+        'ebook': 'E-book',
+        'audiobook': 'Audiobook',
+        'kindle': 'Kindle'
+    }
+
+    def _format_media_type_label(val: str) -> str:
+        normalized = (val or '').strip().lower()
+        if normalized in friendly_labels:
+            return friendly_labels[normalized]
+        base = normalized.replace('_', ' ')
+        return base.title() if base else ''
+
+    media_type_options = [
+        {
+            'value': val,
+            'label': _format_media_type_label(val)
+        }
+        for val in all_media_type_values
+    ]
+    media_type_labels = {opt['value']: opt['label'] for opt in media_type_options}
 
     # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync() or []
@@ -3522,13 +3807,16 @@ def search_books_in_library():
         publishers=sorted([pub for pub in publishers if pub is not None and pub != '']),
         languages=sorted([lang for lang in languages if lang is not None and lang != '']),
         locations=sorted([loc for loc in locations if loc is not None and loc != '']),
+        media_types=media_type_options,
         current_status_filter='all',
         current_category=category_filter,
         current_publisher=publisher_filter,
         current_language=language_filter,
         current_location=location_filter,
+        current_media_type=media_type_filter,
         current_search=search_query,
         current_sort='title_asc',
+        media_type_labels=media_type_labels,
         users=users,
         search_results=results,
         search_query=query
