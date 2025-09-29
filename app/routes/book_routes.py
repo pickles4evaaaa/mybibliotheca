@@ -23,6 +23,7 @@ from app.utils.book_utils import get_best_cover_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook, MediaType
+from app.utils.user_settings import get_default_book_format
 
 # Quiet mode for book routes; enable with VERBOSE=true or IMPORT_VERBOSE=true
 import os as _os_for_verbose
@@ -3938,6 +3939,15 @@ def add_book_manual():
     except Exception:
         pass
 
+    submitted_media_type = (request.form.get('media_type') or '').strip().lower()
+    if submitted_media_type:
+        try:
+            media_type = MediaType(submitted_media_type).value
+        except ValueError:
+            media_type = get_default_book_format()
+    else:
+        media_type = get_default_book_format()
+
     book_data = SimplifiedBook(
         title=title,
         author=author,
@@ -3968,7 +3978,7 @@ def add_book_manual():
             user_id=current_user.id,
             reading_status=request.form.get('reading_status',''),
             ownership_status=request.form.get('ownership_status','owned'),
-            media_type=request.form.get('media_type','physical'),
+            media_type=media_type,
             location_id=request.form.get('location_id')
         )
     except BookAlreadyExistsError as dup:

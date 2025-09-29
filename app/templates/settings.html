@@ -156,6 +156,7 @@
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="opds" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-rss"></i> OPDS</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="audiobookshelf" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-soundwave"></i> Audiobookshelf</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="debug" data-color="info" class="btn btn-outline-info w-100 server-nav"><i class="bi bi-bug"></i> Debug</button></div>
+                <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="repairs" data-color="warning" class="btn btn-outline-warning w-100 server-nav"><i class="bi bi-tools"></i> Repairs</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="jobs" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-activity"></i> Jobs</button></div>
             </div>
             <div id="serverDynamicContainer" class="mb-3"></div>
@@ -698,6 +699,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(panel==='opds') endpoint = "{{ url_for('auth.settings_server_partial', panel='opds') }}";
                 if(panel==='audiobookshelf') endpoint = "{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}";
                 if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";
+                if(panel==='repairs') endpoint = "{{ url_for('auth.settings_server_partial', panel='repairs') }}";
                 if(panel==='jobs') endpoint = "{{ url_for('auth.settings_server_partial', panel='jobs') }}";
                 if(!endpoint){ serverContainer.innerHTML = '<div class="text-danger small">Unknown panel.</div>'; return; }
                 serverContainer.innerHTML = '<div class="text-muted small">Loading...</div>';

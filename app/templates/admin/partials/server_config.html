@@ -45,6 +45,16 @@
         <input type="number" min="1" step="1" name="default_rows_per_page" class="form-control" value="{{ (library_defaults.default_rows_per_page if library_defaults else None) or '' }}" placeholder="e.g. 4" />
         <small class="text-muted">Admin default number of rows shown per page in the library grid.</small>
       </div>
+      <div class="col-md-3">
+        <label class="form-label">Default Book Format</label>
+        {% set current_default_format = (library_defaults.default_book_format if library_defaults else None) or 'physical' %}
+        <select name="default_book_format" class="form-select">
+          {% for opt in media_type_options %}
+          <option value="{{ opt.value }}" {% if opt.value == current_default_format %}selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+        <small class="text-muted">Applied when new books are added without a specified format.</small>
+      </div>
     </div>
   </div>
   <div class="mt-4">

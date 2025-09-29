@@ -13,6 +13,11 @@ import json
 from typing import Any, Dict, Optional, Tuple
 from flask import current_app
 
+from app.domain.models import MediaType
+
+
+_MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
+
 
 def _data_dir() -> str:
     try:
@@ -133,3 +138,20 @@ def get_effective_rows_per_page(user_id: Optional[str]) -> Optional[int]:
         return dv_i if (dv_i is None or dv_i >= 1) else None
     except Exception:
         return None
+
+
+def get_default_book_format() -> str:
+    """Return the admin-configured default book format with a safe fallback."""
+    try:
+        from app.admin import load_system_config
+
+        cfg = load_system_config() or {}
+        lib = cfg.get('library_defaults') or {}
+        raw = lib.get('default_book_format')
+        if isinstance(raw, str):
+            candidate = raw.strip().lower()
+            if candidate in _MEDIA_TYPE_VALUES:
+                return candidate
+    except Exception:
+        pass
+    return MediaType.PHYSICAL.value

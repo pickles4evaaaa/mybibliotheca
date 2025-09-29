@@ -1,0 +1,121 @@
+<div class="card shadow-sm mb-3">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2"><i class="bi bi-tools"></i><strong>Repairs &amp; Data Health</strong></div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="badge bg-secondary">{{ total_books }} total books</span>
+      <span class="badge bg-{{ 'danger' if (total_issues or 0) else 'success' }}">{{ total_issues or 0 }} outstanding issues</span>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if inline_messages %}
+      <div class="mb-3">
+        {% for category, message in inline_messages %}
+          <div class="alert alert-{{ 'danger' if category in ['danger', 'error'] else ('warning' if category == 'warning' else 'success') }} mb-2 py-2">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <p class="text-muted small">Use the quick fixes below to resolve common data consistency issues. All operations are additive and safe to rerun.</p>
+    {% set media_labels = {'physical': 'Physical Book', 'ebook': 'E-book', 'audiobook': 'Audiobook', 'kindle': 'Kindle'} %}
+    {% set default_media_label = media_labels.get(default_media, default_media|capitalize) %}
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="border rounded h-100 p-3 bg-light-subtle">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong>Missing Media Type</strong>
+            <span class="badge bg-{{ 'danger' if issue_stats.get('missing_media_type', 0) else 'success' }}">{{ issue_stats.get('missing_media_type', 0) }}</span>
+          </div>
+          <p class="small text-muted mb-3">Assign the admin default format (<strong>{{ default_media_label }}</strong>) to books where the media type is missing.</p>
+          <form method="post" action="{{ url_for('auth.settings') }}?section=server&panel=repairs" hx-post="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="action" value="backfill_media_type" />
+            <button type="submit" class="btn btn-outline-primary w-100" {% if issue_stats.get('missing_media_type', 0) == 0 %}disabled{% endif %}>
+              <i class="bi bi-sliders"></i> Apply default format
+            </button>
+          </form>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="border rounded h-100 p-3 bg-light-subtle">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong>Books Without Location</strong>
+            <span class="badge bg-{{ 'warning' if issue_stats.get('missing_locations', 0) else 'success' }}">{{ issue_stats.get('missing_locations', 0) }}</span>
+          </div>
+          <p class="small text-muted mb-3">Ensure every book is linked to the default location so shelves and filters work correctly.</p>
+          <form method="post" action="{{ url_for('auth.settings') }}?section=server&panel=repairs" hx-post="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="action" value="assign_default_location" />
+            <button type="submit" class="btn btn-outline-warning w-100" {% if issue_stats.get('missing_locations', 0) == 0 %}disabled{% endif %}>
+              <i class="bi bi-geo"></i> Assign default location
+            </button>
+          </form>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="border rounded h-100 p-3 bg-light-subtle">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong>Missing Contributors</strong>
+            <span class="badge bg-{{ 'warning' if issue_stats.get('missing_authors', 0) else 'success' }}">{{ issue_stats.get('missing_authors', 0) }}</span>
+          </div>
+          <p class="small text-muted">Books without an author link may come from legacy imports. Edit the book and add an author, or merge with an existing Person record.</p>
+          <a href="{{ url_for('book.add_book') }}" target="_blank" class="btn btn-outline-secondary w-100">
+            <i class="bi bi-person-plus"></i> Review in editor
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer small text-muted">Repairs run inside safe transactions and will log details in the application logs.</div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">
+    <strong>Spot Check Samples</strong>
+  </div>
+  <div class="card-body">
+    {% set sample_definitions = [
+      ('missing_media_type', 'Missing Media Type'),
+      ('missing_locations', 'Missing Location'),
+      ('missing_authors', 'Missing Contributor')
+    ] %}
+    {% for key, label in sample_definitions %}
+      <div class="mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0">{{ label }}</h6>
+          <span class="badge bg-light text-dark">Top {{ issue_samples.get(key, [])|length }}</span>
+        </div>
+        {% if issue_samples.get(key) %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:55%">Title</th>
+                  <th style="width:30%">Updated</th>
+                  <th style="width:15%" class="text-end">Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in issue_samples.get(key, []) %}
+                  <tr>
+                    <td class="small">{{ row.title or 'Untitled' }}</td>
+                    <td class="small text-muted">{{ row.updated_at or '—' }}</td>
+                    <td class="text-end">
+                      {% if row.id %}
+                        <a href="{{ url_for('book.view_book_enhanced', uid=row.id) }}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i></a>
+                      {% else %}
+                        <span class="text-muted small">n/a</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="alert alert-success small mb-0">Looks good! No recent examples detected.</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>

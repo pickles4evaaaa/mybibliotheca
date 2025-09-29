@@ -21,9 +21,10 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
-from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType
+from .domain.models import Book, Person, Publisher, Series, Category, BookContribution, ContributionType, MediaType
 from .infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .services.kuzu_custom_field_service import KuzuCustomFieldService
+from app.utils.user_settings import get_default_book_format
 
 
 def _convert_query_result_to_list(result):
@@ -1303,7 +1304,7 @@ class SimplifiedBookService:
     async def add_book_to_user_library(self, book_data: SimplifiedBook, user_id: str, 
                                 reading_status: str = "",
                                 ownership_status: str = "owned",
-                                media_type: str = "physical",
+                                media_type: Optional[str] = None,
                                 user_rating: Optional[float] = None,
                                 personal_notes: Optional[str] = None,
                                 location_id: Optional[str] = None,
@@ -1314,6 +1315,14 @@ class SimplifiedBookService:
         Raises BookAlreadyExistsError if book already exists in communal library.
         """
         try:
+            if not media_type:
+                media_type = get_default_book_format()
+            else:
+                try:
+                    media_type = MediaType(media_type).value
+                except Exception:
+                    media_type = get_default_book_format()
+
             # Step 1: Find or create standalone book
             # This will raise BookAlreadyExistsError if duplicate is found
             book_id = await self.find_or_create_book(book_data)
@@ -1399,7 +1408,7 @@ class SimplifiedBookService:
     def add_book_to_user_library_sync(self, book_data: SimplifiedBook, user_id: str, 
                                      reading_status: str = "",
                                      ownership_status: str = "owned",
-                                     media_type: str = "physical",
+                                     media_type: Optional[str] = None,
                                      user_rating: Optional[float] = None,
                                      personal_notes: Optional[str] = None,
                                      location_id: Optional[str] = None,

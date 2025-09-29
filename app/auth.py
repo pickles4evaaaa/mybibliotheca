@@ -1,10 +1,11 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app, jsonify, abort
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app, jsonify, abort, get_flashed_messages
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
-from app.domain.models import User
+from app.domain.models import User, MediaType
 from app.services import user_service, book_service, reading_log_service
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.services.kuzu_service_facade import _convert_query_result_to_list  # Reuse helper for query results
+from app.utils.user_settings import get_default_book_format
 from wtforms import IntegerField, SubmitField
 from wtforms.validators import Optional, NumberRange
 from flask_wtf import FlaskForm
@@ -18,6 +19,8 @@ from pathlib import Path
 import os
 
 auth = Blueprint('auth', __name__)
+
+_MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
 
 def _safe_get_row_value(row: Any, index: int) -> Any:
     """Safely extract a value from a Kuzu row that may be dict-like or sequence-like."""
@@ -924,8 +927,8 @@ def settings_server_partial(panel: str):
                             pass
                         updated_users = [u for u in user_service.get_all_users_sync() if u.id != target_user.id]
                         # Retrieve flashed messages (if any) to embed
-                        from flask import get_flashed_messages
-                        msgs = get_flashed_messages(with_categories=True)
+                        from flask import get_flashed_messages as _flashed_msgs
+                        msgs = _flashed_msgs(with_categories=True)
                         try:
                             current_app.logger.error(f"[USER_DELETE_DEBUG] Messages after delete attempt: {msgs}")
                         except Exception:
@@ -1126,6 +1129,10 @@ def settings_server_partial(panel: str):
                     metadata_concurrency = 1
             except Exception:
                 metadata_concurrency = None if metadata_concurrency_raw == '' else None
+            default_rows_value = (request.form.get('default_rows_per_page') or '').strip()
+            raw_default_book_format = (request.form.get('default_book_format') or '').strip().lower()
+            if raw_default_book_format not in _MEDIA_TYPE_VALUES:
+                raw_default_book_format = MediaType.PHYSICAL.value
             # Handle optional image upload
             if 'background_image_file' in request.files:
                 file = request.files['background_image_file']
@@ -1158,6 +1165,10 @@ def settings_server_partial(panel: str):
                 'terminology_preference': terminology_preference,
                 'background_config': background_config,
                 'reading_log_defaults': reading_log_defaults,
+                'library_defaults': {
+                    'default_rows_per_page': default_rows_value or None,
+                    'default_book_format': raw_default_book_format
+                },
                 'import_settings': {
                     'metadata_concurrency': metadata_concurrency
                 }
@@ -1764,6 +1775,172 @@ def settings_server_partial(panel: str):
                 return jsonify({'ok': False, 'error': 'save_failed'}), 400
         metadata_settings = get_metadata_settings()
         return render_template('settings/partials/server_metadata.html', metadata_settings=metadata_settings)
+    if panel == 'repairs':
+        if not current_user.is_admin:
+            return '<div class="text-danger small">Not authorized.</div>'
+
+        def _run_query(rows_query: str, params: dict[str, Any] | None = None, op: str = "repairs") -> list[dict[str, Any]]:
+            try:
+                result = safe_execute_kuzu_query(rows_query, params or {}, operation=op)
+                rows = _convert_query_result_to_list(result)
+                # Normalize to plain dicts with string keys
+                normalized: list[dict[str, Any]] = []
+                for row in rows or []:
+                    if isinstance(row, dict):
+                        norm_row = {str(k): row[k] for k in row.keys()}
+                        # Provide col_0 fallback for single-column 'result' rows
+                        if 'result' in norm_row and 'col_0' not in norm_row:
+                            norm_row['col_0'] = norm_row['result']
+                        normalized.append(norm_row)
+                return normalized
+            except Exception as err:
+                try:
+                    current_app.logger.warning(f"Repairs query failed ({op}): {err}")
+                except Exception:
+                    pass
+                return []
+
+        action_taken = (request.form.get('action') or '').strip().lower() if request.method == 'POST' else ''
+        default_media = get_default_book_format()
+
+        if request.method == 'POST' and action_taken:
+            if action_taken == 'backfill_media_type':
+                try:
+                    updated_rows = _run_query(
+                        """
+                        MATCH (b:Book)
+                        WHERE b.media_type IS NULL OR b.media_type = ''
+                        SET b.media_type = $media_type
+                        RETURN COUNT(b) AS updated
+                        """,
+                        {'media_type': default_media},
+                        op='repairs_backfill_media_type'
+                    )
+                    updated = 0
+                    if updated_rows:
+                        row = updated_rows[0]
+                        updated = int(row.get('updated') or row.get('col_0') or 0)
+                    if updated:
+                        flash(f'Updated media type for {updated} book(s).', 'success')
+                    else:
+                        flash('No books were missing a media type.', 'info')
+                except Exception as err:
+                    current_app.logger.error(f"Repair action backfill_media_type failed: {err}")
+                    flash('Failed to backfill media types. Check logs for details.', 'error')
+            elif action_taken == 'assign_default_location':
+                try:
+                    from app.location_service import LocationService
+                    location_service = LocationService()
+                    default_location = location_service.get_default_location()
+                    if not default_location:
+                        defaults = location_service.setup_default_locations()
+                        default_location = defaults[0] if defaults else None
+                    if not default_location or not getattr(default_location, 'id', None):
+                        flash('No default location is available. Create a location first.', 'warning')
+                    else:
+                        updated_rows = _run_query(
+                            """
+                            MATCH (loc:Location {id: $loc_id})
+                            WITH loc
+                            MATCH (b:Book)
+                            WHERE NOT (b)-[:STORED_AT]->(:Location)
+                            MERGE (b)-[:STORED_AT]->(loc)
+                            RETURN COUNT(b) AS updated
+                            """,
+                            {'loc_id': default_location.id},
+                            op='repairs_assign_default_location'
+                        )
+                        updated = 0
+                        if updated_rows:
+                            row = updated_rows[0]
+                            updated = int(row.get('updated') or row.get('col_0') or 0)
+                        if updated:
+                            flash(f'Default location assigned to {updated} book(s).', 'success')
+                        else:
+                            flash('All books already have a location assigned.', 'info')
+                except Exception as err:
+                    current_app.logger.error(f"Repair action assign_default_location failed: {err}")
+                    flash('Failed to assign default locations. Check logs for details.', 'error')
+            else:
+                flash('Unknown repair action.', 'warning')
+
+        issue_stats: dict[str, int | None] = {}
+        issue_samples: dict[str, list[dict[str, Any]]] = {}
+
+        total_books_rows = _run_query(
+            "MATCH (b:Book) RETURN COUNT(b) AS total",
+            op='repairs_total_books'
+        )
+        total_books = 0
+        if total_books_rows:
+            total_books = int(
+                total_books_rows[0].get('total')
+                or total_books_rows[0].get('count')
+                or total_books_rows[0].get('result')
+                or total_books_rows[0].get('col_0')
+                or 0
+            )
+
+        stats_config = [
+            (
+                'missing_media_type',
+                "MATCH (b:Book) WHERE b.media_type IS NULL OR b.media_type = '' RETURN COUNT(b) AS total",
+                "MATCH (b:Book) WHERE b.media_type IS NULL OR b.media_type = '' RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
+            ),
+            (
+                'missing_authors',
+                "MATCH (b:Book) WHERE NOT (b)-[:AUTHORED]->(:Person) AND NOT (b)-[:WRITTEN_BY]->(:Person) RETURN COUNT(b) AS total",
+                "MATCH (b:Book) WHERE NOT (b)-[:AUTHORED]->(:Person) AND NOT (b)-[:WRITTEN_BY]->(:Person) RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
+            ),
+            (
+                'missing_locations',
+                "MATCH (b:Book) WHERE NOT (b)-[:STORED_AT]->(:Location) RETURN COUNT(b) AS total",
+                "MATCH (b:Book) WHERE NOT (b)-[:STORED_AT]->(:Location) RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
+            ),
+        ]
+
+        for key, count_query, sample_query in stats_config:
+            count_rows = _run_query(count_query, op=f'repairs_{key}_count')
+            count_val = 0
+            if count_rows:
+                row = count_rows[0]
+                try:
+                    count_val = int(
+                        row.get('total')
+                        or row.get('count')
+                        or row.get('result')
+                        or row.get('col_0')
+                        or 0
+                    )
+                except Exception:
+                    count_val = 0
+            issue_stats[key] = count_val
+            sample_rows = _run_query(sample_query, op=f'repairs_{key}_sample')
+            normalized_samples: list[dict[str, Any]] = []
+            for item in sample_rows:
+                normalized_samples.append({
+                    'id': item.get('id') or item.get('book_id') or item.get('col_0'),
+                    'title': item.get('title') or item.get('name') or item.get('col_1'),
+                    'updated_at': item.get('updated_at') or item.get('col_2') or item.get('result')
+                })
+            issue_samples[key] = normalized_samples
+
+        try:
+            total_issues = sum(int(issue_stats.get(k) or 0) for k in issue_stats.keys())
+        except Exception:
+            total_issues = 0
+
+        inline_messages = get_flashed_messages(with_categories=True)
+
+        return render_template(
+            'settings/partials/server_repairs.html',
+            issue_stats=issue_stats,
+            issue_samples=issue_samples,
+            total_books=total_books,
+            total_issues=total_issues,
+            default_media=default_media,
+            inline_messages=inline_messages
+        )
     if panel == 'jobs':
         # Admin view of all import/sync jobs across users
         if not current_user.is_admin:

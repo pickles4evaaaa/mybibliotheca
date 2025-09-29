@@ -44,7 +44,7 @@ from app.services import book_service, import_mapping_service, custom_field_serv
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import CustomFieldDefinition, CustomFieldType
 from app.utils import normalize_goodreads_value
-from app.utils.user_settings import get_effective_reading_defaults
+from app.utils.user_settings import get_effective_reading_defaults, get_default_book_format
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.book_utils import get_best_cover_for_book
 from app.utils.safe_import_manager import (
@@ -1740,6 +1740,7 @@ async def process_simple_import(import_config):
     if _META_DEBUG_FLAG:
         logger.debug(f"[IMPORT][PROCESS_START] task={task_id} format={format_type} enrich={enable_api_enrichment} mappings={mappings}")
     simplified_service = SimplifiedBookService()
+    default_media_type = get_default_book_format()
 
     processed_count = success_count = error_count = skipped_count = merged_count = 0
     try:
@@ -1871,7 +1872,7 @@ async def process_simple_import(import_config):
                         user_id=user_id,
                         reading_status=simplified_book.reading_status,
                         ownership_status='owned',
-                        media_type='physical',
+                        media_type=default_media_type,
                         custom_metadata=getattr(simplified_book, 'personal_custom_metadata', None)
                     )
                 except Exception as add_ex:
@@ -2617,6 +2618,7 @@ def simple_csv_import():
         # Initialize service
         simplified_service = SimplifiedBookService()
         print(f"🔧 [SIMPLE_IMPORT] Service initialized")
+        default_media_type = get_default_book_format()
         
         # Process the CSV
         success_count = 0
@@ -2654,7 +2656,7 @@ def simple_csv_import():
                             user_id=str(current_user.id),
                             reading_status=simplified_book.reading_status,
                             ownership_status='owned',
-                            media_type='physical'
+                            media_type=default_media_type
                         )
                         
                         processed_count += 1

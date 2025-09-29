@@ -15,8 +15,25 @@ from datetime import datetime, timedelta, timezone
 import pytz
 import os
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
+from app.domain.models import MediaType
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
+
+_MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
+_FRIENDLY_MEDIA_TYPE_LABELS = {
+    MediaType.PHYSICAL.value: 'Physical Book',
+    MediaType.EBOOK.value: 'E-book',
+    MediaType.AUDIOBOOK.value: 'Audiobook',
+    MediaType.KINDLE.value: 'Kindle'
+}
+
+
+def _format_media_type_label(value: str) -> str:
+    normalized = (value or '').strip().lower()
+    if normalized in _FRIENDLY_MEDIA_TYPE_LABELS:
+        return _FRIENDLY_MEDIA_TYPE_LABELS[normalized]
+    base = normalized.replace('_', ' ')
+    return base.title() if base else ''
 
 def _convert_query_result_to_list(result):
     """Convert SafeKuzuManager query result to legacy list format"""
@@ -192,14 +209,20 @@ def save_system_config(config):
         # Optional: library defaults
         if 'library_defaults' in config:
             lib = config.get('library_defaults') or {}
+            existing_library_defaults = existing_config.get('library_defaults', {}).copy()
             try:
                 dr = lib.get('default_rows_per_page')
                 dr_i = int(dr) if dr not in (None, '',) else None
             except Exception:
                 dr_i = lib.get('default_rows_per_page') if isinstance(lib.get('default_rows_per_page'), int) else None
-            existing_config['library_defaults'] = {
-                'default_rows_per_page': dr_i
-            }
+            existing_library_defaults['default_rows_per_page'] = dr_i
+
+            raw_format = lib.get('default_book_format')
+            candidate = (raw_format or '').strip().lower() if isinstance(raw_format, str) else ''
+            if candidate not in _MEDIA_TYPE_VALUES:
+                candidate = MediaType.PHYSICAL.value
+            existing_library_defaults['default_book_format'] = candidate
+            existing_config['library_defaults'] = existing_library_defaults
         if 'import_settings' in config:
             existing_import_settings = existing_config.get('import_settings', {}).copy()
             import_settings = config.get('import_settings') or {}
@@ -221,6 +244,12 @@ def save_system_config(config):
                 existing_config['import_settings'] = existing_import_settings
             elif 'import_settings' in existing_config:
                 existing_config.pop('import_settings', None)
+        library_defaults = existing_config.get('library_defaults', {})
+        if not isinstance(library_defaults, dict):
+            library_defaults = {}
+        if library_defaults.get('default_book_format') not in _MEDIA_TYPE_VALUES:
+            library_defaults['default_book_format'] = MediaType.PHYSICAL.value
+        existing_config['library_defaults'] = library_defaults
         existing_config['last_updated'] = datetime.now().isoformat()
         
         # Save updated config
@@ -279,7 +308,8 @@ def load_system_config():
             'default_minutes_per_log': None
         },
         'library_defaults': {
-            'default_rows_per_page': None
+            'default_rows_per_page': None,
+            'default_book_format': MediaType.PHYSICAL.value
         },
         'import_settings': {
             'metadata_concurrency': None
@@ -758,6 +788,11 @@ def settings():
         except Exception:
             metadata_concurrency = None if metadata_concurrency_raw == '' else None
 
+        default_rows_value = (request.form.get('default_rows_per_page') or '').strip()
+        raw_default_book_format = (request.form.get('default_book_format') or '').strip().lower()
+        if raw_default_book_format not in _MEDIA_TYPE_VALUES:
+            raw_default_book_format = MediaType.PHYSICAL.value
+
         # Save system configuration to .env file
         config = {
             'site_name': site_name,
@@ -766,7 +801,8 @@ def settings():
             'background_config': background_config,
             'reading_log_defaults': reading_log_defaults,
             'library_defaults': {
-                'default_rows_per_page': (request.form.get('default_rows_per_page') or '').strip() or None
+                'default_rows_per_page': default_rows_value or None,
+                'default_book_format': raw_default_book_format
             },
             'import_settings': {
                 'metadata_concurrency': metadata_concurrency
@@ -870,6 +906,22 @@ def get_admin_settings_context():
     current_site_name = system_config.get('site_name', os.getenv('SITE_NAME', 'MyBibliotheca'))
     current_timezone = system_config.get('server_timezone', os.getenv('TIMEZONE', 'UTC'))
     current_terminology = system_config.get('terminology_preference', 'genre')
+    raw_library_defaults = system_config.get('library_defaults') or {}
+    default_book_format = raw_library_defaults.get('default_book_format')
+    if default_book_format not in _MEDIA_TYPE_VALUES:
+        default_book_format = MediaType.PHYSICAL.value
+    library_defaults = {
+        'default_rows_per_page': raw_library_defaults.get('default_rows_per_page'),
+        'default_book_format': default_book_format
+    }
+    media_type_options = [
+        {
+            'value': mt.value,
+            'label': _format_media_type_label(mt.value)
+        }
+        for mt in MediaType
+    ]
+    media_type_labels = {opt['value']: opt['label'] for opt in media_type_options}
     available_timezones = pytz.all_timezones
     common_timezones = [
         'UTC',
@@ -908,9 +960,9 @@ def get_admin_settings_context():
             'default_pages_per_log': None,
             'default_minutes_per_log': None
         }),
-        'library_defaults': system_config.get('library_defaults', {
-            'default_rows_per_page': None
-        }),
+        'library_defaults': library_defaults,
+        'media_type_options': media_type_options,
+        'media_type_labels': media_type_labels,
         'import_settings': system_config.get('import_settings', {
             'metadata_concurrency': None
         })
