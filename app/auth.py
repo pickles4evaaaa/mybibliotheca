@@ -188,28 +188,39 @@ def register():
         return redirect(url_for('main.index'))
     
     form = RegistrationForm()
+    try:
+        user_count = user_service.get_user_count_sync()
+    except Exception:
+        user_count = 0
+    is_first_user = user_count == 0
+
+    if request.method == 'GET':
+        # Pre-select administrator for the very first user and lock role choice
+        if is_first_user:
+            form.role.data = 'admin'
+        elif not form.role.data:
+            form.role.data = 'user'
+
     if form.validate_on_submit():
         try:
-            # Check if this is the very first user in the system
-            user_count = user_service.get_user_count_sync()
-            is_first_user = user_count == 0
-            
             # Ensure form data is not None
             username = form.username.data
             email = form.email.data
             password = form.password.data
+            selected_role = (form.role.data or 'user').lower()
             
             if not username or not email or not password:
                 flash('All fields are required.', 'error')
-                return render_template('auth/register.html', title='Create New User', form=form)
+                return render_template('auth/register.html', title='Create New User', form=form, is_first_user=is_first_user)
             
             # Create user through Kuzu service
             password_hash = generate_password_hash(password)
+            should_be_admin = is_first_user or selected_role == 'admin'
             domain_user = user_service.create_user_sync(
                 username=username,
                 email=email,
                 password_hash=password_hash,
-                is_admin=is_first_user,
+                is_admin=should_be_admin,
                 password_must_change=True  # All new users must change password on first login
             )
             
@@ -217,15 +228,19 @@ def register():
                 flash('Congratulations! As the first user, you have been granted admin privileges. You must change your password on first login.', 'info')
             else:
                 if domain_user:
-                    flash(f'User {domain_user.username} has been created successfully! They will be required to change their password on first login.', 'success')
+                    role_label = 'administrator' if domain_user.is_admin else 'standard user'
+                    article = 'an' if role_label[0].lower() in ('a', 'e', 'i', 'o', 'u') else 'a'
+                    flash(f'User {domain_user.username} has been created successfully as {article} {role_label}. They will be required to change their password on first login.', 'success')
                 else:
-                    flash('User has been created successfully! They will be required to change their password on first login.', 'success')
+                    fallback_role = 'administrator' if should_be_admin else 'standard user'
+                    fallback_article = 'an' if fallback_role[0].lower() in ('a', 'e', 'i', 'o', 'u') else 'a'
+                    flash(f'User has been created successfully as {fallback_article} {fallback_role}. They will be required to change their password on first login.', 'success')
             
             return redirect(url_for('admin.users'))
         except ValueError as e:
             flash(str(e), 'error')
-    
-    return render_template('auth/register.html', title='Create New User', form=form)
+
+    return render_template('auth/register.html', title='Create New User', form=form, is_first_user=is_first_user)
 
 @auth.route('/profile', methods=['GET', 'POST'])
 @login_required
@@ -851,6 +866,31 @@ def settings_server_partial(panel: str):
                     flash('Password reset & backup created.', 'success')
                 else:
                     flash('Passwords must match.', 'error')
+            elif action == 'update_role':
+                current_app.logger.error(f"[USER_DELETE_DEBUG] update_role path entered for {user_id}")
+                requested_role = (request.form.get('role') or '').strip().lower()
+                if requested_role not in ('admin', 'user'):
+                    flash('Invalid role selection.', 'error')
+                else:
+                    desired_admin_state = requested_role == 'admin'
+                    current_admin_state = bool(getattr(target_user, 'is_admin', False))  # type: ignore
+                    if desired_admin_state == current_admin_state:
+                        flash('User role already set to the selected value.', 'info')
+                    else:
+                        if not desired_admin_state:
+                            admin_count = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 1  # type: ignore
+                            if current_admin_state and admin_count <= 1:
+                                flash('Cannot remove admin privileges from the last administrator.', 'error')
+                            else:
+                                target_user.is_admin = False  # type: ignore
+                                user_service.update_user_sync(target_user)
+                                _trigger_backup('user_role_change')
+                                flash('User role updated & backup created.', 'success')
+                        else:
+                            target_user.is_admin = True  # type: ignore
+                            user_service.update_user_sync(target_user)
+                            _trigger_backup('user_role_change')
+                            flash('User role updated & backup created.', 'success')
             elif action == 'toggle_active':
                 current_app.logger.error(f"[USER_DELETE_DEBUG] toggle_active path entered for {user_id}")
                 target_user.is_active = not getattr(target_user,'is_active',True)  # type: ignore

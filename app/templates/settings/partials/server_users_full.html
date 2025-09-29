@@ -4,7 +4,7 @@
     <form class="d-flex align-items-center gap-2" onsubmit="event.preventDefault(); loadServerUsersFull(this.search.value);">
       <input type="text" name="search" class="form-control form-control-sm" placeholder="Search" value="{{ search }}" />
   <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-search"></i></button>
-  <a href="{{ url_for('auth.register') }}" target="_blank" class="btn btn-sm btn-success"><i class="bi bi-person-plus"></i> New</a>
+  <a href="{{ url_for('auth.register') }}" class="btn btn-sm btn-success"><i class="bi bi-person-plus"></i> New</a>
     </form>
   </div>
   <div class="card-body p-0">

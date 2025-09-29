@@ -29,6 +29,12 @@ class RegistrationForm(FlaskForm):
         DataRequired(), 
         EqualTo('password', message='Passwords must match')
     ])
+    role = SelectField(
+        'Role',
+        choices=[('user', 'Standard User'), ('admin', 'Administrator')],
+        validators=[DataRequired()],
+        default='user'
+    )
     submit = SubmitField('Create User')
 
     def validate_username(self, username):

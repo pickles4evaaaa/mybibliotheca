@@ -47,6 +47,26 @@
       <button class="btn btn-warning mt-3"><i class="bi bi-shield-lock"></i> Reset Password</button>
     </form>
 
+    <h6 class="text-muted mb-3">Role</h6>
+    <form method="POST" onsubmit="return submitUserEdit(this);" class="mb-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="user_id" value="{{ user.id }}" />
+      <input type="hidden" name="action" value="update_role" />
+      <div class="row g-3 align-items-end">
+        <div class="col-md-6 col-lg-5">
+          <label class="form-label">User Role</label>
+          <select name="role" class="form-select">
+            <option value="user" {% if not user.is_admin %}selected{% endif %}>Standard User</option>
+            <option value="admin" {% if user.is_admin %}selected{% endif %}>Administrator</option>
+          </select>
+          <div class="form-text small text-muted">Administrators can manage users and system settings.</div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <button class="btn btn-outline-primary"><i class="bi bi-person-check"></i> Update Role</button>
+        </div>
+      </div>
+    </form>
+
     <h6 class="text-muted mb-3">Status</h6>
     <form method="POST" onsubmit="return submitUserEdit(this);" class="mb-4">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />

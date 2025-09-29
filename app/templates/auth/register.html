@@ -77,6 +77,24 @@
                             </div>
                         {% endif %}
                     </div>
+
+                    <div class="mb-3">
+                        {{ form.role.label(class="form-label") }}
+                        {% if is_first_user %}
+                            {{ form.role(class="form-select", disabled=True) }}
+                            <input type="hidden" name="{{ form.role.name }}" value="admin">
+                            <div class="form-text text-muted">The first account in the system must be an administrator.</div>
+                        {% else %}
+                            {{ form.role(class="form-select" + (" is-invalid" if form.role.errors else "")) }}
+                            {% if form.role.errors %}
+                                <div class="invalid-feedback">
+                                    {% for error in form.role.errors %}
+                                        <span>{{ error }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        {% endif %}
+                    </div>
                     
                     <div class="d-grid">
                         {{ form.submit(class="btn btn-success") }}
