@@ -128,6 +128,7 @@ class SimplifiedBook:
     asin: Optional[str] = None
     average_rating: Optional[float] = None
     rating_count: Optional[int] = None
+    media_type: Optional[str] = None  # physical, ebook, audiobook, kindle
     
     # Additional person type fields (like additional authors)
     additional_authors: Optional[str] = None  # Comma-separated string for simplicity
@@ -273,6 +274,7 @@ class SimplifiedBookService:
                 'series': book_data.series or '',
                 'series_volume': book_data.series_volume,
                 'series_order': book_data.series_order,
+                'media_type': getattr(book_data, 'media_type', '') or '',
                 'created_at_str': datetime.now(timezone.utc).isoformat(),
                 'updated_at_str': datetime.now(timezone.utc).isoformat()
             }
@@ -321,6 +323,7 @@ class SimplifiedBookService:
                     series: $series,
                     series_volume: $series_volume,
                     series_order: $series_order,
+                    media_type: $media_type,
                     created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END,
                     updated_at: CASE WHEN $updated_at_str IS NULL OR $updated_at_str = '' THEN NULL ELSE timestamp($updated_at_str) END
                 })
@@ -1315,6 +1318,7 @@ class SimplifiedBookService:
         Raises BookAlreadyExistsError if book already exists in communal library.
         """
         try:
+            # Validate and set media_type on book_data BEFORE creating the book
             if not media_type:
                 media_type = get_default_book_format()
             else:
@@ -1322,6 +1326,9 @@ class SimplifiedBookService:
                     media_type = MediaType(media_type).value
                 except Exception:
                     media_type = get_default_book_format()
+            
+            # Set media_type on the book_data so it gets saved to the Book node
+            book_data.media_type = media_type
 
             # Step 1: Find or create standalone book
             # This will raise BookAlreadyExistsError if duplicate is found
@@ -1380,21 +1387,75 @@ class SimplifiedBookService:
                 except Exception as e:
                     print(f"❌ [DEFAULT_LOCATION] Exception assigning book to default location: {e}")
             
-            # Step 4: Persist personal custom metadata (if any) AFTER book creation & location assignment
+            # Step 4: Persist personal metadata (standard fields + custom) AFTER book creation & location assignment
             try:
+                from app.services.personal_metadata_service import personal_metadata_service
+                from datetime import datetime as dt
+                
+                # Build custom_updates dict with all personal fields
+                custom_updates = {}
+                
+                # Add standard personal fields (NOT media_type - that's Book metadata, not personal)
+                if reading_status:
+                    custom_updates['reading_status'] = reading_status
+                if ownership_status:
+                    custom_updates['ownership_status'] = ownership_status
+                if user_rating is not None:
+                    custom_updates['user_rating'] = user_rating
+                
+                # Add any custom metadata from book_data
                 if getattr(book_data, 'personal_custom_metadata', None):
                     pcm = book_data.personal_custom_metadata
                     if pcm:
-                        print(f"📝 [UNIVERSAL_LIBRARY] Saving {len(pcm)} personal custom fields for user {user_id}")
-                        fields_ensured = self.custom_field_service.ensure_custom_fields_exist(user_id, {}, pcm)
-                        if fields_ensured:
-                            saved = self.custom_field_service.save_custom_metadata_sync(book_id, user_id, pcm)
-                            if not saved:
-                                print(f"⚠️ [UNIVERSAL_LIBRARY] Failed to save personal custom metadata for user {user_id}")
-                        else:
-                            print(f"⚠️ [UNIVERSAL_LIBRARY] Could not ensure personal custom field defs for user {user_id}")
+                        print(f"📝 [UNIVERSAL_LIBRARY] Including {len(pcm)} personal custom fields")
+                        custom_updates.update(pcm)
+                
+                # Add custom_metadata parameter if provided (but extract dates separately)
+                start_date_value = None
+                finish_date_value = None
+                if custom_metadata:
+                    # Extract start_date and finish_date for separate parameters
+                    if 'start_date' in custom_metadata:
+                        sd_raw = custom_metadata.pop('start_date')
+                        if sd_raw:
+                            try:
+                                if isinstance(sd_raw, dt):
+                                    start_date_value = sd_raw
+                                elif isinstance(sd_raw, str):
+                                    start_date_value = dt.fromisoformat(sd_raw.replace('Z', '+00:00'))
+                            except Exception:
+                                pass
+                    if 'finish_date' in custom_metadata:
+                        fd_raw = custom_metadata.pop('finish_date')
+                        if fd_raw:
+                            try:
+                                if isinstance(fd_raw, dt):
+                                    finish_date_value = fd_raw
+                                elif isinstance(fd_raw, str):
+                                    finish_date_value = dt.fromisoformat(fd_raw.replace('Z', '+00:00'))
+                            except Exception:
+                                pass
+                    # Merge remaining custom fields
+                    custom_updates.update(custom_metadata)
+                
+                # Save all personal metadata (media_type is already on Book node)
+                if custom_updates or personal_notes or start_date_value or finish_date_value:
+                    print(f"📝 [UNIVERSAL_LIBRARY] Saving personal metadata for user {user_id}")
+                    personal_metadata_service.update_personal_metadata(
+                        user_id=user_id,
+                        book_id=book_id,
+                        personal_notes=personal_notes,
+                        start_date=start_date_value,
+                        finish_date=finish_date_value,
+                        custom_updates=custom_updates,
+                        merge=False  # Don't merge, this is a new book
+                    )
+                    print(f"✅ [UNIVERSAL_LIBRARY] Personal metadata saved successfully")
+                    
             except Exception as e:
-                print(f"❌ [UNIVERSAL_LIBRARY] Error saving personal custom metadata: {e}")
+                print(f"❌ [UNIVERSAL_LIBRARY] Error saving personal metadata: {e}")
+                import traceback
+                traceback.print_exc()
             
             return True
             

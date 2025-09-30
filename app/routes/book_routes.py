@@ -1483,16 +1483,16 @@ def library():
         search_lower = search_query.lower()
         filtered_books = [
             book for book in filtered_books 
-            if (search_lower in (book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')).lower()) or
-               (search_lower in (book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')).lower()) or
-               (search_lower in (book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')).lower())
+            if (search_lower in ((book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')) or '').lower()) or
+               (search_lower in ((book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')) or '').lower()) or
+               (search_lower in ((book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')) or '').lower())
         ]
     
     if publisher_filter:
         filtered_books = [
             book for book in filtered_books 
             if (book.get('publisher') if isinstance(book, dict) else getattr(book, 'publisher', None)) and 
-               publisher_filter.lower() in (book.get('publisher', '') if isinstance(book, dict) else getattr(book, 'publisher', '')).lower()
+               publisher_filter.lower() in ((book.get('publisher', '') if isinstance(book, dict) else getattr(book, 'publisher', '')) or '').lower()
         ]
     
     if language_filter:

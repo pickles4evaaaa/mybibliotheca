@@ -551,8 +551,10 @@ class SafeKuzuManager:
             yield connection
             
         except Exception as e:
-            # Check if this is an expected "already exists" error during schema creation
+            # Check if this is an expected error that should be logged as debug
             error_str = str(e).lower()
+            
+            # Schema "already exists" errors during creation
             is_schema_exists_error = (
                 "already exists" in error_str and 
                 ("customfield" in error_str or 
@@ -562,10 +564,16 @@ class SafeKuzuManager:
                  "catalog" in error_str)
             )
             
-            if is_schema_exists_error:
-                # Log as debug instead of error for expected schema conflicts
+            # Legacy OWNS relationship errors (expected when OWNS table doesn't exist)
+            is_owns_legacy_error = (
+                "owns does not exist" in error_str or
+                "table owns does not exist" in error_str
+            )
+            
+            if is_schema_exists_error or is_owns_legacy_error:
+                # Log as debug instead of error for expected issues
                 logger.debug(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "
-                            f"Schema element already exists during operation '{operation}': {e}")
+                            f"Expected error during operation '{operation}': {e}")
             else:
                 # Log as error for unexpected issues
                 logger.error(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] "

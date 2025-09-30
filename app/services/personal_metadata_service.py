@@ -145,6 +145,8 @@ class PersonalMetadataService:
 CREATE REL TABLE {self.REL_NAME}(
     FROM User TO Book,
     personal_notes STRING,
+    start_date TIMESTAMP,
+    finish_date TIMESTAMP,
     personal_custom_fields STRING,
     created_at TIMESTAMP,
     updated_at TIMESTAMP

@@ -1871,6 +1871,15 @@ async def process_simple_import(import_config):
                 if not simplified_book.reading_status:
                     simplified_book.reading_status = import_config.get('default_reading_status', '')
 
+                # Extract personal metadata fields from SimplifiedBook
+                personal_metadata_for_import = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+                
+                # Add standard personal fields if present in SimplifiedBook
+                if simplified_book.date_started:
+                    personal_metadata_for_import['start_date'] = simplified_book.date_started
+                if simplified_book.date_read:
+                    personal_metadata_for_import['finish_date'] = simplified_book.date_read
+                
                 merged_applied = False
                 duplicate_existing_id = None
                 try:
@@ -1880,7 +1889,9 @@ async def process_simple_import(import_config):
                         reading_status=simplified_book.reading_status,
                         ownership_status='owned',
                         media_type=default_media_type,
-                        custom_metadata=getattr(simplified_book, 'personal_custom_metadata', None)
+                        user_rating=simplified_book.user_rating,
+                        personal_notes=simplified_book.personal_notes,
+                        custom_metadata=personal_metadata_for_import
                     )
                 except Exception as add_ex:
                     # Detect duplicate via BookAlreadyExistsError class name
