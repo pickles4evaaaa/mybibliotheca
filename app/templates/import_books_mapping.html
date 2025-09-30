@@ -344,6 +344,25 @@
                         
                         <hr>
                         
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label for="default_import_media_type" class="form-label">
+                                    <i class="bi bi-book me-1"></i>Default Media Type for Import
+                                </label>
+                                <select class="form-select" id="default_import_media_type" name="default_import_media_type">
+                                    <option value="physical" selected>Physical Book</option>
+                                    <option value="ebook">E-book</option>
+                                    <option value="audiobook">Audiobook</option>
+                                    <option value="kindle">Kindle</option>
+                                </select>
+                                <div class="form-text">
+                                    All books in this import will be set to this media type (unless a media_type column is mapped above)
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <hr>
+                        
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="form-check">

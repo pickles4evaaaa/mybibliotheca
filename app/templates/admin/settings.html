@@ -551,6 +551,170 @@
                     </div>
                 </div>
 
+                <!-- SMTP Configuration -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-success text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseSMTPConfig" 
+                                aria-expanded="false" aria-controls="collapseSMTPConfig">
+                            <i class="bi bi-envelope-at me-2"></i>SMTP Configuration
+                        </button>
+                    </h2>
+                    <div id="collapseSMTPConfig" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Configure SMTP server settings for email functionality.</p>
+                            
+                            <form method="POST" action="{{ url_for('admin.update_smtp_settings') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                
+                                <!-- SMTP Server Settings -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-success mb-3">Server Settings</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-8">
+                                            <label for="smtp_server" class="form-label">SMTP Server</label>
+                                            <input type="text" class="form-control" id="smtp_server" name="smtp_server" 
+                                                   value="{{ smtp_config.get('smtp_server', '') if smtp_config else '' }}" 
+                                                   placeholder="smtp.gmail.com">
+                                            <small class="form-text text-muted">SMTP server hostname or IP address</small>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="smtp_port" class="form-label">Port</label>
+                                            <input type="number" class="form-control" id="smtp_port" name="smtp_port" 
+                                                   value="{{ smtp_config.get('smtp_port', 587) if smtp_config else 587 }}" 
+                                                   min="1" max="65535" placeholder="587">
+                                            <small class="form-text text-muted">Common: 587 (TLS), 465 (SSL), 25</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Authentication -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-primary mb-3">Authentication</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="smtp_username" class="form-label">Username</label>
+                                            <input type="text" class="form-control" id="smtp_username" name="smtp_username" 
+                                                   value="{{ smtp_config.get('smtp_username', '') if smtp_config else '' }}" 
+                                                   placeholder="user@example.com" autocomplete="off">
+                                            <small class="form-text text-muted">SMTP authentication username (often an email)</small>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="smtp_password" class="form-label">Password</label>
+                                            <input type="password" class="form-control" id="smtp_password" name="smtp_password" 
+                                                   value="{{ smtp_config.get('smtp_password', '') if smtp_config else '' }}" 
+                                                   placeholder="••••••••" autocomplete="new-password">
+                                            <small class="form-text text-muted">SMTP authentication password or app password</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Security & Sender Settings -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-info mb-3">Security & Sender Settings</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <div class="form-check form-switch mt-4">
+                                                <input class="form-check-input" type="checkbox" id="smtp_use_tls" 
+                                                       name="smtp_use_tls" {{ 'checked' if smtp_config and smtp_config.get('smtp_use_tls', True) else '' }}>
+                                                <label class="form-check-label" for="smtp_use_tls">
+                                                    Use TLS/STARTTLS
+                                                </label>
+                                            </div>
+                                            <small class="form-text text-muted">Enable TLS encryption (recommended)</small>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="smtp_from_email" class="form-label">From Email</label>
+                                            <input type="email" class="form-control" id="smtp_from_email" name="smtp_from_email" 
+                                                   value="{{ smtp_config.get('smtp_from_email', '') if smtp_config else '' }}" 
+                                                   placeholder="noreply@mybibliotheca.local">
+                                            <small class="form-text text-muted">Sender email address</small>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="smtp_from_name" class="form-label">From Name</label>
+                                            <input type="text" class="form-control" id="smtp_from_name" name="smtp_from_name" 
+                                                   value="{{ smtp_config.get('smtp_from_name', 'MyBibliotheca') if smtp_config else 'MyBibliotheca' }}" 
+                                                   placeholder="MyBibliotheca">
+                                            <small class="form-text text-muted">Sender display name</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-grid gap-2 d-md-flex justify-content-md-between mt-4">
+                                    <button type="button" class="btn btn-outline-secondary" onclick="testSMTPConnection()">
+                                        <i class="bi bi-wifi me-1"></i>Test Connection
+                                    </button>
+                                    <button type="submit" class="btn btn-success">
+                                        <i class="bi bi-check2 me-1"></i>Save SMTP Settings
+                                    </button>
+                                </div>
+                            </form>
+                            
+                            <div class="alert alert-info mt-3">
+                                <strong><i class="bi bi-info-circle me-1"></i>Common SMTP Providers:</strong><br>
+                                <small>
+                                    <strong>Gmail:</strong> smtp.gmail.com:587 (Use App Password)<br>
+                                    <strong>Outlook/Office365:</strong> smtp-mail.outlook.com:587<br>
+                                    <strong>Yahoo:</strong> smtp.mail.yahoo.com:587<br>
+                                    <strong>SendGrid:</strong> smtp.sendgrid.net:587
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Backup Configuration -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-dark text-white" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseBackupConfig" 
+                                aria-expanded="false" aria-controls="collapseBackupConfig">
+                            <i class="bi bi-archive me-2"></i>Backup Configuration
+                        </button>
+                    </h2>
+                    <div id="collapseBackupConfig" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Configure backup file storage location.</p>
+                            
+                            <form method="POST" action="{{ url_for('admin.update_backup_settings') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-dark mb-3">Backup Storage</h6>
+                                    <div class="row g-3">
+                                        <div class="col-12">
+                                            <label for="backup_directory" class="form-label">Backup Directory</label>
+                                            <input type="text" class="form-control" id="backup_directory" name="backup_directory" 
+                                                   value="{{ backup_config.get('backup_directory', 'data/backups') if backup_config else 'data/backups' }}" 
+                                                   placeholder="data/backups">
+                                            <small class="form-text text-muted">
+                                                Path where backup files will be stored (relative to application root or absolute path).
+                                                Default: <code>data/backups</code>
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                                    <button type="submit" class="btn btn-dark">
+                                        <i class="bi bi-check2 me-1"></i>Save Backup Settings
+                                    </button>
+                                </div>
+                            </form>
+                            
+                            <div class="alert alert-info mt-3">
+                                <strong><i class="bi bi-info-circle me-1"></i>Note:</strong><br>
+                                <small>
+                                    • The directory will be created automatically if it doesn't exist<br>
+                                    • Use relative paths (e.g., <code>data/backups</code>) or absolute paths (e.g., <code>/mnt/backups</code>)<br>
+                                    • For Docker deployments, ensure the path is within a mounted volume<br>
+                                    • Existing backups will remain in their current location until manually moved
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- System Information -->
                 <div class="accordion-item shadow-sm mb-3">
                     <h2 class="accordion-header">
@@ -743,6 +907,71 @@ function toggleProviderSettings() {
         openaiSettings.style.display = 'none';
         ollamaSettings.style.display = 'block';
     }
+}
+
+async function testSMTPConnection() {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';
+    
+    try {
+        const formData = new FormData();
+        formData.append('csrf_token', '{{ csrf_token() }}');
+        formData.append('smtp_server', document.getElementById('smtp_server').value);
+        formData.append('smtp_port', document.getElementById('smtp_port').value);
+        formData.append('smtp_username', document.getElementById('smtp_username').value);
+        formData.append('smtp_password', document.getElementById('smtp_password').value);
+        formData.append('smtp_use_tls', document.getElementById('smtp_use_tls').checked ? 'true' : 'false');
+        
+        const response = await fetch('/admin/test-smtp-connection', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        // Remove any existing alerts
+        const existingAlerts = document.querySelectorAll('.smtp-test-alert');
+        existingAlerts.forEach(alert => alert.remove());
+        
+        // Create new alert
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${result.success ? 'success' : 'danger'} alert-dismissible fade show mt-3 smtp-test-alert`;
+        alertDiv.innerHTML = `
+            <strong>${result.success ? '✅ Success:' : '❌ Error:'}</strong> ${result.message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        btn.parentNode.parentNode.appendChild(alertDiv);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+    } catch (error) {
+        console.error('Error testing SMTP connection:', error);
+        
+        // Show error message
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-danger alert-dismissible fade show mt-3 smtp-test-alert';
+        alertDiv.innerHTML = `
+            <strong>❌ Error:</strong> Failed to test SMTP connection. Please try again.
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        btn.parentNode.parentNode.appendChild(alertDiv);
+        
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = originalText;
 }
 
 async function testAIConnection() {

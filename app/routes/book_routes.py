@@ -1292,7 +1292,7 @@ def library():
     total_pages = max(1, math.ceil(total_books / per_page)) if per_page > 0 else 1
     page = max(1, min(page, total_pages))
 
-    # Decide data retrieval strategy: if any filter is active, pull all then filter across full set
+    # Decide data retrieval strategy: if any filter is active OR non-default sort is used, pull all then filter/sort across full set
     offset = (page - 1) * per_page
     has_filter = any([
         status_filter and status_filter != 'all',
@@ -1302,6 +1302,7 @@ def library():
         bool(language_filter.strip()) if isinstance(language_filter, str) else False,
         bool(location_filter.strip()) if isinstance(location_filter, str) else False,
         bool(media_type_filter.strip()) if isinstance(media_type_filter, str) else False,
+        sort_option != 'title_asc',  # Treat non-default sort as requiring full fetch for proper ordering
     ])
     if has_filter:
         try:
@@ -1585,6 +1586,41 @@ def library():
         filtered_books.sort(key=lambda x: get_author_last_first(x).lower())
     elif sort_option == 'author_last_desc':
         filtered_books.sort(key=lambda x: get_author_last_first(x).lower(), reverse=True)
+    elif sort_option == 'date_added_desc':
+        # Sort by date added (newest first) - use added_at or created_at
+        filtered_books.sort(key=lambda x: (
+            x.get('added_at') or x.get('created_at') or '' 
+            if isinstance(x, dict) 
+            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or ''
+        ), reverse=True)
+    elif sort_option == 'date_added_asc':
+        # Sort by date added (oldest first)
+        filtered_books.sort(key=lambda x: (
+            x.get('added_at') or x.get('created_at') or '' 
+            if isinstance(x, dict) 
+            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or ''
+        ))
+    elif sort_option == 'publication_date_desc':
+        # Sort by publication date (newest first) - handle various date formats
+        def get_pub_date(book):
+            pub_date = book.get('published_date') if isinstance(book, dict) else getattr(book, 'published_date', None)
+            if not pub_date:
+                return ''
+            # Convert to string for sorting (ISO format works well)
+            if hasattr(pub_date, 'isoformat'):
+                return pub_date.isoformat()
+            return str(pub_date)
+        filtered_books.sort(key=get_pub_date, reverse=True)
+    elif sort_option == 'publication_date_asc':
+        # Sort by publication date (oldest first)
+        def get_pub_date(book):
+            pub_date = book.get('published_date') if isinstance(book, dict) else getattr(book, 'published_date', None)
+            if not pub_date:
+                return ''
+            if hasattr(pub_date, 'isoformat'):
+                return pub_date.isoformat()
+            return str(pub_date)
+        filtered_books.sort(key=get_pub_date)
     else:
         # Default to title A-Z
         filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower())
@@ -4522,7 +4558,6 @@ def add_book_manual():
         media_type_enum = None
         if media_type:
             try:
-                from .domain.models import MediaType
                 media_type_enum = MediaType(media_type)
             except ValueError:
                 pass

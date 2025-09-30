@@ -316,6 +316,125 @@ def load_system_config():
         }
     }
 
+def save_smtp_config(config):
+    """Save SMTP configuration to system config JSON"""
+    import json
+    
+    try:
+        # Get data directory from current app config or default
+        try:
+            data_dir = current_app.config.get('DATA_DIR', 'data')
+        except RuntimeError:
+            data_dir = 'data'
+        
+        config_path = os.path.join(data_dir, 'system_config.json')
+        
+        # Load existing config
+        existing_config = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    existing_config = json.load(f)
+            except (json.JSONDecodeError, Exception):
+                existing_config = {}
+        
+        # Get site name for default from_name
+        site_name = existing_config.get('site_name', 'MyBibliotheca')
+        default_from_name = f"{site_name} (MyBibliotheca)" if site_name != 'MyBibliotheca' else 'MyBibliotheca'
+        
+        # Update SMTP settings
+        existing_config['smtp_config'] = {
+            'smtp_server': config.get('smtp_server', ''),
+            'smtp_port': config.get('smtp_port', 587),
+            'smtp_username': config.get('smtp_username', ''),
+            'smtp_password': config.get('smtp_password', ''),
+            'smtp_use_tls': config.get('smtp_use_tls', True),
+            'smtp_from_email': config.get('smtp_from_email', ''),
+            'smtp_from_name': config.get('smtp_from_name', default_from_name)
+        }
+        existing_config['last_updated'] = datetime.now().isoformat()
+        
+        # Save updated config
+        with open(config_path, 'w') as f:
+            json.dump(existing_config, f, indent=2)
+        
+        return True
+    except Exception as e:
+        try:
+            current_app.logger.error(f"Error saving SMTP config: {e}")
+        except RuntimeError:
+            print(f"Error saving SMTP config: {e}")
+        return False
+
+def save_backup_config(config):
+    """Save backup configuration to system config JSON"""
+    import json
+    
+    try:
+        # Get data directory from current app config or default
+        try:
+            data_dir = current_app.config.get('DATA_DIR', 'data')
+        except RuntimeError:
+            data_dir = 'data'
+        
+        config_path = os.path.join(data_dir, 'system_config.json')
+        
+        # Load existing config
+        existing_config = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    existing_config = json.load(f)
+            except (json.JSONDecodeError, Exception):
+                existing_config = {}
+        
+        # Update backup settings
+        existing_config['backup_config'] = {
+            'backup_directory': config.get('backup_directory', 'data/backups')
+        }
+        existing_config['last_updated'] = datetime.now().isoformat()
+        
+        # Save updated config
+        with open(config_path, 'w') as f:
+            json.dump(existing_config, f, indent=2)
+        
+        return True
+    except Exception as e:
+        try:
+            current_app.logger.error(f"Error saving backup config: {e}")
+        except RuntimeError:
+            print(f"Error saving backup config: {e}")
+        return False
+
+def load_backup_config():
+    """Load backup configuration from system config JSON"""
+    system_config = load_system_config()
+    return system_config.get('backup_config', {
+        'backup_directory': 'data/backups'
+    })
+
+def load_smtp_config():
+    """Load SMTP configuration from system config JSON"""
+    system_config = load_system_config()
+    site_name = system_config.get('site_name', 'MyBibliotheca')
+    # Default from_name is site_name + (MyBibliotheca) unless user has customized it
+    default_from_name = f"{site_name} (MyBibliotheca)" if site_name != 'MyBibliotheca' else 'MyBibliotheca'
+    
+    smtp_config = system_config.get('smtp_config', {})
+    # If smtp_config doesn't have from_name set, use the computed default
+    if not smtp_config.get('smtp_from_name'):
+        smtp_config['smtp_from_name'] = default_from_name
+    
+    return {
+        'smtp_server': smtp_config.get('smtp_server', ''),
+        'smtp_port': smtp_config.get('smtp_port', 587),
+        'smtp_username': smtp_config.get('smtp_username', ''),
+        'smtp_password': smtp_config.get('smtp_password', ''),
+        'smtp_use_tls': smtp_config.get('smtp_use_tls', True),
+        'smtp_from_email': smtp_config.get('smtp_from_email', ''),
+        'smtp_from_name': smtp_config.get('smtp_from_name', default_from_name)
+    }
+
 def save_ai_config(config):
     """Safely update AI configuration keys: write to .env and persist overrides JSON."""
     env_path = _get_root_env_path()
@@ -819,8 +938,8 @@ def settings():
             # Return updated partial for unified settings
             ctx = get_admin_settings_context()
             return render_template('admin/partials/server_config.html', **ctx)
-    # Always bounce to unified settings page (auth.settings) for non-inline posts
-    return redirect(url_for('auth.settings'))
+        # Always bounce to admin settings page for non-inline posts
+        return redirect(url_for('admin.settings'))
 
     # NOTE: api_delete_user route moved to module scope for proper registration.
     
@@ -946,6 +1065,8 @@ def get_admin_settings_context():
         'common_timezones': common_timezones,
         'available_timezones': sorted(available_timezones),
         'ai_config': load_ai_config(),
+        'smtp_config': load_smtp_config(),
+        'backup_config': load_backup_config(),
         'debug_manager': debug_manager,
         'background_config': system_config.get('background_config', {
             'type': 'default',
@@ -975,6 +1096,25 @@ def settings_config_partial():
     """Return just the server configuration form for embedding in unified settings page."""
     ctx = get_admin_settings_context()
     return render_template('admin/partials/server_config.html', **ctx)
+
+@admin.route('/settings/smtp_partial')
+@login_required
+@admin_required
+def settings_smtp_partial():
+    """Return SMTP configuration form for embedding in unified settings page."""
+    ctx = {
+        'smtp_config': load_smtp_config(),
+        'site_name': load_system_config().get('site_name', 'MyBibliotheca')
+    }
+    return render_template('admin/partials/smtp_config.html', **ctx)
+
+@admin.route('/settings/backup_partial')
+@login_required
+@admin_required
+def settings_backup_partial():
+    """Return backup configuration form for embedding in unified settings page."""
+    ctx = {'backup_config': load_backup_config()}
+    return render_template('admin/partials/backup_config.html', **ctx)
 
 @admin.route('/api/stats')
 @login_required
@@ -1036,7 +1176,139 @@ def update_ai_settings():
     except Exception as e:
         current_app.logger.error(f"Error updating AI settings: {e}")
     flash('Error updating AI settings. Please try again.', 'danger')
-    return redirect(url_for('admin.settings', section='ai'))
+    return redirect(url_for('admin.settings'))
+
+@admin.route('/update-smtp-settings', methods=['POST'])
+@login_required
+@admin_required
+def update_smtp_settings():
+    """Update SMTP configuration settings"""
+    try:
+        config = {}
+        
+        # Get form data
+        config['smtp_server'] = request.form.get('smtp_server', '').strip()
+        config['smtp_port'] = int(request.form.get('smtp_port', 587))
+        config['smtp_username'] = request.form.get('smtp_username', '').strip()
+        config['smtp_password'] = request.form.get('smtp_password', '').strip()
+        config['smtp_use_tls'] = request.form.get('smtp_use_tls') == 'on'
+        config['smtp_from_email'] = request.form.get('smtp_from_email', '').strip()
+        config['smtp_from_name'] = request.form.get('smtp_from_name', 'MyBibliotheca').strip()
+        
+        # Save configuration
+        if save_smtp_config(config):
+            flash('SMTP settings saved successfully!', 'success')
+        else:
+            flash('Error saving SMTP settings. Please try again.', 'danger')
+        
+        # Inline (AJAX/unified settings) support
+        if request.form.get('inline') == '1' or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            ctx = get_admin_settings_context()
+            ctx['smtp_config'] = load_smtp_config()
+            # Return just the SMTP panel partial if it exists, otherwise redirect
+            try:
+                return render_template('settings/partials/server_smtp.html', **ctx)
+            except:
+                pass
+        
+        return redirect(url_for('admin.settings'))
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating SMTP settings: {e}")
+        flash('Error updating SMTP settings. Please try again.', 'danger')
+    
+    return redirect(url_for('admin.settings'))
+
+@admin.route('/test-smtp-connection', methods=['POST'])
+@login_required
+@admin_required
+def test_smtp_connection():
+    """Test SMTP connection with provided settings"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        
+        # Get settings from form
+        smtp_server = request.form.get('smtp_server', '').strip()
+        smtp_port = int(request.form.get('smtp_port', 587))
+        smtp_username = request.form.get('smtp_username', '').strip()
+        smtp_password = request.form.get('smtp_password', '').strip()
+        smtp_use_tls = request.form.get('smtp_use_tls') == 'true'
+        
+        if not smtp_server:
+            return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
+        
+        # Test connection
+        try:
+            if smtp_use_tls:
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
+                server.starttls()
+            else:
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
+            
+            if smtp_username and smtp_password:
+                server.login(smtp_username, smtp_password)
+            
+            server.quit()
+            
+            return jsonify({
+                'success': True,
+                'message': f'Successfully connected to {smtp_server}:{smtp_port}'
+            })
+            
+        except smtplib.SMTPAuthenticationError:
+            return jsonify({
+                'success': False,
+                'message': 'Authentication failed. Please check your username and password.'
+            }), 401
+        except smtplib.SMTPException as e:
+            return jsonify({
+                'success': False,
+                'message': f'SMTP error: {str(e)}'
+            }), 500
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'Connection failed: {str(e)}'
+            }), 500
+            
+    except Exception as e:
+        current_app.logger.error(f"Error testing SMTP connection: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error testing connection: {str(e)}'
+        }), 500
+
+@admin.route('/update-backup-settings', methods=['POST'])
+@login_required
+@admin_required
+def update_backup_settings():
+    """Update backup configuration settings"""
+    try:
+        config = {}
+        
+        # Get form data
+        config['backup_directory'] = request.form.get('backup_directory', 'data/backups').strip()
+        
+        # Validate the path
+        backup_dir = config['backup_directory']
+        if not backup_dir:
+            flash('Backup directory cannot be empty.', 'danger')
+            return redirect(url_for('admin.settings'))
+        
+        # Save configuration
+        if save_backup_config(config):
+            flash('Backup settings saved successfully!', 'success')
+        else:
+            flash('Error saving backup settings. Please try again.', 'danger')
+        
+        return redirect(url_for('admin.settings'))
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating backup settings: {e}")
+        flash('Error updating backup settings. Please try again.', 'danger')
+    
+    return redirect(url_for('admin.settings'))
 
 @admin.route('/test-ai-connection', methods=['POST'])
 @login_required

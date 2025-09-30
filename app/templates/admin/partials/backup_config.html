@@ -1,0 +1,84 @@
+{# Partial: Backup Configuration form for unified settings #}
+<div class="card border-dark">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0"><i class="bi bi-archive me-2"></i>Backup Configuration</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">Configure backup file storage location.</p>
+        
+        <form method="POST" action="{{ url_for('admin.update_backup_settings') }}" id="backupConfigForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="inline" value="1"/>
+            
+            <div class="mb-4">
+                <h6 class="fw-bold text-dark mb-3">Backup Storage</h6>
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label for="backup_directory" class="form-label">Backup Directory</label>
+                        <input type="text" class="form-control" id="backup_directory" name="backup_directory" 
+                               value="{{ backup_config.get('backup_directory', 'data/backups') if backup_config else 'data/backups' }}" 
+                               placeholder="data/backups">
+                        <small class="form-text text-muted">
+                            Path where backup files will be stored (relative to application root or absolute path).
+                            Default: <code>data/backups</code>
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                <button type="submit" class="btn btn-dark">
+                    <i class="bi bi-save me-1"></i>Save Backup Settings
+                </button>
+            </div>
+        </form>
+        
+        <div class="alert alert-info mt-3">
+            <strong><i class="bi bi-info-circle me-1"></i>Note:</strong><br>
+            <small>
+                • The directory will be created automatically if it doesn't exist<br>
+                • Use relative paths (e.g., <code>data/backups</code>) or absolute paths (e.g., <code>/mnt/backups</code>)<br>
+                • For Docker deployments, ensure the path is within a mounted volume<br>
+                • Existing backups will remain in their current location until manually moved
+            </small>
+        </div>
+    </div>
+</div>
+
+<script>
+// Handle form submission via AJAX for inline mode
+document.getElementById('backupConfigForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const form = this;
+    const btn = form.querySelector('button[type="submit"]');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+    
+    try {
+        const formData = new FormData(form);
+        const response = await fetch(form.action, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-success alert-dismissible fade show mt-3';
+            alert.innerHTML = '<i class="bi bi-check-circle me-1"></i>Backup settings saved successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+            form.parentNode.insertBefore(alert, form.nextSibling);
+            setTimeout(() => alert.remove(), 3000);
+        } else {
+            throw new Error('Save failed');
+        }
+    } catch (error) {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-danger alert-dismissible fade show mt-3';
+        alert.innerHTML = '<i class="bi bi-x-circle me-1"></i>Error saving settings. Please try again. <button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+        form.parentNode.insertBefore(alert, form.nextSibling);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save me-1"></i>Save Backup Settings';
+    }
+});
+</script>

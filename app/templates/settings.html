@@ -153,6 +153,8 @@
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="users" data-color="danger" class="btn btn-outline-danger w-100 server-nav"><i class="bi bi-people"></i> Users</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="metadata" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-collection"></i> Metadata Providers</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="ai" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-robot"></i> AI</button></div>
+                <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="smtp" data-color="success" class="btn btn-outline-success w-100 server-nav"><i class="bi bi-envelope-at"></i> SMTP</button></div>
+                <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="backup" data-color="dark" class="btn btn-outline-dark w-100 server-nav"><i class="bi bi-archive"></i> Backup</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="opds" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-rss"></i> OPDS</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="audiobookshelf" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-soundwave"></i> Audiobookshelf</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="debug" data-color="info" class="btn btn-outline-info w-100 server-nav"><i class="bi bi-bug"></i> Debug</button></div>
@@ -696,6 +698,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(panel==='users') endpoint = "{{ url_for('auth.settings_server_partial', panel='users') }}";
                 if(panel==='debug') endpoint = "{{ url_for('auth.settings_server_partial', panel='debug') }}";
                 if(panel==='ai') endpoint = "{{ url_for('auth.settings_server_partial', panel='ai') }}";
+                if(panel==='smtp') endpoint = "{{ url_for('admin.settings_smtp_partial') }}";
+                if(panel==='backup') endpoint = "{{ url_for('admin.settings_backup_partial') }}";
                 if(panel==='opds') endpoint = "{{ url_for('auth.settings_server_partial', panel='opds') }}";
                 if(panel==='audiobookshelf') endpoint = "{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}";
                 if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";

@@ -539,6 +539,10 @@
                                         <option value="author_first_desc" {% if current_sort == 'author_first_desc' %}selected{% endif %}>Author First, Last Z-A</option>
                                         <option value="author_last_asc" {% if current_sort == 'author_last_asc' %}selected{% endif %}>Author Last, First A-Z</option>
                                         <option value="author_last_desc" {% if current_sort == 'author_last_desc' %}selected{% endif %}>Author Last, First Z-A</option>
+                                        <option value="date_added_desc" {% if current_sort == 'date_added_desc' %}selected{% endif %}>Date Added (Newest First)</option>
+                                        <option value="date_added_asc" {% if current_sort == 'date_added_asc' %}selected{% endif %}>Date Added (Oldest First)</option>
+                                        <option value="publication_date_desc" {% if current_sort == 'publication_date_desc' %}selected{% endif %}>Publication Date (Newest First)</option>
+                                        <option value="publication_date_asc" {% if current_sort == 'publication_date_asc' %}selected{% endif %}>Publication Date (Oldest First)</option>
                                     </select>
                                 </div>
                                 <div class="col-12">

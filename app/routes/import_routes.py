@@ -864,6 +864,7 @@ def import_books_execute():
     
     default_reading_status = request.form.get('default_reading_status', '')
     duplicate_handling = request.form.get('duplicate_handling', 'skip')
+    default_import_media_type = request.form.get('default_import_media_type', 'physical')
     
     # Create import job with enhanced data
     task_id = str(uuid.uuid4())
@@ -872,17 +873,18 @@ def import_books_execute():
         'user_id': current_user.id,
         'csv_file_path': csv_file_path,
         'field_mappings': mappings,
-    'default_reading_status': default_reading_status,
+        'default_reading_status': default_reading_status,
         'duplicate_handling': duplicate_handling,
+        'default_import_media_type': default_import_media_type,
         'custom_fields_enabled': True,  # Flag to enable custom metadata processing
         'status': 'pending',
         'processed': 0,
         'success': 0,
         'errors': 0,
-    'skipped': 0,  # Initialize skipped counter
-    'total': 0,
-    'start_time': datetime.now(timezone.utc).isoformat(),
-    'current_book': None,
+        'skipped': 0,  # Initialize skipped counter
+        'total': 0,
+        'start_time': datetime.now(timezone.utc).isoformat(),
+        'current_book': None,
         'error_messages': [],
         'recent_activity': []
     }
@@ -1740,7 +1742,12 @@ async def process_simple_import(import_config):
     if _META_DEBUG_FLAG:
         logger.debug(f"[IMPORT][PROCESS_START] task={task_id} format={format_type} enrich={enable_api_enrichment} mappings={mappings}")
     simplified_service = SimplifiedBookService()
-    default_media_type = get_default_book_format()
+    # Check if user specified a default import media type; otherwise use system default
+    default_import_media_type = import_config.get('default_import_media_type')
+    if default_import_media_type and default_import_media_type in ['physical', 'ebook', 'audiobook', 'kindle']:
+        default_media_type = default_import_media_type
+    else:
+        default_media_type = get_default_book_format()
 
     processed_count = success_count = error_count = skipped_count = merged_count = 0
     try:
