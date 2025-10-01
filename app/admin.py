@@ -1224,60 +1224,136 @@ def update_smtp_settings():
 @admin_required
 def test_smtp_connection():
     """Test SMTP connection with provided settings"""
+    import smtplib
+    import socket
+    from email.mime.text import MIMEText
+    
+    # Get settings from form
+    smtp_server = request.form.get('smtp_server', '').strip()
+    smtp_port = int(request.form.get('smtp_port', 587))
+    smtp_username = request.form.get('smtp_username', '').strip()
+    smtp_password = request.form.get('smtp_password', '').strip()
+    smtp_use_tls = request.form.get('smtp_use_tls') == 'true'
+    
+    # Log the connection attempt (sanitize password)
+    current_app.logger.info(f"[SMTP] Testing connection to {smtp_server}:{smtp_port}")
+    current_app.logger.info(f"[SMTP] Configuration - TLS: {smtp_use_tls}, Username: {smtp_username if smtp_username else '(none)'}")
+    
+    if not smtp_server:
+        current_app.logger.warning("[SMTP] Test aborted - no server specified")
+        return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
+    
+    # Test connection with detailed logging
+    server = None
     try:
-        import smtplib
-        from email.mime.text import MIMEText
-        
-        # Get settings from form
-        smtp_server = request.form.get('smtp_server', '').strip()
-        smtp_port = int(request.form.get('smtp_port', 587))
-        smtp_username = request.form.get('smtp_username', '').strip()
-        smtp_password = request.form.get('smtp_password', '').strip()
-        smtp_use_tls = request.form.get('smtp_use_tls') == 'true'
-        
-        if not smtp_server:
-            return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
-        
-        # Test connection
+        # Step 1: DNS Resolution
+        current_app.logger.info(f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...")
         try:
-            if smtp_use_tls:
-                server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
+            resolved_ip = socket.gethostbyname(smtp_server)
+            current_app.logger.info(f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}")
+        except socket.gaierror as dns_err:
+            current_app.logger.error(f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}")
+            return jsonify({
+                'success': False,
+                'message': f'DNS resolution failed for {smtp_server}. Please check the server address.'
+            }), 500
+        
+        # Step 2: Create SMTP connection with longer timeout
+        current_app.logger.info(f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...")
+        try:
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+            server.set_debuglevel(0)  # Don't expose sensitive data in debug output
+            current_app.logger.info(f"[SMTP] Connection established to {smtp_server}:{smtp_port}")
+        except socket.timeout:
+            current_app.logger.error(f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}")
+            return jsonify({
+                'success': False,
+                'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'
+            }), 500
+        except ConnectionRefusedError:
+            current_app.logger.error(f"[SMTP] Connection refused by {smtp_server}:{smtp_port}")
+            return jsonify({
+                'success': False,
+                'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'
+            }), 500
+        except socket.error as sock_err:
+            current_app.logger.error(f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}")
+            return jsonify({
+                'success': False,
+                'message': f'Network error: {sock_err}. Check server address and port.'
+            }), 500
+        
+        # Step 3: STARTTLS if enabled
+        if smtp_use_tls:
+            current_app.logger.info("[SMTP] Step 3/4: Initiating STARTTLS...")
+            try:
                 server.starttls()
-            else:
-                server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
-            
-            if smtp_username and smtp_password:
+                current_app.logger.info("[SMTP] STARTTLS successful")
+            except smtplib.SMTPException as tls_err:
+                current_app.logger.error(f"[SMTP] STARTTLS failed: {tls_err}")
+                return jsonify({
+                    'success': False,
+                    'message': f'TLS negotiation failed: {tls_err}'
+                }), 500
+        else:
+            current_app.logger.info("[SMTP] Step 3/4: Skipping TLS (not enabled)")
+        
+        # Step 4: Authentication
+        if smtp_username and smtp_password:
+            current_app.logger.info(f"[SMTP] Step 4/4: Authenticating as {smtp_username}...")
+            try:
                 server.login(smtp_username, smtp_password)
-            
-            server.quit()
-            
-            return jsonify({
-                'success': True,
-                'message': f'Successfully connected to {smtp_server}:{smtp_port}'
-            })
-            
-        except smtplib.SMTPAuthenticationError:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication failed. Please check your username and password.'
-            }), 401
-        except smtplib.SMTPException as e:
-            return jsonify({
-                'success': False,
-                'message': f'SMTP error: {str(e)}'
-            }), 500
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': f'Connection failed: {str(e)}'
-            }), 500
-            
-    except Exception as e:
-        current_app.logger.error(f"Error testing SMTP connection: {e}")
+                current_app.logger.info(f"[SMTP] Authentication successful for {smtp_username}")
+            except smtplib.SMTPAuthenticationError as auth_err:
+                current_app.logger.error(f"[SMTP] Authentication failed for {smtp_username}: {auth_err}")
+                return jsonify({
+                    'success': False,
+                    'message': 'Authentication failed. Please check your username and password.'
+                }), 401
+            except smtplib.SMTPException as smtp_err:
+                current_app.logger.error(f"[SMTP] SMTP error during authentication: {smtp_err}")
+                return jsonify({
+                    'success': False,
+                    'message': f'SMTP authentication error: {smtp_err}'
+                }), 500
+        else:
+            current_app.logger.info("[SMTP] Step 4/4: No authentication (username/password not provided)")
+        
+        # Success - close connection
+        current_app.logger.info(f"[SMTP] All steps completed successfully. Closing connection...")
+        server.quit()
+        current_app.logger.info(f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully connected to {smtp_server}:{smtp_port}'
+        })
+        
+    except smtplib.SMTPException as e:
+        current_app.logger.error(f"[SMTP] SMTP error: {type(e).__name__}: {str(e)}")
         return jsonify({
             'success': False,
-            'message': f'Error testing connection: {str(e)}'
+            'message': f'SMTP error: {str(e)}'
         }), 500
+    except socket.timeout:
+        current_app.logger.error(f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}")
+        return jsonify({
+            'success': False,
+            'message': f'Operation timeout. The server may be slow or unreachable.'
+        }), 500
+    except Exception as e:
+        current_app.logger.error(f"[SMTP] Unexpected error: {type(e).__name__}: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Connection failed: {str(e)}'
+        }), 500
+    finally:
+        # Ensure connection is closed
+        if server:
+            try:
+                server.quit()
+            except:
+                pass
 
 @admin.route('/update-backup-settings', methods=['POST'])
 @login_required
