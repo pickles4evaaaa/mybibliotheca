@@ -4,7 +4,7 @@ Provides admin-only decorators, middleware, and management functions
 """
 
 import os
-from typing import Dict
+from typing import Dict, Iterable
 from functools import wraps
 from pathlib import Path
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort, current_app
@@ -14,6 +14,7 @@ from .forms import UserProfileForm, AdminPasswordResetForm
 from datetime import datetime, timedelta, timezone
 import pytz
 import os
+import re
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 from app.domain.models import MediaType
 
@@ -49,6 +50,53 @@ def _convert_query_result_to_list(result):
     except Exception:
         # Fallback to empty list if conversion fails
         return []
+
+
+_SENSITIVE_KEYWORDS = (
+    'password',
+    'passwd',
+    'pwd',
+    'secret',
+    'token',
+    'api_key',
+    'apikey',
+    'auth_token',
+)
+
+_SENSITIVE_REGEXES = [
+    re.compile(rf"(?i)({keyword}\s*[=:]\s*)([^\s,;]+)") for keyword in _SENSITIVE_KEYWORDS
+]
+
+
+def _sanitize_for_logging(value: str, extra_secrets: Iterable[str] | None = None) -> str:
+    """Mask sensitive information like passwords or tokens in log messages."""
+    if not isinstance(value, str) or not value:
+        return value
+
+    sanitized = value
+    for pattern in _SENSITIVE_REGEXES:
+        sanitized = pattern.sub(lambda m: f"{m.group(1)}<redacted>", sanitized)
+
+    if extra_secrets:
+        for secret in extra_secrets:
+            if secret:
+                sanitized = sanitized.replace(secret, '<redacted>')
+
+    return sanitized
+
+
+def _log(level: str, message: str, *args, extra_secrets: Iterable[str] | None = None, **kwargs):
+    """Central logging helper that sanitizes sensitive details before output."""
+    logger = current_app.logger
+    sanitized_message = _sanitize_for_logging(message, extra_secrets)
+    sanitized_args = tuple(
+        _sanitize_for_logging(arg, extra_secrets) if isinstance(arg, str) else arg
+        for arg in args
+    )
+    log_method = getattr(logger, level, None)
+    if log_method is None:
+        raise AttributeError(f"Logger has no level '{level}'")
+    return log_method(sanitized_message, *sanitized_args, **kwargs)
 
 def _get_root_env_path() -> str:
     """Resolve the project root .env path regardless of CWD or Docker paths."""
@@ -88,7 +136,7 @@ def load_ai_config():
                         config[key.strip()] = value.strip()
         except Exception as e:
             try:
-                current_app.logger.error(f"Error loading AI config from .env: {e}")
+                _log('error', f"Error loading AI config from .env: {e}")
             except Exception:
                 pass
 
@@ -108,7 +156,7 @@ def load_ai_config():
                     config[k] = str(v)
         except Exception as e:
             try:
-                current_app.logger.warning(f"Failed reading ai_config.json: {e}")
+                _log('warning', f"Failed reading ai_config.json: {e}")
             except Exception:
                 pass
 
@@ -125,7 +173,7 @@ def load_ai_config():
                         config[k] = str(v)
     except Exception as le:
         try:
-            current_app.logger.warning(f"Failed reading ai_settings.json: {le}")
+            _log('warning', f"Failed reading ai_settings.json: {le}")
         except Exception:
             pass
 
@@ -260,7 +308,7 @@ def save_system_config(config):
     except Exception as e:
         # Log error if we have current_app context, otherwise print
         try:
-            current_app.logger.error(f"Error saving system config: {e}")
+            _log('error', f"Error saving system config: {e}")
         except RuntimeError:
             print(f"Error saving system config: {e}")
         return False
@@ -285,7 +333,7 @@ def load_system_config():
     except (json.JSONDecodeError, Exception) as e:
         # Log warning if we have current_app context, otherwise print
         try:
-            current_app.logger.warning(f"Error loading system config: {e}")
+            _log('warning', f"Error loading system config: {e}")
         except RuntimeError:
             print(f"Error loading system config: {e}")
     
@@ -361,7 +409,7 @@ def save_smtp_config(config):
         return True
     except Exception as e:
         try:
-            current_app.logger.error(f"Error saving SMTP config: {e}")
+            _log('error', f"Error saving SMTP config: {e}")
         except RuntimeError:
             print(f"Error saving SMTP config: {e}")
         return False
@@ -401,7 +449,7 @@ def save_backup_config(config):
         return True
     except Exception as e:
         try:
-            current_app.logger.error(f"Error saving backup config: {e}")
+            _log('error', f"Error saving backup config: {e}")
         except RuntimeError:
             print(f"Error saving backup config: {e}")
         return False
@@ -507,7 +555,7 @@ def save_ai_config(config):
                 json.dump(subset, jf, indent=2)
         except Exception as je:
             try:
-                current_app.logger.warning(f"Failed writing ai_config.json: {je}")
+                _log('warning', f"Failed writing ai_config.json: {je}")
             except Exception:
                 pass
 
@@ -519,7 +567,7 @@ def save_ai_config(config):
         return True
     except Exception as e:
         try:
-            current_app.logger.error(f"Error saving AI config: {e}")
+            _log('error', f"Error saving AI config: {e}")
         except Exception:
             print(f"Error saving AI config: {e}")
         return False
@@ -592,7 +640,7 @@ def dashboard():
                              recent_users=recent_users,
                              recent_books=recent_books)
     except Exception as e:
-        current_app.logger.error(f"Error loading admin dashboard: {e}")
+        _log('error', f"Error loading admin dashboard: {e}")
         flash('Error loading dashboard data.', 'danger')
         # Provide default stats structure to prevent template errors
         default_stats = {
@@ -668,7 +716,7 @@ def users():
                              users=users_paginated,
                              search=search)
     except Exception as e:
-        current_app.logger.error(f"Error loading users: {e}")
+        _log('error', f"Error loading users: {e}")
         flash('Error loading users.', 'danger')
         return render_template('admin/users.html',
                              title='User Management',
@@ -717,7 +765,7 @@ def user_detail(user_id):
                              recent_books=recent_books,
                              recent_logs=recent_logs)
     except Exception as e:
-        current_app.logger.error(f"Error loading user detail {user_id}: {e}")
+        _log('error', f"Error loading user detail {user_id}: {e}")
         flash('Error loading user details.', 'danger')
         return redirect(url_for('admin.users'))
 
@@ -747,7 +795,7 @@ def toggle_admin(user_id):
         
         return redirect(url_for('admin.user_detail', user_id=user_id))
     except Exception as e:
-        current_app.logger.error(f"Error toggling admin status for user {user_id}: {e}")
+        _log('error', f"Error toggling admin status for user {user_id}: {e}")
         flash('Error updating user privileges.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
 
@@ -775,7 +823,7 @@ def toggle_active(user_id):
         
         return redirect(url_for('admin.user_detail', user_id=user_id))
     except Exception as e:
-        current_app.logger.error(f"Error toggling active status for user {user_id}: {e}")
+        _log('error', f"Error toggling active status for user {user_id}: {e}")
         flash('Error updating user status.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
 
@@ -808,7 +856,7 @@ def delete_user(user_id):
             if hasattr(user_service, 'delete_user_sync'):
                 deleted = user_service.delete_user_sync(user_id)  # type: ignore
         except Exception as de:
-            current_app.logger.error(f"Admin delete exception for user {user_id}: {de}")
+            _log('error', f"Admin delete exception for user {user_id}: {de}")
             deleted = False
         if deleted:
             flash(f'User {username} deleted.', 'success')
@@ -816,7 +864,7 @@ def delete_user(user_id):
             flash(f'Failed to delete user {username}.', 'error')
         return redirect(url_for('admin.users'))
     except Exception as e:
-        current_app.logger.error(f"Error deleting user {user_id}: {e}")
+        _log('error', f"Error deleting user {user_id}: {e}")
         flash('Error deleting user.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
 
@@ -876,7 +924,7 @@ def settings():
                         
                         flash(f'Background image uploaded successfully: {file.filename}', 'success')
                     except Exception as e:
-                        current_app.logger.error(f"Error uploading background image: {e}")
+                        _log('error', f"Error uploading background image: {e}")
                         flash('Error uploading background image. Please try again.', 'error')
                 else:
                     flash('Invalid file type. Please upload a PNG, JPG, JPEG, GIF, or WebP image.', 'error')
@@ -962,7 +1010,7 @@ def settings():
         from .debug_system import get_debug_manager
         debug_manager = get_debug_manager()
     except Exception as e:
-        current_app.logger.warning(f"Could not load debug manager: {e}")
+        _log('warning', f"Could not load debug manager: {e}")
         # Create a simple mock debug manager to prevent template errors
         class MockDebugManager:
             def is_debug_enabled(self):
@@ -980,7 +1028,7 @@ def api_delete_user(user_id):
     """Diagnostic JSON deletion endpoint used by unified settings UI to debug failures.
     Now serves as the primary deletion API (normal paths log at INFO)."""
     try:
-        current_app.logger.info(f"[USER_DELETE_DEBUG_API] start user_id={user_id}")
+        _log('info', f"[USER_DELETE_DEBUG_API] start user_id={user_id}")
         if not user_id:
             return jsonify({'ok': False, 'error': 'missing id'}), 400
         if getattr(current_user, 'id', None) == user_id:
@@ -991,7 +1039,7 @@ def api_delete_user(user_id):
             return jsonify({'ok': False, 'error': 'admin password invalid'}), 400
         user = user_service.get_user_by_id_sync(user_id)
         if not user:
-            current_app.logger.info(f"[USER_DELETE_DEBUG_API] user not found user_id={user_id}")
+            _log('info', f"[USER_DELETE_DEBUG_API] user not found user_id={user_id}")
             return jsonify({'ok': False, 'error': 'not found'}), 404
         if getattr(user, 'is_admin', False):
             admin_count = user_service.get_admin_count_sync() if hasattr(user_service,'get_admin_count_sync') else 1
@@ -1000,9 +1048,9 @@ def api_delete_user(user_id):
         deleted = False
         try:
             deleted = user_service.delete_user_sync(user_id) if hasattr(user_service,'delete_user_sync') else False
-            current_app.logger.info(f"[USER_DELETE_DEBUG_API] service.delete returned {deleted}")
+            _log('info', f"[USER_DELETE_DEBUG_API] service.delete returned {deleted}")
         except Exception as de:
-            current_app.logger.error(f"[USER_DELETE_DEBUG_API] service.delete exception {de}")
+            _log('error', f"[USER_DELETE_DEBUG_API] service.delete exception {de}")
         exists_flag = True
         try:
             repo = getattr(user_service, 'user_repo', None)
@@ -1011,12 +1059,12 @@ def api_delete_user(user_id):
                 from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
                 data = _cvt(res)
                 exists_flag = bool(data and int(data[0].get('c',0))>0)
-            current_app.logger.info(f"[USER_DELETE_DEBUG_API] exists_after={exists_flag}")
+            _log('info', f"[USER_DELETE_DEBUG_API] exists_after={exists_flag}")
         except Exception as ce:
-            current_app.logger.error(f"[USER_DELETE_DEBUG_API] existence check exception {ce}")
+            _log('error', f"[USER_DELETE_DEBUG_API] existence check exception {ce}")
         return jsonify({'ok': deleted and not exists_flag, 'deleted': deleted, 'exists_after': exists_flag})
     except Exception as e:
-        current_app.logger.error(f"[USER_DELETE_DEBUG_API] fatal error {e}")
+        _log('error', f"[USER_DELETE_DEBUG_API] fatal error {e}")
         return jsonify({'ok': False, 'error': 'server error'}), 500
 
 def get_admin_settings_context():
@@ -1174,7 +1222,7 @@ def update_ai_settings():
         return redirect(url_for('admin.settings', section='ai'))
         
     except Exception as e:
-        current_app.logger.error(f"Error updating AI settings: {e}")
+        _log('error', f"Error updating AI settings: {e}")
     flash('Error updating AI settings. Please try again.', 'danger')
     return redirect(url_for('admin.settings'))
 
@@ -1214,7 +1262,7 @@ def update_smtp_settings():
         return redirect(url_for('admin.settings'))
         
     except Exception as e:
-        current_app.logger.error(f"Error updating SMTP settings: {e}")
+        _log('error', f"Error updating SMTP settings: {e}", extra_secrets=[request.form.get('smtp_password', '')])
         flash('Error updating SMTP settings. Please try again.', 'danger')
     
     return redirect(url_for('admin.settings'))
@@ -1234,50 +1282,51 @@ def test_smtp_connection():
     smtp_username = request.form.get('smtp_username', '').strip()
     smtp_password = request.form.get('smtp_password', '').strip()
     smtp_use_tls = request.form.get('smtp_use_tls') == 'true'
+    secret_values = [smtp_password] if smtp_password else []
     
     # Log the connection attempt (sanitize password)
-    current_app.logger.info(f"[SMTP] Testing connection to {smtp_server}:{smtp_port}")
-    current_app.logger.info(f"[SMTP] Configuration - TLS: {smtp_use_tls}, Username: {smtp_username if smtp_username else '(none)'}")
+    _log('info', f"[SMTP] Testing connection to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+    _log('info', f"[SMTP] Configuration - TLS: {smtp_use_tls}, Username: {smtp_username if smtp_username else '(none)'}", extra_secrets=secret_values)
     
     if not smtp_server:
-        current_app.logger.warning("[SMTP] Test aborted - no server specified")
+        _log('warning', "[SMTP] Test aborted - no server specified", extra_secrets=secret_values)
         return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
     
     # Test connection with detailed logging
     server = None
     try:
         # Step 1: DNS Resolution
-        current_app.logger.info(f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...")
+        _log('info', f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...", extra_secrets=secret_values)
         try:
             resolved_ip = socket.gethostbyname(smtp_server)
-            current_app.logger.info(f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}")
+            _log('info', f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}", extra_secrets=secret_values)
         except socket.gaierror as dns_err:
-            current_app.logger.error(f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}")
+            _log('error', f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}", extra_secrets=secret_values)
             return jsonify({
                 'success': False,
                 'message': f'DNS resolution failed for {smtp_server}. Please check the server address.'
             }), 500
         
         # Step 2: Create SMTP connection with longer timeout
-        current_app.logger.info(f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...")
+        _log('info', f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
         try:
             server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
             server.set_debuglevel(0)  # Don't expose sensitive data in debug output
-            current_app.logger.info(f"[SMTP] Connection established to {smtp_server}:{smtp_port}")
+            _log('info', f"[SMTP] Connection established to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
         except socket.timeout:
-            current_app.logger.error(f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}")
+            _log('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
             return jsonify({
                 'success': False,
                 'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'
             }), 500
         except ConnectionRefusedError:
-            current_app.logger.error(f"[SMTP] Connection refused by {smtp_server}:{smtp_port}")
+            _log('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
             return jsonify({
                 'success': False,
                 'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'
             }), 500
         except socket.error as sock_err:
-            current_app.logger.error(f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}")
+            _log('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
             return jsonify({
                 'success': False,
                 'message': f'Network error: {sock_err}. Check server address and port.'
@@ -1285,44 +1334,44 @@ def test_smtp_connection():
         
         # Step 3: STARTTLS if enabled
         if smtp_use_tls:
-            current_app.logger.info("[SMTP] Step 3/4: Initiating STARTTLS...")
+            _log('info', "[SMTP] Step 3/4: Initiating STARTTLS...", extra_secrets=secret_values)
             try:
                 server.starttls()
-                current_app.logger.info("[SMTP] STARTTLS successful")
+                _log('info', "[SMTP] STARTTLS successful", extra_secrets=secret_values)
             except smtplib.SMTPException as tls_err:
-                current_app.logger.error(f"[SMTP] STARTTLS failed: {tls_err}")
+                _log('error', f"[SMTP] STARTTLS failed: {tls_err}", extra_secrets=secret_values)
                 return jsonify({
                     'success': False,
                     'message': f'TLS negotiation failed: {tls_err}'
                 }), 500
         else:
-            current_app.logger.info("[SMTP] Step 3/4: Skipping TLS (not enabled)")
+            _log('info', "[SMTP] Step 3/4: Skipping TLS (not enabled)", extra_secrets=secret_values)
         
         # Step 4: Authentication
         if smtp_username and smtp_password:
-            current_app.logger.info(f"[SMTP] Step 4/4: Authenticating as {smtp_username}...")
+            _log('info', f"[SMTP] Step 4/4: Authenticating as {smtp_username}...", extra_secrets=secret_values)
             try:
                 server.login(smtp_username, smtp_password)
-                current_app.logger.info(f"[SMTP] Authentication successful for {smtp_username}")
+                _log('info', f"[SMTP] Authentication successful for {smtp_username}", extra_secrets=secret_values)
             except smtplib.SMTPAuthenticationError as auth_err:
-                current_app.logger.error(f"[SMTP] Authentication failed for {smtp_username}: {auth_err}")
+                _log('error', f"[SMTP] Authentication failed for {smtp_username}: {auth_err}", extra_secrets=secret_values)
                 return jsonify({
                     'success': False,
                     'message': 'Authentication failed. Please check your username and password.'
                 }), 401
             except smtplib.SMTPException as smtp_err:
-                current_app.logger.error(f"[SMTP] SMTP error during authentication: {smtp_err}")
+                _log('error', f"[SMTP] SMTP error during authentication: {smtp_err}", extra_secrets=secret_values)
                 return jsonify({
                     'success': False,
                     'message': f'SMTP authentication error: {smtp_err}'
                 }), 500
         else:
-            current_app.logger.info("[SMTP] Step 4/4: No authentication (username/password not provided)")
+            _log('info', "[SMTP] Step 4/4: No authentication (username/password not provided)", extra_secrets=secret_values)
         
         # Success - close connection
-        current_app.logger.info(f"[SMTP] All steps completed successfully. Closing connection...")
+        _log('info', f"[SMTP] All steps completed successfully. Closing connection...", extra_secrets=secret_values)
         server.quit()
-        current_app.logger.info(f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}")
+        _log('info', f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
         
         return jsonify({
             'success': True,
@@ -1330,19 +1379,19 @@ def test_smtp_connection():
         })
         
     except smtplib.SMTPException as e:
-        current_app.logger.error(f"[SMTP] SMTP error: {type(e).__name__}: {str(e)}")
+        _log('error', f"[SMTP] SMTP error: {type(e).__name__}: {str(e)}", extra_secrets=secret_values)
         return jsonify({
             'success': False,
             'message': f'SMTP error: {str(e)}'
         }), 500
     except socket.timeout:
-        current_app.logger.error(f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}")
+        _log('error', f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
         return jsonify({
             'success': False,
             'message': f'Operation timeout. The server may be slow or unreachable.'
         }), 500
     except Exception as e:
-        current_app.logger.error(f"[SMTP] Unexpected error: {type(e).__name__}: {str(e)}", exc_info=True)
+        _log('error', f"[SMTP] Unexpected error: {type(e).__name__}: {str(e)}", extra_secrets=secret_values, exc_info=True)
         return jsonify({
             'success': False,
             'message': f'Connection failed: {str(e)}'
@@ -1381,7 +1430,7 @@ def update_backup_settings():
         return redirect(url_for('admin.settings'))
         
     except Exception as e:
-        current_app.logger.error(f"Error updating backup settings: {e}")
+        _log('error', f"Error updating backup settings: {e}")
         flash('Error updating backup settings. Please try again.', 'danger')
     
     return redirect(url_for('admin.settings'))
@@ -1413,7 +1462,7 @@ def test_ai_connection():
         return jsonify(result)
             
     except Exception as e:
-        current_app.logger.error(f"Error testing AI connection: {e}")
+        _log('error', f"Error testing AI connection: {e}")
         return jsonify({'success': False, 'message': 'Connection test failed. Please check your settings.'})
 
 @admin.route('/test-ollama-connection', methods=['POST'])
@@ -1437,7 +1486,7 @@ def test_ollama_connection():
         return jsonify(result)
             
     except Exception as e:
-        current_app.logger.error(f"Error testing Ollama connection: {e}")
+        _log('error', f"Error testing Ollama connection: {e}")
         return jsonify({'success': False, 'message': 'Ollama connection test failed. Please check your settings.'})
 
 @admin.route('/users/<string:user_id>/reset_password', methods=['GET', 'POST'])
@@ -1474,7 +1523,7 @@ def reset_user_password(user_id):
                              form=form, 
                              user=user)
     except Exception as e:
-        current_app.logger.error(f"Error resetting password for user {user_id}: {e}")
+        _log('error', f"Error resetting password for user {user_id}: {e}")
         flash('Error resetting password.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
 
@@ -1498,7 +1547,7 @@ def unlock_user_account(user_id):
         
         return redirect(url_for('admin.user_detail', user_id=user.id))
     except Exception as e:
-        current_app.logger.error(f"Error unlocking user account {user_id}: {e}")
+        _log('error', f"Error unlocking user account {user_id}: {e}")
         flash('Error unlocking user account.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
 
@@ -1535,7 +1584,7 @@ def migration_management():
                              migration_info=migration_info)
     
     except Exception as e:
-        current_app.logger.error(f"Error loading migration info: {e}")
+        _log('error', f"Error loading migration info: {e}")
         flash('Error loading migration information.', 'danger')
         return render_template('admin/migration.html',
                              title='Database Migration',
@@ -1568,7 +1617,7 @@ def get_system_stats():
         # System health info (with fallback if psutil not available)
         system_info = {}
         try:
-            import psutil
+            import psutil  # type: ignore[import-not-found]
             disk_usage = psutil.disk_usage('/')
             memory = psutil.virtual_memory()
             
@@ -1600,7 +1649,7 @@ def get_system_stats():
             'system': system_info
         }
     except Exception as e:
-        current_app.logger.error(f"Error getting system stats: {e}")
+        _log('error', f"Error getting system stats: {e}")
         return {
             'total_users': 0,
             'active_users': 0,
@@ -1626,7 +1675,7 @@ def promote_user_to_admin(user_id):
             return True
         return False
     except Exception as e:
-        current_app.logger.error(f"Error promoting user {user_id} to admin: {e}")
+        _log('error', f"Error promoting user {user_id} to admin: {e}")
         return False
 
 def demote_admin_user(user_id):
@@ -1642,7 +1691,7 @@ def demote_admin_user(user_id):
                 return True
         return False
     except Exception as e:
-        current_app.logger.error(f"Error demoting admin user {user_id}: {e}")
+        _log('error', f"Error demoting admin user {user_id}: {e}")
         return False
 
 def unlock_user_account_by_id(user_id):
@@ -1655,5 +1704,5 @@ def unlock_user_account_by_id(user_id):
             return True
         return False
     except Exception as e:
-        current_app.logger.error(f"Error unlocking user account {user_id}: {e}")
+        _log('error', f"Error unlocking user account {user_id}: {e}")
         return False
