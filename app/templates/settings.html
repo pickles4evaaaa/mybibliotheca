@@ -1354,9 +1354,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     confirmBtn.classList.remove('btn-success');
                     confirmBtn.classList.add('btn-primary');
                     confirmBtn.innerHTML = data.confirm_label || defaultConfirmHtml;
-                    quickAddPayload.days = data.days ?? quickAddPayload.days;
-                    quickAddPayload.pages = data.pages ?? quickAddPayload.pages;
-                    quickAddPayload.minutes = data.minutes ?? quickAddPayload.minutes;
+                    if(quickAddPayload) {
+                        quickAddPayload.days = data.days ?? quickAddPayload.days;
+                        quickAddPayload.pages = data.pages ?? quickAddPayload.pages;
+                        quickAddPayload.minutes = data.minutes ?? quickAddPayload.minutes;
+                    }
                 } else {
                     confirmBtn.disabled = true;
                 }
