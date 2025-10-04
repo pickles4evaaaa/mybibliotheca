@@ -1,0 +1,48 @@
+{% if errors %}
+  <div class="alert alert-danger" role="alert">
+    <p class="mb-2">The quick add run could not complete:</p>
+    <ul class="mb-0">
+      {% for error in errors %}
+        <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+{% if created_count > 0 %}
+  <div class="alert alert-success" role="alert">
+    Added or updated <strong>{{ created_count }}</strong> reading log{{ 's' if created_count != 1 else '' }} across
+    <strong>{{ days }}</strong> day{{ 's' if days != 1 else '' }}.
+  </div>
+{% elif not errors %}
+  <div class="alert alert-info" role="alert">
+    No new reading logs were created, but existing logs may have been updated.
+  </div>
+{% endif %}
+<ul class="list-unstyled small mb-4">
+  <li><span class="fw-semibold">Pages per day:</span> {{ pages }}</li>
+  <li><span class="fw-semibold">Minutes per day:</span> {{ minutes }}</li>
+  <li><span class="fw-semibold">Linked book:</span> {{ unassigned_title }}</li>
+</ul>
+{% if success_dates %}
+  <div class="mb-4">
+    <h6 class="fw-semibold text-uppercase small text-muted mb-2">Dates updated</h6>
+    <ul class="list-unstyled small mb-0">
+      {% for d in success_dates[:15] %}
+        <li>{{ d.strftime('%Y-%m-%d') }}</li>
+      {% endfor %}
+    </ul>
+    {% if success_dates|length > 15 %}
+      <div class="small text-muted mt-2">…plus {{ success_dates|length - 15 }} more day{{ 's' if (success_dates|length - 15) != 1 else '' }}.</div>
+    {% endif %}
+  </div>
+{% endif %}
+{% if failed_dates %}
+  <div class="alert alert-warning small" role="alert">
+    We couldn't update {{ failed_dates|length }} day{{ 's' if failed_dates|length != 1 else '' }}. You can retry for:
+    <ul class="mb-0">
+      {% for d in failed_dates %}
+        <li>{{ d.strftime('%Y-%m-%d') }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}

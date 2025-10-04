@@ -1,4 +1,4 @@
-<div class="card shadow-sm">
+<div class="card shadow-sm mb-3">
   <div class="card-header d-flex align-items-center gap-2">
     <i class="bi bi-calendar-check"></i>
     <strong>Import Reading History</strong>
@@ -15,5 +15,68 @@
         <button type="submit" class="btn btn-success"><i class="bi bi-upload"></i> Start Import (opens workflow)</button>
       </div>
     </form>
+    <div class="d-flex flex-wrap gap-2 mt-3">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('import.download_reading_history_template') }}" target="_blank" download>
+        <i class="bi bi-file-earmark-arrow-down"></i> Download Sample CSV
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-lightning-charge"></i>
+    <strong>Quick Add Recent Reading</strong>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Create a run of reading logs in one step. Entries are attached to
+      <strong>{{ unassigned_title or 'Unassigned Reading Logs' }}</strong> so you can track streaks even without specifying a book.
+    </p>
+    <form id="quickAddForm" method="post" action="{{ url_for('import.quick_add_reading_history_preview') }}" data-execute-url="{{ url_for('import.quick_add_reading_history_execute_bulk') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label for="quick_add_days" class="form-label">Prior days to add</label>
+          <input type="number" min="1" max="365" class="form-control" id="quick_add_days" name="days" value="{{ default_quick_add_days or 7 }}" required>
+        </div>
+        <div class="col-md-4">
+          <label for="quick_add_pages" class="form-label">Pages per day</label>
+          <input type="number" min="0" class="form-control" id="quick_add_pages" name="pages" value="{{ default_quick_add_pages or 1 }}">
+        </div>
+        <div class="col-md-4">
+          <label for="quick_add_minutes" class="form-label">Minutes per day</label>
+          <input type="number" min="0" class="form-control" id="quick_add_minutes" name="minutes" value="{{ default_quick_add_minutes or 1 }}">
+        </div>
+      </div>
+      <div class="alert alert-warning small mt-3" role="alert">
+        We'll reuse your admin defaults when fields are blank. If neither pages nor minutes are provided, each log will default to at least 1 minute so progress still counts.
+      </div>
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <button type="submit" class="btn btn-primary" id="quickAddPreviewButton"><i class="bi bi-check2-square"></i> Preview Quick Add</button>
+      </div>
+    </form>
+    <div class="modal fade" id="quickAddModal" tabindex="-1" aria-labelledby="quickAddModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="quickAddModalLabel">Quick Add Preview</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="quickAddModalBody">
+            <div class="d-flex align-items-center gap-2 text-muted small">
+              <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+              Preparing preview…
+            </div>
+          </div>
+          <div class="modal-footer flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-role="quick-add-close">Close</button>
+            <button type="button" class="btn btn-primary" id="quickAddModalConfirm" disabled data-mode="confirm">
+              <i class="bi bi-play-fill"></i> Confirm &amp; Add Logs
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>

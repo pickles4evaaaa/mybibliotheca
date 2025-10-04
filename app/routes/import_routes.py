@@ -7,7 +7,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from datetime import datetime, date, timedelta, timezone
-from typing import List, Any
+from typing import List, Any, Optional, Tuple
 import uuid
 import os
 import csv
@@ -40,13 +40,14 @@ def _dprint(*args, **kwargs):
 # Redirect module print to conditional debug print
 print = _dprint
 
-from app.services import book_service, import_mapping_service, custom_field_service
+from app.services import book_service, import_mapping_service, custom_field_service, reading_log_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-from app.domain.models import CustomFieldDefinition, CustomFieldType
+from app.domain.models import CustomFieldDefinition, CustomFieldType, ReadingLog
 from app.utils import normalize_goodreads_value
 from app.utils.user_settings import get_effective_reading_defaults, get_default_book_format
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.book_utils import get_best_cover_for_book
+from app.services.kuzu_async_helper import run_async
 from app.utils.safe_import_manager import (
     safe_import_manager, 
     safe_create_import_job,
@@ -64,6 +65,113 @@ from app.utils.safe_import_manager import (
 
 # Create import blueprint
 import_bp = Blueprint('import', __name__)
+
+UNASSIGNED_READING_LOG_TITLE = 'Unassigned Reading Logs'
+
+
+def _sanitize_quick_add_inputs(days_raw, pages_raw, minutes_raw, user_id) -> Tuple[int, int, int, List[str]]:
+    """Normalize quick-add form inputs and return (days, pages, minutes, errors)."""
+    errors: List[str] = []
+
+    try:
+        days = int(days_raw)
+    except (TypeError, ValueError):
+        days = 0
+        errors.append('Number of prior days must be a whole number.')
+
+    if days < 1:
+        errors.append('Number of prior days must be at least 1.')
+        days = max(days, 0)
+    if days > 365:
+        errors.append('Quick add supports up to 365 prior days per run.')
+        days = 365
+
+    def _parse_int(raw_value) -> int:
+        try:
+            value = int(raw_value)
+            return value if value >= 0 else 0
+        except (TypeError, ValueError):
+            return 0
+
+    pages = _parse_int(pages_raw)
+    minutes = _parse_int(minutes_raw)
+
+    defaults = get_effective_reading_defaults(user_id)
+    default_pages = defaults[0] if defaults else None
+    default_minutes = defaults[1] if defaults else None
+
+    if pages <= 0 and minutes <= 0:
+        if (default_pages or 0) > 0:
+            pages = int(default_pages)  # type: ignore[arg-type]
+        if (default_minutes or 0) > 0:
+            minutes = int(default_minutes)  # type: ignore[arg-type]
+
+    if pages <= 0 and minutes <= 0:
+        pages = 1
+        minutes = 1
+
+    return days, pages, minutes, errors
+
+
+async def _ensure_unassigned_reading_log_book(user_id: str,
+                                              location_service=None,
+                                              default_location_id: Optional[str] = None) -> Optional[str]:
+    """Ensure the placeholder book for bookless logs exists and return its ID."""
+    try:
+        existing = book_service.search_books_sync(UNASSIGNED_READING_LOG_TITLE, user_id, limit=1)
+        if existing:
+            candidate = existing[0]
+            book_id = getattr(candidate, 'id', None)
+            if not book_id and isinstance(candidate, dict):
+                book_id = candidate.get('id')
+            if book_id:
+                return book_id
+    except Exception as search_error:
+        try:
+            current_app.logger.warning(f"Quick add lookup for unassigned book failed: {search_error}")
+        except Exception:
+            pass
+
+    service = SimplifiedBookService()
+    placeholder = SimplifiedBook(title=UNASSIGNED_READING_LOG_TITLE, author='System Generated')
+    try:
+        book_id = await service.create_standalone_book(placeholder)
+    except Exception as creation_error:
+        try:
+            current_app.logger.error(f"Failed to create unassigned reading log book: {creation_error}")
+        except Exception:
+            pass
+        return None
+
+    if not book_id:
+        return None
+
+    try:
+        if location_service is None:
+            from app.location_service import LocationService  # Lazy import to avoid circulars
+            location_service = LocationService()
+            default_location = location_service.get_default_location()
+            default_location_id = getattr(default_location, 'id', None) if default_location else None
+        if location_service and default_location_id:
+            try:
+                location_service.add_book_to_location(book_id, default_location_id, user_id)
+            except Exception as loc_error:
+                current_app.logger.debug(f"Unable to link unassigned book to default location: {loc_error}")
+    except Exception as location_error:
+        try:
+            current_app.logger.debug(f"Location association skipped: {location_error}")
+        except Exception:
+            pass
+
+    return book_id
+
+
+def _is_ajax_request() -> bool:
+    requested_with = request.headers.get('X-Requested-With', '').lower()
+    if requested_with == 'xmlhttprequest':
+        return True
+    accept_header = request.headers.get('Accept', '')
+    return 'application/json' in accept_header.lower()
 
 # Helper functions for import functionality
 def detect_csv_format(csv_file_path):
@@ -3336,6 +3444,181 @@ def download_reading_history_template():
         return redirect(url_for('import.import_reading_history'))
 
 
+@import_bp.route('/reading-history/quick-add/preview', methods=['POST'])
+@login_required
+def quick_add_reading_history_preview():
+    """Render confirmation screen for bulk quick-add of reading logs."""
+    days, pages, minutes, errors = _sanitize_quick_add_inputs(
+        request.form.get('days'),
+        request.form.get('pages'),
+        request.form.get('minutes'),
+        getattr(current_user, 'id', None)
+    )
+
+    today = date.today()
+    target_dates = [today - timedelta(days=i) for i in range(1, days + 1)] if days > 0 else []
+    target_dates.sort()
+    if target_dates:
+        start_date = min(target_dates)
+        end_date = max(target_dates)
+    else:
+        start_date = None
+        end_date = None
+    sample_dates = target_dates[:min(10, len(target_dates))]
+    context = {
+        'errors': errors,
+        'days': days,
+        'pages': pages,
+        'minutes': minutes,
+        'start_date': start_date,
+        'end_date': end_date,
+        'sample_dates': sample_dates,
+        'total_dates': len(target_dates),
+        'unassigned_title': UNASSIGNED_READING_LOG_TITLE
+    }
+
+    if _is_ajax_request():
+        preview_html = render_template('partials/_quick_add_preview_summary.html', **context)
+        status = 'error' if errors else 'ok'
+        modal_title = 'Quick Add Issues' if errors else 'Confirm Quick Add'
+        return jsonify({
+            'status': status,
+            'html': preview_html,
+            'modal_title': modal_title,
+            'confirm_enabled': not errors,
+            'confirm_label': 'Confirm & Add Logs',
+            'days': days,
+            'pages': pages,
+            'minutes': minutes,
+            'start_date': start_date.isoformat() if start_date else None,
+            'end_date': end_date.isoformat() if end_date else None,
+            'errors': errors,
+            'total_dates': len(target_dates)
+        })
+
+    return render_template('import_reading_quick_add_confirm.html', **context)
+
+
+@import_bp.route('/reading-history/quick-add/execute', methods=['POST'])
+@login_required
+def quick_add_reading_history_execute_bulk():
+    """Create or update reading logs across a span of prior days."""
+    days, pages, minutes, errors = _sanitize_quick_add_inputs(
+        request.form.get('days'),
+        request.form.get('pages'),
+        request.form.get('minutes'),
+        getattr(current_user, 'id', None)
+    )
+
+    user_id = str(getattr(current_user, 'id', ''))
+    if not user_id:
+        errors.append('User context is missing.')
+
+    base_context = {
+        'errors': errors,
+        'days': days,
+        'pages': pages,
+        'minutes': minutes,
+        'created_count': 0,
+        'success_dates': [],
+        'failed_dates': [],
+        'unassigned_title': UNASSIGNED_READING_LOG_TITLE
+    }
+
+    if errors:
+        if _is_ajax_request():
+            result_html = render_template('partials/_quick_add_result_summary.html', **base_context)
+            return jsonify({
+                'status': 'error',
+                'html': result_html,
+                'modal_title': 'Quick Add Issues',
+                'errors': errors,
+                'created_count': 0,
+                'success_dates': [],
+                'failed_dates': []
+            })
+        return render_template('import_reading_quick_add_result.html', **base_context)
+
+    try:
+        unassigned_book_id = run_async(_ensure_unassigned_reading_log_book(user_id))
+    except Exception as helper_error:
+        current_app.logger.error(f"Quick add placeholder resolution failed: {helper_error}")
+        unassigned_book_id = None
+
+    if not unassigned_book_id:
+        errors.append('Unable to locate or create the placeholder book used for quick add logs.')
+        base_context['errors'] = errors
+        if _is_ajax_request():
+            result_html = render_template('partials/_quick_add_result_summary.html', **base_context)
+            return jsonify({
+                'status': 'error',
+                'html': result_html,
+                'modal_title': 'Quick Add Issues',
+                'errors': errors,
+                'created_count': 0,
+                'success_dates': [],
+                'failed_dates': []
+            })
+        return render_template('import_reading_quick_add_result.html', **base_context)
+
+    today = date.today()
+    success_dates: List[date] = []
+    failed_dates: List[date] = []
+
+    for offset in range(1, days + 1):
+        log_date = today - timedelta(days=offset)
+        reading_log = ReadingLog(
+            user_id=user_id,
+            book_id=unassigned_book_id,
+            date=log_date,
+            pages_read=pages,
+            minutes_read=minutes,
+            notes=None
+        )
+        try:
+            created = reading_log_service.create_reading_log_sync(reading_log)
+            if created:
+                success_dates.append(log_date)
+            else:
+                failed_dates.append(log_date)
+        except Exception as create_error:
+            failed_dates.append(log_date)
+            current_app.logger.error(f"Quick add log creation failed for {log_date}: {create_error}")
+
+    success_dates.sort()
+    failed_dates.sort()
+    created_count = len(success_dates)
+    base_context.update({
+        'errors': errors,
+        'created_count': created_count,
+        'success_dates': success_dates,
+        'failed_dates': failed_dates
+    })
+
+    if _is_ajax_request():
+        result_html = render_template('partials/_quick_add_result_summary.html', **base_context)
+        if errors and created_count == 0:
+            status = 'error'
+        elif failed_dates:
+            status = 'partial'
+        else:
+            status = 'ok'
+        return jsonify({
+            'status': status,
+            'html': result_html,
+            'modal_title': 'Quick Add Results' if status != 'error' else 'Quick Add Issues',
+            'created_count': created_count,
+            'success_dates': [d.isoformat() for d in success_dates],
+            'failed_dates': [d.isoformat() for d in failed_dates],
+            'errors': errors,
+            'days': days,
+            'pages': pages,
+            'minutes': minutes
+        })
+
+    return render_template('import_reading_quick_add_result.html', **base_context)
+
+
 @import_bp.route('/reading-history/book-matching/<task_id>')
 @login_required
 def reading_history_book_matching(task_id):
@@ -3741,23 +4024,18 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
             if act == 'bookless':
                 if unassigned_book_id is None:
                     try:
-                        search = book_service.search_books_sync("Unassigned Reading Logs", user_id, limit=1)
-                        if search:
-                            unassigned_book_id = getattr(search[0], 'id', None) or search[0].get('id')
-                        else:
-                            service = SimplifiedBookService()
-                            ub = SimplifiedBook(title='Unassigned Reading Logs', author='System Generated')
-                            unassigned_book_id = await service.create_standalone_book(ub)
-                            if unassigned_book_id and default_location_id and location_service:
-                                try:
-                                    location_service.add_book_to_location(unassigned_book_id, default_location_id, user_id)
-                                except Exception:
-                                    pass
+                        unassigned_book_id = await _ensure_unassigned_reading_log_book(
+                            user_id,
+                            location_service=location_service,
+                            default_location_id=default_location_id
+                        )
                     except Exception as ue:
-                        current_app.logger.warning(f"Unassigned book creation failed: {ue}")
-                        skipped_count += len(entries)
-                        total_entries_processed += len(entries)
-                        continue
+                        current_app.logger.warning(f"Unassigned book preparation failed: {ue}")
+                        unassigned_book_id = None
+                if not unassigned_book_id:
+                    skipped_count += len(entries)
+                    total_entries_processed += len(entries)
+                    continue
                 target_book_id = unassigned_book_id
             else:
                 # Support legacy key 'book_id' for already persisted jobs

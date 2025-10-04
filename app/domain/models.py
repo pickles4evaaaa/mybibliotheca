@@ -760,7 +760,7 @@ class User:
     
     def get_reading_streak(self) -> int:
         """Get the user's current reading streak with their personal offset."""
-        from ..utils import calculate_reading_streak
+        from app.utils.user_utils import calculate_reading_streak  # Local import to avoid circulars
         return calculate_reading_streak(self.id, self.reading_streak_offset)
     
     def unlock_account(self) -> None:

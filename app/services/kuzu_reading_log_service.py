@@ -590,7 +590,8 @@ class KuzuReadingLogService:
             # Use the same working query pattern as the paginated method to get ALL reading logs
             # This ensures we're counting from the same data source that displays correctly
             all_logs_query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book)
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+            OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
             RETURN rl, b
             """
             
@@ -606,45 +607,94 @@ class KuzuReadingLogService:
                 total_minutes = 0
                 distinct_books = set()
                 distinct_days = set()
-                
+
+                def _normalize_book_id(payload: Dict[str, Any]) -> Optional[str]:
+                    if not payload:
+                        return None
+                    candidate = payload.get('id') or payload.get('uid') or payload.get('book_id')
+                    return str(candidate) if candidate is not None else None
+
+                def _parse_log_date(raw_value: Any) -> Optional[date]:
+                    if raw_value is None:
+                        return None
+                    if isinstance(raw_value, datetime):
+                        return raw_value.date()
+                    if isinstance(raw_value, date):
+                        return raw_value
+                    if isinstance(raw_value, str):
+                        cleaned = raw_value.strip()
+                        if not cleaned:
+                            return None
+                        cleaned = cleaned.replace('Z', '+00:00')
+                        try:
+                            return datetime.fromisoformat(cleaned).date()
+                        except ValueError:
+                            try:
+                                return date.fromisoformat(cleaned.split('T')[0])
+                            except ValueError:
+                                return None
+                    return None
+
                 for result in logs_list:
-                    if 'col_0' in result and 'col_1' in result:
-                        log_data = dict(result['col_0'])
-                        book_data = dict(result['col_1'])
-                        
-                        # Count pages and minutes (with safe defaults)
-                        pages = log_data.get('pages_read', 0) or 0
-                        minutes = log_data.get('minutes_read', 0) or 0
-                        total_pages += pages
-                        total_minutes += minutes
-                        
-                        # Track distinct books by book ID
-                        book_id = book_data.get('id')
-                        if book_id:
-                            distinct_books.add(book_id)
-                        
-                        # Track distinct days
-                        log_date = log_data.get('date')
-                        if log_date:
-                            distinct_days.add(str(log_date))
+                    raw_log = result.get('col_0') or result.get('result') or result.get('rl')
+                    if not raw_log:
+                        continue
+                    try:
+                        log_data = dict(raw_log)
+                    except (TypeError, ValueError):
+                        continue
+
+                    # Count pages and minutes (with safe defaults)
+                    pages = log_data.get('pages_read') or 0
+                    minutes = log_data.get('minutes_read') or 0
+                    try:
+                        total_pages += int(pages)
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        total_minutes += int(minutes)
+                    except (TypeError, ValueError):
+                        pass
+
+                    # Resolve book data, preferring query column but falling back to embedded payload
+                    raw_book = result.get('col_1')
+                    book_payload: Dict[str, Any] = {}
+                    if raw_book:
+                        try:
+                            book_payload = dict(raw_book)
+                        except (TypeError, ValueError):
+                            book_payload = {}
+                    if not book_payload and isinstance(log_data.get('book'), dict):
+                        book_payload = log_data.get('book')  # type: ignore[assignment]
+
+                    book_id = _normalize_book_id(book_payload)
+                    if book_id:
+                        distinct_books.add(book_id)
+                    elif log_data.get('book_id'):
+                        distinct_books.add(str(log_data.get('book_id')))
+
+                    # Track distinct days
+                    log_date_value = log_data.get('date') or log_data.get('log_date')
+                    parsed_date = _parse_log_date(log_date_value)
+                    if parsed_date:
+                        distinct_days.add(parsed_date.isoformat())
                 
                 stats = {
                     'total_log_entries': total_log_entries,
                     'total_pages': total_pages,
                     'total_minutes': total_minutes,
                     'distinct_books': len(distinct_books),
-                    'distinct_days': len(distinct_days)
+                    'distinct_days': len(distinct_days),
+                    'total_time_formatted': '0m'
                 }
                 
                 # Calculate total time in more readable format
-                total_minutes = stats['total_minutes']
-                if total_minutes and total_minutes > 0:
-                    days = total_minutes // (24 * 60)
-                    hours = (total_minutes % (24 * 60)) // 60
-                    minutes = total_minutes % 60
+                total_minutes_val = stats['total_minutes']
+                if total_minutes_val and total_minutes_val > 0:
+                    days = total_minutes_val // (24 * 60)
+                    hours = (total_minutes_val % (24 * 60)) // 60
+                    minutes = total_minutes_val % 60
                     stats['total_time_formatted'] = f"{days}d {hours}h {minutes}m"
-                else:
-                    stats['total_time_formatted'] = "0m"
                 
                 return stats
             

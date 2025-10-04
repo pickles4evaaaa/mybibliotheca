@@ -5,7 +5,7 @@ Handles book CRUD operations, library views, and book-specific actions.
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, abort, make_response, send_file
 from flask_login import login_required, current_user
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import uuid
 import traceback
 import requests
@@ -39,6 +39,50 @@ print = _dprint
 # =============================
 # Helper functions (refactored edit_book logic)
 # =============================
+
+
+def _normalize_personal_datetime(value):
+    """Convert user-provided date inputs into timezone-aware datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        candidate = s.replace('Z', '+00:00')
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d'):
+            try:
+                parsed = datetime.strptime(s, fmt)
+                return parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        try:
+            epoch = float(s)
+            if epoch > 10_000_000_000:
+                epoch /= 1000.0
+            return datetime.fromtimestamp(epoch, tz=timezone.utc)
+        except (ValueError, OSError):
+            return None
+    return None
+
+
+def _datetimes_equal(a, b):
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return a == b
+
+
 def _scalar_diff_changes(user_book, form):
     """Compute scalar changes (no contributors/categories) - DEPRECATED: Use _get_changed_fields instead."""
     # This function is kept for any legacy callers but is no longer used in the main edit flow
@@ -63,15 +107,26 @@ def _get_changed_fields(user_book, form):
     
     # All possible updatable fields (EXCLUDING cover_url - handled separately)
     all_fields = [
-        'title', 'subtitle', 'description', 'publisher', 'isbn13', 'isbn10', 'published_date', 
-        'language', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 
-        'rating_count', 'media_type', 'personal_notes', 'review', 
-        'user_rating', 'reading_status', 'ownership_status'
+        'title', 'subtitle', 'description', 'publisher', 'isbn13', 'isbn10', 'published_date',
+        'language', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating',
+        'rating_count', 'media_type', 'personal_notes', 'review',
+        'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date'
     ]
+    date_fields = {'start_date', 'finish_date'}
     
     # Process regular fields
     for field in all_fields:
         if field not in form:
+            continue
+
+        if field in date_fields:
+            raw_val = form.get(field, '')
+            new_dt = _normalize_personal_datetime(raw_val)
+            current_dt = _normalize_personal_datetime(getattr(user_book, field, None))
+            if raw_val is not None and isinstance(raw_val, str) and raw_val.strip() == '':
+                new_dt = None
+            if not _datetimes_equal(new_dt, current_dt):
+                changes[field] = new_dt
             continue
             
         new_val = _norm(form.get(field, ''))

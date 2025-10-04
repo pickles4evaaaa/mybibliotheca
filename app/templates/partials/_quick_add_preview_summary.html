@@ -1,0 +1,38 @@
+{% if errors %}
+  <div class="alert alert-danger" role="alert">
+    <p class="mb-2">We couldn't prepare the quick add run:</p>
+    <ul class="mb-0">
+      {% for error in errors %}
+        <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% else %}
+  <p class="lead mb-3">
+    You're about to add <strong>{{ days }}</strong> reading log{{ 's' if days != 1 else '' }} covering
+    <strong>{{ start_date.strftime('%Y-%m-%d') if start_date else 'N/A' }}</strong>
+    through
+    <strong>{{ end_date.strftime('%Y-%m-%d') if end_date else 'N/A' }}</strong>.
+  </p>
+  <ul class="list-unstyled small mb-4">
+    <li><span class="fw-semibold">Pages per day:</span> {{ pages }}</li>
+    <li><span class="fw-semibold">Minutes per day:</span> {{ minutes }}</li>
+    <li><span class="fw-semibold">Reading log book:</span> {{ unassigned_title }}</li>
+  </ul>
+  {% if sample_dates %}
+    <div class="mb-4">
+      <h6 class="fw-semibold text-uppercase small text-muted mb-2">Dates included</h6>
+      <ul class="list-unstyled small mb-0">
+        {% for d in sample_dates %}
+          <li>{{ d.strftime('%Y-%m-%d') }}</li>
+        {% endfor %}
+      </ul>
+      {% if total_dates > sample_dates|length %}
+        <div class="small text-muted mt-2">…plus {{ total_dates - sample_dates|length }} more day{{ 's' if (total_dates - sample_dates|length) != 1 else '' }}.</div>
+      {% endif %}
+    </div>
+  {% endif %}
+  <div class="alert alert-info small" role="alert">
+    Existing logs for the same day will be updated by adding the values above. New logs will be created when none exist.
+  </div>
+{% endif %}

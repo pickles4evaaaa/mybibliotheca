@@ -29,6 +29,26 @@
             {% set reading_status = (book.reading_status or '')|lower %}
             {% set start_date = book.start_date %}
             {% set finish_date = book.finish_date %}
+            {% set start_date_display = '' %}
+            {% if start_date %}
+                {% if start_date.__class__.__name__ in ['datetime', 'date'] %}
+                    {% set start_date_display = start_date.strftime('%Y-%m-%d') %}
+                {% elif start_date is string %}
+                    {% set start_date_display = start_date[:10] %}
+                {% else %}
+                    {% set start_date_display = start_date|string %}
+                {% endif %}
+            {% endif %}
+            {% set finish_date_display = '' %}
+            {% if finish_date %}
+                {% if finish_date.__class__.__name__ in ['datetime', 'date'] %}
+                    {% set finish_date_display = finish_date.strftime('%Y-%m-%d') %}
+                {% elif finish_date is string %}
+                    {% set finish_date_display = finish_date[:10] %}
+                {% else %}
+                    {% set finish_date_display = finish_date|string %}
+                {% endif %}
+            {% endif %}
             {% set is_audio = book.media_type and book.media_type|lower == 'audiobook' %}
             {% set progress_ms = book.progress_ms %}
             {% set duration_ms = book.audio_duration_ms or book.audio_length_minutes %}
@@ -44,11 +64,11 @@
                         <i class="bi bi-book-half me-1"></i>
                         {% if reading_status %}{{ reading_status.replace('_',' ').title() }}{% else %}Not set{% endif %}
                     </span>
-                    {% if start_date %}
-                        <span class="text-muted small">Started: {{ start_date }}</span>
+                    {% if start_date_display %}
+                        <span class="text-muted small">Started: {{ start_date_display }}</span>
                     {% endif %}
-                    {% if finish_date %}
-                        <span class="text-muted small">Finished: {{ finish_date }}</span>
+                    {% if finish_date_display %}
+                        <span class="text-muted small">Finished: {{ finish_date_display }}</span>
                     {% endif %}
                     {% if is_audio and (progress_ms or book.progress_percentage) %}
                         <span class="text-muted small">
@@ -1174,17 +1194,17 @@
                                         </h6>
                                         
                                         <!-- Reading Dates -->
-                                        {% if book.start_date %}
+                                        {% if start_date_display %}
                                         <div class="mb-2">
                                             <small class="text-muted">Started reading:</small>
-                                            <span class="ms-1 fw-medium">{{ book.start_date }}</span>
+                                            <span class="ms-1 fw-medium">{{ start_date_display }}</span>
                                         </div>
                                         {% endif %}
                                         
-                                        {% if book.finish_date %}
+                                        {% if finish_date_display %}
                                         <div class="mb-2">
                                             <small class="text-muted">Finished reading:</small>
-                                            <span class="ms-1 fw-medium">{{ book.finish_date }}</span>
+                                            <span class="ms-1 fw-medium">{{ finish_date_display }}</span>
                                         </div>
                                         {% endif %}
                                         
@@ -1227,7 +1247,7 @@
                                 </div>
                                 
                                 <!-- Show "No personal content" message only if nothing is present -->
-                                {% if not book.personal_notes and not book.review and not book.start_date and not book.finish_date and not book.user_rating and book.ownership_status not in ['borrowed', 'loaned'] %}
+                                {% if not book.personal_notes and not book.review and not start_date_display and not finish_date_display and not book.user_rating and book.ownership_status not in ['borrowed', 'loaned'] %}
                                 <div class="text-center text-muted py-4">
                                     <i class="bi bi-journal-text mb-2" style="font-size: 2rem;"></i>
                                     <p class="mb-0">No personal notes or reading experience recorded yet.</p>
@@ -1259,6 +1279,30 @@
                                                 </label>
                                                 <textarea class="form-control" id="review" name="review" rows="4" 
                                                           placeholder="Your detailed review of this book...">{{ book.review or '' }}</textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Reading Dates -->
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="personal-start-date" class="form-label fw-medium">
+                                                    <i class="bi bi-hourglass-top me-1"></i>Started Reading
+                                                </label>
+                                                <input type="date" class="form-control" id="personal-start-date" name="start_date"
+                                                       value="{{ start_date_display }}">
+                                                <div class="form-text">We'll set this automatically when you begin logging progress.</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="personal-finish-date" class="form-label fw-medium">
+                                                    <i class="bi bi-flag-checkered me-1"></i>Finished Reading
+                                                </label>
+                                                <input type="date" class="form-control" id="personal-finish-date" name="finish_date"
+                                                       value="{{ finish_date_display }}">
+                                                <div class="form-text">Saving a finish date will mark the book as read for your stats.</div>
                                             </div>
                                         </div>
                                     </div>

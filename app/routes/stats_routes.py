@@ -1,14 +1,63 @@
+import calendar
+import json
+import logging
+import re
+from collections import defaultdict
+from datetime import datetime, date, timedelta
+from typing import Dict, List, Optional, Tuple
+
 from flask import Blueprint, jsonify, render_template, current_app, request, flash, redirect, url_for, make_response
 from flask_login import login_required, current_user
+
 from app.services import book_service, reading_log_service, user_service
-from datetime import datetime, date, timedelta
-import logging
-import calendar
-import re
+from app.utils.user_utils import calculate_reading_streak
 
 logger = logging.getLogger(__name__)
 
 stats_bp = Blueprint('stats', __name__)
+
+STATUS_ALIASES = {
+    'currentlyreading': 'reading',
+    'currently_reading': 'reading',
+    'current_reading': 'reading',
+    'reading': 'reading',
+    'plan_to_read': 'plan_to_read',
+    'want_to_read': 'plan_to_read',
+    'wishlist_reading': 'plan_to_read',
+    'tbr': 'plan_to_read',
+    'on_hold': 'on_hold',
+    'onhold': 'on_hold',
+    'paused': 'on_hold',
+    'hold': 'on_hold',
+    'did_not_finish': 'did_not_finish',
+    'dnf': 'did_not_finish',
+    'abandoned': 'did_not_finish',
+    'unfinished': 'did_not_finish',
+    'read': 'read',
+    'finished': 'read',
+    'complete': 'read',
+    'completed': 'read',
+    'has_read': 'read',
+    'library_only': 'library_only'
+}
+
+READ_STATUSES = {'read'}
+NON_FINISHED_STATUSES = {
+    'plan_to_read', 'want_to_read', 'wishlist_reading', 'tbr',
+    'library_only', 'on_hold', 'did_not_finish', 'dnf',
+    'abandoned', 'unfinished'
+}
+
+
+def determine_finished_activity(status: Optional[str], finish_date: Optional[date], fallback_log_date: Optional[date]) -> Tuple[bool, Optional[date]]:
+    """Determine if a book should count as finished and the date to use for stats."""
+    if finish_date:
+        if status and status in NON_FINISHED_STATUSES:
+            return False, None
+        return True, finish_date
+    if status in READ_STATUSES:
+        return True, fallback_log_date
+    return False, None
 
 # Utility for safe date conversion
 def _safe_date_to_isoformat(date_obj):
@@ -261,28 +310,137 @@ def index():
     month_start = today.replace(day=1)
     year_start = today.replace(month=1, day=1)
 
+    user_id = str(current_user.id)
+
     # Get user books for stats calculations with global visibility
-    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+    user_books = book_service.get_all_books_with_user_overlay_sync(user_id) or []
 
-    # Helper to safely get finish date
-    def get_finish_date(book):
-        finish_date = getattr(book, 'finish_date', None)
-        if finish_date is None:
+    def _get_book_value(book, field, default=None):
+        if isinstance(book, dict):
+            return book.get(field, default)
+        return getattr(book, field, default)
+
+    def _parse_date_like(value):
+        if value is None:
             return None
-        if isinstance(finish_date, datetime):
-            return finish_date.date()
-        return finish_date
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return None
+            cleaned = cleaned.replace('Z', '+00:00')
+            try:
+                return datetime.fromisoformat(cleaned).date()
+            except ValueError:
+                try:
+                    return date.fromisoformat(cleaned.split('T')[0])
+                except ValueError:
+                    return None
+        return None
 
-    # User stats
-    books_finished_this_week = len([b for b in user_books if (fd := get_finish_date(b)) and fd >= week_start])
-    books_finished_this_month = len([b for b in user_books if (fd := get_finish_date(b)) and fd >= month_start])
-    books_finished_this_year = len([b for b in user_books if (fd := get_finish_date(b)) and fd >= year_start])
-    books_finished_total = len([b for b in user_books if get_finish_date(b)])
-    
-    # Use reading_status field for currently reading (handle both 'reading' and 'currently_reading')
-    currently_reading = [b for b in user_books if getattr(b, 'reading_status', None) in ['reading', 'currently_reading']]
-    want_to_read = [b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']
-    streak = current_user.get_reading_streak()
+    def _normalize_status(book):
+        raw_status = _get_book_value(book, 'reading_status')
+        if raw_status is None:
+            raw_status = _get_book_value(book, 'status')
+        if raw_status in (None, '', 'null'):
+            custom_blob = _get_book_value(book, 'personal_custom_fields')
+            if custom_blob:
+                try:
+                    if isinstance(custom_blob, str):
+                        parsed = json.loads(custom_blob)
+                    elif isinstance(custom_blob, dict):
+                        parsed = custom_blob
+                    else:
+                        parsed = {}
+                    if isinstance(parsed, dict):
+                        raw_status = parsed.get('reading_status') or parsed.get('status')
+                except Exception:
+                    raw_status = None
+        if raw_status in (None, '', 'null'):
+            book_id = _get_book_id(book)
+            if book_id:
+                try:
+                    from app.services.personal_metadata_service import personal_metadata_service
+                    metadata = personal_metadata_service.get_personal_metadata(user_id, str(book_id))
+                    raw_status = metadata.get('reading_status') or metadata.get('status')
+                except Exception as pm_error:
+                    current_app.logger.debug(f"Stats status fallback failed for book {book_id}: {pm_error}")
+        if not isinstance(raw_status, str) and raw_status is not None and hasattr(raw_status, 'value'):
+            raw_status = raw_status.value
+        if not isinstance(raw_status, str):
+            return str(raw_status).strip().lower() if raw_status is not None else None
+        cleaned = raw_status.strip().lower().replace('-', '_').replace(' ', '_')
+        cleaned = cleaned.replace('__', '_')
+        return STATUS_ALIASES.get(cleaned, cleaned or None)
+
+    def _get_book_id(book):
+        candidate = _get_book_value(book, 'id') or _get_book_value(book, 'uid')
+        return str(candidate) if candidate is not None else None
+
+    def get_finish_date(book):
+        finish_value = _get_book_value(book, 'finish_date')
+        if finish_value is None:
+            return None
+        return _parse_date_like(finish_value)
+
+    # Gather reading logs to supplement completion dates
+    try:
+        reading_logs_recent = reading_log_service.get_user_reading_logs_sync(user_id, days_back=365, limit=2000) or []
+    except Exception as log_error:
+        current_app.logger.error(f"Error loading reading logs for stats overview: {log_error}")
+        reading_logs_recent = []
+
+    last_log_by_book: Dict[str, date] = {}
+    for log in reading_logs_recent:
+        log_date = _parse_date_like(log.get('date')) if isinstance(log, dict) else None
+        if not log_date:
+            continue
+        log_book = log.get('book', {}) if isinstance(log, dict) else {}
+        book_id = log.get('book_id') if isinstance(log, dict) else None
+        if not book_id and isinstance(log_book, dict):
+            book_id = log_book.get('id') or log_book.get('uid')
+        if book_id:
+            book_id_str = str(book_id)
+            previous = last_log_by_book.get(book_id_str)
+            if previous is None or log_date > previous:
+                last_log_by_book[book_id_str] = log_date
+
+    status_buckets = defaultdict(list)
+    finished_book_dates: Dict[str, Optional[date]] = {}
+
+    for idx, book in enumerate(user_books):
+        book_id = _get_book_id(book)
+        book_key = book_id or f"book:{idx}"
+        status_normalized = _normalize_status(book)
+        if status_normalized:
+            status_buckets[status_normalized].append(book)
+        else:
+            status_buckets['unset'].append(book)
+
+        finish_date = get_finish_date(book)
+        fallback_log_date = last_log_by_book.get(book_id) if book_id else None
+        finished_flag, activity_date = determine_finished_activity(status_normalized, finish_date, fallback_log_date)
+        if finished_flag:
+            if activity_date:
+                finished_book_dates[book_key] = activity_date
+            else:
+                finished_book_dates.setdefault(book_key, None)
+
+    def _count_finished_since(threshold: date) -> int:
+        return sum(1 for dt in finished_book_dates.values() if dt and dt >= threshold)
+
+    books_finished_total = len(status_buckets.get('read', []))
+    books_finished_this_week = _count_finished_since(week_start)
+    books_finished_this_month = _count_finished_since(month_start)
+    books_finished_this_year = _count_finished_since(year_start)
+
+    currently_reading = status_buckets.get('reading', [])
+    want_to_read = status_buckets.get('plan_to_read', [])
+    streak_offset = getattr(current_user, 'reading_streak_offset', 0)
+    streak = calculate_reading_streak(user_id, streak_offset)
 
     # Community stats
     sharing_users = []
@@ -993,6 +1151,13 @@ def reading_journey():
     """Display reading journey calendar based on reading logs."""
     try:
         logger.info("Loading Reading Journey calendar view")
+        user_id = str(current_user.id)
+        streak_offset = getattr(current_user, 'reading_streak_offset', 0)
+        try:
+            global_streak = calculate_reading_streak(user_id, streak_offset)
+        except Exception as streak_error:
+            logger.error(f"Error calculating global reading streak: {streak_error}")
+            global_streak = streak_offset if isinstance(streak_offset, int) else 0
         
         # Get filter parameters
         year = request.args.get('year', type=int)
@@ -1006,12 +1171,12 @@ def reading_journey():
             month = datetime.now().month
             
         # Get reading logs data (use paginated method with large page size)
-        result = reading_log_service.get_user_reading_logs_paginated_sync(str(current_user.id), page=1, per_page=1000)
+        result = reading_log_service.get_user_reading_logs_paginated_sync(user_id, page=1, per_page=1000)
         all_logs = result.get('logs', []) if result else []
         logger.info(f"Retrieved {len(all_logs) if all_logs else 0} reading logs for user {current_user.id}")
         
         # Also get full book data with relationships for author extraction
-        user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+        user_books = book_service.get_all_books_with_user_overlay_sync(user_id)
         books_by_id = {book.id if hasattr(book, 'id') else _get_value(book, 'id'): book for book in user_books} if user_books else {}
         logger.info(f"Retrieved {len(books_by_id)} full book objects for author extraction")
         
@@ -1022,7 +1187,8 @@ def reading_journey():
                 'month_name': calendar.month_name[month],
                 'year': year,
                 'active_days': 0,
-                'current_streak': 0,
+                'current_streak': global_streak,
+                'calendar_streak': 0,
                 'intensity_level': 'None',
                 'max_activity': 0,
                 'avg_activity': 0,
@@ -1138,8 +1304,8 @@ def reading_journey():
         active_days = [day for day in calendar_data['days'] if day.get('logs') or day.get('clusters')]
         activity_counts = [day.get('activity_count', 0) for day in calendar_data['days'] if day.get('is_current_month')]
         
-        # Calculate current streak
-        current_streak = _calculate_current_streak(calendar_data['days'])
+        # Calculate current streak using calendar data while displaying global streak in UI
+        calendar_streak = _calculate_current_streak(calendar_data['days'])
         
         # Determine intensity level
         max_activity = calendar_data.get('max_activity', 0)
@@ -1161,7 +1327,8 @@ def reading_journey():
             'month_name': calendar.month_name[month],
             'year': year,
             'active_days': len(active_days),
-            'current_streak': current_streak,
+            'current_streak': global_streak,
+            'calendar_streak': calendar_streak,
             'intensity_level': intensity_level,
             'max_activity': max_activity,
             'avg_activity': avg_activity,

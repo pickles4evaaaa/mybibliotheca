@@ -513,10 +513,10 @@ class KuzuRelationshipService:
             query = """
             MATCH (b:Book)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            WITH b,
+                COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) AS locations
             OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
-            RETURN b,
-                   COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) as locations,
-                   pm
+            RETURN b, locations, pm
             """
 
             result = safe_execute_kuzu_query(query, {"user_id": user_id})

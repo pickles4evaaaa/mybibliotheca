@@ -787,6 +787,27 @@
                                         </div>
                                     </div>
                                     
+                                    {% set start_date_display = '' %}
+                                    {% if book.start_date %}
+                                        {% if book.start_date.__class__.__name__ in ['datetime', 'date'] %}
+                                            {% set start_date_display = book.start_date.strftime('%Y-%m-%d') %}
+                                        {% elif book.start_date is string %}
+                                            {% set start_date_display = book.start_date[:10] %}
+                                        {% else %}
+                                            {% set start_date_display = book.start_date|string %}
+                                        {% endif %}
+                                    {% endif %}
+                                    {% set finish_date_display = '' %}
+                                    {% if book.finish_date %}
+                                        {% if book.finish_date.__class__.__name__ in ['datetime', 'date'] %}
+                                            {% set finish_date_display = book.finish_date.strftime('%Y-%m-%d') %}
+                                        {% elif book.finish_date is string %}
+                                            {% set finish_date_display = book.finish_date[:10] %}
+                                        {% else %}
+                                            {% set finish_date_display = book.finish_date|string %}
+                                        {% endif %}
+                                    {% endif %}
+
                                     <div class="col-lg-6">
                                         <!-- Reading Dates -->
                                         <div class="row mb-3">
@@ -795,14 +816,14 @@
                                                     <i class="bi bi-play-circle me-1"></i>Start Date
                                                 </label>
                                                 <input type="date" class="form-control" id="start_date" name="start_date" 
-                                                       value="{{ book.start_date or '' }}">
+                                                       value="{{ start_date_display }}">
                                             </div>
                                             <div class="col-md-6">
                                                 <label for="finish_date" class="form-label fw-medium">
                                                     <i class="bi bi-check-circle me-1"></i>Finish Date
                                                 </label>
                                                 <input type="date" class="form-control" id="finish_date" name="finish_date" 
-                                                       value="{{ book.finish_date or '' }}">
+                                                       value="{{ finish_date_display }}">
                                             </div>
                                         </div>
                                         

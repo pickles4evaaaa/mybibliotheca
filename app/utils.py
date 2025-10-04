@@ -434,16 +434,10 @@ def format_date(date):
     return date.strftime("%Y-%m-%d") if date else None
 
 def calculate_reading_streak(user_id, streak_offset=0):
-    """
-    Calculate reading streak for a specific user with foolproof logic.
-    Currently returns the streak_offset until the reading log system is fully implemented.
-    """
+    """Backward-compatible wrapper that delegates to the enhanced user_utils implementation."""
     try:
-        # TODO: Implement proper reading log system
-        # For now, return the streak_offset as a fallback
-        current_app.logger.debug(f"Reading log system not fully implemented, returning streak offset: {streak_offset}")
-        return streak_offset
-            
+        from app.utils.user_utils import calculate_reading_streak as _calc
+        return _calc(user_id, streak_offset)
     except Exception as e:
         current_app.logger.error(f"Error calculating reading streak for user {user_id}: {e}")
         return streak_offset

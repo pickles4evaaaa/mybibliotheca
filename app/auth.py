@@ -5,7 +5,7 @@ from app.domain.models import User, MediaType
 from app.services import user_service, book_service, reading_log_service
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.services.kuzu_service_facade import _convert_query_result_to_list  # Reuse helper for query results
-from app.utils.user_settings import get_default_book_format
+from app.utils.user_settings import get_default_book_format, get_effective_reading_defaults
 from wtforms import IntegerField, SubmitField
 from wtforms.validators import Optional, NumberRange
 from flask_wtf import FlaskForm
@@ -648,7 +648,21 @@ def settings_data_partial(panel: str):
     if panel == 'import_books':
         return render_template('settings/partials/data_import_books.html')
     if panel == 'import_reading':
-        return render_template('settings/partials/data_import_reading.html')
+        defaults = get_effective_reading_defaults(getattr(current_user, 'id', None))
+        default_pages = defaults[0] if defaults and (defaults[0] or 0) > 0 else 1
+        default_minutes = defaults[1] if defaults and (defaults[1] or 0) > 0 else 1
+        try:
+            from app.routes.import_routes import UNASSIGNED_READING_LOG_TITLE
+            unassigned_title = UNASSIGNED_READING_LOG_TITLE
+        except Exception:
+            unassigned_title = 'Unassigned Reading Logs'
+        return render_template(
+            'settings/partials/data_import_reading.html',
+            default_quick_add_days=7,
+            default_quick_add_pages=default_pages,
+            default_quick_add_minutes=default_minutes,
+            unassigned_title=unassigned_title
+        )
     if panel == 'backup':
         if not current_user.is_admin:
             return '<div class="text-danger small">Not authorized.</div>'

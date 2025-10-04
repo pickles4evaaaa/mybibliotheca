@@ -134,106 +134,51 @@ def inject_reading_streak():
     try:
         # Import here to avoid circular imports
         from app.services import reading_log_service
-        from app.routes.stats_routes import _calculate_current_streak, _generate_calendar_with_logs
-        
-        # Get recent reading logs for streak calculation
-        current_month = datetime.now().month
-        current_year = datetime.now().year
-        
-        # Get reading logs for current month and previous month to ensure we catch streaks
-        result = reading_log_service.get_user_reading_logs_paginated_sync(str(current_user.id), page=1, per_page=100)
-        all_logs = result.get('logs', []) if result else []
-        
-        if not all_logs:
-            return {'current_reading_streak': 0}
-        
-        # Process logs to calculate streak
-        processed_logs = []
-        for log in all_logs:
-            try:
-                log_date_str = log.get('date')
-                if not log_date_str:
-                    continue
-                    
-                if isinstance(log_date_str, str):
-                    log_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
-                elif hasattr(log_date_str, 'date'):
-                    log_date = log_date_str.date()
-                else:
-                    log_date = log_date_str
-                
-                # Only include recent logs (last 60 days for streak calculation)
-                days_ago = (datetime.now().date() - log_date).days
-                if days_ago <= 60:
-                    processed_logs.append({
-                        'day': log_date.day,
-                        'log_date': log_date,
-                        'activity_count': 1
-                    })
-            except:
-                continue
-        
-        # Generate calendar data to use existing streak calculation logic
-        calendar_data = _generate_calendar_with_logs(current_year, current_month, processed_logs)
-        
-        # Calculate current streak
-        streak = _calculate_current_streak(calendar_data['days'])
-        
-        # Calculate their personal best streak from ALL reading history
+        from app.utils.user_utils import calculate_reading_streak as _calculate_reading_streak
+
+        streak_offset = getattr(current_user, 'reading_streak_offset', 0) or 0
+        streak = _calculate_reading_streak(str(current_user.id), streak_offset)
+
+        personal_best_streak = streak_offset or 0
+
         try:
-            # Get all reading logs for this user (not just current month)
             all_logs_result = reading_log_service.get_user_reading_logs_paginated_sync(
-                str(current_user.id), page=1, per_page=1000  # Get lots of logs
+                str(current_user.id), page=1, per_page=1000
             )
             all_logs = all_logs_result.get('logs', []) if all_logs_result else []
-            
-            # Process all logs to find the longest historical streak
-            all_processed_logs = []
+
+            unique_log_dates = []
             for log in all_logs:
                 try:
                     log_date_str = log.get('date')
                     if not log_date_str:
                         continue
-                        
                     if isinstance(log_date_str, str):
                         log_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
                     elif hasattr(log_date_str, 'date'):
                         log_date = log_date_str.date()
                     else:
                         log_date = log_date_str
-                    
-                    all_processed_logs.append({
-                        'day': log_date.day,
-                        'log_date': log_date,
-                        'activity_count': 1
-                    })
-                except:
+                    unique_log_dates.append(log_date)
+                except Exception:
                     continue
-            
-            # Sort by date
-            all_processed_logs.sort(key=lambda x: x['log_date'])
-            
-            # Calculate historical max streak
-            personal_best_streak = 0
-            current_historical_streak = 0
-            last_date = None
-            
-            for log in all_processed_logs:
-                if last_date is None:
-                    current_historical_streak = 1
+
+            unique_log_dates = sorted(set(unique_log_dates))
+            best_run = 0
+            current_run = 0
+            prev_date = None
+            for log_date in unique_log_dates:
+                if prev_date and (log_date - prev_date).days == 1:
+                    current_run += 1
                 else:
-                    days_diff = (log['log_date'] - last_date).days
-                    if days_diff == 1:
-                        current_historical_streak += 1
-                    else:
-                        current_historical_streak = 1
-                
-                personal_best_streak = max(personal_best_streak, current_historical_streak)
-                last_date = log['log_date']
-            
-        except Exception as e:
-            # Fallback if historical calculation fails
-            personal_best_streak = 0
+                    current_run = 1
+                prev_date = log_date
+                best_run = max(best_run, current_run)
+
+            personal_best_streak = max(personal_best_streak, best_run + streak_offset, streak)
+
+        except Exception:
+            personal_best_streak = max(personal_best_streak, streak)
         
         # Determine if they're exceeding their record
         is_exceeding_record = streak > personal_best_streak or personal_best_streak == 0

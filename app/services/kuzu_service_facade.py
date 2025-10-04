@@ -12,9 +12,9 @@ and delegates method calls to the appropriate service.
 
 import traceback
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone, date
 
-from ..domain.models import Book, Category
+from ..domain.models import Book, Category, now_utc
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .kuzu_book_service import KuzuBookService
@@ -153,19 +153,120 @@ class KuzuServiceFacade:
         # Update personal metadata (replacing OWNS usage)
         if personal_updates:
             from .personal_metadata_service import personal_metadata_service
-            personal_kwargs = {}
-            custom_updates = {}
-            # Map fields to personal metadata storage
+
+            def _to_utc(value):
+                if value is None:
+                    return None
+                if isinstance(value, datetime):
+                    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                if isinstance(value, date):
+                    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+                if isinstance(value, str):
+                    s = value.strip()
+                    if not s:
+                        return None
+                    candidate = s.replace('Z', '+00:00')
+                    parsed: Optional[datetime] = None
+                    try:
+                        parsed = datetime.fromisoformat(candidate)
+                    except ValueError:
+                        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d'):
+                            try:
+                                parsed = datetime.strptime(s, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if parsed is None:
+                            try:
+                                epoch = float(s)
+                                if epoch > 10_000_000_000:
+                                    epoch /= 1000.0
+                                return datetime.fromtimestamp(epoch, tz=timezone.utc)
+                            except (ValueError, OSError):
+                                return None
+                    if parsed is None:
+                        return None
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    else:
+                        parsed = parsed.astimezone(timezone.utc)
+                    return parsed
+                return None
+
+            def _norm_status(value: Optional[str]) -> str:
+                if not value:
+                    return ''
+                return str(value).strip().lower().replace('-', '_')
+
+            personal_kwargs: Dict[str, Any] = {}
+            custom_updates: Dict[str, Any] = {}
+
             for k, v in personal_updates.items():
                 if k == 'review':
                     personal_kwargs['user_review'] = v
-                elif k in ('personal_notes', 'start_date', 'finish_date'):
+                elif k == 'personal_notes':
                     personal_kwargs[k] = v
+                elif k in ('start_date', 'finish_date'):
+                    if v is None:
+                        custom_updates[k] = None
+                    else:
+                        personal_kwargs[k] = _to_utc(v)
                 else:
-                    # Other fields like reading_status, ownership_status, user_rating, media_type -> store as custom keys
                     custom_updates[k] = v
+
+            try:
+                existing_meta = personal_metadata_service.get_personal_metadata(user_id, book_id)
+            except Exception:
+                existing_meta = {}
+
+            existing_status_norm = _norm_status(existing_meta.get('reading_status'))
+            existing_start = _to_utc(existing_meta.get('start_date'))
+            existing_finish = _to_utc(existing_meta.get('finish_date'))
+
+            status_explicit = 'reading_status' in custom_updates
+            status_norm = _norm_status(custom_updates['reading_status']) if status_explicit else existing_status_norm
+
+            user_set_start = 'start_date' in personal_kwargs
+            user_cleared_start = custom_updates.get('start_date', object()) is None if 'start_date' in custom_updates else False
+            user_set_finish = 'finish_date' in personal_kwargs
+            user_cleared_finish = custom_updates.get('finish_date', object()) is None if 'finish_date' in custom_updates else False
+
+            if user_set_finish:
+                if not status_explicit or status_norm != 'read':
+                    custom_updates['reading_status'] = 'read'
+                    status_explicit = True
+                    status_norm = 'read'
+
+            if user_set_start and not status_explicit and status_norm != 'read':
+                custom_updates['reading_status'] = 'reading'
+                status_explicit = True
+                status_norm = 'reading'
+
+            if user_cleared_finish:
+                custom_updates['finish_date'] = None
+                if status_norm == 'read':
+                    custom_updates['reading_status'] = 'reading'
+                    status_norm = 'reading'
+                    status_explicit = True
+
+            if status_norm == 'read':
+                if not user_set_finish and not user_cleared_finish and existing_finish is None:
+                    personal_kwargs['finish_date'] = now_utc()
+                if not user_set_start and not user_cleared_start and existing_start is None:
+                    personal_kwargs['start_date'] = personal_kwargs.get('start_date') or now_utc()
+            else:
+                if not user_set_finish and not user_cleared_finish and existing_finish is not None:
+                    custom_updates['finish_date'] = None
+                if status_norm not in ('reading', 'currently_reading', 'in_progress'):
+                    if not user_set_start and not user_cleared_start and existing_start is not None:
+                        custom_updates['start_date'] = None
+                elif status_norm in ('reading', 'currently_reading', 'in_progress'):
+                    if not user_set_start and not user_cleared_start and existing_start is None:
+                        personal_kwargs['start_date'] = now_utc()
+
             if custom_updates:
                 personal_kwargs['custom_updates'] = custom_updates
+
             try:
                 personal_metadata_service.update_personal_metadata(user_id, book_id, **personal_kwargs)
             except Exception as e:

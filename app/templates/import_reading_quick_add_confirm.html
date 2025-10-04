@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Quick Add Reading Logs · Confirm{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="row justify-content-center">
+    <div class="col-lg-8 col-xl-7">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex align-items-center gap-2">
+          <i class="bi bi-check2-square"></i>
+          <strong>Confirm Quick Add</strong>
+        </div>
+        <div class="card-body">
+          {% include 'partials/_quick_add_preview_summary.html' %}
+          {% if errors %}
+            <div class="d-flex flex-wrap gap-2">
+              <a href="#" class="btn btn-outline-secondary" onclick="window.close(); return false;">Close Window</a>
+            </div>
+          {% else %}
+            <form method="post" action="{{ url_for('import.quick_add_reading_history_execute_bulk') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="days" value="{{ days }}">
+              <input type="hidden" name="pages" value="{{ pages }}">
+              <input type="hidden" name="minutes" value="{{ minutes }}">
+              <div class="d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-success"><i class="bi bi-play-fill"></i> Confirm and Add Logs</button>
+                <a href="#" class="btn btn-outline-secondary" onclick="window.history.back(); return false;">Go Back</a>
+                <a href="#" class="btn btn-outline-secondary" onclick="window.close(); return false;">Close Window</a>
+              </div>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

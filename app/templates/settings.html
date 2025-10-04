@@ -1261,9 +1261,167 @@ document.addEventListener('DOMContentLoaded', () => {
                 dataContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
                 fetch(`{{ url_for('auth.settings_data_partial', panel='__P__') }}`.replace('__P__', panel))
                     .then(r=>r.text())
-                    .then(html=> dataContainer.innerHTML = html)
+                    .then(html=> {
+                        dataContainer.innerHTML = html;
+                        initializeDataPanel(panel);
+                    })
                     .catch(()=> dataContainer.innerHTML = '<div class="text-danger small">Failed to load.</div>');
         }
+    function initializeDataPanel(panel){
+        if(panel === 'import_reading'){
+            initQuickAddModalControls();
+        }
+    }
+    function initQuickAddModalControls(){
+        const form = document.getElementById('quickAddForm');
+        const previewButton = document.getElementById('quickAddPreviewButton');
+        const modalEl = document.getElementById('quickAddModal');
+        const modalBody = document.getElementById('quickAddModalBody');
+        const confirmBtn = document.getElementById('quickAddModalConfirm');
+        if(!form || !modalEl || !modalBody || !confirmBtn) return;
+
+        const modalTitle = modalEl.querySelector('.modal-title');
+        const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const defaultBodyHtml = modalBody.innerHTML;
+        const defaultConfirmHtml = confirmBtn.innerHTML;
+        const spinnerHtml = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>';
+
+        if(form.dataset.quickAddBound === '1'){
+            return;
+        }
+        form.dataset.quickAddBound = '1';
+
+        let quickAddPayload = null;
+
+        function resetModal(){
+            modalTitle.textContent = 'Quick Add Preview';
+            modalBody.innerHTML = defaultBodyHtml;
+            confirmBtn.disabled = true;
+            confirmBtn.dataset.mode = 'confirm';
+            confirmBtn.innerHTML = defaultConfirmHtml;
+            confirmBtn.classList.remove('btn-success');
+            confirmBtn.classList.add('btn-primary');
+            quickAddPayload = null;
+        }
+
+        function setPreviewLoading(loading){
+            if(!previewButton) return;
+            if(loading){
+                previewButton.disabled = true;
+                previewButton.dataset.original = previewButton.innerHTML;
+                previewButton.innerHTML = `${spinnerHtml}Preparing…`;
+            } else {
+                if(previewButton.dataset.original){
+                    previewButton.innerHTML = previewButton.dataset.original;
+                    delete previewButton.dataset.original;
+                }
+                previewButton.disabled = false;
+            }
+        }
+
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            if(confirmBtn.dataset.mode === 'refresh'){
+                window.location.reload();
+                return;
+            }
+            resetModal();
+        });
+
+        form.addEventListener('submit', (event) => {
+            event.preventDefault();
+            if(previewButton && previewButton.disabled){
+                return;
+            }
+            const formData = new FormData(form);
+            quickAddPayload = Object.fromEntries(formData.entries());
+            setPreviewLoading(true);
+            resetModal();
+            fetch(form.action, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                credentials: 'same-origin'
+            })
+            .then(resp => resp.ok ? resp.json() : Promise.reject(new Error('Unable to prepare preview.')))
+            .then(data => {
+                modalTitle.textContent = data.modal_title || 'Quick Add Preview';
+                modalBody.innerHTML = data.html || '<div class="text-muted small">No preview available.</div>';
+                if(data.status === 'ok' && data.confirm_enabled !== false){
+                    confirmBtn.disabled = false;
+                    confirmBtn.dataset.mode = 'confirm';
+                    confirmBtn.classList.remove('btn-success');
+                    confirmBtn.classList.add('btn-primary');
+                    confirmBtn.innerHTML = data.confirm_label || defaultConfirmHtml;
+                    quickAddPayload.days = data.days ?? quickAddPayload.days;
+                    quickAddPayload.pages = data.pages ?? quickAddPayload.pages;
+                    quickAddPayload.minutes = data.minutes ?? quickAddPayload.minutes;
+                } else {
+                    confirmBtn.disabled = true;
+                }
+                modalInstance.show();
+            })
+            .catch(err => {
+                modalTitle.textContent = 'Quick Add Issues';
+                modalBody.innerHTML = `<div class="alert alert-danger" role="alert">${err.message || 'Unable to prepare preview.'}</div>`;
+                confirmBtn.disabled = true;
+                modalInstance.show();
+            })
+            .finally(() => {
+                setPreviewLoading(false);
+            });
+        });
+
+        confirmBtn.addEventListener('click', () => {
+            const mode = confirmBtn.dataset.mode || 'confirm';
+            if(mode === 'refresh'){
+                window.location.reload();
+                return;
+            }
+            if(mode !== 'confirm' || !quickAddPayload){
+                return;
+            }
+            const executeUrl = form.getAttribute('data-execute-url');
+            if(!executeUrl){
+                console.error('Missing execute URL for quick add.');
+                return;
+            }
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = `${spinnerHtml}Creating…`;
+            const executeData = new FormData();
+            for (const [key, value] of Object.entries(quickAddPayload)){
+                executeData.append(key, value ?? '');
+            }
+            fetch(executeUrl, {
+                method: 'POST',
+                body: executeData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                credentials: 'same-origin'
+            })
+            .then(resp => resp.ok ? resp.json() : Promise.reject(new Error('Unable to apply quick add.')))
+            .then(data => {
+                modalTitle.textContent = data.modal_title || 'Quick Add Results';
+                modalBody.innerHTML = data.html || '<div class="text-muted small">No results available.</div>';
+                confirmBtn.disabled = false;
+                confirmBtn.dataset.mode = 'refresh';
+                confirmBtn.classList.remove('btn-primary');
+                confirmBtn.classList.add('btn-success');
+                confirmBtn.innerHTML = data.refresh_label || '<i class="bi bi-arrow-repeat"></i> Refresh to Update Stats';
+            })
+            .catch(err => {
+                modalTitle.textContent = 'Quick Add Issues';
+                modalBody.innerHTML = `<div class="alert alert-danger" role="alert">${err.message || 'Unable to apply quick add.'}</div>`;
+                confirmBtn.disabled = false;
+                confirmBtn.dataset.mode = 'confirm';
+                confirmBtn.classList.remove('btn-success');
+                confirmBtn.classList.add('btn-primary');
+                confirmBtn.innerHTML = defaultConfirmHtml;
+            });
+        });
+    }
     document.querySelectorAll('.data-nav').forEach(btn=>{
         btn.addEventListener('click',()=>{
             document.querySelectorAll('.data-nav').forEach(b=>b.classList.remove('active'));
