@@ -47,14 +47,14 @@
                         <small class="form-text text-muted">For Gmail, use an App Password</small>
                     </div>
                 </div>
+                {% set smtp_security = smtp_config.get('smtp_security', 'starttls') if smtp_config else 'starttls' %}
                 <div class="mt-3">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="smtp_use_tls" name="smtp_use_tls" 
-                               {% if smtp_config and smtp_config.get('smtp_use_tls', 'true') == 'true' %}checked{% endif %}>
-                        <label class="form-check-label" for="smtp_use_tls">
-                            Use TLS/STARTTLS (Recommended)
-                        </label>
-                    </div>
+                    <label for="smtp_security" class="form-label">Security</label>
+                    <select class="form-select" id="smtp_security" name="smtp_security">
+                        <option value="starttls" {{ 'selected' if smtp_security == 'starttls' else '' }}>STARTTLS (port 587, recommended)</option>
+                        <option value="ssl" {{ 'selected' if smtp_security == 'ssl' else '' }}>Implicit SSL (port 465)</option>
+                        <option value="none" {{ 'selected' if smtp_security == 'none' else '' }}>None (port 25 or custom)</option>
+                    </select>
                 </div>
             </div>
 

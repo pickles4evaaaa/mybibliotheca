@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import pytz
 import os
 import re
+import logging
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 from app.domain.models import MediaType
 
@@ -68,6 +69,15 @@ _SENSITIVE_REGEXES = [
 ]
 
 
+def _resolve_log_level(level: str) -> int:
+    """Map string level names to logging module constants."""
+    try:
+        return int(level)
+    except (TypeError, ValueError):
+        normalized = (level or '').upper()
+        return getattr(logging, normalized, logging.INFO)
+
+
 def _sanitize_for_logging(value: str, extra_secrets: Iterable[str] | None = None) -> str:
     """Mask sensitive information like passwords or tokens in log messages."""
     if not isinstance(value, str) or not value:
@@ -97,6 +107,19 @@ def _log(level: str, message: str, *args, extra_secrets: Iterable[str] | None = 
     if log_method is None:
         raise AttributeError(f"Logger has no level '{level}'")
     return log_method(sanitized_message, *sanitized_args, **kwargs)
+
+
+def _log_force(level: str, message: str, *args, extra_secrets: Iterable[str] | None = None, **kwargs):
+    """Log a message ensuring it meets or exceeds the current logger threshold."""
+    logger = current_app.logger
+    numeric_level = _resolve_log_level(level)
+    effective_level = max(logger.level, numeric_level)
+    sanitized_message = _sanitize_for_logging(message, extra_secrets)
+    sanitized_args = tuple(
+        _sanitize_for_logging(arg, extra_secrets) if isinstance(arg, str) else arg
+        for arg in args
+    )
+    logger.log(effective_level, sanitized_message, *sanitized_args, **kwargs)
 
 def _get_root_env_path() -> str:
     """Resolve the project root .env path regardless of CWD or Docker paths."""
@@ -389,14 +412,28 @@ def save_smtp_config(config):
         # Get site name for default from_name
         site_name = existing_config.get('site_name', 'MyBibliotheca')
         default_from_name = f"{site_name} (MyBibliotheca)" if site_name != 'MyBibliotheca' else 'MyBibliotheca'
-        
+
+        allowed_security_values = {'starttls', 'ssl', 'none'}
+        raw_security = str(config.get('smtp_security', '') or '').lower()
+        if raw_security not in allowed_security_values:
+            legacy_tls = config.get('smtp_use_tls', True)
+            legacy_str = str(legacy_tls).lower() if isinstance(legacy_tls, (str, bool)) else ''
+            raw_security = 'starttls' if legacy_tls is True or legacy_str in {'true', '1', 'on', 'yes'} else 'none'
+        use_tls = raw_security == 'starttls'
+
+        try:
+            smtp_port = int(config.get('smtp_port', 587))
+        except (TypeError, ValueError):
+            smtp_port = 587
+
         # Update SMTP settings
         existing_config['smtp_config'] = {
             'smtp_server': config.get('smtp_server', ''),
-            'smtp_port': config.get('smtp_port', 587),
+            'smtp_port': smtp_port,
             'smtp_username': config.get('smtp_username', ''),
             'smtp_password': config.get('smtp_password', ''),
-            'smtp_use_tls': config.get('smtp_use_tls', True),
+            'smtp_use_tls': use_tls,
+            'smtp_security': raw_security,
             'smtp_from_email': config.get('smtp_from_email', ''),
             'smtp_from_name': config.get('smtp_from_name', default_from_name)
         }
@@ -472,13 +509,22 @@ def load_smtp_config():
     # If smtp_config doesn't have from_name set, use the computed default
     if not smtp_config.get('smtp_from_name'):
         smtp_config['smtp_from_name'] = default_from_name
+
+    allowed_security_values = {'starttls', 'ssl', 'none'}
+    raw_security = str(smtp_config.get('smtp_security', '') or '').lower()
+    if raw_security not in allowed_security_values:
+        legacy_tls = smtp_config.get('smtp_use_tls', True)
+        legacy_str = str(legacy_tls).lower() if isinstance(legacy_tls, (str, bool)) else ''
+        raw_security = 'starttls' if legacy_tls is True or legacy_str in {'true', '1', 'on', 'yes'} else 'none'
+    use_tls = raw_security == 'starttls'
     
     return {
         'smtp_server': smtp_config.get('smtp_server', ''),
         'smtp_port': smtp_config.get('smtp_port', 587),
         'smtp_username': smtp_config.get('smtp_username', ''),
         'smtp_password': smtp_config.get('smtp_password', ''),
-        'smtp_use_tls': smtp_config.get('smtp_use_tls', True),
+        'smtp_use_tls': use_tls,
+        'smtp_security': raw_security,
         'smtp_from_email': smtp_config.get('smtp_from_email', ''),
         'smtp_from_name': smtp_config.get('smtp_from_name', default_from_name)
     }
@@ -1236,12 +1282,22 @@ def update_smtp_settings():
         
         # Get form data
         config['smtp_server'] = request.form.get('smtp_server', '').strip()
-        config['smtp_port'] = int(request.form.get('smtp_port', 587))
+        raw_port = (request.form.get('smtp_port', '') or '').strip()
+        try:
+            config['smtp_port'] = int(raw_port or 587)
+        except (TypeError, ValueError):
+            config['smtp_port'] = 587
         config['smtp_username'] = request.form.get('smtp_username', '').strip()
         config['smtp_password'] = request.form.get('smtp_password', '').strip()
-        config['smtp_use_tls'] = request.form.get('smtp_use_tls') == 'on'
         config['smtp_from_email'] = request.form.get('smtp_from_email', '').strip()
         config['smtp_from_name'] = request.form.get('smtp_from_name', 'MyBibliotheca').strip()
+        allowed_security_values = {'starttls', 'ssl', 'none'}
+        raw_security = (request.form.get('smtp_security', '') or '').strip().lower()
+        if raw_security not in allowed_security_values:
+            legacy_tls = request.form.get('smtp_use_tls', '')
+            raw_security = 'starttls' if legacy_tls in {'on', 'true', '1'} else 'none'
+        config['smtp_security'] = raw_security
+        config['smtp_use_tls'] = raw_security == 'starttls'
         
         # Save configuration
         if save_smtp_config(config):
@@ -1274,124 +1330,165 @@ def test_smtp_connection():
     """Test SMTP connection with provided settings"""
     import smtplib
     import socket
-    from email.mime.text import MIMEText
-    
+    import ssl
+
     # Get settings from form
     smtp_server = request.form.get('smtp_server', '').strip()
-    smtp_port = int(request.form.get('smtp_port', 587))
+    raw_port = (request.form.get('smtp_port', '') or '').strip()
     smtp_username = request.form.get('smtp_username', '').strip()
     smtp_password = request.form.get('smtp_password', '').strip()
-    smtp_use_tls = request.form.get('smtp_use_tls') == 'true'
+    allowed_security_values = {'starttls', 'ssl', 'none'}
+    raw_security = (request.form.get('smtp_security', '') or '').strip().lower()
+    if raw_security not in allowed_security_values:
+        legacy_tls = (request.form.get('smtp_use_tls', '') or '').strip().lower()
+        raw_security = 'starttls' if legacy_tls in {'true', '1', 'on'} else 'none'
+    try:
+        smtp_port = int(raw_port or 587)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'SMTP port must be a number.'}), 400
+
     secret_values = [smtp_password] if smtp_password else []
-    
-    # Log the connection attempt (sanitize password)
-    _log('info', f"[SMTP] Testing connection to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-    _log('info', f"[SMTP] Configuration - TLS: {smtp_use_tls}, Username: {smtp_username if smtp_username else '(none)'}", extra_secrets=secret_values)
+
+    # Log the connection attempt (sanitize password) with forced visibility
+    _log_force('info', f"[SMTP] Testing connection to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+    _log_force('info', f"[SMTP] Configuration - Security: {raw_security.upper()}, Username: {smtp_username if smtp_username else '(none)'}", extra_secrets=secret_values)
     
     if not smtp_server:
-        _log('warning', "[SMTP] Test aborted - no server specified", extra_secrets=secret_values)
+        _log_force('warning', "[SMTP] Test aborted - no server specified", extra_secrets=secret_values)
         return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
     
     # Test connection with detailed logging
     server = None
     try:
         # Step 1: DNS Resolution
-        _log('info', f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...", extra_secrets=secret_values)
+        _log_force('info', f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...", extra_secrets=secret_values)
         try:
             resolved_ip = socket.gethostbyname(smtp_server)
-            _log('info', f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}", extra_secrets=secret_values)
+            _log_force('info', f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}", extra_secrets=secret_values)
         except socket.gaierror as dns_err:
-            _log('error', f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}", extra_secrets=secret_values)
+            _log_force('error', f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}", extra_secrets=secret_values)
             return jsonify({
                 'success': False,
                 'message': f'DNS resolution failed for {smtp_server}. Please check the server address.'
             }), 500
         
         # Step 2: Create SMTP connection with longer timeout
-        _log('info', f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
-        try:
-            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
-            server.set_debuglevel(0)  # Don't expose sensitive data in debug output
-            _log('info', f"[SMTP] Connection established to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-        except socket.timeout:
-            _log('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-            return jsonify({
-                'success': False,
-                'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'
-            }), 500
-        except ConnectionRefusedError:
-            _log('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-            return jsonify({
-                'success': False,
-                'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'
-            }), 500
-        except socket.error as sock_err:
-            _log('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
-            return jsonify({
-                'success': False,
-                'message': f'Network error: {sock_err}. Check server address and port.'
-            }), 500
-        
-        # Step 3: STARTTLS if enabled
-        if smtp_use_tls:
-            _log('info', "[SMTP] Step 3/4: Initiating STARTTLS...", extra_secrets=secret_values)
+        if raw_security == 'ssl':
+            _log_force('info', f"[SMTP] Step 2/4: Connecting with implicit SSL to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
             try:
-                server.starttls()
-                _log('info', "[SMTP] STARTTLS successful", extra_secrets=secret_values)
+                context = ssl.create_default_context()
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30, context=context)
+                server.set_debuglevel(0)
+                server.ehlo()
+                _log_force('info', "[SMTP] Connection established over SSL", extra_secrets=secret_values)
+            except socket.timeout:
+                _log_force('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({
+                    'success': False,
+                    'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'
+                }), 500
+            except ConnectionRefusedError:
+                _log_force('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({
+                    'success': False,
+                    'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'
+                }), 500
+            except socket.error as sock_err:
+                _log_force('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
+                return jsonify({
+                    'success': False,
+                    'message': f'Network error: {sock_err}. Check server address and port.'
+                }), 500
+        else:
+            _log_force('info', f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
+            try:
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+                server.set_debuglevel(0)  # Don't expose sensitive data in debug output
+                server.ehlo()
+                _log_force('info', f"[SMTP] Connection established to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+            except socket.timeout:
+                _log_force('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({
+                    'success': False,
+                    'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'
+                }), 500
+            except ConnectionRefusedError:
+                _log_force('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({
+                    'success': False,
+                    'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'
+                }), 500
+            except socket.error as sock_err:
+                _log_force('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
+                return jsonify({
+                    'success': False,
+                    'message': f'Network error: {sock_err}. Check server address and port.'
+                }), 500
+
+        # Step 3: TLS handling
+        if raw_security == 'starttls':
+            _log_force('info', "[SMTP] Step 3/4: Initiating STARTTLS...", extra_secrets=secret_values)
+            try:
+                context = ssl.create_default_context()
+                server.starttls(context=context)
+                server.ehlo()
+                _log_force('info', "[SMTP] STARTTLS successful", extra_secrets=secret_values)
             except smtplib.SMTPException as tls_err:
-                _log('error', f"[SMTP] STARTTLS failed: {tls_err}", extra_secrets=secret_values)
+                _log_force('error', f"[SMTP] STARTTLS failed: {tls_err}", extra_secrets=secret_values)
                 return jsonify({
                     'success': False,
                     'message': f'TLS negotiation failed: {tls_err}'
                 }), 500
+        elif raw_security == 'ssl':
+            _log_force('info', "[SMTP] Step 3/4: SSL negotiation completed during connection", extra_secrets=secret_values)
         else:
-            _log('info', "[SMTP] Step 3/4: Skipping TLS (not enabled)", extra_secrets=secret_values)
+            _log_force('info', "[SMTP] Step 3/4: No TLS requested", extra_secrets=secret_values)
         
         # Step 4: Authentication
         if smtp_username and smtp_password:
-            _log('info', f"[SMTP] Step 4/4: Authenticating as {smtp_username}...", extra_secrets=secret_values)
+            _log_force('info', f"[SMTP] Step 4/4: Authenticating as {smtp_username}...", extra_secrets=secret_values)
             try:
                 server.login(smtp_username, smtp_password)
-                _log('info', f"[SMTP] Authentication successful for {smtp_username}", extra_secrets=secret_values)
+                _log_force('info', f"[SMTP] Authentication successful for {smtp_username}", extra_secrets=secret_values)
             except smtplib.SMTPAuthenticationError as auth_err:
-                _log('error', f"[SMTP] Authentication failed for {smtp_username}: {auth_err}", extra_secrets=secret_values)
+                _log_force('error', f"[SMTP] Authentication failed for {smtp_username}: {auth_err}", extra_secrets=secret_values)
                 return jsonify({
                     'success': False,
                     'message': 'Authentication failed. Please check your username and password.'
                 }), 401
             except smtplib.SMTPException as smtp_err:
-                _log('error', f"[SMTP] SMTP error during authentication: {smtp_err}", extra_secrets=secret_values)
+                _log_force('error', f"[SMTP] SMTP error during authentication: {smtp_err}", extra_secrets=secret_values)
                 return jsonify({
                     'success': False,
                     'message': f'SMTP authentication error: {smtp_err}'
                 }), 500
         else:
-            _log('info', "[SMTP] Step 4/4: No authentication (username/password not provided)", extra_secrets=secret_values)
+            _log_force('info', "[SMTP] Step 4/4: No authentication (username/password not provided)", extra_secrets=secret_values)
         
         # Success - close connection
-        _log('info', f"[SMTP] All steps completed successfully. Closing connection...", extra_secrets=secret_values)
+        _log_force('info', f"[SMTP] All steps completed successfully. Closing connection...", extra_secrets=secret_values)
         server.quit()
-        _log('info', f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+        _log_force('info', f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
         
         return jsonify({
             'success': True,
-            'message': f'Successfully connected to {smtp_server}:{smtp_port}'
+            'message': f'Successfully connected to {smtp_server}:{smtp_port} using {raw_security.upper()} security'
         })
         
     except smtplib.SMTPException as e:
-        _log('error', f"[SMTP] SMTP error: {type(e).__name__}: {str(e)}", extra_secrets=secret_values)
+        _log_force('error', f"[SMTP] SMTP error: {type(e).__name__}: {str(e)}", extra_secrets=secret_values)
         return jsonify({
             'success': False,
             'message': f'SMTP error: {str(e)}'
         }), 500
     except socket.timeout:
-        _log('error', f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+        _log_force('error', f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
         return jsonify({
             'success': False,
             'message': f'Operation timeout. The server may be slow or unreachable.'
         }), 500
     except Exception as e:
-        _log('error', f"[SMTP] Unexpected error: {type(e).__name__}: {str(e)}", extra_secrets=secret_values, exc_info=True)
+        _log_force('error', f"[SMTP] Unexpected error: {type(e).__name__}: {str(e)}", extra_secrets=secret_values, exc_info=True)
         return jsonify({
             'success': False,
             'message': f'Connection failed: {str(e)}'

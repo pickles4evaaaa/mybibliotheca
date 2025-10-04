@@ -613,15 +613,15 @@
                                 <div class="mb-4">
                                     <h6 class="fw-bold text-info mb-3">Security & Sender Settings</h6>
                                     <div class="row g-3">
+                                        {% set smtp_security = smtp_config.get('smtp_security', 'starttls') if smtp_config else 'starttls' %}
                                         <div class="col-md-4">
-                                            <div class="form-check form-switch mt-4">
-                                                <input class="form-check-input" type="checkbox" id="smtp_use_tls" 
-                                                       name="smtp_use_tls" {{ 'checked' if smtp_config and smtp_config.get('smtp_use_tls', True) else '' }}>
-                                                <label class="form-check-label" for="smtp_use_tls">
-                                                    Use TLS/STARTTLS
-                                                </label>
-                                            </div>
-                                            <small class="form-text text-muted">Enable TLS encryption (recommended)</small>
+                                            <label for="smtp_security" class="form-label">Security</label>
+                                            <select class="form-select" id="smtp_security" name="smtp_security">
+                                                <option value="starttls" {{ 'selected' if smtp_security == 'starttls' else '' }}>STARTTLS (port 587, recommended)</option>
+                                                <option value="ssl" {{ 'selected' if smtp_security == 'ssl' else '' }}>Implicit SSL (port 465)</option>
+                                                <option value="none" {{ 'selected' if smtp_security == 'none' else '' }}>None (port 25 or custom)</option>
+                                            </select>
+                                            <small class="form-text text-muted">Select the encryption mode required by your mail provider.</small>
                                         </div>
                                         <div class="col-md-4">
                                             <label for="smtp_from_email" class="form-label">From Email</label>
@@ -923,7 +923,10 @@ async function testSMTPConnection() {
         formData.append('smtp_port', document.getElementById('smtp_port').value);
         formData.append('smtp_username', document.getElementById('smtp_username').value);
         formData.append('smtp_password', document.getElementById('smtp_password').value);
-        formData.append('smtp_use_tls', document.getElementById('smtp_use_tls').checked ? 'true' : 'false');
+        const securityField = document.getElementById('smtp_security');
+        if (securityField) {
+            formData.append('smtp_security', securityField.value);
+        }
         
         const response = await fetch('/admin/test-smtp-connection', {
             method: 'POST',
