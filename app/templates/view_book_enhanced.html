@@ -4210,4 +4210,23 @@ document.addEventListener('DOMContentLoaded', function() {
 <!-- Debug Panel (Admin Only) -->
 {% include 'components/debug_panel.html' %}
 
+{% block scripts %}
+{{ super() }}
+{% if book.id %}
+{% set _reading_log_prefill = {
+    "id": book.id,
+    "title": book.title,
+    "authors": book.author_names or '',
+    "series": book.series.name if book.series else ''
+} %}
+<script>
+    (function() {
+        const prefillState = window.__READING_LOG_PREFILL__ = window.__READING_LOG_PREFILL__ || {};
+        const currentPrefill = JSON.parse('{{ _reading_log_prefill | tojson | safe }}');
+        prefillState.currentBook = currentPrefill;
+    })();
+</script>
+{% endif %}
+{% endblock %}
+
 {% endblock %}

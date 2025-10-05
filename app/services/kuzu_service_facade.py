@@ -362,6 +362,10 @@ class KuzuServiceFacade:
     def get_recently_added_want_to_read_books(self, user_id: str, limit: int = 5) -> List[Book]:
         """Get recently added want-to-read books for a user."""
         return self.relationship_service.get_recently_added_want_to_read_books_sync(user_id, limit)
+
+    def get_recently_added_books_sync(self, limit: int = 5) -> List[Book]:
+        """Get the most recently added books across the library."""
+        return self.relationship_service.get_recently_added_books_sync(limit)
     
     def get_book_by_id_for_user_sync(self, book_id: str, user_id: str) -> Optional[Book]:
         """Get a specific book for a user with relationship data."""

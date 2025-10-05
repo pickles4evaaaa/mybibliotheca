@@ -343,12 +343,14 @@ async function loadUserBooks() {
         
         const response = await fetch('/reading-logs/api/user/books?limit=20');
         if (response.ok) {
-            userBooks = await response.json();
+            const payload = await response.json();
+            userBooks = Array.isArray(payload) ? payload : (payload && Array.isArray(payload.books) ? payload.books : []);
             
             // Load more books for search if needed
             const allBooksResponse = await fetch('/reading-logs/api/user/books?limit=100');
             if (allBooksResponse.ok) {
-                allUserBooks = await allBooksResponse.json();
+                const allPayload = await allBooksResponse.json();
+                allUserBooks = Array.isArray(allPayload) ? allPayload : (allPayload && Array.isArray(allPayload.books) ? allPayload.books : []);
             } else {
                 allUserBooks = userBooks; // Fallback to limited list
             }

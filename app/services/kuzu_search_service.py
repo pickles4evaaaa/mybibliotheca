@@ -8,6 +8,7 @@ This service has been migrated to use the SafeKuzuManager pattern for
 improved thread safety and connection management.
 """
 
+import re
 import traceback
 from typing import List, Optional, Dict, Any
 from datetime import date, timedelta
@@ -105,18 +106,69 @@ class KuzuSearchService:
         try:
             # Get all user books first
             user_books = await self.relationship_service.get_books_for_user(user_id, limit=1000)  # Get all books for filtering
-            
-            # Simple text search across title and authors
-            query_lower = query.lower()
-            filtered_books = []
-            
+
+            tokens = [token.lower() for token in re.split(r"\s+", query.strip()) if token]
+            if not tokens:
+                # If the query is empty or whitespace, return recent slice of library
+                return user_books[:limit]
+
+            def _expand_name_segments(name: str) -> List[str]:
+                cleaned = re.sub(r"[\s,]+", " ", name).strip().lower()
+                if not cleaned:
+                    return []
+                segments = [segment for segment in cleaned.split(" ") if segment]
+                # Preserve the full name first for contains matches, followed by individual parts
+                return [cleaned] + segments
+
+            filtered_books: List[Book] = []
+
             for book in user_books:
-                if (query_lower in book.title.lower() or 
-                    any(query_lower in author.name.lower() for author in book.authors)):
+                search_blobs: List[str] = []
+
+                if getattr(book, "title", None):
+                    search_blobs.append(book.title.lower())
+                    # Enable matching on individual title words
+                    search_blobs.extend(word for word in re.split(r"\s+", book.title.lower()) if word)
+
+                subtitle_value = getattr(book, "subtitle", None)
+                if subtitle_value:
+                    subtitle_lower = str(subtitle_value).lower()
+                    search_blobs.append(subtitle_lower)
+                    search_blobs.extend(word for word in re.split(r"\s+", subtitle_lower) if word)
+
+                # Include authors/contributors (first or last name)
+                if getattr(book, "contributors", None):
+                    for contribution in book.contributors:
+                        person = getattr(contribution, "person", None)
+                        if person and getattr(person, "name", None):
+                            search_blobs.extend(_expand_name_segments(person.name))
+                        normalized_name = getattr(person, "normalized_name", None) if person else None
+                        if normalized_name:
+                            search_blobs.extend(_expand_name_segments(normalized_name))
+
+                # Legacy authors property, if contributors missing
+                if hasattr(book, "authors") and book.authors:
+                    for author in book.authors:
+                        if getattr(author, "name", None):
+                            search_blobs.extend(_expand_name_segments(author.name))
+
+                # Include series name when available
+                series_obj = getattr(book, "series", None)
+                if series_obj and getattr(series_obj, "name", None):
+                    search_blobs.append(series_obj.name.lower())
+                    search_blobs.extend(word for word in re.split(r"\s+", series_obj.name.lower()) if word)
+
+                if not search_blobs:
+                    continue
+
+                if all(any(token in blob for blob in search_blobs) for token in tokens):
                     filtered_books.append(book)
-            
+
+                if len(filtered_books) >= limit:
+                    break
+
             return filtered_books[:limit]
-            
+
         except Exception as e:
             traceback.print_exc()
             return []

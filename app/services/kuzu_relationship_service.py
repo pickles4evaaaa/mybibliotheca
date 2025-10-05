@@ -324,6 +324,47 @@ class KuzuRelationshipService:
         except Exception as e:
             traceback.print_exc()
             return []
+
+    async def get_recently_added_books(self, limit: int = 10) -> List[Book]:
+        """Get the most recently created books (global scope)."""
+        try:
+            query = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
+            WITH b,
+                 COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) AS locations
+            ORDER BY
+                 CASE
+                     WHEN b.created_at IS NOT NULL THEN b.created_at
+                     ELSE b.updated_at
+                 END DESC,
+                 b.updated_at DESC,
+                 lower(COALESCE(b.normalized_title, b.title, '')) ASC
+            LIMIT $limit
+            RETURN b, locations
+            """
+
+            result = safe_execute_kuzu_query(query, {
+                "limit": limit
+            })
+            rows = _convert_query_result_to_list(result)
+
+            books: List[Book] = []
+            for row in rows:
+                book_data = row.get('col_0')
+                if not book_data:
+                    continue
+                locations_data = row.get('col_1', []) or []
+                valid_locations = [loc for loc in locations_data if loc and loc.get('id') and loc.get('name')]
+                relationship_data: Dict[str, Any] = {}
+                book = self._create_enriched_book(book_data, relationship_data, valid_locations)
+                books.append(book)
+
+            return books
+
+        except Exception:
+            traceback.print_exc()
+            return []
     
     async def get_book_by_id_for_user(self, book_id: str, user_id: str) -> Optional[Book]:
         """Get a specific book for a user with relationship data (universal library model)."""
@@ -674,6 +715,10 @@ class KuzuRelationshipService:
         """Sync wrapper for get_books_for_user."""
         return run_async(self.get_books_for_user(user_id, limit, offset))
     
+    def get_recently_added_books_sync(self, limit: int = 10) -> List[Book]:
+        """Sync wrapper for get_recently_added_books."""
+        return run_async(self.get_recently_added_books(limit))
+
     def get_book_by_id_for_user_sync(self, book_id: str, user_id: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_id_for_user."""
         return run_async(self.get_book_by_id_for_user(book_id, user_id))

@@ -6,12 +6,14 @@ Handles reading log functionality including creating, viewing, and managing read
 
 from flask import Blueprint, request, jsonify, render_template, flash, redirect, url_for
 from flask_login import login_required, current_user
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
+from typing import Any, Dict, Optional
 import logging
 
 from app.forms import ReadingLogEntryForm
 from app.services import reading_log_service, book_service
-from app.domain.models import ReadingLog
+from app.services.personal_metadata_service import personal_metadata_service
+from app.domain.models import ReadingLog, ReadingStatus
 from app.utils.user_settings import get_effective_reading_defaults
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,9 @@ def create_reading_log_entry():
             }), 400
         
         # Universal library: verify book exists globally (personal metadata optional)
-        user_book = book_service.get_book_by_id_sync(book_id)
+        user_book = book_service.get_book_by_id_for_user_sync(book_id, current_user.id)
+        if not user_book:
+            user_book = book_service.get_book_by_id_sync(book_id)
         if not user_book:
             return jsonify({
                 'status': 'error',
@@ -82,10 +86,11 @@ def create_reading_log_entry():
             }), 404
         
         # Create reading log entry
+        log_entry_date = date.today()
         reading_log = ReadingLog(
             user_id=current_user.id,
             book_id=book_id,
-            date=date.today(),
+            date=log_entry_date,
             pages_read=pages_read_int,
             minutes_read=minutes_read_int,
             notes=notes or None
@@ -95,6 +100,37 @@ def create_reading_log_entry():
         created_log = reading_log_service.create_reading_log_sync(reading_log)
         
         if created_log:
+            # Ensure the personal start date is captured when logging begins
+            try:
+                existing_start = getattr(user_book, 'start_date', None)
+                if not existing_start:
+                    start_dt = datetime(
+                        log_entry_date.year,
+                        log_entry_date.month,
+                        log_entry_date.day,
+                        tzinfo=timezone.utc
+                    )
+                    personal_metadata_service.ensure_start_date(current_user.id, book_id, start_dt)
+
+                # Promote reading status to "reading" when logging begins unless already finished/abandoned
+                raw_status = getattr(user_book, 'reading_status', None)
+                if isinstance(raw_status, ReadingStatus):
+                    status_value = raw_status.value
+                else:
+                    status_value = (raw_status or '').strip() if isinstance(raw_status, str) else ''
+
+                normalized_status = status_value.lower() if status_value else ''
+                terminal_statuses = {'read', 'finished', 'completed', 'did_not_finish', 'did-not-finish', 'dnf'}
+
+                if normalized_status not in terminal_statuses and normalized_status != ReadingStatus.READING.value:
+                    personal_metadata_service.update_personal_metadata(
+                        current_user.id,
+                        book_id,
+                        custom_updates={'reading_status': ReadingStatus.READING.value}
+                    )
+            except Exception as ensure_exc:
+                logger.warning(f"Unable to ensure reading metadata for book {book_id}: {ensure_exc}")
+
             return jsonify({
                 'status': 'success',
                 'message': f'Logged {pages_read_int} pages' + (f' and {minutes_read_int} minutes' if minutes_read_int > 0 else '') + ' of reading!'
@@ -136,14 +172,19 @@ def my_reading_logs():
 def api_user_books():
     """API endpoint to get user's books for the reading log modal, prioritizing recent reads.
 
-    Returns a flat JSON array of books: [{id, title, authors}]. The first
-    up-to-5 items are the most recently read books (by recent reading logs),
-    followed by additional library books to reach the requested limit.
+        Returns a JSON object containing:
+            - books: [{id, title, authors, series?}]
+            - suggested_book (optional): most recent in-progress title for auto-prefill
+
+        The first up-to-5 items in books are the most recently read titles (by
+        recent reading logs), followed by newly added books and general library
+        entries to reach the requested limit.
     """
     try:
         # Get limit from query parameter, default to 20 for recent reads, max 100
         limit = request.args.get('limit', default=20, type=int)
         limit = min(limit, 100)  # Cap at 100 books
+        query = (request.args.get('q') or '').strip()
 
         def authors_string(book) -> str:
             """Build a concise authors string from contributors/authors."""
@@ -163,38 +204,174 @@ def api_user_books():
                         authors_str += ' et al.'
             return authors_str
 
+        def make_payload(book):
+            series_obj = getattr(book, 'series', None)
+            series_name = getattr(series_obj, 'name', None) if series_obj else None
+            payload = {
+                'id': book.id,
+                'title': book.title,
+                'authors': authors_string(book),
+                'author': authors_string(book)
+            }
+            if series_name:
+                payload['series'] = series_name
+            return payload
+
+        def qualifies_for_in_progress_prefill(book_obj: Optional[object], meta: Optional[Dict[str, Any]] = None) -> bool:
+            if not book_obj:
+                return False
+
+            def _has_finish(value: Any) -> bool:
+                if value is None:
+                    return False
+                if isinstance(value, str):
+                    return bool(value.strip())
+                return True
+
+            meta_status_raw: Any = None
+            meta_finish_raw: Any = None
+            latest_log_raw: Any = None
+            if isinstance(meta, dict):
+                meta_status_raw = meta.get('reading_status') or meta.get('status') or meta.get('relationship_status')
+                meta_finish_raw = meta.get('finish_date') or meta.get('finishDate')
+                latest_log_raw = meta.get('latest_log_date') or meta.get('latestLogDate') or meta.get('last_logged_at')
+
+            if _has_finish(meta_finish_raw) or _has_finish(getattr(book_obj, 'finish_date', None)):
+                return False
+
+            raw_status = getattr(book_obj, 'reading_status', None)
+            if isinstance(raw_status, ReadingStatus):
+                status_val = raw_status.value
+            else:
+                status_val = str(raw_status or '')
+            normalized_status = status_val.strip().lower()
+
+            meta_status = ''
+            if isinstance(meta_status_raw, ReadingStatus):
+                meta_status = meta_status_raw.value
+            elif meta_status_raw is not None:
+                meta_status = str(meta_status_raw)
+            meta_status_norm = meta_status.strip().lower()
+
+            terminal_statuses = {
+                'read', 'finished', 'completed', 'did_not_finish', 'did-not-finish', 'dnf', 'abandoned', 'not_interested',
+                'finished_reading', 'complete', 'completed_reading'
+            }
+            in_progress_statuses = {'reading', 'currently_reading', 'in_progress', 'reading_now'}
+
+            if normalized_status in terminal_statuses or meta_status_norm in terminal_statuses:
+                return False
+
+            if normalized_status in in_progress_statuses or meta_status_norm in in_progress_statuses:
+                return True
+
+            if normalized_status or meta_status_norm:
+                # Status provided but not in recognized in-progress set; don't auto-prefill
+                return False
+
+            if latest_log_raw:
+                latest_log_date: Optional[date] = None
+                if isinstance(latest_log_raw, datetime):
+                    latest_log_date = latest_log_raw.date()
+                elif isinstance(latest_log_raw, date):
+                    latest_log_date = latest_log_raw
+                elif isinstance(latest_log_raw, str):
+                    candidate = latest_log_raw.strip()
+                    if candidate:
+                        candidate = candidate.replace('Z', '+00:00')
+                        try:
+                            latest_log_date = datetime.fromisoformat(candidate).date()
+                        except ValueError:
+                            try:
+                                latest_log_date = date.fromisoformat(candidate.split('T')[0])
+                            except ValueError:
+                                latest_log_date = None
+
+                if latest_log_date:
+                    today = datetime.now(timezone.utc).date()
+                    if latest_log_date <= today and (today - latest_log_date) <= timedelta(days=14):
+                        return True
+
+            return False
+
+        if query:
+            matched_books = book_service.search_books_sync(query, current_user.id, limit=limit)
+            results = [make_payload(book) for book in matched_books if book]
+            return jsonify(results)
+
         # 1) Recently read (prioritized)
         recently_read = reading_log_service.get_recently_read_books_sync(current_user.id, limit=5)
 
         books: list[dict] = []
         seen: set = set()
+        suggested_payload: Optional[dict] = None
 
         for bdict in recently_read or []:
             bid = bdict.get('id')
             if not bid or bid in seen:
                 continue
-            b = book_service.get_book_by_id_sync(bid)
+            b = book_service.get_book_by_id_for_user_sync(bid, current_user.id)
+            if not b:
+                b = book_service.get_book_by_id_sync(bid)
             if not b:
                 continue
-            a = authors_string(b)
-            books.append({'id': b.id, 'title': b.title, 'authors': a, 'author': a})
+            metadata_snapshot: Dict[str, Any] = {}
+            try:
+                metadata_snapshot = personal_metadata_service.get_personal_metadata(current_user.id, bid) or {}
+            except Exception as meta_exc:
+                logger.debug(f"Unable to load personal metadata for book {bid}: {meta_exc}")
+
+            if metadata_snapshot.get('reading_status') and not getattr(b, 'reading_status', None):
+                try:
+                    setattr(b, 'reading_status', metadata_snapshot.get('reading_status'))
+                except Exception:
+                    pass
+            if metadata_snapshot.get('finish_date') and not getattr(b, 'finish_date', None):
+                try:
+                    setattr(b, 'finish_date', metadata_snapshot.get('finish_date'))
+                except Exception:
+                    pass
+
+            meta_context: Dict[str, Any] = {}
+            if isinstance(bdict, dict):
+                meta_context.update(bdict)
+            if metadata_snapshot:
+                meta_context.update(metadata_snapshot)
+
+            payload = make_payload(b)
+            if suggested_payload is None and qualifies_for_in_progress_prefill(b, meta_context):
+                suggested_payload = dict(payload)
+            books.append(payload)
             seen.add(b.id)
 
-        # 2) Fill with user's other books up to the requested limit
+        # 2) Include most recently added books in the global library
+        if len(books) < limit:
+            recently_added = book_service.get_recently_added_books_sync(limit=min(5, limit - len(books)))
+            for b in recently_added:
+                if len(books) >= limit:
+                    break
+                if not getattr(b, 'id', None) or b.id in seen:
+                    continue
+                books.append(make_payload(b))
+                seen.add(b.id)
+
+        # 3) Fill with additional books to reach the requested limit
         if len(books) < limit:
             remaining = limit - len(books)
-            # Fetch some extra to account for duplicates or missing data
             more = book_service.get_books_for_user(current_user.id, limit=remaining + 50)
             for b in more:
                 if len(books) >= limit:
                     break
-                if b.id in seen:
+                if not getattr(b, 'id', None) or b.id in seen:
                     continue
-                a = authors_string(b)
-                books.append({'id': b.id, 'title': b.title, 'authors': a, 'author': a})
+                books.append(make_payload(b))
                 seen.add(b.id)
 
-        return jsonify(books)
+        response_body: Dict[str, Any] = {'books': books}
+        if suggested_payload:
+            response_body['suggested_book'] = suggested_payload
+
+        return jsonify(response_body)
 
     except Exception as e:
         logger.error(f"Error getting user books for API: {e}")

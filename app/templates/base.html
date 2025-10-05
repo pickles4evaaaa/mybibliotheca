@@ -1243,6 +1243,12 @@
       color: #666;
       margin-top: 2px;
     }
+
+    .book-series-sub {
+      font-size: 0.85em;
+      color: #888;
+      margin-top: 2px;
+    }
     
     .selected-book-display {
       padding: 10px;
@@ -1287,6 +1293,10 @@
     [data-theme="dark"] .book-authors-sub {
       color: #b0b0b0;
     }
+
+    [data-theme="dark"] .book-series-sub {
+      color: #9a9a9a;
+    }
     
     [data-theme="dark"] .selected-book-display {
       background-color: #2d2d2d;
@@ -1314,8 +1324,13 @@
       const endPageInput = document.getElementById('end_page');
       const pagesReadInput = document.getElementById('pages_read');
       
-      let userBooksData = [];
-      let searchTimeout = null;
+  let userBooksData = [];
+  let searchTimeout = null;
+  const searchCache = new Map();
+  let activeSearchRequest = 0;
+  let lastSelectedBook = null;
+  let lastSelectionSource = null;
+    const PREFILL_STATE = window.__READING_LOG_PREFILL__ = window.__READING_LOG_PREFILL__ || {};
       
       // Capture server-rendered defaults as fallback constants
   const STATIC_DEFAULTS = JSON.parse('{{ {"pages": (get_effective_reading_defaults(current_user.id)[0] if (current_user and current_user.is_authenticated) else None), "minutes": (get_effective_reading_defaults(current_user.id)[1] if (current_user and current_user.is_authenticated) else None)} | tojson | safe }}');
@@ -1351,8 +1366,86 @@
   return { pages: (STATIC_DEFAULTS && STATIC_DEFAULTS.pages !== undefined ? STATIC_DEFAULTS.pages : null), minutes: (STATIC_DEFAULTS && STATIC_DEFAULTS.minutes !== undefined ? STATIC_DEFAULTS.minutes : null) };
       }
 
+      try {
+        const queuedSuccess = window.sessionStorage.getItem('readingLogSuccessMessage');
+        if (queuedSuccess) {
+          showAlert('success', queuedSuccess);
+          window.sessionStorage.removeItem('readingLogSuccessMessage');
+        }
+      } catch (storageErr) {
+        console.warn('Unable to access sessionStorage for reading log alerts', storageErr);
+      }
+
+      function normalizeBookPayload(raw) {
+        if (!raw || !raw.id || !raw.title) {
+          return null;
+        }
+        return {
+          id: raw.id,
+          title: raw.title,
+          authors: raw.authors || raw.author || '',
+          series: raw.series || ''
+        };
+      }
+
+      function storeGlobalPrefill(key, payload) {
+        const normalized = normalizeBookPayload(payload);
+        if (!normalized) {
+          delete PREFILL_STATE[key];
+          return null;
+        }
+        PREFILL_STATE[key] = normalized;
+        return normalized;
+      }
+
+      function getSuggestedPrefill() {
+        return PREFILL_STATE.suggestedInProgress || null;
+      }
+
+      function resolvePageContextPrefill() {
+        return PREFILL_STATE.currentBook || null;
+      }
+
+      function extractDatasetPrefill(element) {
+        if (!element) {
+          return null;
+        }
+        const target = element.closest('[data-prefill-book-id]') || element;
+        const dataset = target.dataset || {};
+        const id = dataset.prefillBookId;
+        const title = dataset.prefillBookTitle;
+        if (!id || !title) {
+          return null;
+        }
+        return normalizeBookPayload({
+          id,
+          title,
+          authors: dataset.prefillBookAuthors || dataset.prefillBookAuthor || '',
+          series: dataset.prefillBookSeries || ''
+        });
+      }
+
+      function attemptAutoSelect(payload, options = {}) {
+        const normalized = normalizeBookPayload(payload);
+        if (!normalized) {
+          return false;
+        }
+        const force = options.force === true;
+        const hasSelection = !!selectedBookIdInput.value;
+        const searchHasValue = !!(bookSearchInput.value && bookSearchInput.value.trim());
+        if (!force && (hasSelection || searchHasValue)) {
+          return false;
+        }
+        const source = options.source || 'prefill';
+        selectBook(normalized, source);
+        if (source === 'suggested') {
+          storeGlobalPrefill('suggestedInProgress', normalized);
+        }
+        return true;
+      }
+
       // Prefill defaults and load user's books when modal is shown
-      modal.addEventListener('show.bs.modal', function() {
+      modal.addEventListener('show.bs.modal', function(event) {
         try {
           const eff = resolveEffectiveDefaults();
           if (eff.pages !== null && eff.pages !== undefined && pagesReadInput) {
@@ -1364,6 +1457,29 @@
             minutesInput.value = String(eff.minutes);
           }
         } catch (e) { /* ignore */ }
+
+        let prefillApplied = false;
+        if (event && event.relatedTarget) {
+          const triggerPrefill = extractDatasetPrefill(event.relatedTarget);
+          if (triggerPrefill) {
+            prefillApplied = attemptAutoSelect(triggerPrefill, { force: true, source: 'trigger' });
+          }
+        }
+
+        if (!prefillApplied) {
+          const pagePrefill = resolvePageContextPrefill();
+          if (pagePrefill) {
+            prefillApplied = attemptAutoSelect(pagePrefill, { force: true, source: 'context' });
+          }
+        }
+
+        if (!prefillApplied) {
+          const suggested = getSuggestedPrefill();
+          if (suggested) {
+            prefillApplied = attemptAutoSelect(suggested, { source: 'suggested' });
+          }
+        }
+
         if (userBooksData.length === 0) {
           loadUserBooks();
         }
@@ -1426,7 +1542,7 @@
       
       // Load user's books via AJAX
       function loadUserBooks() {
-        fetch('/reading-logs/api/user/books', {
+        fetch('/reading-logs/api/user/books?limit=60', {
           headers: {
             // GET usually doesn't require CSRF, but keep header harmlessly for consistency
             'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
@@ -1434,16 +1550,31 @@
         })
         .then(r => r.json())
         .then(data => {
-          // Accept both formats:
-          // 1) Array of books: [{id, title, authors}]
-          // 2) Object: { status: 'success', books: [...] }
+          let booksPayload = [];
           if (Array.isArray(data)) {
-            userBooksData = data;
+            booksPayload = data;
           } else if (data && Array.isArray(data.books)) {
-            userBooksData = data.books;
+            booksPayload = data.books;
           } else {
             console.warn('Unexpected books payload', data);
-            userBooksData = [];
+          }
+          userBooksData = booksPayload;
+
+          let suggestionHandled = false;
+          if (!Array.isArray(data) && data && data.suggested_book) {
+            const normalizedSuggestion = storeGlobalPrefill('suggestedInProgress', data.suggested_book);
+            if (normalizedSuggestion) {
+              suggestionHandled = attemptAutoSelect(normalizedSuggestion, { source: 'suggested' });
+            }
+          } else {
+            delete PREFILL_STATE.suggestedInProgress;
+            if (lastSelectionSource === 'suggested') {
+              clearBookSelection({ forget: true });
+            }
+          }
+
+          if (!suggestionHandled && bookSearchInput.style.display !== 'none' && !bookSearchInput.value.trim()) {
+            showRecentBooks();
           }
         })
         .catch(error => {
@@ -1451,19 +1582,67 @@
         });
       }
       
-    function searchBooks(query) {
-        if (!userBooksData.length) {
+    async function searchBooks(query) {
+        const trimmed = query.trim();
+        if (!trimmed) {
+          showRecentBooks();
           return;
         }
-        
-        const queryLower = query.toLowerCase();
-        const matchingBooks = userBooksData.filter(book => {
-      const authors = (book.authors || book.author || '');
-      return (book.title && book.title.toLowerCase().includes(queryLower)) ||
-         (authors && authors.toLowerCase().includes(queryLower));
-        });
-        
-        showBookDropdown(matchingBooks, query);
+
+        const normalized = trimmed.toLowerCase();
+        if (searchCache.has(normalized)) {
+          showBookDropdown(searchCache.get(normalized) || [], query);
+          return;
+        }
+
+        const requestId = ++activeSearchRequest;
+
+        try {
+          const response = await fetch(`/reading-logs/api/user/books?q=${encodeURIComponent(trimmed)}&limit=20`, {
+            headers: {
+              'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            }
+          });
+
+          if (!response.ok) {
+            throw new Error(`Search request failed with status ${response.status}`);
+          }
+
+          const data = await response.json();
+          let books = [];
+          if (Array.isArray(data)) {
+            books = data;
+          } else if (data && Array.isArray(data.books)) {
+            books = data.books;
+          }
+
+          if (!Array.isArray(data) && data && data.suggested_book) {
+            storeGlobalPrefill('suggestedInProgress', data.suggested_book);
+          }
+
+          searchCache.set(normalized, books);
+
+          if (requestId === activeSearchRequest) {
+            showBookDropdown(books, query);
+          }
+        } catch (error) {
+          console.error('Error searching books:', error);
+          if (requestId !== activeSearchRequest) {
+            return;
+          }
+          if (userBooksData.length) {
+            const fallbackQuery = normalized;
+            const fallbackResults = userBooksData.filter(book => {
+              const authors = (book.authors || book.author || '');
+              const seriesName = (book.series || '');
+              const haystacks = [book.title || '', authors, seriesName].map(text => (text || '').toString().toLowerCase());
+              return haystacks.some(text => text.includes(fallbackQuery));
+            });
+            showBookDropdown(fallbackResults, query);
+          } else {
+            showBookDropdown([], query);
+          }
+        }
       }
       
       function showRecentBooks() {
@@ -1489,9 +1668,10 @@
             item.className = 'autocomplete-item';
             item.innerHTML = `
               <div class="book-title-main">${book.title}</div>
+        ${book.series ? `<div class="book-series-sub">${book.series}</div>` : ''}
         ${book.authors ? `<div class="book-authors-sub">by ${book.authors}</div>` : (book.author ? `<div class=\"book-authors-sub\">by ${book.author}</div>` : '')}
             `;
-            item.addEventListener('click', () => selectBook(book));
+            item.addEventListener('click', () => selectBook(book, 'manual'));
             bookDropdown.appendChild(item);
           });
         }
@@ -1503,25 +1683,39 @@
         bookDropdown.style.display = 'none';
       }
       
-      function selectBook(book) {
-  selectedBookIdInput.value = book.id;
-        bookSearchInput.value = '';
-        
-        // Show selected book
-        selectedBookDiv.querySelector('.book-title').textContent = book.title;
-  const authors = book.authors || book.author || '';
-  selectedBookDiv.querySelector('.book-authors').textContent = authors ? `by ${authors}` : '';
-        selectedBookDiv.style.display = 'block';
-        bookSearchInput.style.display = 'none';
-        
-        hideBookDropdown();
-      }
+            function selectBook(rawBook, source = 'manual') {
+              const book = normalizeBookPayload(rawBook);
+              if (!book) {
+                return;
+              }
+              selectedBookIdInput.value = book.id;
+              bookSearchInput.value = '';
+
+              // Show selected book
+              selectedBookDiv.querySelector('.book-title').textContent = book.title;
+              const authors = book.authors || (rawBook && rawBook.author) || '';
+              selectedBookDiv.querySelector('.book-authors').textContent = authors ? `by ${authors}` : '';
+              selectedBookDiv.style.display = 'block';
+              bookSearchInput.style.display = 'none';
+
+              lastSelectedBook = book;
+              lastSelectionSource = source;
+
+              hideBookDropdown();
+            }
       
-      window.clearBookSelection = function() {
+      window.clearBookSelection = function(options = {}) {
         selectedBookIdInput.value = '';
         selectedBookDiv.style.display = 'none';
         bookSearchInput.style.display = 'block';
+        bookSearchInput.value = '';
         bookSearchInput.focus();
+        showRecentBooks();
+        lastSelectionSource = null;
+        if (options && options.forget) {
+          lastSelectedBook = null;
+          delete PREFILL_STATE.suggestedInProgress;
+        }
       };
       
       // Helper functions for modal error handling
@@ -1573,13 +1767,29 @@
             const modalInstance = bootstrap.Modal.getInstance(modal);
             modalInstance.hide();
             
+            if (lastSelectedBook) {
+              const normalized = storeGlobalPrefill('suggestedInProgress', lastSelectedBook);
+              if (normalized) {
+                userBooksData = [normalized, ...userBooksData.filter(book => book.id !== normalized.id)];
+                lastSelectedBook = normalized;
+              }
+              searchCache.clear();
+            }
+
             // Reset form
             this.reset();
             clearBookSelection();
             pagesReadInput.readOnly = true;
-            
-            // Show success alert on page
-            showAlert('success', 'Reading session logged successfully!');
+
+            try {
+              window.sessionStorage.setItem('readingLogSuccessMessage', 'Reading session logged successfully!');
+            } catch (storageErr) {
+              console.warn('Unable to persist reading log success message', storageErr);
+            }
+
+            setTimeout(() => {
+              window.location.reload();
+            }, 150);
           } else {
             // Show error in modal instead of page
             showModalError(data.message || 'Error logging reading session');
