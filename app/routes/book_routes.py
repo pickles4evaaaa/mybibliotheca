@@ -15,6 +15,7 @@ import io
 from pathlib import Path
 from io import BytesIO
 from typing import Optional, Any, Dict, List
+from collections import OrderedDict
 
 from app.services import book_service, reading_log_service, custom_field_service, user_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
@@ -22,7 +23,7 @@ from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data
 from app.utils.book_utils import get_best_cover_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
-from app.domain.models import Book as DomainBook, MediaType
+from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
 from app.utils.user_settings import get_default_book_format
 
 # Quiet mode for book routes; enable with VERBOSE=true or IMPORT_VERBOSE=true
@@ -325,6 +326,223 @@ def _handle_edit_book_post(uid, user_book, form):
 # Create book blueprint
 book_bp = Blueprint('book', __name__)
 api_book_bp = Blueprint('api_book', __name__, url_prefix='/api/book')
+
+
+def _is_json_request() -> bool:
+    if request.headers.get('X-Requested-With', '').lower() == 'xmlhttprequest':
+        return True
+    accept_mimetypes = getattr(request, 'accept_mimetypes', None)
+    if accept_mimetypes is not None:
+        try:
+            return accept_mimetypes['application/json'] >= accept_mimetypes['text/html']
+        except Exception:
+            return False
+    return False
+
+
+def _extract_bulk_book_ids(form) -> List[str]:
+    potential_keys = ['book_ids', 'selected_books']
+    collected: List[str] = []
+
+    for key in potential_keys:
+        collected.extend(form.getlist(key))
+
+    if not collected:
+        for key in potential_keys:
+            raw_value = form.get(key)
+            if raw_value:
+                fragments = [fragment.strip() for fragment in raw_value.replace(',', '\n').split('\n') if fragment.strip()]
+                if fragments:
+                    collected.extend(fragments)
+                    break
+
+    # Filter and dedupe while preserving order
+    seen = set()
+    sanitized: List[str] = []
+    for uid in collected:
+        if not uid:
+            continue
+        canonical = uid.strip()
+        if not canonical:
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        sanitized.append(canonical)
+    return sanitized
+
+
+def _bulk_response(success: bool, message: str, redirect_url: Optional[str], *, data: Optional[Dict[str, Any]] = None, status_code: int = 200, flash_category: Optional[str] = None):
+    target_url = redirect_url or request.form.get('redirect_url') or request.referrer or url_for('book.library')
+
+    if _is_json_request():
+        payload: Dict[str, Any] = {
+            'success': success,
+            'message': message,
+            'redirect_url': target_url
+        }
+        if data:
+            payload.update(data)
+        return jsonify(payload), status_code
+
+    if message:
+        effective_category = flash_category or ('success' if success else 'error')
+        flash(message, effective_category)
+    return redirect(target_url)
+
+
+def _humanize_status(status: str) -> str:
+    mapping = {
+        'plan_to_read': 'Plan to Read',
+        'reading': 'Reading',
+        'currently_reading': 'Currently Reading',
+        'read': 'Read',
+        'on_hold': 'On Hold',
+        'did_not_finish': 'Did Not Finish',
+        'library_only': 'Library Only'
+    }
+    base = mapping.get(status, status.replace('_', ' ').replace('-', ' ').title())
+    return base
+
+
+def _normalize_reading_status(raw_status: str) -> Optional[str]:
+    if not raw_status:
+        return None
+    normalized = raw_status.strip().lower().replace('-', '_').replace(' ', '_')
+    alias_map = {
+        'currently_reading': 'reading',
+        'in_progress': 'reading',
+        'current': 'reading',
+        'want_to_read': 'plan_to_read',
+        'wishlist_reading': 'plan_to_read',
+        'has_read': 'read',
+        'completed': 'read',
+        'complete': 'read',
+        'finished': 'read',
+        'paused': 'on_hold',
+        'hold': 'on_hold',
+        'dnf': 'did_not_finish',
+        'dropped': 'did_not_finish'
+    }
+    mapped = alias_map.get(normalized, normalized)
+    allowed_statuses = {status.value for status in ReadingStatus}
+    if mapped in allowed_statuses:
+        return mapped
+    return None
+
+
+def _dedupe_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    deduped: List[str] = []
+    for value in values:
+        if not value:
+            continue
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _parse_additional_categories(raw_value: str) -> List[str]:
+    if not raw_value:
+        return []
+    tokens = [token.strip() for token in re.split(r'[\n,]+', raw_value) if token.strip()]
+    return tokens
+
+
+def _category_name_from_record(record: Any) -> Optional[str]:
+    if record is None:
+        return None
+    if isinstance(record, dict):
+        for key in ('name', 'label', 'value', 'normalized_name', 'result'):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        # Fallback: inspect remaining values
+        for value in record.values():
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+    if isinstance(record, str):
+        cleaned = record.strip()
+        return cleaned or None
+    name_attr = getattr(record, 'name', None)
+    if isinstance(name_attr, str) and name_attr.strip():
+        return name_attr.strip()
+    cleaned = str(record).strip()
+    return cleaned or None
+
+
+def _extract_existing_categories_from_book(book: Any) -> List[str]:
+    ordered: OrderedDict[str, str] = OrderedDict()
+
+    def _record(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                _record(item)
+            return
+        if isinstance(value, dict):
+            candidate = _category_name_from_record(value)
+            if candidate:
+                _record(candidate)
+            return
+        # Handle objects with name/label attributes before falling back to repr strings
+        name_attr = getattr(value, 'name', None)
+        if isinstance(name_attr, str) and name_attr.strip():
+            normalized = name_attr.strip()
+            key = normalized.lower()
+            if key not in ordered:
+                ordered[key] = normalized
+            return
+        label_attr = getattr(value, 'label', None)
+        if isinstance(label_attr, str) and label_attr.strip():
+            normalized = label_attr.strip()
+            key = normalized.lower()
+            if key not in ordered:
+                ordered[key] = normalized
+            return
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return
+            # Attempt to split composite strings (comma / newline separated)
+            segments = _parse_additional_categories(value)
+            if len(segments) > 1:
+                for segment in segments:
+                    _record(segment)
+                return
+            key = normalized.lower()
+            if key not in ordered:
+                ordered[key] = normalized
+            return
+        cleaned = str(value).strip()
+        if cleaned:
+            key = cleaned.lower()
+            if key not in ordered:
+                ordered[key] = cleaned
+
+    if isinstance(book, dict):
+        for key in ('raw_categories', 'categories', 'category_names', 'tags', 'genres', 'audiobookshelf_categories'):
+            if key in book:
+                _record(book[key])
+        import_metadata = book.get('import_metadata')
+        if isinstance(import_metadata, dict):
+            for key in ('categories', 'tags', 'genres'):
+                if key in import_metadata:
+                    _record(import_metadata[key])
+    else:
+        for attr in ('raw_categories', 'categories', 'category_names', 'tags', 'genres'):
+            if hasattr(book, attr):
+                _record(getattr(book, attr))
+
+    return list(ordered.values())
 
 def _convert_query_result_to_list(result):
     """Convert SafeKuzuManager query result to legacy list format"""
@@ -1851,6 +2069,89 @@ def library():
         }
         users.append(type('User', (), user_data))
 
+    # Bulk action option lists
+    reading_status_options = [
+        {
+            'value': status.value,
+            'label': _humanize_status(status.value)
+        }
+        for status in ReadingStatus
+    ]
+
+    location_options: List[Dict[str, Any]] = []
+    try:
+        from app.location_service import LocationService
+
+        location_service = LocationService()
+        all_locations = location_service.get_all_locations(active_only=True)
+        for location in all_locations or []:
+            if isinstance(location, dict):
+                loc_id = (location.get('id') or '').strip()
+                loc_name = (location.get('name') or '').strip()
+                is_default = bool(location.get('is_default'))
+            else:
+                loc_id = (getattr(location, 'id', '') or '').strip()
+                loc_name = (getattr(location, 'name', '') or '').strip()
+                is_default = bool(getattr(location, 'is_default', False))
+
+            if not loc_id or not loc_name:
+                continue
+
+            location_options.append({
+                'id': loc_id,
+                'name': loc_name,
+                'is_default': is_default
+            })
+
+        if location_options:
+            location_options.sort(key=lambda entry: (not entry.get('is_default', False), entry.get('name', '').lower()))
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        current_app.logger.warning(f"Failed to load locations for bulk actions: {exc}")
+        location_options = []
+
+    category_options: List[Dict[str, str]] = []
+    category_lookup: Dict[str, Dict[str, str]] = {}
+
+    try:
+        all_categories = book_service.list_all_categories_sync()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        current_app.logger.warning(f"Failed to load category list for bulk actions: {exc}")
+        all_categories = []
+
+    for category in (all_categories or []):
+        if isinstance(category, dict):
+            raw_name = (category.get('name') or category.get('normalized_name') or '').strip()
+            display_label = (category.get('label') or category.get('display_name') or raw_name)
+        else:
+            raw_name = (getattr(category, 'name', '') or '').strip()
+            display_label = raw_name
+
+        if not raw_name:
+            continue
+
+        key = raw_name.lower()
+        if key in category_lookup:
+            continue
+
+        category_lookup[key] = {
+            'name': raw_name,
+            'label': (display_label.strip() if isinstance(display_label, str) and display_label.strip() else raw_name)
+        }
+
+    for existing_category in categories:
+        name = (existing_category or '').strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key not in category_lookup:
+            category_lookup[key] = {
+                'name': name,
+                'label': name
+            }
+
+    if category_lookup:
+        category_options = sorted(category_lookup.values(), key=lambda entry: entry.get('label', '').lower())
+
     # Optional JSON output for fast client-side rendering
     if request.args.get('format') == 'json':
         # Minimal payload for grid
@@ -1917,7 +2218,10 @@ def library():
         current_search=search_query,
         current_sort=sort_option,
         media_type_labels=media_type_labels,
-        users=users
+        users=users,
+        reading_status_options=reading_status_options,
+        location_options=location_options,
+        category_options=category_options
     ))
     resp.headers['ETag'] = _html_etag
     resp.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=120'
@@ -3581,67 +3885,278 @@ def assign_book(uid):
 @login_required
 def bulk_delete_books():
     """Delete multiple books selected from the library view."""
-    print(f"Bulk delete route called by user {current_user.id}")
-    print(f"Request method: {request.method}")
-    print(f"Request form keys: {list(request.form.keys())}")
-    print(f"Full form data: {dict(request.form)}")
-    
-    # Try both possible field names
-    selected_uids = request.form.getlist('selected_books')
+    user_id = str(current_user.id)
+    redirect_url = request.form.get('redirect_url')
+
+    selected_uids = _extract_bulk_book_ids(request.form)
     if not selected_uids:
-        selected_uids = request.form.getlist('book_ids')
-    
-    # If still empty, try getting as single values
-    if not selected_uids:
-        single_value = request.form.get('selected_books') or request.form.get('book_ids')
-        if single_value:
-            # Split by comma or newline if multiple values in single field
-            selected_uids = [uid.strip() for uid in single_value.replace(',', '\n').split('\n') if uid.strip()]
-    
-    # Filter out empty strings
-    selected_uids = [uid for uid in selected_uids if uid and uid.strip()]
-    
-    print(f"Selected UIDs after filtering: {selected_uids}")
-    
-    if not selected_uids:
-        print("No books selected for deletion")
-        flash('No books selected for deletion.', 'warning')
-        return redirect(url_for('main.library'))
-    
+        return _bulk_response(False, 'Select at least one book to delete.', redirect_url, status_code=400)
+
     deleted_count = 0
-    failed_count = 0
-    
+    failed_ids: List[str] = []
+
     for uid in selected_uids:
         try:
-            print(f"Attempting to delete book {uid} for user {current_user.id}")
-            # Use the regular delete_book_sync method which handles global deletion
-            # if no other users have the book
-            success = book_service.delete_book_sync(uid, str(current_user.id))
-            print(f"Delete result for {uid}: {success}")
+            success = book_service.delete_book_sync(uid, user_id)
             if success:
                 deleted_count += 1
             else:
-                failed_count += 1
-        except Exception as e:
-            print(f"Error deleting book {uid}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed_count += 1
-    
-    print(f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed")
-    
-    if deleted_count > 0:
-        flash(f'Successfully deleted {deleted_count} book(s) from your library.', 'success')
-        # Invalidate cached library payloads for this user so UI updates immediately
+                failed_ids.append(uid)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            current_app.logger.exception(f"Bulk delete failed for {uid}: {exc}")
+            failed_ids.append(uid)
+
+    if deleted_count:
         try:
             from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(str(current_user.id))
+            bump_user_library_version(user_id)
         except Exception:
             pass
-    if failed_count > 0:
-        flash(f'Failed to delete {failed_count} book(s).', 'error')
-    
-    return redirect(url_for('main.library'))
+
+    message_parts = []
+    if deleted_count:
+        message_parts.append(f"Deleted {deleted_count} book(s).")
+    if failed_ids:
+        message_parts.append(f"Failed to delete {len(failed_ids)} book(s).")
+
+    status_code = 200 if not failed_ids else (207 if deleted_count else 400)
+    payload: Dict[str, Any] = {'deleted_count': deleted_count}
+    if failed_ids:
+        payload['failed_ids'] = failed_ids
+
+    return _bulk_response(
+        deleted_count > 0,
+        ' '.join(message_parts) or 'Unable to delete the selected books.',
+        redirect_url,
+        data=payload,
+        status_code=status_code
+    )
+
+
+@book_bp.route('/books/bulk_update_status', methods=['POST'])
+@login_required
+def bulk_update_book_status():
+    user_id = str(current_user.id)
+    redirect_url = request.form.get('redirect_url')
+
+    target_status = _normalize_reading_status(request.form.get('reading_status', ''))
+    if not target_status:
+        return _bulk_response(False, 'Choose a valid reading status.', redirect_url, status_code=400)
+
+    selected_uids = _extract_bulk_book_ids(request.form)
+    if not selected_uids:
+        return _bulk_response(False, 'Select at least one book to change status.', redirect_url, status_code=400)
+
+    updated_count = 0
+    failed_ids: List[str] = []
+
+    for uid in selected_uids:
+        try:
+            user_book = book_service.get_book_by_uid_sync(uid, user_id)
+            if not user_book:
+                failed_ids.append(uid)
+                continue
+            updated = book_service.update_book_sync(uid, user_id, reading_status=target_status)
+            if updated:
+                updated_count += 1
+            else:
+                failed_ids.append(uid)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            current_app.logger.exception(f"Bulk status update failed for {uid}: {exc}")
+            failed_ids.append(uid)
+
+    if updated_count:
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(user_id)
+        except Exception:
+            pass
+
+    message_bits = []
+    if updated_count:
+        message_bits.append(f"Set status to {_humanize_status(target_status)} for {updated_count} book(s).")
+    if failed_ids:
+        message_bits.append(f"Failed to update {len(failed_ids)} book(s).")
+
+    status_code = 200 if not failed_ids else (207 if updated_count else 400)
+    payload: Dict[str, Any] = {'updated_count': updated_count, 'new_status': target_status}
+    if failed_ids:
+        payload['failed_ids'] = failed_ids
+
+    return _bulk_response(
+        updated_count > 0,
+        ' '.join(message_bits) or 'Unable to update reading status for the selected books.',
+        redirect_url,
+        data=payload,
+        status_code=status_code
+    )
+
+
+@book_bp.route('/books/bulk_update_location', methods=['POST'])
+@login_required
+def bulk_update_book_location():
+    user_id = str(current_user.id)
+    redirect_url = request.form.get('redirect_url')
+
+    raw_location = (request.form.get('location_id') or '').strip()
+    location_id: Optional[str]
+    if not raw_location or raw_location.lower() in {'clear', 'none', 'null'}:
+        location_id = None
+    else:
+        location_id = raw_location
+
+    from app.location_service import LocationService
+
+    location_service = LocationService()
+    location_label = 'Cleared location'
+    if location_id:
+        location = location_service.get_location(location_id)
+        if not location:
+            return _bulk_response(False, 'Selected location is no longer available.', redirect_url, status_code=400)
+        location_label = location.name or 'Selected location'
+
+    selected_uids = _extract_bulk_book_ids(request.form)
+    if not selected_uids:
+        return _bulk_response(False, 'Select at least one book to change location.', redirect_url, status_code=400)
+
+    updated_count = 0
+    failed_ids: List[str] = []
+
+    for uid in selected_uids:
+        try:
+            user_book = book_service.get_book_by_uid_sync(uid, user_id)
+            if not user_book:
+                failed_ids.append(uid)
+                continue
+            success = location_service.set_book_location(uid, location_id, user_id)
+            if success:
+                updated_count += 1
+            else:
+                failed_ids.append(uid)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            current_app.logger.exception(f"Bulk location update failed for {uid}: {exc}")
+            failed_ids.append(uid)
+
+    if updated_count:
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(user_id)
+        except Exception:
+            pass
+
+    message_bits = []
+    if updated_count:
+        action_phrase = f"Set location to {location_label}" if location_id else 'Cleared location'
+        message_bits.append(f"{action_phrase} for {updated_count} book(s).")
+    if failed_ids:
+        message_bits.append(f"Failed to update {len(failed_ids)} book(s).")
+
+    status_code = 200 if not failed_ids else (207 if updated_count else 400)
+    payload: Dict[str, Any] = {'updated_count': updated_count, 'location_id': location_id}
+    if failed_ids:
+        payload['failed_ids'] = failed_ids
+
+    return _bulk_response(
+        updated_count > 0,
+        ' '.join(message_bits) or 'Unable to update location for the selected books.',
+        redirect_url,
+        data=payload,
+        status_code=status_code
+    )
+
+
+@book_bp.route('/books/bulk_update_categories', methods=['POST'])
+@login_required
+def bulk_update_book_categories():
+    user_id = str(current_user.id)
+    redirect_url = request.form.get('redirect_url')
+
+    selected_uids = _extract_bulk_book_ids(request.form)
+    if not selected_uids:
+        return _bulk_response(False, 'Select at least one book to change categories.', redirect_url, status_code=400)
+
+    clear_existing = request.form.get('clear_categories') in {'1', 'true', 'on', 'yes'}
+    selected_categories = [value for value in request.form.getlist('categories') if value]
+    additional_categories = _parse_additional_categories(request.form.get('additional_categories', ''))
+    requested_categories = _dedupe_preserve_order(selected_categories + additional_categories)
+
+    updated_count = 0
+    failed_ids: List[str] = []
+
+    for uid in selected_uids:
+        try:
+            user_book = book_service.get_book_by_uid_sync(uid, user_id)
+            if not user_book:
+                failed_ids.append(uid)
+                continue
+
+            final_categories: List[str]
+            if clear_existing:
+                final_categories = requested_categories
+            else:
+                existing_from_db: List[str] = []
+                try:
+                    raw_categories = book_service.get_book_categories_sync(uid) or []
+                    for category in raw_categories:
+                        name = _category_name_from_record(category)
+                        if name:
+                            existing_from_db.append(name)
+                except Exception:
+                    existing_from_db = []
+
+                existing_from_book = _extract_existing_categories_from_book(user_book)
+
+                combined = existing_from_db + existing_from_book + requested_categories
+                final_categories = _dedupe_preserve_order(combined)
+
+            if not clear_existing and not requested_categories and not final_categories:
+                # Nothing to change and user didn't request a clear
+                updated_count += 1
+                continue
+
+            result = book_service.update_book_sync(uid, user_id, raw_categories=final_categories)
+            if result is not None:
+                updated_count += 1
+            else:
+                failed_ids.append(uid)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            current_app.logger.exception(f"Bulk category update failed for {uid}: {exc}")
+            failed_ids.append(uid)
+
+    if updated_count:
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(user_id)
+        except Exception:
+            pass
+
+    message_bits = []
+    if updated_count:
+        if clear_existing and not requested_categories:
+            message_bits.append(f"Cleared categories for {updated_count} book(s).")
+        elif requested_categories:
+            message_bits.append(f"Updated categories for {updated_count} book(s).")
+        else:
+            message_bits.append(f"Categories already up to date for {updated_count} book(s).")
+    if failed_ids:
+        message_bits.append(f"Failed to update {len(failed_ids)} book(s).")
+
+    status_code = 200 if not failed_ids else (207 if updated_count else 400)
+    payload: Dict[str, Any] = {
+        'updated_count': updated_count,
+        'clear_existing': clear_existing,
+        'applied_categories': requested_categories
+    }
+    if failed_ids:
+        payload['failed_ids'] = failed_ids
+
+    return _bulk_response(
+        updated_count > 0,
+        ' '.join(message_bits) or 'Unable to update categories for the selected books.',
+        redirect_url,
+        data=payload,
+        status_code=status_code
+    )
 
 @book_bp.route('/csrf-guide')
 def csrf_guide():

@@ -583,12 +583,47 @@
                             <div>
                                 <span id="selection-count">0</span> book(s) selected
                             </div>
-                            <div>
-                                <button type="button" class="btn btn-outline-light btn-sm me-2" onclick="selectAll()">
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-light btn-sm" onclick="selectAll()">
                                     Select All
                                 </button>
-                                <button type="button" class="btn btn-outline-light btn-sm me-2" onclick="clearSelection()">
+                                <button type="button" class="btn btn-outline-light btn-sm" onclick="clearSelection()">
                                     Clear Selection
+                                </button>
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-outline-light btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                        Change Status
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end" id="bulk-status-menu">
+                                        {% for option in reading_status_options %}
+                                            <li>
+                                                <button type="button" class="dropdown-item" data-status="{{ option.value }}">{{ option.label }}</button>
+                                            </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-outline-light btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                        Change Location
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end" id="bulk-location-menu">
+                                        {% if location_options %}
+                                            {% for location in location_options %}
+                                                <li>
+                                                    <button type="button" class="dropdown-item" data-location="{{ location.id }}">
+                                                        {{ location.name }}{% if location.is_default %} (Default){% endif %}
+                                                    </button>
+                                                </li>
+                                            {% endfor %}
+                                            <li><hr class="dropdown-divider"></li>
+                                        {% endif %}
+                                        <li>
+                                            <button type="button" class="dropdown-item text-danger" data-location="clear">Clear Location</button>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <button type="button" class="btn btn-outline-light btn-sm" id="bulk-category-button">
+                                    Change Categories
                                 </button>
                                 <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected()">
                                     Delete Selected
@@ -716,10 +751,68 @@
         </div>
     </div>
 
-    <!-- Bulk Delete Form (hidden) -->
-    <form id="bulk-delete-form" method="POST" action="{{ url_for('main.bulk_delete_books') }}" style="display: none;">
+    <!-- Bulk action forms -->
+    <form id="bulk-delete-form" method="POST" action="{{ url_for('book.bulk_delete_books') }}" style="display: none;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <input type="hidden" name="redirect_url" value="{{ request.url }}"/>
+        <div id="bulk-delete-ids"></div>
     </form>
+
+    <form id="bulk-status-form" method="POST" action="{{ url_for('book.bulk_update_book_status') }}" style="display: none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <input type="hidden" name="reading_status" value=""/>
+        <input type="hidden" name="redirect_url" value="{{ request.url }}"/>
+        <div id="bulk-status-ids"></div>
+    </form>
+
+    <form id="bulk-location-form" method="POST" action="{{ url_for('book.bulk_update_book_location') }}" style="display: none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <input type="hidden" name="location_id" value=""/>
+        <input type="hidden" name="redirect_url" value="{{ request.url }}"/>
+        <div id="bulk-location-ids"></div>
+    </form>
+
+    <!-- Bulk Categories Modal -->
+    <div class="modal fade" id="bulkCategoryModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <form id="bulk-category-form" method="POST" action="{{ url_for('book.bulk_update_book_categories') }}">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-tags me-2"></i>Change Categories</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <input type="hidden" name="redirect_url" value="{{ request.url }}"/>
+                        <div id="bulk-category-ids"></div>
+                        <div class="mb-3">
+                            <label for="bulk-category-select" class="form-label">Select existing categories</label>
+                            <select class="form-select" id="bulk-category-select" name="categories" multiple size="8">
+                                {% for category in category_options %}
+                                    <option value="{{ category.name }}">{{ category.label }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Hold Ctrl (Cmd on Mac) to select multiple categories.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="bulk-additional-categories" class="form-label">Add new categories (comma or newline separated)</label>
+                            <textarea class="form-control" id="bulk-additional-categories" name="additional_categories" rows="2" placeholder="e.g., Cozy Mystery, Historical Fiction"></textarea>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="bulk-clear-categories" name="clear_categories" value="1">
+                            <label class="form-check-label" for="bulk-clear-categories">
+                                Clear existing categories before applying new ones
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Apply Categories</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -755,6 +848,103 @@ document.addEventListener('DOMContentLoaded', function() {
     const checkboxes = document.querySelectorAll('.book-checkbox');
     const selectionToolbar = document.getElementById('selection-toolbar');
     const selectionCount = document.getElementById('selection-count');
+    const bulkDeleteForm = document.getElementById('bulk-delete-form');
+    const bulkStatusForm = document.getElementById('bulk-status-form');
+    const bulkLocationForm = document.getElementById('bulk-location-form');
+    const bulkCategoryForm = document.getElementById('bulk-category-form');
+    const bulkStatusMenu = document.getElementById('bulk-status-menu');
+    const bulkLocationMenu = document.getElementById('bulk-location-menu');
+    const bulkCategoryButton = document.getElementById('bulk-category-button');
+    const bulkCategoryModalElement = document.getElementById('bulkCategoryModal');
+
+    const currentPageUrl = window.location.href;
+    [bulkDeleteForm, bulkStatusForm, bulkLocationForm, bulkCategoryForm].forEach(form => {
+        if (form) {
+            updateHiddenInput(form, 'redirect_url', currentPageUrl);
+        }
+    });
+
+    function getSelectedCheckboxes() {
+        return Array.from(document.querySelectorAll('.book-checkbox:checked'));
+    }
+
+    function populateBulkForm(form, containerId) {
+        if (!form) return [];
+        const container = document.getElementById(containerId);
+        if (!container) return [];
+        container.innerHTML = '';
+        updateHiddenInput(form, 'redirect_url', window.location.href);
+        const selectedCheckboxes = getSelectedCheckboxes();
+        selectedCheckboxes.forEach(checkbox => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'book_ids';
+            input.value = checkbox.value;
+            container.appendChild(input);
+        });
+        return selectedCheckboxes.map(cb => cb.value);
+    }
+
+    function updateHiddenInput(form, name, value) {
+        if (!form) return;
+        const input = form.querySelector(`input[name="${name}"]`);
+        if (input) {
+            input.value = value;
+        }
+    }
+
+    function handleBulkActionResponse(data) {
+        if (data && typeof data.redirect_url === 'string' && data.redirect_url.trim()) {
+            window.location.href = data.redirect_url;
+        } else {
+            window.location.reload();
+        }
+    }
+
+    function submitBulkAction(form, { onSuccess, onError } = {}) {
+        if (!form) {
+            return;
+        }
+
+        const formData = new FormData(form);
+        fetch(form.action, {
+            method: form.method || 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json'
+            }
+        })
+            .then(response => {
+                if (!response.ok) {
+                    const error = new Error(`Request failed with status ${response.status}`);
+                    error.status = response.status;
+                    throw error;
+                }
+                return response.json().catch(() => ({}));
+            })
+            .then(data => {
+                if (data && Object.prototype.hasOwnProperty.call(data, 'success') && data.success === false) {
+                    const error = new Error(data.message || 'Bulk action failed.');
+                    error.data = data;
+                    throw error;
+                }
+                if (typeof onSuccess === 'function') {
+                    onSuccess(data || {});
+                } else {
+                    handleBulkActionResponse(data || {});
+                }
+            })
+            .catch(error => {
+                console.error('Bulk action error:', error);
+                if (typeof onError === 'function') {
+                    onError(error);
+                } else {
+                    alert(error.message || 'Bulk action failed. Please try again.');
+                    form.submit();
+                }
+            });
+    }
 
     checkboxes.forEach(checkbox => {
         checkbox.addEventListener('change', updateSelectionUI);
@@ -865,27 +1055,114 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     window.deleteSelected = function() {
-        const selected = document.querySelectorAll('.book-checkbox:checked');
-        if (selected.length === 0) return;
-        
-        if (confirm(`Are you sure you want to delete ${selected.length} book(s) from your library?`)) {
-            const form = document.getElementById('bulk-delete-form');
-            
-            // Clear existing inputs
-            form.querySelectorAll('input[name="book_ids"]').forEach(input => input.remove());
-            
-            // Add selected book IDs
-            selected.forEach(checkbox => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'book_ids';
-                input.value = checkbox.value;
-                form.appendChild(input);
-            });
-            
-            form.submit();
+        if (!bulkDeleteForm) return;
+        const selectedIds = populateBulkForm(bulkDeleteForm, 'bulk-delete-ids');
+        if (selectedIds.length === 0) {
+            alert('Select at least one book to delete.');
+            return;
+        }
+
+        if (confirm(`Are you sure you want to delete ${selectedIds.length} book(s) from your library?`)) {
+            bulkDeleteForm.submit();
         }
     };
+
+    function handleStatusChange(statusValue) {
+        if (!statusValue || !bulkStatusForm) return;
+        const selectedIds = populateBulkForm(bulkStatusForm, 'bulk-status-ids');
+        if (selectedIds.length === 0) {
+            alert('Select at least one book to change status.');
+            return;
+        }
+        updateHiddenInput(bulkStatusForm, 'reading_status', statusValue);
+        if (bulkStatusMenu && bulkStatusMenu.previousElementSibling) {
+            const dropdown = bootstrap.Dropdown.getOrCreateInstance(bulkStatusMenu.previousElementSibling);
+            dropdown.hide();
+        }
+        submitBulkAction(bulkStatusForm, {
+            onSuccess: handleBulkActionResponse,
+        });
+    }
+
+    function handleLocationChange(locationValue) {
+        if (!bulkLocationForm) return;
+        const selectedIds = populateBulkForm(bulkLocationForm, 'bulk-location-ids');
+        if (selectedIds.length === 0) {
+            alert('Select at least one book to change location.');
+            return;
+        }
+        updateHiddenInput(bulkLocationForm, 'location_id', locationValue);
+        if (bulkLocationMenu && bulkLocationMenu.previousElementSibling) {
+            const dropdown = bootstrap.Dropdown.getOrCreateInstance(bulkLocationMenu.previousElementSibling);
+            dropdown.hide();
+        }
+        submitBulkAction(bulkLocationForm, {
+            onSuccess: handleBulkActionResponse,
+        });
+    }
+
+    function openBulkCategoryModal() {
+        if (!bulkCategoryForm) return;
+        const selectedIds = populateBulkForm(bulkCategoryForm, 'bulk-category-ids');
+        if (selectedIds.length === 0) {
+            alert('Select at least one book to change categories.');
+            return;
+        }
+
+        const categorySelect = document.getElementById('bulk-category-select');
+        if (categorySelect) {
+            Array.from(categorySelect.options).forEach(option => option.selected = false);
+        }
+        const additionalField = document.getElementById('bulk-additional-categories');
+        if (additionalField) {
+            additionalField.value = '';
+        }
+        const clearCheckbox = document.getElementById('bulk-clear-categories');
+        if (clearCheckbox) {
+            clearCheckbox.checked = false;
+        }
+
+        if (bulkCategoryModalElement) {
+            const modal = bootstrap.Modal.getOrCreateInstance(bulkCategoryModalElement);
+            modal.show();
+        }
+    }
+
+    if (bulkStatusMenu) {
+        bulkStatusMenu.querySelectorAll('button[data-status]').forEach(item => {
+            item.addEventListener('click', () => handleStatusChange(item.dataset.status));
+        });
+    }
+
+    if (bulkLocationMenu) {
+        bulkLocationMenu.querySelectorAll('button[data-location]').forEach(item => {
+            item.addEventListener('click', () => handleLocationChange(item.dataset.location));
+        });
+    }
+
+    if (bulkCategoryButton) {
+        bulkCategoryButton.addEventListener('click', openBulkCategoryModal);
+    }
+
+    if (bulkCategoryForm) {
+        bulkCategoryForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            const selectedIds = populateBulkForm(bulkCategoryForm, 'bulk-category-ids');
+            if (selectedIds.length === 0) {
+                alert('Select at least one book to change categories.');
+                return;
+            }
+            submitBulkAction(bulkCategoryForm, {
+                onSuccess: data => {
+                    if (bulkCategoryModalElement) {
+                        const modal = bootstrap.Modal.getOrCreateInstance(bulkCategoryModalElement);
+                        modal.hide();
+                    }
+                    handleBulkActionResponse(data);
+                }
+            });
+        });
+    }
 
     // Fallback delegated click handler so clicks on cards navigate even if inline handlers fail
     const booksContainer = document.getElementById('books-container');
