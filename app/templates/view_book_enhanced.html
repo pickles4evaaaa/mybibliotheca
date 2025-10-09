@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% from 'macros/contributors.html' import display_authors, display_narrators, display_editors %}
 {% from 'macros/categories.html' import display_categories, display_category_badges %}
+{% set author_names = book.authors | map(attribute='name') | list if book.authors else [] %}
+{% set primary_author_name = author_names[0] if author_names else '' %}
 {% block title %}{{ book.title }} - MyBibliotheca{% endblock %}
 
 {% block content %}
@@ -90,6 +92,9 @@
                             </button>
                             <button type="button" class="btn btn-outline-secondary action-icon-btn" id="coverEditBtn" title="Edit Cover">
                                 <i class="bi bi-image"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary action-icon-btn" id="metadataSearchBtn" title="Search Metadata">
+                                <i class="bi bi-upc-scan"></i>
                             </button>
                             <form method="post" action="{{ url_for('book.delete_book', uid=book.uid) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book? This action cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
@@ -725,12 +730,15 @@
                                     <!-- Personal Notes & Review removed from main details; managed in dedicated accordion below -->
                                     
                                     <!-- Save/Cancel Buttons -->
-                                    <div class="d-flex gap-2">
+                                    <div class="d-flex gap-2 flex-wrap">
                                         <button type="submit" class="btn btn-primary">
                                             <i class="bi bi-check-lg me-1"></i>Save Changes
                                         </button>
                                         <button type="button" class="btn btn-secondary" id="cancelEdit">
                                             <i class="bi bi-x-lg me-1"></i>Cancel
+                                        </button>
+                                        <button type="button" class="btn btn-outline-danger" id="discardEditChanges">
+                                            <i class="bi bi-arrow-counterclockwise me-1"></i>Discard Changes
                                         </button>
                                     </div>
                                 </form>
@@ -1624,6 +1632,63 @@ const GENRE_TERM = '{{ get_genre_term() }}';
 const GENRE_TERM_PLURAL = '{{ get_genre_term_plural() }}';
 const GENRE_TERM_LOWER = '{{ get_genre_term_lower() }}';
 const GENRE_TERM_PLURAL_LOWER = '{{ get_genre_term_plural_lower() }}';
+const BOOK_METADATA_CONTEXT = {{ {
+    'uid': book.uid,
+    'isbn13': book.isbn13,
+    'isbn10': book.isbn10,
+    'title': book.title,
+    'subtitle': book.subtitle,
+    'authors': author_names,
+    'primary_author': primary_author_name
+} | tojson | safe }};
+const METADATA_ENDPOINTS = {
+    fetchByIsbn: "{{ url_for('book.fetch_book', isbn='__ISBN__PLACEHOLDER__') }}",
+    search: "{{ url_for('book.search_book_details') }}"
+};
+const CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || '{{ csrf_token() }}';
+const METADATA_ISBN_TIMEOUT_MS = 9000;
+const METADATA_SEARCH_TIMEOUT_MS = 12000;
+const DEFAULT_FETCH_TIMEOUT_MS = 12000;
+
+function fetchWithTimeout(resource, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const { signal: externalSignal } = options || {};
+    let didTimeout = false;
+    const abortExternal = () => controller.abort();
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            controller.abort();
+        } else {
+            externalSignal.addEventListener('abort', abortExternal);
+        }
+    }
+    const timer = window.setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+    }, timeoutMs);
+    const finalOptions = { ...options, signal: controller.signal };
+    const cleanup = () => {
+        clearTimeout(timer);
+        if (externalSignal) {
+            externalSignal.removeEventListener('abort', abortExternal);
+        }
+    };
+    return fetch(resource, finalOptions).then(
+        response => {
+            cleanup();
+            return response;
+        },
+        error => {
+            cleanup();
+            if (didTimeout) {
+                const timeoutError = new Error('timeout');
+                timeoutError.name = 'TimeoutError';
+                throw timeoutError;
+            }
+            throw error;
+        }
+    );
+}
 
 document.addEventListener('DOMContentLoaded', function() {
     // Edit mode toggle functionality for main card
@@ -1631,6 +1696,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const viewMode = document.querySelector('.view-mode');
     const editMode = document.querySelector('.edit-mode');
     const cancelBtn = document.getElementById('cancelEdit');
+    const discardBtn = document.getElementById('discardEditChanges');
     
     // Edit mode toggle functionality for all sections
     const basicInfoViewMode = document.querySelector('.basic-info-view-mode');
@@ -1813,6 +1879,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 editToggle.innerHTML = '<i class="bi bi-pencil" id="edit-icon"></i>';
                 editToggle.title = 'Edit Book Details';
+            });
+        }
+
+        if (discardBtn) {
+            discardBtn.addEventListener('click', function() {
+                const confirmation = window.confirm('Discard all unsaved changes and reload book details?');
+                if (!confirmation) {
+                    return;
+                }
+                // Ensure edit mode is closed immediately for better UX
+                if (cancelBtn) {
+                    cancelBtn.click();
+                }
+                window.location.reload();
             });
         }
     }
@@ -2007,6 +2087,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Cover editing functionality
     initializeCoverEditing();
+    initializeMetadataSearch();
     
     // Initialize autocomplete functionality
     initializeAutocomplete();
@@ -2281,6 +2362,673 @@ function applyCoverUrl(coverUrl) {
             currentCover.disabled = false;
         }
     });
+}
+
+let metadataSearchResults = [];
+let metadataModalInstance = null;
+
+function initializeMetadataSearch() {
+    const metadataBtn = document.getElementById('metadataSearchBtn');
+    if (!metadataBtn) {
+        return;
+    }
+    metadataBtn.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openMetadataSearchModal();
+    });
+}
+
+function openMetadataSearchModal() {
+    const existingModal = document.getElementById('metadataSearchModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    const modalHTML = `
+        <div class="modal fade" id="metadataSearchModal" tabindex="-1" aria-labelledby="metadataSearchModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="metadataSearchModalLabel">
+                            <i class="bi bi-upc-scan me-2"></i>Search Book Metadata
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="metadataSearchStatus" class="alert alert-info d-flex align-items-center" role="alert">
+                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            Searching for the best match...
+                        </div>
+                        <div id="metadataResultsContainer" class="mt-3"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    const modalEl = document.getElementById('metadataSearchModal');
+    metadataModalInstance = new bootstrap.Modal(modalEl);
+    modalEl.addEventListener('hidden.bs.modal', function() {
+        metadataModalInstance = null;
+        this.remove();
+    });
+    metadataModalInstance.show();
+    runMetadataSearch(modalEl);
+}
+
+async function runMetadataSearch(modalEl) {
+    const statusEl = modalEl.querySelector('#metadataSearchStatus');
+    const resultsContainer = modalEl.querySelector('#metadataResultsContainer');
+    if (statusEl) {
+        statusEl.className = 'alert alert-info d-flex align-items-center';
+        statusEl.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Searching for the best match...';
+    }
+    if (resultsContainer) {
+        resultsContainer.innerHTML = '';
+    }
+
+    metadataSearchResults = [];
+    const aggregated = [];
+    const seenKeys = new Set();
+    const timedOutProviderLabels = new Set();
+    const pushResult = (normalized) => {
+        if (!normalized) {
+            return;
+        }
+        const keyBasis = normalized.isbn13 || normalized.isbn10 || `${(normalized.title || '').toLowerCase()}|${(normalized.authors || []).join(',').toLowerCase()}`;
+        const key = keyBasis || Math.random().toString(36).slice(2);
+        if (seenKeys.has(key)) {
+            return;
+        }
+        seenKeys.add(key);
+        aggregated.push(normalized);
+    };
+
+    const isbnCandidates = [];
+    if (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.isbn13) {
+        isbnCandidates.push(String(BOOK_METADATA_CONTEXT.isbn13));
+    }
+    if (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.isbn10) {
+        const isbn10 = String(BOOK_METADATA_CONTEXT.isbn10);
+        if (!isbnCandidates.includes(isbn10)) {
+            isbnCandidates.push(isbn10);
+        }
+    }
+
+    let isbnMatched = false;
+    for (const candidate of isbnCandidates) {
+        const clean = (candidate || '').trim();
+        if (!clean) {
+            continue;
+        }
+        try {
+            const endpoint = METADATA_ENDPOINTS.fetchByIsbn.replace('__ISBN__PLACEHOLDER__', encodeURIComponent(clean));
+            const response = await fetchWithTimeout(endpoint, { headers: { 'Accept': 'application/json' } }, METADATA_ISBN_TIMEOUT_MS);
+            if (response.ok) {
+                const data = await response.json();
+                const normalized = normalizeMetadataResult(data, 'ISBN Lookup');
+                if (normalized) {
+                    normalized._priority = 0;
+                    normalized._viaIsbn = true;
+                    pushResult(normalized);
+                    isbnMatched = true;
+                    break;
+                }
+            }
+        } catch (error) {
+            if (error && (error.name === 'TimeoutError' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout')))) {
+                timedOutProviderLabels.add('ISBN lookup');
+                console.warn('[MetadataSearch] ISBN lookup timed out', error);
+            } else if (error && error.name === 'AbortError') {
+                timedOutProviderLabels.add('ISBN lookup');
+                console.warn('[MetadataSearch] ISBN lookup aborted', error);
+            } else {
+                console.warn('[MetadataSearch] ISBN lookup failed', error);
+            }
+        }
+    }
+
+    const title = (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title ? BOOK_METADATA_CONTEXT.title : '').trim();
+    const authorParts = (BOOK_METADATA_CONTEXT && Array.isArray(BOOK_METADATA_CONTEXT.authors)) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
+    if (!authorParts.length && BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.primary_author) {
+        authorParts.push(BOOK_METADATA_CONTEXT.primary_author);
+    }
+    const author = authorParts.join(', ').trim();
+
+    if (title || author) {
+        try {
+            const payload = {};
+            if (title) {
+                payload.title = title;
+            }
+            if (author) {
+                payload.author = author;
+            }
+            const response = await fetch(METADATA_ENDPOINTS.search, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRFToken': CSRF_TOKEN
+                },
+                body: JSON.stringify(payload)
+            }, METADATA_SEARCH_TIMEOUT_MS);
+            if (response.ok) {
+                const data = await response.json();
+                if (Array.isArray(data.timed_out_providers) && data.timed_out_providers.length) {
+                    data.timed_out_providers.forEach(provider => {
+                        if (typeof provider === 'string' && provider.trim()) {
+                            const normalizedLabel = provider.trim().toLowerCase();
+                            const labelMap = {
+                                openlibrary: 'OpenLibrary',
+                                google: 'Google Books',
+                                googlebooks: 'Google Books'
+                            };
+                            timedOutProviderLabels.add(labelMap[normalizedLabel] || provider.trim());
+                        }
+                    });
+                }
+                if (data && Array.isArray(data.results)) {
+                    data.results.forEach(raw => {
+                        const normalized = normalizeMetadataResult(raw, (raw && raw.source) || 'Online Search');
+                        if (normalized) {
+                            normalized._priority = normalized._viaIsbn ? 0 : (isbnMatched ? 1 : 0);
+                            pushResult(normalized);
+                        }
+                    });
+                } else if (statusEl) {
+                    statusEl.className = 'alert alert-warning';
+                    statusEl.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>No additional matches were found.';
+                }
+            }
+        } catch (error) {
+            if (error && (error.name === 'TimeoutError' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout')))) {
+                timedOutProviderLabels.add('Title/author search');
+                console.warn('[MetadataSearch] Title/author search timed out', error);
+            } else if (error && error.name === 'AbortError') {
+                timedOutProviderLabels.add('Title/author search');
+                console.warn('[MetadataSearch] Title/author search aborted', error);
+            } else {
+                console.warn('[MetadataSearch] Title/author search failed', error);
+            }
+        }
+    }
+
+    if (!aggregated.length) {
+        if (statusEl) {
+            const providers = Array.from(timedOutProviderLabels);
+            if (providers.length) {
+                statusEl.className = 'alert alert-warning d-flex align-items-start';
+                statusEl.innerHTML = `<i class="bi bi-hourglass-split me-2 mt-1"></i><div>Metadata search timed out while contacting: ${providers.join(', ')}. Try again in a moment or verify your connection.</div>`;
+            } else {
+                statusEl.className = 'alert alert-warning d-flex align-items-center';
+                statusEl.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>No metadata matches found. Try adding an ISBN or refining the book title and author.';
+            }
+        }
+        return;
+    }
+
+    aggregated.sort((a, b) => (a._priority ?? 1) - (b._priority ?? 1));
+    metadataSearchResults = aggregated;
+
+    if (statusEl) {
+        const providers = Array.from(timedOutProviderLabels);
+        const baseMessage = `Found ${aggregated.length} option${aggregated.length === 1 ? '' : 's'}. Select one to apply.`;
+        if (providers.length) {
+            statusEl.className = 'alert alert-success';
+            statusEl.innerHTML = `
+                <div class="d-flex align-items-start">
+                    <i class="bi bi-check-circle me-2 mt-1"></i>
+                    <div>
+                        <div>${baseMessage}</div>
+                        <div class="small text-muted mt-1">Some providers timed out: ${providers.join(', ')}. Results may be partial.</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            statusEl.className = 'alert alert-success d-flex align-items-center';
+            statusEl.innerHTML = `<i class="bi bi-check-circle me-2"></i>${baseMessage}`;
+        }
+    }
+    if (resultsContainer) {
+        renderMetadataResults(metadataSearchResults, resultsContainer);
+    }
+}
+
+function normalizeMetadataResult(raw, fallbackSource) {
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+
+    const authors = [];
+    if (Array.isArray(raw.authors_list)) {
+        raw.authors_list.forEach(name => {
+            if (name) authors.push(String(name).trim());
+        });
+    } else if (Array.isArray(raw.authors)) {
+        raw.authors.forEach(name => {
+            if (name) authors.push(String(name).trim());
+        });
+    } else if (raw.authors && typeof raw.authors === 'string') {
+        raw.authors.split(',').forEach(name => {
+            if (name) authors.push(name.trim());
+        });
+    } else if (raw.author && typeof raw.author === 'string') {
+        raw.author.split(',').forEach(name => {
+            if (name) authors.push(name.trim());
+        });
+    }
+
+    const publisher = (() => {
+        if (typeof raw.publisher === 'string') {
+            return raw.publisher;
+        }
+        if (raw.publisher && typeof raw.publisher === 'object') {
+            if (raw.publisher.name) return raw.publisher.name;
+            if (raw.publisher.title) return raw.publisher.title;
+        }
+        if (Array.isArray(raw.publishers) && raw.publishers.length) {
+            return String(raw.publishers[0]);
+        }
+        return '';
+    })();
+
+    const descriptionCandidate = raw.description || raw.summary || '';
+    const description = typeof descriptionCandidate === 'string' ? descriptionCandidate : '';
+    const cleanDescription = description.replace(/<[^>]*>/g, '');
+
+    const isbnList = Array.isArray(raw.isbn_list) ? raw.isbn_list.map(String) : [];
+    const isbn13 = raw.isbn13 || raw.isbn_13 || raw.isbn || isbnList.find(code => code && code.replace(/\D/g, '').length === 13) || '';
+    const isbn10 = raw.isbn10 || raw.isbn_10 || isbnList.find(code => code && code.replace(/\D/g, '').length === 10) || '';
+    const publishedDate = raw.published_date || raw.publication_date || raw.publication_year || raw.release_date || '';
+    const language = raw.language || raw.language_code || raw.lang || '';
+    const googleId = raw.google_books_id || raw.google_id || '';
+    const openlibraryId = raw.openlibrary_id || raw.olid || raw.open_library_id || '';
+    const asin = raw.asin || raw.amazon_id || '';
+    const averageRating = raw.average_rating ?? raw.global_average_rating ?? raw.rating ?? null;
+    const ratingCount = raw.rating_count ?? raw.ratings_count ?? raw.reviews ?? null;
+    const coverUrl = raw.cover_url || raw.cover || (raw.imageLinks && (raw.imageLinks.large || raw.imageLinks.medium || raw.imageLinks.thumbnail)) || '';
+    const categoriesCandidate = Array.isArray(raw.categories) ? raw.categories : (Array.isArray(raw.subjects) ? raw.subjects : []);
+    const seriesName = raw.series || raw.series_name || (raw.series && raw.series.title) || '';
+    const seriesOrder = raw.series_order || raw.number || raw.volume_number || '';
+    const seriesVolume = raw.series_volume || raw.volume || '';
+    const rawCategoryPaths = Array.isArray(raw.raw_category_paths)
+        ? raw.raw_category_paths.filter(Boolean).map(String)
+        : [];
+    const normalizedCategories = (Array.isArray(categoriesCandidate) ? categoriesCandidate : [])
+        .filter(Boolean)
+        .map(String);
+
+    return {
+        title: raw.title || '',
+        subtitle: raw.subtitle || '',
+        authors: authors.filter(Boolean),
+        description: cleanDescription,
+        publisher,
+        isbn13,
+        isbn10,
+        published_date: publishedDate,
+        language: typeof language === 'string' ? language : '',
+        average_rating: averageRating,
+        rating_count: ratingCount,
+        google_books_id: googleId,
+        openlibrary_id: openlibraryId,
+        asin,
+        cover_url: coverUrl,
+    categories: normalizedCategories,
+    raw_category_paths: rawCategoryPaths,
+        series: typeof seriesName === 'string' ? seriesName : '',
+        series_order: seriesOrder,
+        series_volume: seriesVolume,
+        source: raw.source || fallbackSource || 'Online Search',
+        raw
+    };
+}
+
+function renderMetadataResults(results, container) {
+    const cards = results.map((result, index) => {
+        const title = escapeHtml(result.title || 'Untitled');
+        const subtitle = escapeHtml(result.subtitle || '');
+        const authors = result.authors && result.authors.length ? escapeHtml(result.authors.join(', ')) : 'Unknown author';
+        const publisher = result.publisher ? `<span class="me-3"><strong>Publisher:</strong> ${escapeHtml(result.publisher)}</span>` : '';
+        const published = result.published_date ? `<span class="me-3"><strong>Published:</strong> ${escapeHtml(result.published_date)}</span>` : '';
+        const isbn13 = result.isbn13 ? `<span class="me-3"><strong>ISBN-13:</strong> <code>${escapeHtml(result.isbn13)}</code></span>` : '';
+        const isbn10 = result.isbn10 ? `<span class="me-3"><strong>ISBN-10:</strong> <code>${escapeHtml(result.isbn10)}</code></span>` : '';
+        const language = result.language ? `<span class="me-3"><strong>Language:</strong> ${escapeHtml(result.language)}</span>` : '';
+        const rating = result.average_rating != null ? `<span class="badge bg-warning-subtle text-warning-emphasis border"><i class="bi bi-star-fill me-1"></i>${escapeHtml(result.average_rating)}</span>` : '';
+        const ratingCount = result.rating_count != null ? `<span class="badge bg-light text-muted border"><i class="bi bi-people me-1"></i>${escapeHtml(result.rating_count)}</span>` : '';
+        const categories = (result.categories || []).slice(0, 3).map(cat => `<span class="badge bg-secondary-subtle text-secondary-emphasis me-1">${escapeHtml(cat)}</span>`).join('');
+        const description = result.description ? `<p class="small text-muted mb-0">${escapeHtml(truncateText(result.description, 260))}</p>` : '';
+        const cover = result.cover_url ? `<div class="flex-shrink-0 text-center"><img src="${escapeHtml(result.cover_url)}" alt="Cover preview" class="rounded shadow-sm" style="max-width: 120px; max-height: 180px; object-fit: cover;"><div class="small text-muted mt-2">${escapeHtml(result.source || 'Online Search')}</div></div>` : `<div class="flex-shrink-0 small text-muted text-center"><i class="bi bi-journal-text fs-3"></i><div>${escapeHtml(result.source || 'Online Search')}</div></div>`;
+
+        return `
+            <div class="card mb-3 shadow-sm metadata-result-card" data-result-index="${index}">
+                <div class="card-body">
+                    <div class="d-flex flex-column flex-lg-row gap-3 align-items-stretch">
+                        <div class="flex-grow-1">
+                            <h5 class="mb-1">${title}</h5>
+                            ${subtitle ? `<p class="text-muted mb-1">${subtitle}</p>` : ''}
+                            <p class="small text-muted mb-2">by ${authors}
+                                ${result.series ? `<span class="ms-2 badge bg-primary-subtle text-primary-emphasis">${escapeHtml(result.series)}${result.series_order ? ` #${escapeHtml(result.series_order)}` : ''}</span>` : ''}
+                            </p>
+                            <div class="small text-muted mb-2 d-flex flex-wrap align-items-center">
+                                ${publisher}
+                                ${published}
+                                ${isbn13}
+                                ${isbn10}
+                                ${language}
+                            </div>
+                            ${categories ? `<div class="mb-2">${categories}</div>` : ''}
+                            ${description}
+                            <div class="d-flex gap-2 mt-2">
+                                ${rating}
+                                ${ratingCount}
+                            </div>
+                        </div>
+                        ${cover}
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <small class="text-muted"><i class="bi bi-database me-1"></i>${escapeHtml(result.source || 'Online Search')}</small>
+                        <button type="button" class="btn btn-primary btn-sm" data-apply-result="${index}">
+                            <i class="bi bi-download me-1"></i>Apply Metadata
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = cards;
+
+    if (!container.dataset.listenerAttached) {
+        container.addEventListener('click', function(event) {
+            const applyBtn = event.target.closest('[data-apply-result]');
+            if (!applyBtn) {
+                return;
+            }
+            event.preventDefault();
+            const index = parseInt(applyBtn.getAttribute('data-apply-result'), 10);
+            if (!Number.isNaN(index)) {
+                applyMetadataResult(index);
+            }
+        });
+        container.dataset.listenerAttached = 'true';
+    }
+}
+
+function applyMetadataResult(index) {
+    const result = metadataSearchResults[index];
+    if (!result) {
+        return;
+    }
+    applyMetadataToForms(result);
+    if (metadataModalInstance) {
+        metadataModalInstance.hide();
+    }
+    if (result.cover_url) {
+        window.metadataCoverCandidate = result.cover_url;
+    }
+    const noticeMessage = result.cover_url
+        ? 'Metadata applied to the edit form. Review and save changes to keep them. Need a new cover? Re-run the cover search to apply the suggested artwork.'
+        : 'Metadata applied to the edit form. Review and save changes to keep them.';
+    showMetadataNotice(noticeMessage, 'success');
+}
+
+function applyMetadataToForms(result) {
+    const editMode = document.querySelector('.edit-mode');
+    const editToggle = document.getElementById('editToggle');
+    const isEditActive = editMode && editMode.style.display !== 'none';
+    if (editToggle && !isEditActive) {
+        editToggle.click();
+    }
+
+    const setValue = (id, value) => {
+        if (value === undefined || value === null || value === '') {
+            return;
+        }
+        const input = document.getElementById(id);
+        if (!input) {
+            return;
+        }
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    setValue('edit-title', result.title || (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title) || '');
+    setValue('edit-subtitle', result.subtitle || '');
+    if (result.series) setValue('edit-series', result.series);
+    const inlineSeriesIdInput = document.getElementById('inline_series_id');
+    if (inlineSeriesIdInput) {
+        inlineSeriesIdInput.value = '';
+    }
+    if (result.series_volume) setValue('edit-series-volume', result.series_volume);
+    if (result.series_order) setValue('edit-series-order', result.series_order);
+    setValue('publisher', result.publisher || '');
+    setValue('isbn13', result.isbn13 || '');
+    setValue('isbn10', result.isbn10 || '');
+    setValue('published_date', result.published_date || '');
+    if (result.language) {
+        setSelectValue('language', result.language);
+    }
+    setValue('asin', result.asin || '');
+    setValue('google_books_id', result.google_books_id || '');
+    setValue('openlibrary_id', result.openlibrary_id || '');
+    if (result.average_rating !== undefined && result.average_rating !== null) {
+        setValue('average_rating', result.average_rating);
+    }
+    if (result.rating_count !== undefined && result.rating_count !== null) {
+        setValue('rating_count', result.rating_count);
+    }
+
+    const descriptionEl = document.getElementById('edit-description');
+    if (descriptionEl && result.description) {
+        descriptionEl.value = result.description;
+        descriptionEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    if (Array.isArray(result.authors) && result.authors.length) {
+        replaceContributors('authored', result.authors);
+    }
+
+    const rawCategoryPaths = Array.isArray(result.raw_category_paths) ? result.raw_category_paths.filter(Boolean) : [];
+    let categoryCandidates = Array.isArray(result.categories) ? result.categories.filter(Boolean) : [];
+    if (rawCategoryPaths.length && (categoryCandidates.length <= 1 || rawCategoryPaths.length > categoryCandidates.length)) {
+        categoryCandidates = rawCategoryPaths;
+    }
+    if (categoryCandidates.length) {
+        replaceCategories(categoryCandidates, rawCategoryPaths.length ? rawCategoryPaths : categoryCandidates);
+    }
+
+    if (window.updateContributorHiddenInputs) {
+        window.updateContributorHiddenInputs();
+    }
+    if (window.updateCategoryHiddenInputs) {
+        window.updateCategoryHiddenInputs();
+    }
+}
+
+function setSelectValue(selectId, value) {
+    const select = document.getElementById(selectId);
+    if (!select || value === undefined || value === null) {
+        return;
+    }
+    const languageMap = {
+        'english': 'en', 'eng': 'en', 'en-us': 'en', 'en_gb': 'en',
+        'spanish': 'es', 'spa': 'es',
+        'french': 'fr', 'fre': 'fr', 'fra': 'fr',
+        'german': 'de', 'ger': 'de', 'deu': 'de',
+        'italian': 'it', 'ita': 'it',
+        'portuguese': 'pt', 'por': 'pt',
+        'russian': 'ru', 'rus': 'ru',
+        'japanese': 'ja', 'jpn': 'ja',
+        'korean': 'ko', 'kor': 'ko',
+        'chinese': 'zh', 'chi': 'zh', 'zho': 'zh',
+        'arabic': 'ar', 'ara': 'ar',
+        'hindi': 'hi', 'hin': 'hi'
+    };
+    const normalized = String(value).trim();
+    const mapped = languageMap[normalized.toLowerCase()] || normalized;
+    let option = Array.from(select.options).find(opt => opt.value === mapped);
+    if (!option) {
+        option = new Option(mapped.toUpperCase(), mapped, true, true);
+        select.appendChild(option);
+    }
+    select.value = mapped;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function replaceContributors(type, names) {
+    const section = document.querySelector(`.contributor-section[data-type="${type}"]`);
+    if (!section) {
+        return;
+    }
+    const display = section.querySelector('.contributors-display');
+    if (!display) {
+        return;
+    }
+    display.innerHTML = '';
+    names.forEach(name => {
+        const trimmed = (name || '').trim();
+        if (!trimmed) {
+            return;
+        }
+        const tag = document.createElement('div');
+        tag.className = 'contributor-tag';
+        tag.dataset.id = '';
+        tag.dataset.name = trimmed;
+        tag.dataset.new = 'true';
+        tag.innerHTML = `${escapeHtml(trimmed)}<span class="remove" onclick="removeContributor(this)">×</span>`;
+        display.appendChild(tag);
+    });
+}
+
+function replaceCategories(categories, rawCategoryCandidates) {
+    const section = document.querySelector('.category-section[data-type="category"]');
+    if (!section || !Array.isArray(categories)) {
+        return;
+    }
+
+    const display = section.querySelector('.categories-display');
+    if (!display) {
+        return;
+    }
+
+    const rawCandidates = Array.isArray(rawCategoryCandidates) ? rawCategoryCandidates : categories;
+    if (!window.rawCategoryPaths || !(window.rawCategoryPaths instanceof Set)) {
+        window.rawCategoryPaths = new Set();
+    } else {
+        window.rawCategoryPaths.clear();
+    }
+
+    rawCandidates.forEach(value => {
+        const trimmed = (value || '').trim();
+        if (trimmed) {
+            window.rawCategoryPaths.add(trimmed);
+        }
+    });
+
+    display.innerHTML = '';
+    const seen = new Set();
+
+    const addCategoryTag = (name) => {
+        const trimmed = (name || '').trim();
+        if (!trimmed) {
+            return;
+        }
+        const normalized = trimmed.toLowerCase();
+        if (seen.has(normalized)) {
+            return;
+        }
+        seen.add(normalized);
+        const tag = document.createElement('div');
+        tag.className = 'category-tag';
+        tag.dataset.id = '';
+        tag.dataset.name = trimmed;
+        tag.dataset.new = 'true';
+        tag.innerHTML = `${escapeHtml(trimmed)}<span class="remove" onclick="removeCategory(this)">×</span>`;
+        display.appendChild(tag);
+    };
+
+    categories.forEach(value => {
+        const trimmed = (value || '').trim();
+        if (!trimmed) {
+            return;
+        }
+        const segments = splitCategoryPath(trimmed);
+        if (segments.length > 1) {
+            segments.forEach(addCategoryTag);
+        } else {
+            addCategoryTag(trimmed);
+        }
+    });
+}
+
+function splitCategoryPath(value) {
+    if (typeof value !== 'string') {
+        return [];
+    }
+    return value
+        .split(/[>\/]/)
+        .map(part => part.trim())
+        .filter(Boolean);
+}
+
+function showMetadataNotice(message, variant = 'info') {
+    const container = document.querySelector('.container-fluid');
+    if (!container) {
+        alert(message);
+        return;
+    }
+    let alertEl = document.getElementById('metadataApplyAlert');
+    if (alertEl) {
+        alertEl.remove();
+    }
+    alertEl = document.createElement('div');
+    alertEl.id = 'metadataApplyAlert';
+    alertEl.className = `alert alert-${variant} alert-dismissible fade show`;
+    alertEl.role = 'alert';
+    alertEl.innerHTML = `
+        ${escapeHtml(message)}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    container.insertAdjacentElement('afterbegin', alertEl);
+    setTimeout(() => {
+        try {
+            const bsAlert = new bootstrap.Alert(alertEl);
+            bsAlert.close();
+        } catch (error) {
+            alertEl.remove();
+        }
+    }, 6000);
+}
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function truncateText(text, limit = 220) {
+    if (!text) {
+        return '';
+    }
+    const trimmed = text.trim();
+    if (trimmed.length <= limit) {
+        return trimmed;
+    }
+    return `${trimmed.substring(0, limit - 1)}…`;
 }
 
 function showCoverSelectionModal(results) {
@@ -3228,17 +3976,16 @@ function initializeCategories() {
     }
 
     function updateCategoryHiddenInputs() {
-        const hiddenContainer = document.getElementById('categoryInputs');
+        let hiddenContainer = document.getElementById('categoryInputs');
         if (!hiddenContainer) {
-            // Create hidden container if it doesn't exist
             const form = document.getElementById('book-edit-form');
-            if (form) {
-                const container = document.createElement('div');
-                container.id = 'categoryInputs';
-                container.style.display = 'none';
-                form.appendChild(container);
+            if (!form) {
+                return;
             }
-            return;
+            hiddenContainer = document.createElement('div');
+            hiddenContainer.id = 'categoryInputs';
+            hiddenContainer.style.display = 'none';
+            form.appendChild(hiddenContainer);
         }
         
         hiddenContainer.innerHTML = '';
@@ -3271,6 +4018,18 @@ function initializeCategories() {
             hiddenContainer.appendChild(nameInput);
             hiddenContainer.appendChild(isNewInput);
         });
+
+        if (window.rawCategoryPaths && typeof window.rawCategoryPaths.forEach === 'function' && window.rawCategoryPaths.size > 0) {
+            try {
+                const rawInput = document.createElement('input');
+                rawInput.type = 'hidden';
+                rawInput.name = 'raw_categories';
+                rawInput.value = JSON.stringify(Array.from(window.rawCategoryPaths));
+                hiddenContainer.appendChild(rawInput);
+            } catch (error) {
+                console.warn('Failed to serialize raw category paths:', error);
+            }
+        }
     }
 
     // Make updateCategoryHiddenInputs available globally

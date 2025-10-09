@@ -1196,19 +1196,135 @@ def search_book_details():
                     doc_title = doc.get('title','')
                     doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name','')]
                     doc_isbn = doc.get('isbn', []) or []
-                    best_isbn = next((i for i in doc_isbn if len(i)==13), (doc_isbn[0] if doc_isbn else None))
+                    edition_keys = doc.get('edition_key') if isinstance(doc.get('edition_key'), list) else ([doc.get('edition_key')] if doc.get('edition_key') else [])
+                    if (not edition_keys) and doc.get('key'):
+                        work_path = doc.get('key')
+                        try:
+                            editions_resp = _req.get(f"https://openlibrary.org{work_path}/editions.json?limit=3", timeout=5)
+                            editions_resp.raise_for_status()
+                            editions_data = editions_resp.json() or {}
+                            entries = editions_data.get('entries') if isinstance(editions_data, dict) else None
+                            if isinstance(entries, list):
+                                derived_keys = []
+                                for entry in entries:
+                                    key_val = entry.get('key') if isinstance(entry, dict) else None
+                                    if key_val and key_val.startswith('/books/'):
+                                        derived_keys.append(key_val.replace('/books/', ''))
+                                if derived_keys:
+                                    edition_keys = derived_keys
+                                    # Merge ISBNs directly from entries if present
+                                    for entry in entries:
+                                        if not isinstance(entry, dict):
+                                            continue
+                                        for seq_key in ('isbn_13', 'isbn13', 'isbn', 'isbn_10'):
+                                            seq_val = entry.get(seq_key)
+                                            if isinstance(seq_val, list):
+                                                for candidate in seq_val:
+                                                    if candidate and candidate not in doc_isbn:
+                                                        doc_isbn.append(str(candidate))
+                                            elif isinstance(seq_val, str) and seq_val and seq_val not in doc_isbn:
+                                                doc_isbn.append(seq_val)
+                        except Exception as editions_err:
+                            current_app.logger.debug(f"[SEARCH][OpenLibraryWork] Failed editions fetch {work_path}: {editions_err}")
+                    # Fetch edition metadata if ISBN missing from search index
+                    edition_payload = {}
+                    if (not doc_isbn or not any(len(str(x)) == 13 for x in doc_isbn)) and edition_keys:
+                        for ed_key in edition_keys:
+                            if not ed_key:
+                                continue
+                            try:
+                                ed_resp = _req.get(f"https://openlibrary.org/books/{ed_key}.json", timeout=5)
+                                ed_resp.raise_for_status()
+                                edition_payload = ed_resp.json() or {}
+                            except Exception as ed_err:
+                                current_app.logger.debug(f"[SEARCH][OpenLibraryEdition] Failed {ed_key}: {ed_err}")
+                                edition_payload = {}
+                            if edition_payload:
+                                # Pull ISBNs and other fields from edition payload
+                                ed_isbn13 = edition_payload.get('isbn_13') or []
+                                ed_isbn10 = edition_payload.get('isbn_10') or []
+                                merged_isbns = []
+                                for seq in (doc_isbn, ed_isbn13, ed_isbn10):
+                                    for candidate in seq if isinstance(seq, list) else []:
+                                        if candidate and candidate not in merged_isbns:
+                                            merged_isbns.append(str(candidate))
+                                doc_isbn = merged_isbns
+                                break
+                    best_isbn = next((i for i in doc_isbn if isinstance(i, str) and len(i)==13), (doc_isbn[0] if doc_isbn else None))
+                    cleaned_isbn_list = []
+                    for candidate in doc_isbn:
+                        if not candidate:
+                            continue
+                        digits = re.sub(r"[^0-9Xx]", "", str(candidate))
+                        if digits and digits not in cleaned_isbn_list:
+                            cleaned_isbn_list.append(digits)
+                    isbn13_candidate = next((digits for digits in cleaned_isbn_list if len(digits) == 13), None)
+                    isbn10_candidate = next((digits for digits in cleaned_isbn_list if len(digits) == 10), None)
+                    subjects_facet = doc.get('subject_facet') if isinstance(doc.get('subject_facet'), list) else []
+                    subjects = doc.get('subject') if isinstance(doc.get('subject'), list) else []
+                    combined_subjects = [s for s in (subjects_facet or subjects) if isinstance(s, str)]
+                    raw_category_paths = [s for s in (subjects if subjects else subjects_facet) if isinstance(s, str)]
+                    ol_description = doc.get('first_sentence')
+                    if isinstance(ol_description, dict):
+                        ol_description = ol_description.get('value')
+                    if isinstance(ol_description, list):
+                        ol_description = ' '.join([str(item) for item in ol_description])
+                    if not ol_description and isinstance(edition_payload.get('description'), dict):
+                        ol_description = edition_payload['description'].get('value')
+                    elif not ol_description and isinstance(edition_payload.get('description'), str):
+                        ol_description = edition_payload.get('description')
+                    # fallback metadata from edition
+                    ed_publishers = []
+                    if not doc.get('publisher'):
+                        publishers_seq = edition_payload.get('publishers') if isinstance(edition_payload, dict) else None
+                        if isinstance(publishers_seq, list):
+                            ed_publishers = [str(p) for p in publishers_seq if p]
+                    published_date = str(doc.get('first_publish_year','')) if doc.get('first_publish_year') else ''
+                    if not published_date:
+                        published_date = edition_payload.get('publish_date') or ''
+                    language_code = None
+                    if doc.get('language'):
+                        language_code = (doc.get('language') or ['en'])[0]
+                    elif isinstance(edition_payload.get('languages'), list) and edition_payload['languages']:
+                        lang_entry = edition_payload['languages'][0]
+                        language_code = lang_entry.get('key', '').split('/')[-1] if isinstance(lang_entry, dict) else str(lang_entry)
                     res = {
                         'title': doc_title,
+                        'subtitle': doc.get('subtitle') or '',
                         'authors': ', '.join(doc_authors) if doc_authors else '',
                         'authors_list': doc_authors,
                         'isbn': best_isbn,
-                        'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher',''),
-                        'published_date': str(doc.get('first_publish_year','')) if doc.get('first_publish_year') else '',
+                        'isbn_list': cleaned_isbn_list or doc_isbn,
+                        'isbn13': isbn13_candidate,
+                        'isbn10': isbn10_candidate,
+                        'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) and doc.get('publisher') else (', '.join(ed_publishers) if ed_publishers else (str(doc.get('publisher')) if isinstance(doc.get('publisher'), str) else '')),
+                        'published_date': published_date,
                         'page_count': doc.get('number_of_pages_median'),
-                        'language': (doc.get('language') or ['en'])[0],
+                        'language': language_code or (doc.get('language') or ['en'])[0],
                         'openlibrary_id': doc.get('key','').replace('/works/','') if doc.get('key') else None,
+                        'cover_id': doc.get('cover_i'),
+                        'description': ol_description if isinstance(ol_description, str) else '',
+                        'categories': combined_subjects,
+                        'raw_category_paths': raw_category_paths,
                         'source': 'OpenLibrary'
                     }
+                    # Apply edition fallbacks for additional metadata when missing
+                    if edition_payload:
+                        if not res['page_count'] and edition_payload.get('number_of_pages'):
+                            res['page_count'] = edition_payload.get('number_of_pages')
+                        if (not res.get('subtitle')) and edition_payload.get('subtitle'):
+                            res['subtitle'] = edition_payload.get('subtitle')
+                        if not res['language']:
+                            res['language'] = language_code or 'en'
+                        res.setdefault('edition_key', edition_keys[0] if edition_keys else None)
+                        if not res.get('isbn13'):
+                            ed_isbn13 = edition_payload.get('isbn_13') if isinstance(edition_payload, dict) else None
+                            if isinstance(ed_isbn13, list) and ed_isbn13:
+                                res['isbn13'] = re.sub(r"[^0-9Xx]", "", str(ed_isbn13[0]))
+                        if not res.get('isbn10'):
+                            ed_isbn10 = edition_payload.get('isbn_10') if isinstance(edition_payload, dict) else None
+                            if isinstance(ed_isbn10, list) and ed_isbn10:
+                                res['isbn10'] = re.sub(r"[^0-9Xx]", "", str(ed_isbn10[0]))
                     # Cover selection (non-blocking catch)
                     try:
                         from app.utils.book_utils import get_best_cover_for_book
@@ -1241,12 +1357,15 @@ def search_book_details():
                     gb_authors = info.get('authors', []) or []
                     identifiers = info.get('industryIdentifiers', []) or []
                     gb_isbn = None
+                    isbn_candidates = []
                     for ident in identifiers:
                         t = ident.get('type')
                         if t == 'ISBN_13':
                             gb_isbn = ident.get('identifier'); break
                         if t == 'ISBN_10' and not gb_isbn:
                             gb_isbn = ident.get('identifier')
+                        if ident.get('identifier'):
+                            isbn_candidates.append(ident.get('identifier'))
                     gb_cover = None
                     try:
                         from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
@@ -1258,11 +1377,17 @@ def search_book_details():
                         'authors': ', '.join(gb_authors) if gb_authors else '',
                         'authors_list': gb_authors,
                         'isbn': gb_isbn,
+                        'isbn_list': isbn_candidates,
                         'publisher': info.get('publisher',''),
                         'published_date': info.get('publishedDate',''),
                         'description': info.get('description',''),
                         'page_count': info.get('pageCount'),
                         'language': info.get('language','en'),
+                        'average_rating': info.get('averageRating'),
+                        'rating_count': info.get('ratingsCount'),
+                        'categories': info.get('categories', []),
+                        'raw_category_paths': info.get('categories', []),
+                        'google_books_id': item.get('id'),
                         'cover_url': gb_cover,
                         'source': 'Google Books'
                     })
@@ -1271,14 +1396,35 @@ def search_book_details():
                 current_app.logger.debug(f"[SEARCH] Google Books failed: {e}")
                 return []
 
+        provider_timeout = float(current_app.config.get('BOOK_SEARCH_PROVIDER_TIMEOUT', 7.0)) if current_app else 7.0
+        timed_out_providers: list[str] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             fut_ol = ex.submit(_fetch_openlibrary)
             fut_gb = ex.submit(_fetch_google)
-            ol_results = fut_ol.result()
+            try:
+                ol_results = fut_ol.result(timeout=provider_timeout)
+            except concurrent.futures.TimeoutError:
+                timed_out_providers.append('openlibrary')
+                current_app.logger.warning(f"[SEARCH] OpenLibrary timed out after {provider_timeout:.1f}s")
+                fut_ol.cancel()
+                ol_results = []
+            except Exception as e:
+                current_app.logger.debug(f"[SEARCH] OpenLibrary exception: {e}")
+                ol_results = []
             results.extend(ol_results)
-            # Early stop if we already have many
-            gb_results = fut_gb.result() if len(results) < 8 else []
-            # Deduplicate
+            gb_results = []
+            if len(results) >= 8:
+                fut_gb.cancel()
+            else:
+                try:
+                    gb_results = fut_gb.result(timeout=provider_timeout)
+                except concurrent.futures.TimeoutError:
+                    timed_out_providers.append('google')
+                    current_app.logger.warning(f"[SEARCH] Google Books timed out after {provider_timeout:.1f}s")
+                    fut_gb.cancel()
+                except Exception as e:
+                    current_app.logger.debug(f"[SEARCH] Google Books exception: {e}")
+                    gb_results = []
             existing_keys = {(r.get('title','').lower(), r.get('authors','').lower()) for r in results}
             for r in gb_results:
                 key = (r.get('title','').lower(), r.get('authors','').lower())
@@ -1286,10 +1432,20 @@ def search_book_details():
                     results.append(r)
                     existing_keys.add(key)
 
+        def _format_provider_label(raw: str) -> str:
+            mapping = {'openlibrary': 'OpenLibrary', 'google': 'Google Books', 'googlebooks': 'Google Books'}
+            return mapping.get(raw.lower(), raw.title())
+
+        message = f"Found {len(results)} books matching your search" if results else 'No books found matching your search criteria. Try different keywords or check spelling.'
+        if results and timed_out_providers:
+            formatted = ', '.join(_format_provider_label(name) for name in timed_out_providers)
+            message += f" (partial results: {formatted} timed out)"
+
         payload = {
             'success': bool(results),
             'results': results,
-            'message': f"Found {len(results)} books matching your search" if results else 'No books found matching your search criteria. Try different keywords or check spelling.'
+            'timed_out_providers': timed_out_providers,
+            'message': message
         }
         # Store small cache entry (TTL not implemented; acceptable for session)
         _SEARCH_CACHE[cache_key] = payload

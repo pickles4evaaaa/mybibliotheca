@@ -359,6 +359,7 @@ def auto_detect_fields(headers, user_id):
         # Reading status
         'status': 'reading_status',
         'reading status': 'reading_status',
+    'read status': 'reading_status',
         'shelf': 'reading_status',
         'exclusive shelf': 'reading_status',
         
