@@ -20,6 +20,7 @@ import logging
 import json
 import os as _os_for_import_verbosity
 import requests  # Add requests import
+import time
 
 # Metadata debug flag (shared with unified metadata module)
 _META_DEBUG_FLAG = (os.getenv('METADATA_DEBUG','0').lower() in ('1','true','yes','on'))
@@ -67,6 +68,35 @@ from app.utils.safe_import_manager import (
 import_bp = Blueprint('import', __name__)
 
 UNASSIGNED_READING_LOG_TITLE = 'Unassigned Reading Logs'
+
+MAX_PROGRESS_RECENT_BOOKS = int(os.getenv('IMPORT_PROGRESS_RECENT', '25'))
+MAX_PROGRESS_ERROR_MESSAGES = int(os.getenv('IMPORT_PROGRESS_MAX_ERRORS', '200'))
+PROGRESS_EMIT_INTERVAL = float(os.getenv('IMPORT_PROGRESS_INTERVAL', '0.35'))
+
+
+def _bounded_list(existing: Optional[List[Any]], addition: Any, max_len: int) -> List[Any]:
+    items = list(existing or [])
+    if addition is None:
+        return items[-max_len:] if max_len > 0 else items
+    if isinstance(addition, list):
+        items.extend(addition)
+    else:
+        items.append(addition)
+    if max_len > 0 and len(items) > max_len:
+        items = items[-max_len:]
+    return items
+
+
+def _update_import_progress(user_id: str, task_id: str, *, updates: Optional[dict] = None,
+                             processed_book: Optional[Any] = None,
+                             error_message: Optional[dict] = None) -> bool:
+    snapshot = safe_get_import_job(user_id, task_id) or {}
+    payload = dict(updates or {})
+    if processed_book is not None:
+        payload['processed_books'] = _bounded_list(snapshot.get('processed_books'), processed_book, MAX_PROGRESS_RECENT_BOOKS)
+    if error_message is not None:
+        payload['error_messages'] = _bounded_list(snapshot.get('error_messages'), error_message, MAX_PROGRESS_ERROR_MESSAGES)
+    return safe_update_import_job(user_id, task_id, payload)
 
 
 def _sanitize_quick_add_inputs(days_raw, pages_raw, minutes_raw, user_id) -> Tuple[int, int, int, List[str]]:
@@ -1858,6 +1888,8 @@ async def process_simple_import(import_config):
         default_media_type = get_default_book_format()
 
     processed_count = success_count = error_count = skipped_count = merged_count = 0
+    last_progress_emit = time.perf_counter()
+    pending_processed_entries: List[dict] = []
     try:
         # Pre-analyze custom fields
         try:
@@ -1867,32 +1899,35 @@ async def process_simple_import(import_config):
         except Exception as ce:
             print(f"⚠️ [PROCESS_SIMPLE] Custom field analysis failed: {ce}")
 
-        # Read CSV
+        row_count = 0
+        isbn_candidates: List[str] = []
         with open(csv_file_path, 'r', encoding='utf-8') as fh:
-            rows_list = list(csv.DictReader(fh))
-        print(f"📋 [PROCESS_SIMPLE] Rows to process: {len(rows_list)}")
-
-        # Batch enrichment
-        book_metadata = {}
-        if enable_api_enrichment:
-            isbns = []
-            for idx, r in enumerate(rows_list, 1):
-                raw_isbn = r.get('ISBN13') or r.get('isbn13') or r.get('ISBN') or r.get('ISBN/UID') or r.get('isbn')
+            reader = csv.DictReader(fh)
+            for idx, scan_row in enumerate(reader, 1):
+                row_count = idx
+                if not enable_api_enrichment:
+                    continue
+                raw_isbn = scan_row.get('ISBN13') or scan_row.get('isbn13') or scan_row.get('ISBN') or scan_row.get('ISBN/UID') or scan_row.get('isbn')
                 if not raw_isbn:
                     continue
                 cleaned = normalize_goodreads_value(raw_isbn, 'isbn')
                 if cleaned and isinstance(cleaned, str) and len(cleaned) >= 10:
-                    isbns.append(cleaned)
+                    isbn_candidates.append(cleaned)
                 if _META_DEBUG_FLAG:
                     logger.debug(f"[IMPORT][ISBN_COLLECT] row={idx} raw={raw_isbn!r} cleaned={cleaned!r}")
+        print(f"📋 [PROCESS_SIMPLE] Rows to process: {row_count}")
+
+        # Batch enrichment
+        book_metadata = {}
+        if enable_api_enrichment and isbn_candidates:
             if _META_DEBUG_FLAG:
-                logger.debug(f"[IMPORT][ISBN_COLLECT] collected={len(isbns)} values={isbns}")
-            # Deduplicate while preserving order
+                logger.debug(f"[IMPORT][ISBN_COLLECT] collected={len(isbn_candidates)} values={isbn_candidates}")
             seen = set()
-            uniq = []
-            for v in isbns:
+            uniq: List[str] = []
+            for v in isbn_candidates:
                 if v not in seen:
-                    seen.add(v); uniq.append(v)
+                    seen.add(v)
+                    uniq.append(v)
             if _META_DEBUG_FLAG:
                 logger.debug(f"[IMPORT][ISBN_COLLECT] dedup_size={len(uniq)} values={uniq}")
             if uniq:
@@ -1912,47 +1947,41 @@ async def process_simple_import(import_config):
                     logger.debug(f"[IMPORT][POST_BATCH] requested={len(uniq)} fetched={len(book_metadata)} keys={list(book_metadata.keys())}")
 
         source_filename = os.path.basename(csv_file_path)
-        for row_num, row in enumerate(rows_list, 1):
-            try:
-                simplified_book = simplified_service.build_book_data_from_row(row, mappings)
-                # Allow ISBN-only rows (title may be filled after enrichment). Skip only if missing both title and ISBN.
-                if not simplified_book or (not simplified_book.title and not (simplified_book.isbn13 or simplified_book.isbn10)):
-                    processed_count += 1
-                    skipped_count += 1
-                    raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
-                    job_snapshot = safe_get_import_job(user_id, task_id) or {}
-                    pb = job_snapshot.get('processed_books', [])
-                    pb.append({'title': raw_title, 'status': 'skipped'})
-                    safe_update_import_job(user_id, task_id, {'processed_books': pb})
-                    continue
-
-                if enable_api_enrichment and book_metadata:
-                    simplified_book = merge_api_data_into_simplified_book(simplified_book, book_metadata, {})
-                    if _META_DEBUG_FLAG:
-                        logger.debug(f"[IMPORT][ROW_ENRICHED] row={row_num} isbn13={simplified_book.isbn13} isbn10={simplified_book.isbn10} title={simplified_book.title!r}")
-
-                # After enrichment, if this was an ISBN-only row and we failed to retrieve metadata (no real title), record error instead of creating placeholder book
-                isbn_key = simplified_book.isbn13 or simplified_book.isbn10
-                if isbn_key and enable_api_enrichment:
-                    # Consider presence of either ISBN form in metadata map
-                    in_meta = isbn_key in book_metadata or (simplified_book.isbn13 and simplified_book.isbn13 in book_metadata) or (simplified_book.isbn10 and simplified_book.isbn10 in book_metadata)
-                    # Failed if not in metadata OR title is still placeholder (exactly equals any isbn form)
-                    placeholder_title = not simplified_book.title or simplified_book.title.strip() == '' or simplified_book.title in {simplified_book.isbn13, simplified_book.isbn10}
-                    lookup_failed = (not in_meta) or placeholder_title
-                    # If original CSV provided no title (row mapping produced empty title) and lookup failed, treat as error
-                    if lookup_failed and (not row.get(mappings.get('title',''))):
-                        try:
-                            logger.error(f"[IMPORT][LOOKUP_FAIL] row={row_num} isbn={isbn_key} in_metadata={isbn_key in book_metadata} title_after={simplified_book.title!r}")
-                        except Exception:
-                            pass
+        with open(csv_file_path, 'r', encoding='utf-8') as fh:
+            reader = csv.DictReader(fh)
+            for row_num, row in enumerate(reader, 1):
+                try:
+                    simplified_book = simplified_service.build_book_data_from_row(row, mappings)
+                    # Allow ISBN-only rows (title may be filled after enrichment). Skip only if missing both title and ISBN.
+                    if not simplified_book or (not simplified_book.title and not (simplified_book.isbn13 or simplified_book.isbn10)):
                         processed_count += 1
-                        error_count += 1
-                        snap = safe_get_import_job(user_id, task_id) or {}
-                        pb = snap.get('processed_books', [])
-                        pb.append({'title': isbn_key, 'status': 'error'})
-                        errs = snap.get('error_messages', [])
-                        if len(errs) < 1000:
-                            errs.append({
+                        skipped_count += 1
+                        raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                        _update_import_progress(user_id, task_id, processed_book={'title': raw_title, 'status': 'skipped'})
+                        continue
+
+                    if enable_api_enrichment and book_metadata:
+                        simplified_book = merge_api_data_into_simplified_book(simplified_book, book_metadata, {})
+                        if _META_DEBUG_FLAG:
+                            logger.debug(f"[IMPORT][ROW_ENRICHED] row={row_num} isbn13={simplified_book.isbn13} isbn10={simplified_book.isbn10} title={simplified_book.title!r}")
+
+                    # After enrichment, if this was an ISBN-only row and we failed to retrieve metadata (no real title), record error instead of creating placeholder book
+                    isbn_key = simplified_book.isbn13 or simplified_book.isbn10
+                    if isbn_key and enable_api_enrichment:
+                        # Consider presence of either ISBN form in metadata map
+                        in_meta = isbn_key in book_metadata or (simplified_book.isbn13 and simplified_book.isbn13 in book_metadata) or (simplified_book.isbn10 and simplified_book.isbn10 in book_metadata)
+                        # Failed if not in metadata OR title is still placeholder (exactly equals any isbn form)
+                        placeholder_title = not simplified_book.title or simplified_book.title.strip() == '' or simplified_book.title in {simplified_book.isbn13, simplified_book.isbn10}
+                        lookup_failed = (not in_meta) or placeholder_title
+                        # If original CSV provided no title (row mapping produced empty title) and lookup failed, treat as error
+                        if lookup_failed and (not row.get(mappings.get('title', ''))):
+                            try:
+                                logger.error(f"[IMPORT][LOOKUP_FAIL] row={row_num} isbn={isbn_key} in_metadata={isbn_key in book_metadata} title_after={simplified_book.title!r}")
+                            except Exception:
+                                pass
+                            processed_count += 1
+                            error_count += 1
+                            error_payload = {
                                 'row_number': row_num,
                                 'title': isbn_key,
                                 'author': '',
@@ -1962,111 +1991,120 @@ async def process_simple_import(import_config):
                                 'error_type': 'lookup_failed',
                                 'message': f'Failed to fetch metadata for ISBN {isbn_key}',
                                 'raw_row': {k: v for k, v in row.items() if v}
-                            })
-                        progress_update = {
-                            'processed': processed_count,
-                            'success': success_count,
-                            'merged': merged_count,
-                            'errors': error_count,
-                            'skipped': skipped_count,
-                            'current_book': isbn_key,
-                            'processed_books': pb,
-                            'error_messages': errs
-                        }
-                        safe_update_import_job(user_id, task_id, progress_update)
-                        continue  # Skip creation attempt
+                            }
+                            progress_update = {
+                                'processed': processed_count,
+                                'success': success_count,
+                                'merged': merged_count,
+                                'errors': error_count,
+                                'skipped': skipped_count,
+                                'current_book': isbn_key,
+                            }
+                            _update_import_progress(
+                                user_id,
+                                task_id,
+                                updates=progress_update,
+                                processed_book={'title': isbn_key, 'status': 'error'},
+                                error_message=error_payload,
+                            )
+                            last_progress_emit = time.perf_counter()
+                            continue  # Skip creation attempt
 
-                if not simplified_book.reading_status:
-                    simplified_book.reading_status = import_config.get('default_reading_status', '')
+                    if not simplified_book.reading_status:
+                        simplified_book.reading_status = import_config.get('default_reading_status', '')
 
-                # Extract personal metadata fields from SimplifiedBook
-                personal_metadata_for_import = getattr(simplified_book, 'personal_custom_metadata', None) or {}
-                
-                # Add standard personal fields if present in SimplifiedBook
-                if simplified_book.date_started:
-                    personal_metadata_for_import['start_date'] = simplified_book.date_started
-                if simplified_book.date_read:
-                    personal_metadata_for_import['finish_date'] = simplified_book.date_read
-                
-                merged_applied = False
-                duplicate_existing_id = None
-                try:
-                    result = await simplified_service.add_book_to_user_library(
-                        book_data=simplified_book,
-                        user_id=user_id,
-                        reading_status=simplified_book.reading_status,
-                        ownership_status='owned',
-                        media_type=default_media_type,
-                        user_rating=simplified_book.user_rating,
-                        personal_notes=simplified_book.personal_notes,
-                        custom_metadata=personal_metadata_for_import
-                    )
-                except Exception as add_ex:
-                    # Detect duplicate via BookAlreadyExistsError class name
-                    if add_ex.__class__.__name__ == 'BookAlreadyExistsError':
-                        # Extract existing id if attribute present
-                        duplicate_existing_id = getattr(add_ex, 'book_id', None)
-                        try:
-                            # Merge logic: fill empty fields and append metadata
-                            from app.services.kuzu_book_service import KuzuBookService
-                            from app.services.kuzu_custom_field_service import KuzuCustomFieldService
-                            kbs = KuzuBookService(user_id=user_id)
-                            existing = await kbs.get_book_by_id(duplicate_existing_id) if duplicate_existing_id else None
-                            updates = {}
-                            # Helper for deciding emptiness
-                            def _needs(existing_val):
-                                return existing_val is None or (isinstance(existing_val, str) and existing_val.strip() == '') or existing_val == 0
-                            candidate_fields = ['subtitle','description','published_date','page_count','language','cover_url','asin','google_books_id','openlibrary_id','average_rating','rating_count','series','series_volume','series_order']
-                            for f in candidate_fields:
-                                new_val = getattr(simplified_book, f, None)
-                                if not new_val:
-                                    continue
-                                if existing and _needs(getattr(existing, f, None)):
-                                    updates[f] = new_val
-                            if updates and duplicate_existing_id:
-                                await kbs.update_book(duplicate_existing_id, updates)
-                                merged_applied = True
-                            # Merge global custom metadata
+                    # Extract personal metadata fields from SimplifiedBook
+                    personal_metadata_for_import = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+
+                    # Add standard personal fields if present in SimplifiedBook
+                    if simplified_book.date_started:
+                        personal_metadata_for_import['start_date'] = simplified_book.date_started
+                    if simplified_book.date_read:
+                        personal_metadata_for_import['finish_date'] = simplified_book.date_read
+
+                    merged_applied = False
+                    duplicate_existing_id = None
+                    try:
+                        result = await simplified_service.add_book_to_user_library(
+                            book_data=simplified_book,
+                            user_id=user_id,
+                            reading_status=simplified_book.reading_status,
+                            ownership_status='owned',
+                            media_type=default_media_type,
+                            user_rating=simplified_book.user_rating,
+                            personal_notes=simplified_book.personal_notes,
+                            custom_metadata=personal_metadata_for_import
+                        )
+                    except Exception as add_ex:
+                        # Detect duplicate via BookAlreadyExistsError class name
+                        if add_ex.__class__.__name__ == 'BookAlreadyExistsError':
+                            # Extract existing id if attribute present
+                            duplicate_existing_id = getattr(add_ex, 'book_id', None)
                             try:
-                                cfs = KuzuCustomFieldService()
-                                gmeta = simplified_book.global_custom_metadata or {}
-                                pmeta = getattr(simplified_book, 'personal_custom_metadata', None) or {}
-                                if gmeta or pmeta:
-                                    # Only include keys not already present in existing global metadata if we can fetch it
-                                    # (Service itself merges; we rely on that behavior.)
-                                    cfs.ensure_custom_fields_exist(user_id, gmeta, pmeta)
-                                    # Save combined dict so merge occurs
-                                    combined_meta = {}
-                                    combined_meta.update(gmeta)
-                                    combined_meta.update(pmeta)
-                                    if combined_meta and duplicate_existing_id:
-                                        cfs.save_custom_metadata_sync(book_id=duplicate_existing_id, user_id=user_id, custom_metadata=combined_meta)
-                                        merged_applied = True
-                            except Exception as meta_ex:
-                                print(f"⚠️ [MERGE] Custom metadata merge failed: {meta_ex}")
-                            result = True  # Treat duplicate+merge as success
-                        except Exception as merge_ex:
-                            print(f"⚠️ [MERGE] Failed merging duplicate: {merge_ex}")
-                            result = False
-                    else:
-                        # Unexpected error path
-                        raise
+                                # Merge logic: fill empty fields and append metadata
+                                from app.services.kuzu_book_service import KuzuBookService
+                                from app.services.kuzu_custom_field_service import KuzuCustomFieldService
+                                kbs = KuzuBookService(user_id=user_id)
+                                existing = await kbs.get_book_by_id(duplicate_existing_id) if duplicate_existing_id else None
+                                updates = {}
 
-                processed_count += 1
-                if result and merged_applied:
-                    merged_count += 1
-                    status_value = 'merged'
-                else:
-                    status_value = 'success' if result else 'error'
-                    if result:
-                        success_count += 1
-                if not result:
-                    error_count += 1
-                    snap = safe_get_import_job(user_id, task_id) or {}
-                    errs = snap.get('error_messages', [])
-                    if len(errs) < 1000:
+                                def _needs(existing_val):
+                                    return existing_val is None or (isinstance(existing_val, str) and existing_val.strip() == '') or existing_val == 0
+
+                                candidate_fields = ['subtitle', 'description', 'published_date', 'page_count', 'language', 'cover_url', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count', 'series', 'series_volume', 'series_order']
+                                for field_name in candidate_fields:
+                                    new_val = getattr(simplified_book, field_name, None)
+                                    if not new_val:
+                                        continue
+                                    if existing and _needs(getattr(existing, field_name, None)):
+                                        updates[field_name] = new_val
+                                if updates and duplicate_existing_id:
+                                    await kbs.update_book(duplicate_existing_id, updates)
+                                    merged_applied = True
+                                try:
+                                    cfs = KuzuCustomFieldService()
+                                    gmeta = simplified_book.global_custom_metadata or {}
+                                    pmeta = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+                                    if gmeta or pmeta:
+                                        cfs.ensure_custom_fields_exist(user_id, gmeta, pmeta)
+                                        combined_meta = {}
+                                        combined_meta.update(gmeta)
+                                        combined_meta.update(pmeta)
+                                        if combined_meta and duplicate_existing_id:
+                                            cfs.save_custom_metadata_sync(book_id=duplicate_existing_id, user_id=user_id, custom_metadata=combined_meta)
+                                            merged_applied = True
+                                except Exception as meta_ex:
+                                    print(f"⚠️ [MERGE] Custom metadata merge failed: {meta_ex}")
+                                result = True  # Treat duplicate+merge as success
+                            except Exception as merge_ex:
+                                print(f"⚠️ [MERGE] Failed merging duplicate: {merge_ex}")
+                                result = False
+                        else:
+                            # Unexpected error path
+                            raise
+
+                    processed_count += 1
+                    if result and merged_applied:
+                        merged_count += 1
+                        status_value = 'merged'
+                    else:
+                        status_value = 'success' if result else 'error'
+                        if result:
+                            success_count += 1
+                    progress_entry = {'title': simplified_book.title or 'Untitled', 'status': status_value}
+                    progress_update = {
+                        'processed': processed_count,
+                        'success': success_count,
+                        'merged': merged_count,
+                        'errors': error_count,
+                        'skipped': skipped_count,
+                        'current_book': simplified_book.title,
+                    }
+
+                    if not result:
+                        error_count += 1
                         message_txt = 'Duplicate book detected but merge failed' if duplicate_existing_id else 'Failed to add book to library (service returned no result)'
-                        errs.append({
+                        error_payload = {
                             'row_number': row_num,
                             'title': simplified_book.title or '',
                             'author': getattr(simplified_book, 'authors', [''])[0] if getattr(simplified_book, 'authors', None) else '',
@@ -2076,34 +2114,38 @@ async def process_simple_import(import_config):
                             'error_type': 'duplicate_merge_failed' if duplicate_existing_id else 'add_failed',
                             'message': message_txt,
                             'raw_row': {k: v for k, v in row.items() if v}
-                        })
-                        safe_update_import_job(user_id, task_id, {'error_messages': errs})
+                        }
+                        pending_processed_entries.append(progress_entry)
+                        _update_import_progress(
+                            user_id,
+                            task_id,
+                            updates=progress_update,
+                            processed_book=pending_processed_entries,
+                            error_message=error_payload,
+                        )
+                        pending_processed_entries.clear()
+                        last_progress_emit = time.perf_counter()
+                    else:
+                        pending_processed_entries.append(progress_entry)
+                        immediate = status_value != 'success'
+                        elapsed = time.perf_counter() - last_progress_emit
+                        if immediate or elapsed >= PROGRESS_EMIT_INTERVAL:
+                            _update_import_progress(
+                                user_id,
+                                task_id,
+                                updates=progress_update,
+                                processed_book=pending_processed_entries,
+                            )
+                            pending_processed_entries.clear()
+                            last_progress_emit = time.perf_counter()
 
-                snap = safe_get_import_job(user_id, task_id) or {}
-                pb = snap.get('processed_books', [])
-                pb.append({'title': simplified_book.title or 'Untitled', 'status': status_value})
-                progress_update = {
-                    'processed': processed_count,
-                    'success': success_count,
-                    'merged': merged_count,
-                    'errors': error_count,
-                    'skipped': skipped_count,
-                    'current_book': simplified_book.title,
-                    'processed_books': pb
-                }
-                safe_update_import_job(user_id, task_id, progress_update)
-                if processed_count % 5 == 0:
-                    update_job_in_kuzu(task_id, progress_update)
-            except Exception as ex:
-                processed_count += 1
-                error_count += 1
-                raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
-                snap = safe_get_import_job(user_id, task_id) or {}
-                pb = snap.get('processed_books', [])
-                pb.append({'title': raw_title, 'status': 'error'})
-                errs = snap.get('error_messages', [])
-                if len(errs) < 1000:
-                    errs.append({
+                    if processed_count % 5 == 0:
+                        update_job_in_kuzu(task_id, progress_update)
+                except Exception as ex:
+                    processed_count += 1
+                    error_count += 1
+                    raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
+                    error_payload = {
                         'row_number': row_num,
                         'title': raw_title,
                         'author': row.get('Author') or row.get('author') or '',
@@ -2113,11 +2155,48 @@ async def process_simple_import(import_config):
                         'error_type': 'exception',
                         'message': str(ex)[:500],
                         'raw_row': {k: v for k, v in row.items() if v}
-                    })
-                safe_update_import_job(user_id, task_id, {'processed': processed_count, 'errors': error_count, 'processed_books': pb, 'current_book': raw_title, 'error_messages': errs})
-                continue
+                    }
+                    progress_entry = {'title': raw_title, 'status': 'error'}
+                    pending_processed_entries.append(progress_entry)
+                    progress_update = {
+                        'processed': processed_count,
+                        'success': success_count,
+                        'merged': merged_count,
+                        'errors': error_count,
+                        'skipped': skipped_count,
+                        'current_book': raw_title,
+                    }
+                    _update_import_progress(
+                        user_id,
+                        task_id,
+                        updates=progress_update,
+                        processed_book=pending_processed_entries,
+                        error_message=error_payload,
+                    )
+                    pending_processed_entries.clear()
+                    last_progress_emit = time.perf_counter()
+                    continue
+                    continue
 
-        completion = {
+        if pending_processed_entries:
+            progress_update = {
+                'processed': processed_count,
+                'success': success_count,
+                'merged': merged_count,
+                'errors': error_count,
+                'skipped': skipped_count,
+                'current_book': pending_processed_entries[-1].get('title') if pending_processed_entries else None,
+            }
+            _update_import_progress(
+                user_id,
+                task_id,
+                updates=progress_update,
+                processed_book=pending_processed_entries,
+            )
+            pending_processed_entries.clear()
+
+        final_activity = f"Import completed! {success_count} new, {merged_count} merged, {error_count} errors, {skipped_count} skipped"
+        completion_updates = {
             'status': 'completed',
             'processed': processed_count,
             'success': success_count,
@@ -2125,9 +2204,11 @@ async def process_simple_import(import_config):
             'errors': error_count,
             'skipped': skipped_count,
             'current_book': None,
-            'recent_activity': [f"Import completed! {success_count} new, {merged_count} merged, {error_count} errors, {skipped_count} skipped"]
+            'recent_activity': [final_activity],
         }
+        _update_import_progress(user_id, task_id, updates=completion_updates)
         snap = safe_get_import_job(user_id, task_id) or {}
+        completion = dict(completion_updates)
         if 'processed_books' in snap:
             completion['processed_books'] = snap['processed_books']
         if 'error_messages' in snap:

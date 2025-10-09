@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
@@ -22,9 +23,87 @@ class CoverResult:
     elapsed: float
     steps: str
 
-_PROCESSED_CACHE: dict[str, str] = {}
+_PROCESSED_CACHE: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
 _COVER_JOBS: dict[str, dict[str, Any]] = {}
 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+_CACHE_TTL_SECONDS = int(os.getenv('COVER_CACHE_TTL', '21600'))  # 6 hours by default
+_CACHE_MAX_ENTRIES = int(os.getenv('COVER_CACHE_MAX', '512'))
+_HEAD_CACHE_TTL_SECONDS = int(os.getenv('COVER_HEAD_TTL', '900'))  # 15 minutes
+_HEAD_TIMEOUT = float(os.getenv('COVER_HEAD_TIMEOUT', '1.5'))
+_HEAD_CACHE: "OrderedDict[str, tuple[float, Optional[int]]]" = OrderedDict()
+
+
+def _purge_expired(cache: "OrderedDict[str, tuple[float, Any]]", ttl: int) -> None:
+    if not cache or ttl <= 0:
+        return
+    now = time.time()
+    for key, (ts, _) in list(cache.items()):
+        if now - ts > ttl:
+            cache.pop(key, None)
+        else:
+            break
+
+
+def _record_processed_cache(url: str, cached_url: str) -> None:
+    if not cached_url:
+        return
+    now = time.time()
+    if url in _PROCESSED_CACHE:
+        _PROCESSED_CACHE.pop(url, None)
+    _PROCESSED_CACHE[url] = (now, cached_url)
+    _purge_expired(_PROCESSED_CACHE, _CACHE_TTL_SECONDS)
+    while len(_PROCESSED_CACHE) > _CACHE_MAX_ENTRIES:
+        _PROCESSED_CACHE.popitem(last=False)
+
+
+def _get_cached_processed_url(url: str) -> Optional[str]:
+    entry = _PROCESSED_CACHE.get(url)
+    if not entry:
+        return None
+    ts, cached_url = entry
+    if time.time() - ts > _CACHE_TTL_SECONDS:
+        _PROCESSED_CACHE.pop(url, None)
+        return None
+    try:
+        _PROCESSED_CACHE.move_to_end(url)
+    except Exception:
+        pass
+    return cached_url
+
+
+def _record_head_cache(url: str, value: Optional[int]) -> None:
+    now = time.time()
+    if url in _HEAD_CACHE:
+        _HEAD_CACHE.pop(url, None)
+    _HEAD_CACHE[url] = (now, value)
+    _purge_expired(_HEAD_CACHE, _HEAD_CACHE_TTL_SECONDS)
+    while len(_HEAD_CACHE) > _CACHE_MAX_ENTRIES:
+        _HEAD_CACHE.popitem(last=False)
+
+
+def _head_content_length(url: str) -> Optional[int]:
+    if not url.startswith('http'):
+        return None
+    entry = _HEAD_CACHE.get(url)
+    if entry:
+        ts, val = entry
+        if time.time() - ts <= _HEAD_CACHE_TTL_SECONDS:
+            try:
+                _HEAD_CACHE.move_to_end(url)
+            except Exception:
+                pass
+            return val
+        _HEAD_CACHE.pop(url, None)
+    try:
+        resp = requests.head(url, timeout=_HEAD_TIMEOUT, allow_redirects=True)
+        resp.raise_for_status()
+        header_val = resp.headers.get('Content-Length')
+        value = int(header_val) if header_val and header_val.isdigit() else None
+    except Exception:
+        value = None
+    _record_head_cache(url, value)
+    return value
 
 class CoverService:
     """Unified facade for selecting & caching book covers.
@@ -111,11 +190,12 @@ class CoverService:
                                 pass
                 except Exception:
                     steps.append('fallback:title_author_fail')
-            cached_url = None
+            cached_url: Optional[str] = None
             if cover_url:
                 try:
-                    if cover_url in _PROCESSED_CACHE:
-                        cached_url = _PROCESSED_CACHE[cover_url]
+                    cached_hit = _get_cached_processed_url(cover_url)
+                    if cached_hit:
+                        cached_url = cached_hit
                         steps.append('cache:hit')
                     else:
                         # If we've already burned most of the deadline, pass through original to avoid user-visible lag
@@ -123,17 +203,13 @@ class CoverService:
                             steps.append('deadline:pass_through')
                             cached_url = cover_url  # Return remote URL directly (UI can still display it)
                         else:
-                        # Optional HEAD probe to validate asset size (skip if non-http)
-                            if cover_url.startswith('http'):
-                                try:
-                                    h = requests.head(cover_url, timeout=1.5, allow_redirects=True)
-                                    cl = int(h.headers.get('Content-Length','0') or 0)
-                                    if cl < 15_000:
-                                        steps.append(f'probe:tiny={cl}')
-                                    else:
-                                        steps.append(f'probe:bytes={cl}')
-                                except Exception:
-                                    steps.append('probe:fail')
+                            content_length = _head_content_length(cover_url)
+                            if content_length is None:
+                                steps.append('probe:unknown')
+                            elif content_length < 15_000:
+                                steps.append(f'probe:tiny={content_length}')
+                            else:
+                                steps.append(f'probe:bytes={content_length}')
                             steps.append('download:start')
                             rel = process_image_from_url(cover_url)
                             steps.append('download:ok')
@@ -148,7 +224,7 @@ class CoverService:
                             else:
                                 cached_url = rel
                             if cached_url:
-                                _PROCESSED_CACHE[cover_url] = cached_url
+                                _record_processed_cache(cover_url, cached_url)
                 except Exception as e:
                     steps.append(f'download:fail={e.__class__.__name__}')
                     current_app.logger.warning(f"[COVER][SERVICE] Download/process failed url={cover_url} err={e}")
@@ -219,23 +295,24 @@ class CoverService:
         The UI can display the remote candidate immediately; poll status endpoint to swap to processed local URL.
         """
         cand = self.select_candidate(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
-        if cand and cand.get('url'):
+        selected_cand = dict(cand) if cand else None
+        if selected_cand and selected_cand.get('url'):
             try:
                 from app.utils.book_utils import normalize_cover_url
-                cand['url'] = normalize_cover_url(cand['url'])
+                selected_cand['url'] = normalize_cover_url(selected_cand['url'])
             except Exception:
                 pass
         job_id = str(uuid.uuid4())
         job_record = {
             'id': job_id,
             'status': 'pending',
-            'original_url': cand.get('url') if cand else None,
+            'original_url': selected_cand.get('url') if selected_cand else None,
             'processed_url': None,
             'error': None,
             'isbn': isbn,
             'title': title,
-            'provider': cand.get('provider') if cand else None,
-            'size': cand.get('size') if cand else None,
+            'provider': selected_cand.get('provider') if selected_cand else None,
+            'size': selected_cand.get('size') if selected_cand else None,
             'started': time.time(),
             'completed': None
         }
@@ -254,7 +331,7 @@ class CoverService:
                 ctx.push()
             try:
                 try:
-                    if not cand or not cand.get('url'):
+                    if not selected_cand or not selected_cand.get('url'):
                         job_record['status'] = 'no_candidate'
                         job_record['completed'] = time.time()
                         return

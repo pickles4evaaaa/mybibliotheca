@@ -1,9 +1,20 @@
-_BEST_COVER_CACHE: dict = {}
-_PROVIDER_META_CACHE: dict = {}
+from collections import OrderedDict
+import time as _time
+import os as _os_cover_debug
+from typing import Dict, List, Optional, Tuple
+
+_PROVIDER_META_CACHE: Dict[str, Tuple[dict, float]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes; cover metadata rarely changes
 
+_BEST_CACHE_TTL_SECONDS = int((_os_cover_debug.getenv('BEST_COVER_CACHE_TTL') or '21600'))
+_BEST_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv('BEST_COVER_CACHE_MAX') or '512'))
+_CANDIDATE_CACHE_TTL_SECONDS = int((_os_cover_debug.getenv('COVER_CANDIDATE_CACHE_TTL') or '900'))
+_CANDIDATE_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv('COVER_CANDIDATE_CACHE_MAX') or '256'))
+
+_BEST_COVER_CACHE: OrderedDict[str, Tuple[float, dict]] = OrderedDict()
+_COVER_CANDIDATE_CACHE: OrderedDict[str, Tuple[float, List[dict]]] = OrderedDict()
+
 # Verbose flag for cover & search debug (ENV: VERBOSE, IMPORT_VERBOSE, COVER_VERBOSE)
-import os as _os_cover_debug
 _COVER_VERBOSE = (
     (_os_cover_debug.getenv('VERBOSE') or 'false').lower() == 'true'
     or (_os_cover_debug.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
@@ -28,6 +39,79 @@ def _cache_set(key, data):
     import time as _t
     _PROVIDER_META_CACHE[key] = (data, _t.time())
 
+
+def _purge_ordered_dict(store: OrderedDict, ttl: int, max_entries: int) -> None:
+    now = _time.time()
+    if ttl > 0:
+        for key, (ts, _) in list(store.items()):
+            if now - ts > ttl:
+                store.pop(key, None)
+            else:
+                break
+    if max_entries > 0:
+        while len(store) > max_entries:
+            store.popitem(last=False)
+
+
+def _normalized_cover_key(isbn: Optional[str], title: Optional[str], author: Optional[str]) -> str:
+    return "|".join([
+        (isbn or '').strip().lower(),
+        (title or '').strip().lower(),
+        (author or '').strip().lower(),
+    ])
+
+
+def _best_cache_get(cache_key: str) -> Optional[dict]:
+    entry = _BEST_COVER_CACHE.get(cache_key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if _time.time() - ts > _BEST_CACHE_TTL_SECONDS:
+        _BEST_COVER_CACHE.pop(cache_key, None)
+        return None
+    try:
+        _BEST_COVER_CACHE.move_to_end(cache_key)
+    except Exception:
+        pass
+    return payload
+
+
+def _best_cache_set(cache_key: str, value: dict) -> None:
+    if _BEST_CACHE_MAX_ENTRIES <= 0:
+        return
+    _BEST_COVER_CACHE[cache_key] = (_time.time(), value)
+    _purge_ordered_dict(_BEST_COVER_CACHE, _BEST_CACHE_TTL_SECONDS, _BEST_CACHE_MAX_ENTRIES)
+
+
+def _candidate_cache_key(isbn: Optional[str], title: Optional[str], author: Optional[str]) -> str:
+    return _normalized_cover_key(isbn, title, author)
+
+
+def _candidate_cache_get(isbn: Optional[str], title: Optional[str], author: Optional[str]) -> Optional[List[dict]]:
+    if _CANDIDATE_CACHE_MAX_ENTRIES <= 0:
+        return None
+    key = _candidate_cache_key(isbn, title, author)
+    entry = _COVER_CANDIDATE_CACHE.get(key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if _time.time() - ts > _CANDIDATE_CACHE_TTL_SECONDS:
+        _COVER_CANDIDATE_CACHE.pop(key, None)
+        return None
+    try:
+        _COVER_CANDIDATE_CACHE.move_to_end(key)
+    except Exception:
+        pass
+    return [candidate.copy() for candidate in payload]
+
+
+def _candidate_cache_set(isbn: Optional[str], title: Optional[str], author: Optional[str], candidates: List[dict]) -> None:
+    if _CANDIDATE_CACHE_MAX_ENTRIES <= 0:
+        return
+    key = _candidate_cache_key(isbn, title, author)
+    _COVER_CANDIDATE_CACHE[key] = (_time.time(), [candidate.copy() for candidate in candidates])
+    _purge_ordered_dict(_COVER_CANDIDATE_CACHE, _CANDIDATE_CACHE_TTL_SECONDS, _CANDIDATE_CACHE_MAX_ENTRIES)
+
 # --- Google Cover Utilities ---
 _GOOGLE_SIZE_ORDER = ['extraLarge','large','medium','small','thumbnail','smallThumbnail']
 
@@ -46,7 +130,7 @@ def select_highest_google_image(image_links: dict | None) -> str | None:
             return v
     return None
 
-def upgrade_google_cover_url(raw_url: str | None) -> str | None:
+def upgrade_google_cover_url(raw_url: str | None, *, allow_probe: bool = True) -> str | None:
     """Normalize and opportunistically upgrade Google Books cover URL.
 
     Strategy:
@@ -79,7 +163,7 @@ def upgrade_google_cover_url(raw_url: str | None) -> str | None:
     # Decide whether to attempt zoom=0 upgrade
     attempt_zoom0 = ('zoom=0' not in url) and ('extraLarge' not in url) and ('large' not in url)
     chosen = url
-    if attempt_zoom0:
+    if attempt_zoom0 and allow_probe:
         z0 = _re.sub(r'zoom=\d', 'zoom=0', url) if has_zoom else url + '&zoom=0'
         try:
             import requests
@@ -150,9 +234,10 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
     """
     # Simple in-memory cache (module-level) to cut repeated latency
     global _BEST_COVER_CACHE
-    cache_key = (isbn or '').strip(), (title or '').lower().strip(), (author or '').lower().strip()
-    if cache_key in _BEST_COVER_CACHE:
-        return _BEST_COVER_CACHE[cache_key]
+    cache_key = _normalized_cover_key(isbn, title, author)
+    cached = _best_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     import time
     t0 = time.perf_counter()
@@ -218,7 +303,7 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
         'source': source,
         'quality': quality
     }
-    _BEST_COVER_CACHE[cache_key] = result_obj
+    _best_cache_set(cache_key, result_obj)
     total = time.perf_counter() - t0
     try:
         from flask import current_app
@@ -236,7 +321,11 @@ def get_cover_candidates(isbn=None, title=None, author=None):
     2. OpenLibrary: large (L), medium (M), small (S)
     Returns list of dicts: {'provider': 'google'|'openlibrary', 'size': label, 'url': url}
     """
-    candidates = []
+    cached_candidates = _candidate_cache_get(isbn, title, author)
+    if cached_candidates is not None:
+        return cached_candidates
+
+    candidates: List[dict] = []
     def _expand_google_variants(url: str):
         """Generate ordered google image variants (largest first) heuristically.
 
@@ -327,6 +416,7 @@ def get_cover_candidates(isbn=None, title=None, author=None):
             candidates.append({'provider': 'openlibrary', 'size': 'L', 'url': ol_data['cover_url']})
     except Exception:
         pass
+    _candidate_cache_set(isbn, title, author, candidates)
     return candidates
 
 # USAGE INSTRUCTIONS:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from io import BytesIO
+import ipaddress
+import socket
 import time
 from urllib.parse import urlparse
 from pathlib import Path
@@ -10,6 +12,10 @@ from typing import Any, Dict, Optional
 import requests
 from PIL import Image, ImageOps
 from flask import current_app
+
+
+MAX_REMOTE_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB safety ceiling
+
 
 
 def _get_base_dir() -> Path:
@@ -73,6 +79,33 @@ def _prepare_image(img: Image.Image, out_fmt: str) -> Image.Image:
     return img
 
 
+def ensure_safe_remote_image_url(url: str) -> str:
+    """Validate that a remote image URL is safe to fetch.
+
+    - Must be http/https with hostname.
+    - Host must not resolve to private, loopback, multicast, or link-local ranges.
+    Raises ValueError if the URL is unsafe.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        raise ValueError("Cover URL must use http or https scheme")
+    if not parsed.hostname:
+        raise ValueError("Cover URL must include a hostname")
+
+    try:
+        addr_info = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as exc:  # pragma: no cover - resolution failure
+        raise ValueError(f"Unable to resolve cover host: {parsed.hostname}") from exc
+
+    for info in addr_info:
+        ip_str = info[4][0]
+        ip_obj = ipaddress.ip_address(ip_str)
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_reserved:
+            raise ValueError("Cover URL resolves to a disallowed network range")
+
+    return url
+
+
 def process_image_bytes_and_store(image_bytes: bytes, filename_hint: str | None = None) -> str:
     """Process image bytes with LANCZOS resampling and store into covers dir.
 
@@ -130,6 +163,8 @@ def process_image_from_url(
             return f"/covers/{fname}"
         # Fall through to download if not present
 
+    ensure_safe_remote_image_url(url)
+
     start_total = time.perf_counter()
     current_app.logger.info(f"[COVER][DL] Start url={url}")
     dl_start = time.perf_counter()
@@ -141,13 +176,27 @@ def process_image_from_url(
         request_kwargs["headers"] = headers
     resp = requests.get(url, **request_kwargs)
     resp.raise_for_status()
+    content_length = resp.headers.get('Content-Length')
+    if content_length:
+        try:
+            if int(content_length) > MAX_REMOTE_IMAGE_BYTES:
+                resp.close()
+                raise ValueError("Remote image exceeds maximum allowed size")
+        except ValueError as err:
+            resp.close()
+            raise ValueError("Invalid Content-Length header for remote image") from err
     dl_time = time.perf_counter() - dl_start
     buf = BytesIO()
     copy_start = time.perf_counter()
+    total_bytes = 0
     for chunk in resp.iter_content(chunk_size=16384):
         if not chunk:
             continue
         buf.write(chunk)
+        total_bytes += len(chunk)
+        if total_bytes > MAX_REMOTE_IMAGE_BYTES:
+            resp.close()
+            raise ValueError("Remote image download exceeded maximum allowed size")
     copy_time = time.perf_counter() - copy_start
     proc_start = time.perf_counter()
     out_url = process_image_bytes_and_store(buf.getvalue())

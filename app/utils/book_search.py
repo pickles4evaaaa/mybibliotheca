@@ -12,6 +12,9 @@ import re
 from urllib.parse import quote_plus
 import time
 import os as _os_for_verbose
+from collections import OrderedDict
+import threading
+import copy
 
 # Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
 _IMPORT_VERBOSE = (
@@ -25,6 +28,59 @@ def _dprint(*args, **kwargs):
 
 # Shadow print in this module to respect verbosity toggle
 print = _dprint
+
+
+_SEARCH_CACHE_TTL = int((_os_for_verbose.getenv('BOOK_SEARCH_CACHE_TTL') or '300'))
+_SEARCH_CACHE_MAX = int((_os_for_verbose.getenv('BOOK_SEARCH_CACHE_MAX') or '128'))
+_SEARCH_CACHE: "OrderedDict[tuple, tuple[float, List[Dict[str, Any]]]]" = OrderedDict()
+_SEARCH_CACHE_LOCK = threading.RLock()
+
+_GOOGLE_CONNECT_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_GOOGLE_CONNECT_TIMEOUT') or '2.5'))
+_GOOGLE_READ_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_GOOGLE_READ_TIMEOUT') or '3.5'))
+_OPENLIBRARY_CONNECT_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_OPENLIBRARY_CONNECT_TIMEOUT') or '2.5'))
+_OPENLIBRARY_READ_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_OPENLIBRARY_READ_TIMEOUT') or '4.5'))
+_GOOGLE_RESULT_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_GOOGLE_RESULT_TIMEOUT') or '3.8'))
+_OPENLIBRARY_RESULT_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_OPENLIBRARY_RESULT_TIMEOUT') or '5.0'))
+_BOOK_SEARCH_GLOBAL_TIMEOUT = float((_os_for_verbose.getenv('BOOK_SEARCH_GLOBAL_TIMEOUT') or '5.5'))
+
+
+
+def _purge_search_cache_locked() -> None:
+    if not _SEARCH_CACHE:
+        return
+    now = time.time()
+    if _SEARCH_CACHE_TTL > 0:
+        expired = [cache_key for cache_key, (ts, _) in _SEARCH_CACHE.items() if now - ts > _SEARCH_CACHE_TTL]
+        for cache_key in expired:
+            _SEARCH_CACHE.pop(cache_key, None)
+    while _SEARCH_CACHE_MAX > 0 and len(_SEARCH_CACHE) > _SEARCH_CACHE_MAX:
+        _SEARCH_CACHE.popitem(last=False)
+
+
+def _search_cache_get(key: tuple) -> Optional[List[Dict[str, Any]]]:
+    if _SEARCH_CACHE_MAX <= 0 or _SEARCH_CACHE_TTL <= 0:
+        return None
+    with _SEARCH_CACHE_LOCK:
+        entry = _SEARCH_CACHE.get(key)
+        if not entry:
+            return None
+        ts, payload = entry
+        if time.time() - ts > _SEARCH_CACHE_TTL:
+            _SEARCH_CACHE.pop(key, None)
+            return None
+        try:
+            _SEARCH_CACHE.move_to_end(key)
+        except Exception:
+            pass
+        return copy.deepcopy(payload)
+
+
+def _search_cache_set(key: tuple, results: List[Dict[str, Any]]) -> None:
+    if _SEARCH_CACHE_MAX <= 0 or _SEARCH_CACHE_TTL <= 0:
+        return
+    with _SEARCH_CACHE_LOCK:
+        _SEARCH_CACHE[key] = (time.time(), copy.deepcopy(results))
+        _purge_search_cache_locked()
 
 
 def validate_asin(asin: str) -> bool:
@@ -97,6 +153,55 @@ def calculate_title_similarity(search_title: str, result_title: str) -> float:
     return similarity
 
 
+def _dedupe_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: List[Dict[str, Any]] = []
+    for cand in candidates:
+        url = cand.get('url')
+        if not url or url in seen:
+            continue
+        deduped.append(cand)
+        seen.add(url)
+    return deduped
+
+
+def _build_google_cover_candidates(volume_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    image_links = volume_info.get('imageLinks') or {}
+    if not isinstance(image_links, dict) or not image_links:
+        return []
+    try:
+        from app.utils.book_utils import upgrade_google_cover_url
+    except Exception:
+        def upgrade_google_cover_url(raw_url: Optional[str], *, allow_probe: bool = True) -> Optional[str]:  # type: ignore
+            return raw_url
+    order = ['extraLarge', 'large', 'medium', 'small', 'thumbnail', 'smallThumbnail']
+    candidates: List[Dict[str, Any]] = []
+    for label in order:
+        raw = image_links.get(label)
+        if not raw or not isinstance(raw, str):
+            continue
+        normalized = upgrade_google_cover_url(raw, allow_probe=False)
+        if not normalized:
+            continue
+        candidates.append({'provider': 'google', 'size': label, 'url': normalized})
+    return _dedupe_candidates(candidates)
+
+
+def _build_openlibrary_cover_candidates(cover_i: Optional[int]) -> List[Dict[str, Any]]:
+    if not cover_i:
+        return []
+    base = f"https://covers.openlibrary.org/b/id/{cover_i}"
+    sizes = (
+        ('L', 'large'),
+        ('M', 'medium'),
+        ('S', 'small'),
+    )
+    candidates = []
+    for suffix, label in sizes:
+        candidates.append({'provider': 'openlibrary', 'size': label, 'url': f"{base}-{suffix}.jpg?default=false"})
+    return candidates
+
+
 def select_best_publication_date(date1: str, date2: str, year1: Optional[int], year2: Optional[int]) -> tuple[str, Optional[int]]:
     """
     Select the best publication date from two sources.
@@ -154,7 +259,7 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
     url = f"https://www.googleapis.com/books/v1/volumes?q={q}&maxResults={max_results}"
     
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=(_GOOGLE_CONNECT_TIMEOUT, _GOOGLE_READ_TIMEOUT))
         response.raise_for_status()
         data = response.json()
         
@@ -202,14 +307,17 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
                             asin = asin_match.group()
                 
                 # Extract and normalize Google cover image (no immediate download for speed)
+                cover_candidates = _build_google_cover_candidates(volume_info)
                 cover_url = None
                 try:
                     from app.utils.book_utils import select_highest_google_image, upgrade_google_cover_url
                     raw_cover = select_highest_google_image(volume_info.get('imageLinks', {}))
                     if raw_cover:
-                        cover_url = upgrade_google_cover_url(raw_cover)
+                        cover_url = upgrade_google_cover_url(raw_cover, allow_probe=False)
                 except Exception as ce:
                     print(f"[COVER_NORMALIZE] Google cover normalization failed: {ce}")
+                if not cover_url and cover_candidates:
+                    cover_url = cover_candidates[0].get('url')
                 
                 # Extract publication year
                 publication_year = None
@@ -268,7 +376,8 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
                     'google_books_id': item.get('id'),
                     'openlibrary_id': None,  # Will be filled if found in OpenLibrary
                     'source': 'Google Books',
-                    'similarity_score': similarity_score
+                    'similarity_score': similarity_score,
+                    'cover_candidates': cover_candidates
                 }
                 
                 results.append(result)
@@ -304,7 +413,7 @@ def search_openlibrary(title: str, max_results: int = 20, author: Optional[str] 
         url = f"https://openlibrary.org/search.json?title={q_title}&limit={max_results}"
     
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=(_OPENLIBRARY_CONNECT_TIMEOUT, _OPENLIBRARY_READ_TIMEOUT))
         response.raise_for_status()
         data = response.json()
         
@@ -349,19 +458,8 @@ def search_openlibrary(title: str, max_results: int = 20, author: Optional[str] 
                 
                 # Extract cover image (centralized via CoverService)
                 cover_i = doc.get('cover_i')
-                cover_url = None
-                if cover_i:
-                    raw_cover = f"https://covers.openlibrary.org/b/id/{cover_i}-L.jpg"
-                    try:
-                        from app.services.cover_service import cover_service
-                        cr = cover_service.fetch_and_cache(isbn=isbn_13 or isbn_10, title=book_title, author=authors[0] if authors else None)
-                        if cr and cr.cached_url:
-                            cover_url = cr.cached_url
-                        else:
-                            cover_url = raw_cover
-                    except Exception as e:
-                        cover_url = raw_cover
-                        print(f"[COVER_SERVICE] Failure for OpenLibrary result: {e}")
+                cover_candidates = _build_openlibrary_cover_candidates(cover_i)
+                cover_url = cover_candidates[0].get('url') if cover_candidates else None
                 
                 # Extract OpenLibrary ID
                 openlibrary_id = None
@@ -417,7 +515,8 @@ def search_openlibrary(title: str, max_results: int = 20, author: Optional[str] 
                     'google_books_id': None,  # Will be filled if found in Google Books
                     'openlibrary_id': openlibrary_id,
                     'source': 'OpenLibrary',
-                    'similarity_score': similarity_score
+                    'similarity_score': similarity_score,
+                    'cover_candidates': cover_candidates
                 }
                 
                 results.append(result)
@@ -453,7 +552,10 @@ def merge_and_rank_results(search_title: str, google_results: List[Dict],
     for result in google_results:
         isbn_key = result.get('isbn_13') or result.get('isbn_10') or f"google_{result.get('google_books_id')}"
         if isbn_key:
-            merged_results[isbn_key] = result.copy()
+            record = result.copy()
+            if result.get('cover_candidates'):
+                record['cover_candidates'] = [c.copy() for c in result['cover_candidates'] if isinstance(c, dict)]
+            merged_results[isbn_key] = record
     
     # Process OpenLibrary results and merge with Google Books where ISBN matches
     for result in openlibrary_results:
@@ -480,6 +582,19 @@ def merge_and_rank_results(search_title: str, google_results: List[Dict],
             for key, value in result.items():
                 if key not in ['published_date', 'publication_year'] and (key not in existing or not existing[key]):
                     existing[key] = value
+
+            incoming_candidates = result.get('cover_candidates') or []
+            if incoming_candidates:
+                existing_candidates = list(existing.get('cover_candidates') or [])
+                seen_urls = {c.get('url') for c in existing_candidates if isinstance(c, dict) and c.get('url')}
+                for cand in incoming_candidates:
+                    url = cand.get('url') if isinstance(cand, dict) else None
+                    if not url or url in seen_urls:
+                        continue
+                    existing_candidates.append(cand.copy())
+                    seen_urls.add(url)
+                if existing_candidates:
+                    existing['cover_candidates'] = existing_candidates
             
             # Update source to indicate both
             existing['source'] = 'Google Books + OpenLibrary'
@@ -494,7 +609,10 @@ def merge_and_rank_results(search_title: str, google_results: List[Dict],
             
         else:
             # New book from OpenLibrary
-            merged_results[isbn_key] = result.copy()
+            record = result.copy()
+            if result.get('cover_candidates'):
+                record['cover_candidates'] = [c.copy() for c in result['cover_candidates'] if isinstance(c, dict)]
+            merged_results[isbn_key] = record
     
     # Convert to list and sort by similarity score
     final_results = list(merged_results.values())
@@ -533,21 +651,39 @@ def search_books_by_title(title: str, max_results: int = 10, author: Optional[st
         return []
     
     title = title.strip()
-    
-    # Search both APIs in parallel (could be made truly async in the future)
-    google_results = search_google_books(title, max_results * 2, author)  # Get more to allow for better ranking
-    
-    # Add small delay to be respectful to APIs
-    time.sleep(0.5)
-    
-    openlibrary_results = search_openlibrary(title, max_results * 2, author)
+    author_arg = author.strip() if isinstance(author, str) else None
+
+    cache_key = (title.lower(), (author_arg or '').lower(), int(max_results))
+    cached = _search_cache_get(cache_key)
+    if cached is not None:
+        print(f"💾 [BOOK_SEARCH] Cache hit for '{title}'")
+        return cached
+
+    start_time = time.perf_counter()
+    google_results: List[Dict[str, Any]] = []
+    try:
+        google_results = search_google_books(title, max_results * 2, author_arg)
+    except Exception as exc:
+        print(f"❌ [BOOK_SEARCH] Google search failed: {exc}")
+
+    openlibrary_results: List[Dict[str, Any]] = []
+    elapsed = time.perf_counter() - start_time
+    remaining_budget = max(0.0, _BOOK_SEARCH_GLOBAL_TIMEOUT - elapsed)
+    if remaining_budget <= 0:
+        print("⏱️ [BOOK_SEARCH] Skipping OpenLibrary results due to global timeout budget")
+    else:
+        try:
+            openlibrary_results = search_openlibrary(title, max_results * 2, author_arg)
+        except Exception as exc:
+            print(f"❌ [BOOK_SEARCH] OpenLibrary search failed: {exc}")
     
     # Merge, deduplicate, and rank results
     final_results = merge_and_rank_results(title, google_results, openlibrary_results, max_results)
+    _search_cache_set(cache_key, final_results)
     
     print(f"🎯 [BOOK_SEARCH] Search complete. Returning {len(final_results)} results for '{title}'" + (f" by '{author}'" if author else ""))
     
-    return final_results
+    return copy.deepcopy(final_results)
 
 
 def search_books_with_display_fields(title: str, max_results: int = 10, isbn_required: bool = False, author: Optional[str] = None) -> Dict[str, Any]:
@@ -573,14 +709,27 @@ def search_books_with_display_fields(title: str, max_results: int = 10, isbn_req
     display_results = []
     for result in results:
         # Non-blocking cover strategy: select candidate quickly; let UI optionally schedule async processing
-        cover_url = result.get('cover_url')
+        cover_candidates = result.get('cover_candidates') or []
+        if cover_candidates and not result.get('cover_candidate'):
+            result['cover_candidate'] = cover_candidates[0]
+        cover_url = result.get('cover_url') or (cover_candidates[0].get('url') if cover_candidates else None)
         if not cover_url:
             try:
                 from app.services.cover_service import cover_service
-                cand = cover_service.select_candidate(isbn=result.get('isbn_13') or result.get('isbn_10'), title=result.get('title'), author=(result.get('authors') or [None])[0] if isinstance(result.get('authors'), list) else result.get('author'))
+                cand = cover_service.select_candidate(
+                    isbn=result.get('isbn_13') or result.get('isbn_10'),
+                    title=result.get('title'),
+                    author=(result.get('authors') or [None])[0] if isinstance(result.get('authors'), list) else result.get('author')
+                )
                 if cand:
                     cover_url = cand.get('url')
                     result['cover_candidate'] = cand
+                    existing_candidates = [c.copy() for c in cover_candidates if isinstance(c, dict)]
+                    if isinstance(cand, dict):
+                        if not any(c.get('url') == cand.get('url') for c in existing_candidates):
+                            existing_candidates.append(cand.copy())
+                    if existing_candidates:
+                        result['cover_candidates'] = existing_candidates
                     result['cover_url'] = cover_url
             except Exception:
                 pass
@@ -593,6 +742,7 @@ def search_books_with_display_fields(title: str, max_results: int = 10, isbn_req
             'source': result.get('source', ''),
             'cover_url': cover_url,
             'cover_candidate': result.get('cover_candidate'),
+            'cover_candidates': result.get('cover_candidates'),
             'full_data': result
         }
         display_results.append(display_item)

@@ -405,7 +405,8 @@ def run_schema_preflight() -> None:
     if got_lock:
         _release_lock()
 
-try:  # execute on import
-    run_schema_preflight()
-except Exception:
-    raise
+if os.getenv("SCHEMA_PREFLIGHT_AUTORUN", "1").lower() in ("1", "true", "yes"):
+    try:  # execute on import
+        run_schema_preflight()
+    except Exception:
+        raise
