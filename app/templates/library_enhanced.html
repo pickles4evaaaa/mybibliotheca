@@ -817,9 +817,11 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize with the current filter from the URL
+    // Initialize with the current filter from the URL, falling back to the hidden input default
     const urlParams = new URLSearchParams(window.location.search);
-    const currentFilter = urlParams.get('status_filter') || 'all';  // Changed default to 'all'
+    const fallbackInput = document.getElementById('status_filter');
+    const fallbackFilter = fallbackInput ? (fallbackInput.value || 'all') : 'all';
+    const currentFilter = urlParams.get('status_filter') || fallbackFilter;
     
     // Set active filter button
     updateActiveFilter(currentFilter);

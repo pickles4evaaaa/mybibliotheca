@@ -10,13 +10,72 @@ from __future__ import annotations
 
 import os
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from flask import current_app
 
 from app.domain.models import MediaType
 
 
 _MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
+
+_LIBRARY_SORT_ORDER: Tuple[Tuple[str, str], ...] = (
+    ('title_asc', 'Title A-Z'),
+    ('title_desc', 'Title Z-A'),
+    ('author_first_asc', 'Author First, Last A-Z'),
+    ('author_first_desc', 'Author First, Last Z-A'),
+    ('author_last_asc', 'Author Last, First A-Z'),
+    ('author_last_desc', 'Author Last, First Z-A'),
+    ('date_added_desc', 'Date Added (Newest First)'),
+    ('date_added_asc', 'Date Added (Oldest First)'),
+    ('publication_date_desc', 'Publication Date (Newest First)'),
+    ('publication_date_asc', 'Publication Date (Oldest First)')
+)
+
+_LIBRARY_STATUS_ORDER: Tuple[Tuple[str, str], ...] = (
+    ('reading', 'Currently Reading'),
+    ('read', 'Books Read'),
+    ('plan_to_read', 'Plan to Read'),
+    ('wishlist', 'Wishlist'),
+    ('on_hold', 'On Hold'),
+    ('all', 'All Books')
+)
+
+_LIBRARY_SORT_OPTIONS = {key for key, _ in _LIBRARY_SORT_ORDER}
+_LIBRARY_STATUS_OPTIONS = {key for key, _ in _LIBRARY_STATUS_ORDER}.union({'currently_reading'})
+
+
+def normalize_library_sort_option(raw: Optional[str]) -> Optional[str]:
+    """Normalize a library sort option to a known value."""
+    if raw is None:
+        return None
+    candidate = str(raw).strip().lower()
+    return candidate if candidate in _LIBRARY_SORT_OPTIONS else None
+
+
+def normalize_library_status_filter(raw: Optional[str]) -> Optional[str]:
+    """Normalize a library status filter to a supported token."""
+    if raw is None:
+        return None
+    candidate = str(raw).strip().lower()
+    aliases = {
+        'currently_reading': 'reading',
+        'currently reading': 'reading',
+        'want_to_read': 'plan_to_read',
+        'wishlist_reading': 'plan_to_read',
+        '': 'all',
+    }
+    candidate = aliases.get(candidate, candidate)
+    return candidate if candidate in _LIBRARY_STATUS_OPTIONS else None
+
+
+def get_library_sort_choices() -> List[Tuple[str, str]]:
+    """Return available library sort options as (value, label) pairs."""
+    return list(_LIBRARY_SORT_ORDER)
+
+
+def get_library_status_choices() -> List[Tuple[str, str]]:
+    """Return available library status filter options as (value, label) pairs."""
+    return list(_LIBRARY_STATUS_ORDER)
 
 
 def _data_dir() -> str:
@@ -48,6 +107,11 @@ def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
             data.setdefault('abs_api_key', '')
             data.setdefault('abs_sync_books', False)
             data.setdefault('abs_sync_listening', False)
+            # Library defaults (sort/status)
+            sort_token = normalize_library_sort_option(data.get('library_default_sort'))
+            status_token = normalize_library_status_filter(data.get('library_default_status'))
+            data['library_default_sort'] = sort_token or 'title_asc'
+            data['library_default_status'] = status_token or 'all'
             return data
         return {}
     except Exception:
@@ -59,7 +123,19 @@ def save_user_settings(user_id: Optional[str], updates: Dict[str, Any]) -> bool:
     if not user_id:
         return False
     existing = load_user_settings(user_id)
-    existing.update({k: v for k, v in updates.items() if v is not None})
+    normalized_updates: Dict[str, Any] = {}
+    for key, value in updates.items():
+        if key == 'library_default_sort':
+            norm = normalize_library_sort_option(value)
+            normalized_updates[key] = norm or 'title_asc'
+        elif key == 'library_default_status':
+            norm = normalize_library_status_filter(value)
+            normalized_updates[key] = norm or 'all'
+        else:
+            if value is not None:
+                normalized_updates[key] = value
+
+    existing.update(normalized_updates)
     try:
         path = _user_settings_path(str(user_id))
         with open(path, 'w') as f:
@@ -138,6 +214,14 @@ def get_effective_rows_per_page(user_id: Optional[str]) -> Optional[int]:
         return dv_i if (dv_i is None or dv_i >= 1) else None
     except Exception:
         return None
+
+
+def get_library_view_defaults(user_id: Optional[str]) -> Tuple[str, str]:
+    """Return (status_filter, sort_option) defaults for the library view."""
+    settings = load_user_settings(user_id)
+    status = normalize_library_status_filter(settings.get('library_default_status')) or 'all'
+    sort = normalize_library_sort_option(settings.get('library_default_sort')) or 'title_asc'
+    return status, sort
 
 
 def get_default_book_format() -> str:

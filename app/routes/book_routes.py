@@ -24,7 +24,7 @@ from app.utils.book_utils import get_best_cover_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
-from app.utils.user_settings import get_default_book_format
+from app.utils.user_settings import get_default_book_format, get_library_view_defaults
 
 # Quiet mode for book routes; enable with VERBOSE=true or IMPORT_VERBOSE=true
 import os as _os_for_verbose
@@ -1525,8 +1525,15 @@ def update_status(uid):
 @book_bp.route('/library')
 @login_required
 def library():
-    # Get filter parameters from URL - default to "all" to show all books
-    status_filter = request.args.get('status_filter', 'all')  # Changed from 'reading' to 'all'
+    # Determine per-user defaults for status/sort fallbacks
+    try:
+        default_status, default_sort = get_library_view_defaults(str(current_user.id))
+    except Exception:
+        default_status, default_sort = ('all', 'title_asc')
+
+    # Get filter parameters from URL, falling back to per-user defaults
+    raw_status = request.args.get('status_filter')
+    status_filter = (raw_status.strip().lower() if isinstance(raw_status, str) else '') or default_status
     category_filter = request.args.get('category', '')
     publisher_filter = request.args.get('publisher', '')
     language_filter = request.args.get('language', '')
@@ -1534,7 +1541,8 @@ def library():
     media_type_filter_raw = request.args.get('media_type', '')
     media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
     search_query = request.args.get('search', '')
-    sort_option = request.args.get('sort', 'title_asc')  # Default to title A-Z
+    raw_sort_option = request.args.get('sort')
+    sort_option = (raw_sort_option.strip().lower() if isinstance(raw_sort_option, str) else '') or default_sort
 
     # Pagination parameters: rows*cols determines per_page; default rows via settings
     try:
@@ -2182,7 +2190,7 @@ def library():
             'total': (len(filtered_books) if has_filter else total_books)
         }))
         resp.headers['ETag'] = etag
-        resp.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=120'
+        resp.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
         return resp
 
     # ETag for HTML response too
@@ -2224,7 +2232,7 @@ def library():
         category_options=category_options
     ))
     resp.headers['ETag'] = _html_etag
-    resp.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=120'
+    resp.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
     # Hint the browser to warm the next page JSON in the background
     try:
         if page < total_pages:
@@ -3366,6 +3374,12 @@ def replace_cover(uid):
 
             book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=abs_cover_url)
             current_app.logger.info(f"[COVER][REPLACE] STORED uid={uid} cached={new_cached_cover_url}")
+
+            try:
+                from app.utils.simple_cache import bump_user_library_version
+                bump_user_library_version(str(current_user.id))
+            except Exception as cache_err:
+                current_app.logger.debug(f"[COVER][REPLACE][CACHE_BUMP_FAIL] uid={uid} err={cache_err}")
 
             # Clean up old cover file if it exists and is a local file
             if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):

@@ -25,8 +25,30 @@
       <small class="text-muted">Leave blank to use server default (if any)</small>
     </div>
   </div>
+  <div class="row g-3 mt-1">
+    <div class="col-md-4">
+      <label class="form-label">Default Library Status Filter</label>
+      <select name="library_default_status" class="form-select">
+        {% set current_status = settings.library_default_status or 'all' %}
+        {% for value, label in library_status_choices %}
+          <option value="{{ value }}" {% if current_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">Applied when you open the library. Choose "All Books" to disable.</small>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Default Library Sort Order</label>
+      <select name="library_default_sort" class="form-select">
+        {% set current_sort = settings.library_default_sort or 'title_asc' %}
+        {% for value, label in library_sort_choices %}
+          <option value="{{ value }}" {% if current_sort == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">Controls how books are ordered on first load.</small>
+    </div>
+  </div>
   <div class="mt-3">
-    <button class="btn btn-primary"><i class="bi bi-save"></i> Save Reading Preferences</button>
+    <button class="btn btn-primary"><i class="bi bi-save"></i> Save Library Preferences</button>
   </div>
 </form>
 

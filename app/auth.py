@@ -591,11 +591,18 @@ def settings_privacy_partial():
 @login_required
 def settings_reading_prefs_partial():
     # Simple manual form parsing; no WTForms needed
-    from app.utils.user_settings import load_user_settings, save_user_settings
+    from app.utils.user_settings import (
+        get_library_sort_choices,
+        get_library_status_choices,
+        load_user_settings,
+        save_user_settings,
+    )
     if request.method == 'POST':
         rows_raw = (request.form.get('library_rows_per_page') or '').strip()
         dp_raw = (request.form.get('default_pages_per_log') or '').strip()
         dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
+        status_raw = (request.form.get('library_default_status') or 'all').strip()
+        sort_raw = (request.form.get('library_default_sort') or 'title_asc').strip()
         def _to_int_or_none(v: str):
             try:
                 return int(v) if v not in (None, '',) else None
@@ -604,13 +611,23 @@ def settings_reading_prefs_partial():
         payload = {
             'library_rows_per_page': _to_int_or_none(rows_raw),
             'default_pages_per_log': _to_int_or_none(dp_raw),
-            'default_minutes_per_log': _to_int_or_none(dm_raw)
+            'default_minutes_per_log': _to_int_or_none(dm_raw),
+            'library_default_status': status_raw or 'all',
+            'library_default_sort': sort_raw or 'title_asc'
         }
         ok = save_user_settings(getattr(current_user, 'id', None), payload)
-        flash('Reading preferences saved.' if ok else 'Failed to save preferences.', 'success' if ok else 'error')
+        if ok:
+            flash('Library preferences saved.', 'success')
+        else:
+            flash('Failed to save preferences.', 'error')
     # Load current settings for display
     settings = load_user_settings(getattr(current_user, 'id', None))
-    return render_template('settings/partials/reading_prefs.html', settings=settings)
+    return render_template(
+        'settings/partials/reading_prefs.html',
+        settings=settings,
+        library_status_choices=get_library_status_choices(),
+        library_sort_choices=get_library_sort_choices()
+    )
 
 # New: Personal Audiobookshelf partial (per-user ABS settings)
 @auth.route('/settings/partial/personal_abs', methods=['GET', 'POST'])
