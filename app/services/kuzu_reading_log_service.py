@@ -134,7 +134,7 @@ class KuzuReadingLogService:
         logger.debug(f"Reading log system not fully implemented - returning empty list for recent shared logs")
         return []
     
-    def get_user_reading_logs_sync(self, user_id: str, days_back: int = 30, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_user_reading_logs_sync(self, user_id: str, days_back: int = 30, limit: Optional[int] = 100) -> List[Dict[str, Any]]:
         """
         Get reading logs for a specific user.
         
@@ -150,20 +150,26 @@ class KuzuReadingLogService:
             cutoff_date = date.today() - timedelta(days=days_back)  # Keep as date object
             
             # Query to get both book-specific and bookless reading logs
-            query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+            limit_clause = ""
+            query_params = {
+                "user_id": user_id,
+                "cutoff_date": cutoff_date
+            }
+
+            if limit is not None and limit > 0:
+                limit_clause = "LIMIT $limit"
+                query_params["limit"] = limit
+
+            query = f"""
+            MATCH (u:User {{id: $user_id}})-[:LOGGED]->(rl:ReadingLog)
             WHERE rl.date >= $cutoff_date
             OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
             RETURN rl, b
             ORDER BY rl.date DESC, rl.created_at DESC
-            LIMIT $limit
+            {limit_clause}
             """
             
-            results = safe_execute_kuzu_query(query, {
-                "user_id": user_id,
-                "cutoff_date": cutoff_date,
-                "limit": limit
-            })
+            results = safe_execute_kuzu_query(query, query_params)
             results = _convert_query_result_to_list(results)
             
             logs = []
@@ -183,6 +189,52 @@ class KuzuReadingLogService:
             
         except Exception as e:
             logger.error(f"Error getting user reading logs: {e}")
+            return []
+
+    def get_user_reading_dates_sync(self, user_id: str, days_back: Optional[int] = None) -> List[date]:
+        """Return unique reading-log dates for a user ordered from most recent to oldest."""
+        try:
+            params: Dict[str, Any] = {"user_id": user_id}
+            date_filter = ""
+
+            if days_back is not None:
+                params["cutoff_date"] = date.today() - timedelta(days=days_back)
+                date_filter = "WHERE rl.date >= $cutoff_date"
+
+            query = f"""
+            MATCH (u:User {{id: $user_id}})-[:LOGGED]->(rl:ReadingLog)
+            {date_filter}
+            RETURN DISTINCT rl.date
+            ORDER BY rl.date DESC
+            """
+
+            results = safe_execute_kuzu_query(query, params)
+            rows = _convert_query_result_to_list(results)
+
+            reading_dates: List[date] = []
+            for row in rows:
+                raw_value = row.get('col_0') or row.get('result')
+                if raw_value is None and row:
+                    try:
+                        raw_value = next(iter(row.values()))
+                    except StopIteration:
+                        raw_value = None
+                if raw_value is None:
+                    continue
+                if isinstance(raw_value, date):
+                    reading_dates.append(raw_value)
+                elif isinstance(raw_value, datetime):
+                    reading_dates.append(raw_value.date())
+                elif isinstance(raw_value, str):
+                    try:
+                        reading_dates.append(date.fromisoformat(raw_value.split('T')[0]))
+                    except ValueError:
+                        continue
+
+            return reading_dates
+
+        except Exception as e:
+            logger.error(f"Error getting reading dates for user {user_id}: {e}")
             return []
     
     def create_reading_log_sync(self, reading_log: ReadingLog) -> Optional[Dict[str, Any]]:

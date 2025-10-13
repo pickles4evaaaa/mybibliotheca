@@ -20,28 +20,51 @@ def calculate_reading_streak(user_id, streak_offset=0):
     try:
         # Try to use the reading log service to calculate actual streak
         from app.services import reading_log_service
-        from datetime import date, timedelta
-        
-        # Get reading logs for the last 365 days to calculate streak
-        logs = reading_log_service.get_user_reading_logs_sync(user_id, days_back=365, limit=365)
-        
-        if not logs:
-            # No logs found, return streak offset
-            current_app.logger.debug(f"No reading logs found for user {user_id}, returning streak offset: {streak_offset}")
-            return streak_offset
-        
-        # Extract unique dates from logs
+        from datetime import date, datetime, timedelta
+
         reading_dates = set()
-        for log in logs:
-            if 'date' in log:
-                # Handle both string and date objects
+
+        # Prefer optimized distinct-date query when available.
+        try:
+            raw_dates = reading_log_service.get_user_reading_dates_sync(user_id)
+        except AttributeError:
+            raw_dates = []
+        except Exception as date_exc:
+            current_app.logger.debug(f"Falling back to detailed logs for streak calculation (user={user_id}): {date_exc}")
+            raw_dates = []
+
+        for raw_date in raw_dates:
+            if isinstance(raw_date, date):
+                reading_dates.add(raw_date)
+            elif isinstance(raw_date, datetime):
+                reading_dates.add(raw_date.date())
+            elif isinstance(raw_date, str):
+                try:
+                    reading_dates.add(date.fromisoformat(raw_date.split('T')[0]))
+                except ValueError:
+                    continue
+
+        # Fallback to detailed logs if distinct-date query was unavailable or empty.
+        if not reading_dates:
+            logs = reading_log_service.get_user_reading_logs_sync(user_id, days_back=3650, limit=None)
+
+            if not logs:
+                current_app.logger.debug(f"No reading logs found for user {user_id}, returning streak offset: {streak_offset}")
+                return streak_offset
+
+            for log in logs:
+                if 'date' not in log or log['date'] is None:
+                    continue
                 log_date = log['date']
-                if isinstance(log_date, str):
+                if isinstance(log_date, date):
+                    reading_dates.add(log_date)
+                elif isinstance(log_date, datetime):
+                    reading_dates.add(log_date.date())
+                elif isinstance(log_date, str):
                     try:
-                        log_date = date.fromisoformat(log_date)
+                        reading_dates.add(date.fromisoformat(log_date.split('T')[0]))
                     except (ValueError, TypeError):
                         continue
-                reading_dates.add(log_date)
         
         if not reading_dates:
             current_app.logger.debug(f"No valid reading dates found for user {user_id}, returning streak offset: {streak_offset}")
