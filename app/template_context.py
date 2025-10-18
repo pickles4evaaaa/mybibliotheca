@@ -217,12 +217,42 @@ def inject_datetime():
     }
 
 
+def inject_password_policy():
+    """Expose password policy details to templates."""
+    from app.utils.password_policy import (
+        ENV_PASSWORD_MIN_LENGTH_KEY,
+        MAX_ALLOWED_PASSWORD_LENGTH,
+        MIN_ALLOWED_PASSWORD_LENGTH,
+        get_env_password_min_length,
+        get_password_requirements,
+        get_persisted_password_min_length,
+        resolve_min_password_length,
+    )
+
+    resolved = resolve_min_password_length(include_source=True)
+    if isinstance(resolved, tuple):
+        effective_length, source = resolved
+    else:
+        effective_length, source = resolved, 'default'
+    return {
+        'password_min_length': effective_length,
+        'password_min_length_source': source,
+        'password_min_length_env': get_env_password_min_length(),
+        'password_min_length_env_key': ENV_PASSWORD_MIN_LENGTH_KEY,
+        'password_min_length_configured': get_persisted_password_min_length(),
+        'password_min_length_min': MIN_ALLOWED_PASSWORD_LENGTH,
+        'password_min_length_max': MAX_ALLOWED_PASSWORD_LENGTH,
+        'password_requirements': get_password_requirements(),
+    }
+
+
 def register_context_processors(app):
     """Register all context processors with the Flask app."""
     app.context_processor(inject_debug_manager)
     app.context_processor(inject_site_config)
     app.context_processor(inject_reading_streak)
     app.context_processor(inject_datetime)
+    app.context_processor(inject_password_policy)
     # Helper for templates to resolve effective reading defaults quickly
     def _get_defaults(user_id=None):
         try:

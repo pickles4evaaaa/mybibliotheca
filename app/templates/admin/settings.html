@@ -173,6 +173,19 @@
                                         </select>
                                         <small class="form-text text-muted">Choose whether to use "Genres" or "Categories" terminology throughout the application</small>
                                     </div>
+                                    <div class="col-md-6">
+                                        <label for="min_password_length" class="form-label">Minimum Password Length</label>
+                                        <div class="input-group">
+                                            <input type="number" class="form-control" id="min_password_length" name="min_password_length"
+                                                   min="{{ password_policy_bounds.min }}" max="{{ password_policy_bounds.max }}"
+                                                   value="{{ configured_min_password_length }}" required>
+                                            <span class="input-group-text">characters</span>
+                                        </div>
+                                        <small class="form-text text-muted">Effective minimum: {{ effective_min_password_length }} characters.</small>
+                                        {% if password_policy_env_override %}
+                                        <small class="text-warning d-block mt-1">Environment variable {{ password_policy_env_key }} is set to {{ password_policy_env_override }} and overrides this value.</small>
+                                        {% endif %}
+                                    </div>
                                 </div>
 
                                 <!-- Background Configuration -->

@@ -102,11 +102,10 @@
             <i class="bi bi-shield-check"></i>
             Password Requirements
         </div>
-        <ul class="requirements-list">
-            <li>At least 12 characters long</li>
-            <li>Contains uppercase and lowercase letters</li>
-            <li>Contains at least one number</li>
-            <li>Contains at least one special character</li>
+            <ul class="requirements-list">
+                {% for requirement in password_requirements %}
+                <li>{{ requirement }}</li>
+                {% endfor %}
         </ul>
     </div>
     

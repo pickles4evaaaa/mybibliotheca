@@ -106,7 +106,7 @@ docker exec -it bibliotheca python3 admin_tools.py system-stats
 
 ### Password Requirements
 All passwords must meet these security requirements:
-- At least 12 characters long
+- Meets the configured minimum length (default 12 characters, adjustable via admin settings or the `PASSWORD_MIN_LENGTH` environment variable)
 - Includes at least one uppercase letter (A-Z)
 - Includes at least one lowercase letter (a-z)
 - Includes at least one number (0-9)
@@ -201,7 +201,7 @@ docker exec -it bibliotheca python3 admin_tools.py list-users
 ```
 
 **"Password does not meet requirements"**
-- Ensure the password is at least 12 characters long
+- Ensure the password meets the configured minimum length (default 12 characters)
 - Include uppercase, lowercase, numbers, and special characters
 - Avoid common or reused passwords
 

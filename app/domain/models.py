@@ -9,9 +9,14 @@ from dataclasses import dataclass, field, InitVar
 from dataclasses import fields as dataclass_fields
 from dataclasses import MISSING
 from datetime import datetime, date, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 from enum import Enum
 import json
+
+from app.utils.password_policy import (
+    get_password_requirements as get_policy_password_requirements,
+    resolve_min_password_length,
+)
 
 
 def now_utc() -> datetime:
@@ -686,7 +691,7 @@ class User:
     def is_password_strong(password: str) -> bool:
         """
         Check if password meets security requirements:
-        - At least 12 characters long
+        - Meets the configured minimum length
         - Contains uppercase letter
         - Contains lowercase letter
         - Contains number
@@ -694,8 +699,9 @@ class User:
         - Not in common password blacklist
         """
         import re
-        
-        if len(password) < 12:
+
+        min_length = cast(int, resolve_min_password_length())
+        if len(password) < min_length:
             return False
         
         if not re.search(r'[A-Z]', password):
@@ -724,14 +730,7 @@ class User:
     @staticmethod
     def get_password_requirements() -> List[str]:
         """Return a list of password requirements for display to users"""
-        return [
-            "At least 12 characters long",
-            "Contains at least one uppercase letter (A-Z)",
-            "Contains at least one lowercase letter (a-z)",
-            "Contains at least one number (0-9)",
-            "Contains at least one special character (!@#$%^&*()_+-=[]{};\':\"\\|,.<>/?)",
-            "Not a commonly used password"
-        ]
+        return get_policy_password_requirements()
     
     def is_locked(self) -> bool:
         """Check if the user account is currently locked."""

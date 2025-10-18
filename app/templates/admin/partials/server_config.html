@@ -1,5 +1,5 @@
 {# Partial: Server Configuration form reused in unified settings #}
-<form method="POST" action="{{ url_for('admin.settings') }}" enctype="multipart/form-data" class="mb-4" onsubmit="return saveServerConfig(this);">
+<form method="POST" action="{{ url_for('admin.settings') }}" enctype="multipart/form-data" class="mb-4" data-server-config-form="1">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
   <div class="row g-3">
     <div class="col-md-4">
@@ -20,6 +20,18 @@
         <option value="genre" {% if terminology_preference=='genre' %}selected{% endif %}>Genres</option>
         <option value="category" {% if terminology_preference=='category' %}selected{% endif %}>Categories</option>
       </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Minimum Password Length</label>
+      <div class="input-group">
+        <input type="number" min="{{ password_policy_bounds.min }}" max="{{ password_policy_bounds.max }}"
+               name="min_password_length" class="form-control" value="{{ configured_min_password_length }}" required />
+        <span class="input-group-text">characters</span>
+      </div>
+      <small class="text-muted">Effective minimum: {{ effective_min_password_length }} characters.</small>
+      {% if password_policy_env_override %}
+      <small class="text-warning d-block">Env {{ password_policy_env_key }}={{ password_policy_env_override }} currently overrides this setting.</small>
+      {% endif %}
     </div>
   </div>
   <div class="mt-4">
@@ -117,37 +129,25 @@
 <script>
 (function(){
   const typeSel = document.getElementById('bgType');
+  const toggleScope = typeSel ? (typeSel.closest('form') || document) : document;
   function sync(){
+    if(!typeSel) return;
     const type = typeSel.value;
-    document.querySelectorAll('[data-bg]').forEach(el=>{
-      el.style.display = el.getAttribute('data-bg')===type ? '' : 'none';
-      if(type==='gradient' && el.getAttribute('data-bg')==='gradient'){ el.style.display='flex'; }
+    toggleScope.querySelectorAll('[data-bg]').forEach(el=>{
+      const match = el.getAttribute('data-bg')===type;
+      el.style.display = match ? '' : 'none';
+      if(match && type==='gradient'){
+        el.style.display = 'flex';
+      }
     });
   }
-  typeSel && typeSel.addEventListener('change',sync); sync();
-})();
-async function saveServerConfig(form){
-  const unifiedContainer = document.getElementById('serverDynamicContainer');
-  const inUnified = !!unifiedContainer; // if unified settings page present
-  if(!inUnified){
-    // Let normal POST/redirect happen to legacy admin.settings
-    return true;
+  if(typeSel && !typeSel.dataset.bgBoundLegacy){
+    typeSel.addEventListener('change', sync);
+    typeSel.dataset.bgBoundLegacy = '1';
   }
-  const fd = new FormData(form);
-  fd.append('inline','1');
-  const btn = form.querySelector('button[type="submit"], button:not([type])');
-  if(btn){ btn.disabled=true; btn.dataset.original=btn.innerHTML; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...'; }
-  try {
-    // Force request to unified partial endpoint instead of admin redirect
-    const endpoint = "{{ url_for('auth.settings_server_partial', panel='config') }}";
-    const resp = await fetch(endpoint, {method:'POST', body: fd, headers:{'X-Requested-With':'XMLHttpRequest'}});
-    const html = await resp.text();
-    unifiedContainer.innerHTML = html;
-    if(!unifiedContainer.querySelector('.alert-inline-save-success')){
-      const alert=document.createElement('div'); alert.className='alert alert-success py-2 mb-3 alert-inline-save-success'; alert.textContent='Configuration saved.'; unifiedContainer.prepend(alert); setTimeout(()=>alert.remove(),3000);
-    }
-  } catch(e){ alert('Failed to save configuration.'); }
-  finally { if(btn){ btn.disabled=false; btn.innerHTML=btn.dataset.original; } }
-  return false;
-}
+  sync();
+  if(typeof window.ensureServerConfigBindings === 'function'){
+    try { window.ensureServerConfigBindings(); } catch(_) {}
+  }
+})();
 </script>

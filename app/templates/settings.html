@@ -197,6 +197,85 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Server dynamic panels (AJAX embed)
     const serverContainer = document.getElementById('serverDynamicContainer');
+
+    async function unifiedSaveServerConfig(formEl){
+        const unifiedContainer = document.getElementById('serverDynamicContainer');
+        if(!unifiedContainer){
+            return true; // fallback to legacy submission
+        }
+        const fd = new FormData(formEl);
+        fd.append('inline','1');
+        const btn = formEl.querySelector('button[type="submit"], button:not([type])');
+        if(btn){
+            if(!btn.dataset.original){ btn.dataset.original = btn.innerHTML; }
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...';
+        }
+        try {
+            const endpoint = "{{ url_for('auth.settings_server_partial', panel='config') }}";
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                body: fd,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const html = await resp.text();
+            unifiedContainer.innerHTML = html;
+            ensureServerConfigBindings();
+            if(!unifiedContainer.querySelector('.alert-inline-save-success')){
+                const alert = document.createElement('div');
+                alert.className = 'alert alert-success py-2 mb-3 alert-inline-save-success';
+                alert.textContent = 'Configuration saved.';
+                unifiedContainer.prepend(alert);
+                setTimeout(()=>alert.remove(), 3000);
+            }
+        } catch(err){
+            alert('Failed to save configuration.');
+        } finally {
+            if(btn){
+                btn.disabled = false;
+                btn.innerHTML = btn.dataset.original || '<i class="bi bi-check2 me-1"></i>Save';
+            }
+        }
+        return false;
+    }
+
+    function ensureServerConfigBindings(){
+        const container = document.getElementById('serverDynamicContainer');
+        const scope = container || document;
+        const typeSel = scope.querySelector('#bgType');
+        if(typeSel){
+            const form = typeSel.closest('form');
+            const sync = () => {
+                const toggleScope = form || scope;
+                toggleScope.querySelectorAll('[data-bg]').forEach(el => {
+                    const isMatch = el.getAttribute('data-bg') === typeSel.value;
+                    el.style.display = isMatch ? '' : 'none';
+                    if(isMatch && typeSel.value === 'gradient'){
+                        el.style.display = 'flex';
+                    }
+                });
+            };
+            sync();
+            if(!typeSel.dataset.bgBoundUnified){
+                typeSel.addEventListener('change', sync);
+                typeSel.dataset.bgBoundUnified = '1';
+            }
+        }
+        scope.querySelectorAll('form[data-server-config-form]').forEach(formEl => {
+            if(formEl.dataset.unifiedHandlerBound){
+                return;
+            }
+            formEl.addEventListener('submit', ev => {
+                if(!document.getElementById('serverDynamicContainer')){
+                    return; // legacy path, allow default submission
+                }
+                ev.preventDefault();
+                unifiedSaveServerConfig(formEl);
+            });
+            formEl.dataset.unifiedHandlerBound = '1';
+        });
+        window.saveServerConfig = unifiedSaveServerConfig;
+    }
     if(!window.__initOPDSPanel){
         window.__initOPDSPanel = function(){
             const root = document.getElementById('opdsPanelRoot');
@@ -719,6 +798,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if(panel==='opds' && window.__initOPDSPanel){
                             try { window.__initOPDSPanel(); } catch(err){ console.error('OPDS init error', err); }
                         }
+                        if(panel==='config'){
+                            ensureServerConfigBindings();
+                        }
                                                 // Re-bind scripts for panels whose inline <script> won't auto-run after fetch
                                                 if(panel==='audiobookshelf'){
                                                         try {
@@ -855,34 +937,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                         } catch(e) { console.warn('ABS panel init failed', e); }
                                                 }
                         if(panel==='config'){
-                            if(typeof window.saveServerConfig !== 'function'){
-                                window.saveServerConfig = async function(form){
-                                    try {
-                                        const fd = new FormData(form);
-                                        if(!fd.get('inline')) fd.append('inline','1');
-                                        const btn = form.querySelector('button[type="submit"],button:not([type])');
-                                        const container = document.getElementById('serverDynamicContainer');
-                                        if(btn){ btn.disabled=true; btn.dataset.original=btn.innerHTML; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...'; }
-                                        const resp = await fetch(form.action, {method:'POST', body:fd, headers:{'X-Requested-With':'XMLHttpRequest'}});
-                                        const html2 = await resp.text();
-                                        if(container) container.innerHTML = html2;
-                                        // ensure function persists after re-render
-                                        if(!container.querySelector('.alert-inline-save-success')){
-                                            const alert=document.createElement('div'); alert.className='alert alert-success py-2 mb-3 alert-inline-save-success'; alert.textContent='Configuration saved.'; container.prepend(alert); setTimeout(()=>alert.remove(),3000);
-                                        }
-                                    } catch(e){ alert('Failed to save configuration.'); }
-                                    finally {
-                                        const btn2 = form.querySelector('button[type="submit"],button:not([type])');
-                                        if(btn2){ btn2.disabled=false; btn2.innerHTML=btn2.dataset.original||'Save'; }
-                                    }
-                                    return false;
-                                }
-                            }
-                            // Attach listener redundantly in case inline onsubmit not executed due to script tag non-execution
-                            try {
-                                const cfgForm = serverContainer.querySelector('form[action*="/settings/partial/server/config"]');
-                                if(cfgForm){ cfgForm.onsubmit = function(){ return window.saveServerConfig(this); }; }
-                            } catch(e){ console.warn('Config form hook failed', e); }
+                            try { ensureServerConfigBindings(); } catch(e){ console.warn('Config bindings refresh failed', e); }
                         }
                         if(panel==='ai'){
                             // Inline <script> tags inside inserted HTML from fetch won't execute; ensure functions exist

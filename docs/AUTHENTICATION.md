@@ -60,7 +60,7 @@ MAIL_PASSWORD=your-app-password
 New users can register at `/register` with:
 - Username (3-20 characters, alphanumeric + underscore)
 - Email address (must be valid and unique)
-- Password (minimum 8 characters, at least one letter and one number)
+- Password (default minimum 12 characters with mixed case, number, and symbol; configurable via admin settings or the `PASSWORD_MIN_LENGTH` environment variable)
 
 ### Login
 
@@ -89,10 +89,12 @@ docker exec -it bibliotheca python3 admin_tools.py reset-admin-password --passwo
 
 #### Password Security Requirements
 
-- Minimum 8 characters
-- At least one letter (a-z or A-Z)
+- Configurable minimum length (default 12 characters, minimum allowed 8, maximum 128)
+- At least one uppercase letter (A-Z)
+- At least one lowercase letter (a-z)
 - At least one number (0-9)
-- No common passwords accepted
+- At least one special character (!@#$%^&*()_+-=[]{};':"\|,.<>/?)
+- Screens out a small set of commonly abused passwords
 
 ## User Data Isolation
 

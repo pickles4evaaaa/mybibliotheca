@@ -18,6 +18,14 @@ import re
 import logging
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 from app.domain.models import MediaType
+from app.utils.password_policy import (
+    ENV_PASSWORD_MIN_LENGTH_KEY,
+    MAX_ALLOWED_PASSWORD_LENGTH,
+    MIN_ALLOWED_PASSWORD_LENGTH,
+    coerce_min_password_length,
+    get_env_password_min_length,
+    resolve_min_password_length,
+)
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -315,6 +323,20 @@ def save_system_config(config):
                 existing_config['import_settings'] = existing_import_settings
             elif 'import_settings' in existing_config:
                 existing_config.pop('import_settings', None)
+        if 'security_settings' in config:
+            existing_security_settings = existing_config.get('security_settings', {})
+            if not isinstance(existing_security_settings, dict):
+                existing_security_settings = {}
+            security_settings = config.get('security_settings') or {}
+            min_length_value = coerce_min_password_length(security_settings.get('min_password_length'))
+            if min_length_value is not None:
+                existing_security_settings['min_password_length'] = min_length_value
+            elif 'min_password_length' in existing_security_settings:
+                existing_security_settings.pop('min_password_length', None)
+            if existing_security_settings:
+                existing_config['security_settings'] = existing_security_settings
+            elif 'security_settings' in existing_config:
+                existing_config.pop('security_settings', None)
         library_defaults = existing_config.get('library_defaults', {})
         if not isinstance(library_defaults, dict):
             library_defaults = {}
@@ -361,6 +383,9 @@ def load_system_config():
             print(f"Error loading system config: {e}")
     
     # Return defaults if file doesn't exist or is corrupted
+    default_min_length = resolve_min_password_length()
+    if isinstance(default_min_length, tuple):
+        default_min_length = default_min_length[0]
     return {
         'site_name': 'MyBibliotheca',
         'server_timezone': 'UTC',
@@ -384,6 +409,9 @@ def load_system_config():
         },
         'import_settings': {
             'metadata_concurrency': None
+        },
+        'security_settings': {
+            'min_password_length': default_min_length
         }
     }
 
@@ -920,6 +948,7 @@ def delete_user(user_id):
 def settings():
     """Admin settings page"""
     safe_manager = get_safe_kuzu_manager()
+    existing_config = load_system_config()
     
     if request.method == 'POST':
         site_name = request.form.get('site_name', 'MyBibliotheca')
@@ -1007,6 +1036,17 @@ def settings():
             raw_default_book_format = MediaType.PHYSICAL.value
 
         # Save system configuration to .env file
+        current_security_settings = existing_config.get('security_settings') or {}
+        configured_min = coerce_min_password_length(current_security_settings.get('min_password_length'))
+        min_password_length_raw = (request.form.get('min_password_length') or '').strip()
+        requested_min = coerce_min_password_length(min_password_length_raw)
+        if requested_min is None:
+            fallback_min = configured_min
+            if fallback_min is None:
+                resolved_value = resolve_min_password_length(include_source=True)
+                fallback_min = resolved_value[0] if isinstance(resolved_value, tuple) else resolved_value
+            requested_min = fallback_min
+
         config = {
             'site_name': site_name,
             'server_timezone': server_timezone,
@@ -1019,6 +1059,9 @@ def settings():
             },
             'import_settings': {
                 'metadata_concurrency': metadata_concurrency
+            },
+            'security_settings': {
+                'min_password_length': requested_min
             }
         }
         
@@ -1127,6 +1170,18 @@ def get_admin_settings_context():
         'default_rows_per_page': raw_library_defaults.get('default_rows_per_page'),
         'default_book_format': default_book_format
     }
+    security_settings = system_config.get('security_settings') or {}
+    configured_min = coerce_min_password_length(security_settings.get('min_password_length'))
+    resolved_info = resolve_min_password_length(include_source=True)
+    if isinstance(resolved_info, tuple):
+        effective_min_length, password_policy_source = resolved_info
+    else:
+        effective_min_length, password_policy_source = resolved_info, 'default'
+    env_override = get_env_password_min_length()
+    password_policy_bounds = {
+        'min': MIN_ALLOWED_PASSWORD_LENGTH,
+        'max': MAX_ALLOWED_PASSWORD_LENGTH
+    }
     media_type_options = [
         {
             'value': mt.value,
@@ -1180,7 +1235,14 @@ def get_admin_settings_context():
         'media_type_labels': media_type_labels,
         'import_settings': system_config.get('import_settings', {
             'metadata_concurrency': None
-        })
+        }),
+        'security_settings': security_settings,
+        'configured_min_password_length': configured_min or effective_min_length,
+        'effective_min_password_length': effective_min_length,
+        'password_policy_source': password_policy_source,
+        'password_policy_env_override': env_override,
+        'password_policy_bounds': password_policy_bounds,
+        'password_policy_env_key': ENV_PASSWORD_MIN_LENGTH_KEY
     }
 
 @admin.route('/settings/config_partial')
