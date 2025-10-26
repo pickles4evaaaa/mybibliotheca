@@ -692,10 +692,8 @@ class User:
         """
         Check if password meets security requirements:
         - Meets the configured minimum length
-        - Contains uppercase letter
-        - Contains lowercase letter
-        - Contains number
-        - Contains special character
+        - Contains at least one letter (upper or lower case)
+        - Contains at least one number OR special character
         - Not in common password blacklist
         """
         import re
@@ -704,22 +702,22 @@ class User:
         if len(password) < min_length:
             return False
         
-        if not re.search(r'[A-Z]', password):
+        # Must contain at least one letter
+        if not re.search(r'[A-Za-z]', password):
             return False
         
-        if not re.search(r'[a-z]', password):
+        # Must contain at least one number OR special character (more flexible)
+        has_number = bool(re.search(r'\d', password))
+        has_special = bool(re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]', password))
+        
+        if not (has_number or has_special):
             return False
         
-        if not re.search(r'\d', password):
-            return False
-        
-        if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]', password):
-            return False
-        
-        # Common password blacklist
+        # Common password blacklist (more comprehensive but still reasonable)
         common_passwords = {
-            'password123', 'password1234', 'admin123', 'administrator',
-            'qwerty123', 'welcome123', 'letmein123', 'password!',
+            'password', 'password123', 'password1234', 'admin123', 'administrator',
+            'qwerty123', 'welcome123', 'letmein123', 'password!', 'admin', 'qwerty',
+            '123456', '12345678', 'welcome', 'letmein', 'monkey', 'dragon'
         }
         
         if password.lower() in common_passwords:
