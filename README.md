@@ -15,25 +15,20 @@
 
 ## 📸 Screenshots
 
-### Library View
-Organize and browse your personal book collection with advanced filtering, status tracking, and beautiful cover displays.
+### Library Homepage
+Browse your personal book collection with beautiful cover displays, reading status indicators, and quick access to all your books.
 
-![Library View](docs/images/library-view.png)
+![Library Homepage](https://i.imgur.com/cDN06Lo.png)
 
 ### Reading Log
 Track your reading sessions with detailed logging including pages read, time spent, and personal notes for every book.
 
-![Reading Log](docs/images/reading-log.png)
-
-### Enhanced Library View
-Filter books by reading status, ownership, genres, and more. See all your books at a glance with comprehensive metadata.
-
-![Library Detailed View](docs/images/library-detailed.png)
+![Reading Log](https://i.imgur.com/1WqQQAW.png)
 
 ### Book Details
-View comprehensive book information including genres, authors, reading status, dates, and manage your personal collection.
+View comprehensive book information including genres, authors, reading status, publication dates, and manage your personal collection.
 
-![Book Details](docs/images/book-details.png)
+![Book Details](https://i.imgur.com/A4jI2nS.png)
 
 ---
 
