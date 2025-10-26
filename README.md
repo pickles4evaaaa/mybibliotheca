@@ -11,6 +11,32 @@
 
 [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white&labelColor=7289DA&style=for-the-badge)](https://discord.gg/Hc8C5eRm7Q)
 
+---
+
+## 📸 Screenshots
+
+### Library View
+Organize and browse your personal book collection with advanced filtering, status tracking, and beautiful cover displays.
+
+![Library View](docs/images/library-view.png)
+
+### Reading Log
+Track your reading sessions with detailed logging including pages read, time spent, and personal notes for every book.
+
+![Reading Log](docs/images/reading-log.png)
+
+### Enhanced Library View
+Filter books by reading status, ownership, genres, and more. See all your books at a glance with comprehensive metadata.
+
+![Library Detailed View](docs/images/library-detailed.png)
+
+### Book Details
+View comprehensive book information including genres, authors, reading status, dates, and manage your personal collection.
+
+![Book Details](docs/images/book-details.png)
+
+---
+
 
 ---
 
