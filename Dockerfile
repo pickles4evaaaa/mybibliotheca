@@ -13,9 +13,7 @@ ENV OPENSSL_ENABLE_SHA1_SIGNATURES=1
 WORKDIR /app
 
 # Install system dependencies required for psutil, cryptographic packages, OCR, and imaging
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    set -eux; \
+RUN set -eux; \
         apt-get update; \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             gcc \
@@ -63,12 +61,9 @@ RUN echo "openssl_conf = openssl_init" >> /etc/ssl/openssl.cnf && \
 # Install Python dependencies
 COPY requirements.txt .
 # Upgrade pip and install cryptographic dependencies first
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip setuptools wheel
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install cryptography
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install cryptography
+RUN pip install -r requirements.txt
 
 # Copy all source code
 COPY . .
