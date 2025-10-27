@@ -317,6 +317,7 @@ CUSTOM_FIELD_*.md
 GENRE_MAPPING_*.md
 PROGRESS_BAR_*.md
 session_strategy.md
+DOCKER_TAGGING_STRATEGY.md
 
 # Temporary migration and example files
 app_factory_example.py
