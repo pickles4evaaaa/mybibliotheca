@@ -1,0 +1,99 @@
+<div class="card border-success shadow-sm">
+  <div class="card-header bg-success text-white d-flex align-items-center gap-2">
+    <i class="bi bi-envelope-at"></i>
+    <strong>SMTP Configuration</strong>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-3">Configure SMTP server settings for email notifications.</p>
+    <form method="POST"
+          action="{{ url_for('auth.save_smtp_settings') }}"
+          id="smtpConfigForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="inline" value="1" />
+      <div class="mb-4">
+        <h6 class="fw-bold text-dark mb-3">Server Settings</h6>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="smtp_server" class="form-label">SMTP Server</label>
+            <input type="text" class="form-control" id="smtp_server" name="smtp_server"
+                   value="{{ smtp_config.get('smtp_server', '') if smtp_config else '' }}"
+                   placeholder="smtp.gmail.com" />
+          </div>
+          <div class="col-md-6">
+            <label for="smtp_port" class="form-label">SMTP Port</label>
+            <input type="number" class="form-control" id="smtp_port" name="smtp_port"
+                   value="{{ smtp_config.get('smtp_port', '587') if smtp_config else '587' }}"
+                   placeholder="587" />
+          </div>
+        </div>
+      </div>
+      <div class="mb-4">
+        <h6 class="fw-bold text-dark mb-3">Authentication</h6>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="smtp_username" class="form-label">Username / Email</label>
+            <input type="text" class="form-control" id="smtp_username" name="smtp_username"
+                   value="{{ smtp_config.get('smtp_username', '') if smtp_config else '' }}"
+                   placeholder="your-email@gmail.com" />
+          </div>
+          <div class="col-md-6">
+            <label for="smtp_password" class="form-label">Password / App Password</label>
+            <input type="password" class="form-control" id="smtp_password" name="smtp_password"
+                   value="{{ smtp_config.get('smtp_password', '') if smtp_config else '' }}"
+                   placeholder="••••••••" />
+            <small class="form-text text-muted">For Gmail, use an App Password.</small>
+          </div>
+        </div>
+        {% set smtp_security = smtp_config.get('smtp_security', 'starttls') if smtp_config else 'starttls' %}
+        <div class="mt-3">
+          <label for="smtp_security" class="form-label">Security</label>
+          <select class="form-select" id="smtp_security" name="smtp_security">
+            <option value="starttls" {{ 'selected' if smtp_security == 'starttls' else '' }}>STARTTLS (port 587, recommended)</option>
+            <option value="ssl" {{ 'selected' if smtp_security == 'ssl' else '' }}>Implicit SSL (port 465)</option>
+            <option value="none" {{ 'selected' if smtp_security == 'none' else '' }}>None (port 25 or custom)</option>
+          </select>
+        </div>
+      </div>
+      <div class="mb-4">
+        <h6 class="fw-bold text-dark mb-3">Email Settings</h6>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="smtp_from_email" class="form-label">From Email</label>
+            <input type="email" class="form-control" id="smtp_from_email" name="smtp_from_email"
+                   value="{{ smtp_config.get('smtp_from_email', '') if smtp_config else '' }}"
+                   placeholder="noreply@yourlibrary.com" />
+          </div>
+          <div class="col-md-6">
+            <label for="smtp_from_name" class="form-label">From Name</label>
+            <input type="text" class="form-control" id="smtp_from_name" name="smtp_from_name"
+                   value="{{ smtp_config.get('smtp_from_name', site_name + ' (MyBibliotheca)') if smtp_config else (site_name + ' (MyBibliotheca)') }}"
+                   placeholder="{{ site_name }} (MyBibliotheca)" />
+            <small class="form-text text-muted">Displayed as the sender name in emails.</small>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center mt-4">
+        <button type="button" class="btn btn-outline-success" id="testSmtpBtn">
+          <i class="bi bi-check-circle me-1"></i>Test Connection
+        </button>
+        <div class="settings-save-bar ms-md-auto w-100">
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-save me-1"></i>Save SMTP Settings
+          </button>
+        </div>
+      </div>
+    </form>
+    <div id="smtpTestResult" class="mt-3" style="display:none;"></div>
+    <div class="alert alert-info mt-3">
+      <strong><i class="bi bi-info-circle me-1"></i>Common Providers:</strong><br />
+      <small>
+        <strong>Gmail:</strong> smtp.gmail.com:587 (Use App Password)<br />
+        <strong>Outlook/Office365:</strong> smtp.office365.com:587<br />
+        <strong>Yahoo:</strong> smtp.mail.yahoo.com:587<br />
+        <strong>SendGrid:</strong> smtp.sendgrid.net:587<br />
+        <strong>Mailgun:</strong> smtp.mailgun.org:587
+      </small>
+    </div>
+  </div>
+</div>
+<script>

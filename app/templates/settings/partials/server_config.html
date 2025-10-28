@@ -1,0 +1,199 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-gear-wide-connected"></i>
+    <strong>General Configuration</strong>
+  </div>
+  <div class="card-body">
+    <form method="POST"
+          action="{{ url_for('auth.settings_server_partial', panel='config') }}"
+          enctype="multipart/form-data"
+          class="mb-0"
+          data-server-config-form="1">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="inline" value="1" />
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Site Name</label>
+          <input name="site_name" class="form-control" value="{{ site_name }}" placeholder="MyBibliotheca" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Server Timezone</label>
+          <select name="server_timezone" class="form-select">
+            {% for tz in common_timezones %}
+            <option value="{{ tz }}" {% if tz == server_timezone %}selected{% endif %}>{{ tz }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ get_genre_term() }} Terminology</label>
+          <select name="terminology_preference" class="form-select">
+            <option value="genre" {% if terminology_preference == 'genre' %}selected{% endif %}>Genres</option>
+            <option value="category" {% if terminology_preference == 'category' %}selected{% endif %}>Categories</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Minimum Password Length</label>
+          <div class="input-group">
+            <input type="number"
+                   min="{{ password_policy_bounds.min }}"
+                   max="{{ password_policy_bounds.max }}"
+                   name="min_password_length"
+                   class="form-control"
+                   value="{{ configured_min_password_length }}"
+                   required />
+            <span class="input-group-text">characters</span>
+          </div>
+          <small class="text-muted">Effective minimum: {{ effective_min_password_length }} characters.</small>
+          {% if password_policy_env_override %}
+          <small class="text-warning d-block">Env {{ password_policy_env_key }}={{ password_policy_env_override }} currently overrides this setting.</small>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h6 class="fw-semibold">Reading Log Defaults</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Default Pages/Log</label>
+            <input type="number"
+                   min="0"
+                   step="1"
+                   name="default_pages_per_log"
+                   class="form-control"
+                   value="{{ (reading_log_defaults.default_pages_per_log if reading_log_defaults else None) or '' }}"
+                   placeholder="e.g. 10" />
+            <small class="text-muted">Leave blank for no default</small>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Default Minutes/Log</label>
+            <input type="number"
+                   min="0"
+                   step="1"
+                   name="default_minutes_per_log"
+                   class="form-control"
+                   value="{{ (reading_log_defaults.default_minutes_per_log if reading_log_defaults else None) or '' }}"
+                   placeholder="e.g. 20" />
+            <small class="text-muted">Leave blank for no default</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h6 class="fw-semibold">Library Defaults</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Default Rows per Page</label>
+            <input type="number"
+                   min="1"
+                   step="1"
+                   name="default_rows_per_page"
+                   class="form-control"
+                   value="{{ (library_defaults.default_rows_per_page if library_defaults else None) or '' }}"
+                   placeholder="e.g. 4" />
+            <small class="text-muted">Admin default number of rows shown per page in the library grid.</small>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Default Book Format</label>
+            {% set current_default_format = (library_defaults.default_book_format if library_defaults else None) or 'physical' %}
+            <select name="default_book_format" class="form-select">
+              {% for opt in media_type_options %}
+              <option value="{{ opt.value }}" {% if opt.value == current_default_format %}selected{% endif %}>{{ opt.label }}</option>
+              {% endfor %}
+            </select>
+            <small class="text-muted">Applied when new books are added without a specified format.</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h6 class="fw-semibold">Import &amp; Metadata</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Metadata Fetch Concurrency</label>
+            <input type="number"
+                   min="1"
+                   step="1"
+                   name="metadata_concurrency"
+                   class="form-control"
+                   value="{{ (import_settings.metadata_concurrency if import_settings else None) or '' }}"
+                   placeholder="e.g. 4" />
+            <small class="text-muted">Controls parallel ISBN lookups during import. Leave blank to use environment defaults.</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h6 class="fw-semibold">Background</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Type</label>
+            <select name="background_type" id="bgType" class="form-select">
+              <option value="default" {% if background_config.type == 'default' %}selected{% endif %}>Default</option>
+              <option value="solid" {% if background_config.type == 'solid' %}selected{% endif %}>Solid</option>
+              <option value="gradient" {% if background_config.type == 'gradient' %}selected{% endif %}>Gradient</option>
+              <option value="image" {% if background_config.type == 'image' %}selected{% endif %}>Image</option>
+            </select>
+          </div>
+          <div class="col-md-3" data-bg="solid">
+            <label class="form-label">Solid Color</label>
+            <input type="color" name="solid_color" class="form-control form-control-color" value="{{ background_config.solid_color }}" />
+          </div>
+          <div class="col-md-6 row g-2" data-bg="gradient">
+            <div class="col-4">
+              <label class="form-label">Start</label>
+              <input type="color" name="gradient_start" class="form-control form-control-color" value="{{ background_config.gradient_start }}" />
+            </div>
+            <div class="col-4">
+              <label class="form-label">End</label>
+              <input type="color" name="gradient_end" class="form-control form-control-color" value="{{ background_config.gradient_end }}" />
+            </div>
+            <div class="col-4">
+              <label class="form-label">Dir</label>
+                <select name="gradient_direction" class="form-select">
+                  <option value="135deg" {% if background_config.gradient_direction == '135deg' %}selected{% endif %}>135°</option>
+                  <option value="90deg" {% if background_config.gradient_direction == '90deg' %}selected{% endif %}>90°</option>
+                  <option value="0deg" {% if background_config.gradient_direction == '0deg' %}selected{% endif %}>0°</option>
+                </select>
+            </div>
+          </div>
+          <div class="col-md-6" data-bg="image">
+            <label class="form-label">Image URL</label>
+            <input type="url" name="background_image_url" class="form-control" value="{{ background_config.image_url }}" placeholder="https://..." />
+            <div class="mt-2">
+              <input type="file" name="background_image_file" accept="image/*" class="form-control" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-save-bar mt-4">
+        <button class="btn btn-primary"><i class="bi bi-check2 me-1"></i>Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(function(){
+  const typeSel = document.getElementById('bgType');
+  const toggleScope = typeSel ? (typeSel.closest('form') || document) : document;
+  function sync(){
+    if(!typeSel) return;
+    const type = typeSel.value;
+    toggleScope.querySelectorAll('[data-bg]').forEach(el=>{
+      const match = el.getAttribute('data-bg') === type;
+      el.style.display = match ? '' : 'none';
+      if(match && type === 'gradient'){
+        el.style.display = 'flex';
+      }
+    });
+  }
+  if(typeSel && !typeSel.dataset.bgBoundUnified){
+    typeSel.addEventListener('change', sync);
+    typeSel.dataset.bgBoundUnified = '1';
+  }
+  sync();
+  if(typeof window.ensureServerConfigBindings === 'function'){
+    try { window.ensureServerConfigBindings(); } catch(_) {}
+  }
+})();
+</script>

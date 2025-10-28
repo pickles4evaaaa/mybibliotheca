@@ -899,7 +899,6 @@ def create_app():
     # Register application routes via modular blueprints
     from .routes import register_blueprints
     from .auth import auth
-    from .admin import admin
     try:
         from .location_routes import bp as locations_bp
         app.register_blueprint(locations_bp)
@@ -935,7 +934,6 @@ def create_app():
     # Register main and modular routes
     register_blueprints(app)
     app.register_blueprint(auth, url_prefix='/auth')
-    app.register_blueprint(admin, url_prefix='/admin')
     try:
         from .routes.db_health_routes import db_health
         app.register_blueprint(db_health)
