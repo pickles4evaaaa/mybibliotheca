@@ -713,6 +713,7 @@ class KuzuBookRepository:
                 'subtitle': getattr(book, 'subtitle', None),
                 'asin': getattr(book, 'asin', None),
                 'description': getattr(book, 'description', ''),
+                'notes': getattr(book, 'notes', None),
                 'published_date': getattr(book, 'published_date', None),
                 'page_count': getattr(book, 'page_count', 0),
                 'language': getattr(book, 'language', 'en'),

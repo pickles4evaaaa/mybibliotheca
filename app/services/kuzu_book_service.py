@@ -464,7 +464,7 @@ class KuzuBookService:
             # Whitelist of properties that exist on the Book node (avoid relationship fields like publisher)
             allowed_properties = {
                 'title', 'subtitle', 'normalized_title', 'isbn13', 'isbn10', 'asin',
-                'description', 'published_date', 'page_count', 'language', 'cover_url',
+                'description', 'notes', 'published_date', 'page_count', 'language', 'cover_url',
                 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count',
                 'series', 'series_volume', 'series_order', 'created_at', 'updated_at', 'media_type'
             }
