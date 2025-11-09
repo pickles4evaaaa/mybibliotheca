@@ -96,7 +96,7 @@
       min-height: 100vh;
       font-family: 'Georgia', serif;
       color: var(--text-color);
-      padding-top: clamp(80px, 15vw, 110px); /* Dynamic padding for floating navbar */
+      padding-top: 0; /* No padding needed for static navbar */
     }
     .overlay {
       min-height: 100vh;
@@ -207,46 +207,27 @@
     }
     .navbar {
       background: var(--navbar-background);
-      border: 1px solid var(--border-color);
-      margin-bottom: 32px;
-      position: fixed;
-      top: clamp(8px, 2vw, 16px);
-      left: clamp(8px, 2vw, 16px);
-      right: clamp(8px, 2vw, 16px);
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 1rem;
+      position: static; /* Static positioning - navbar stays at top */
       z-index: 1030;
-      border-radius: clamp(8px, 2vw, 16px);
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    
-    /* Slightly more opaque when scrolling for better contrast */
-    .navbar.scrolled {
-      background: rgba(255, 255, 255, 0.98);
-      border-color: rgba(224, 201, 166, 0.8);
-    }
-    
-    [data-theme="dark"] .navbar.scrolled {
-      background: rgba(20, 20, 20, 0.98);
-      border-color: rgba(64, 64, 64, 0.8);
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
     }
     
     /* Responsive navbar compensation and improvements */
     @media (max-width: 991px) {
       body {
-        padding-top: clamp(100px, 20vw, 140px); /* More padding for collapsed navbar */
+        padding-top: 0; /* No extra padding needed */
       }
       
-      .navbar-nav .btn {
-        margin-bottom: 0.5rem;
-        margin-right: 0 !important;
-        width: 100%;
-        text-align: center;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
+      .navbar-nav .nav-link {
+        padding: 0.5rem 1rem;
+        display: block;
       }
       
       .navbar-nav {
-        margin-top: 1rem;
+        margin-top: 0.5rem;
       }
       
       .navbar-text {
@@ -257,34 +238,38 @@
     
     @media (max-width: 576px) {
       body {
-        padding-top: clamp(90px, 18vw, 120px); /* Adjusted for mobile */
+        padding-top: 0; /* No extra padding needed */
       }
     }
     
     /* Fully responsive typography */
     .navbar-brand {
-      font-size: clamp(1.1rem, 3.5vw, 1.8rem);
+      font-size: clamp(1rem, 2.5vw, 1.3rem); /* Reduced from 1.1rem - 1.8rem */
       font-weight: bold;
     }
     
-    /* Adaptive spacing for all screen sizes */
-    .navbar-nav .btn {
-      font-size: clamp(0.75rem, 2.5vw, 1rem);
-      padding: clamp(0.3rem, 1.5vw, 0.6rem) clamp(0.8rem, 3vw, 1.2rem);
-      border-radius: clamp(6px, 1.5vw, 12px);
-      text-align: center;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+    /* Navigation links - clean text style without boxes */
+    .navbar-nav .nav-link {
+      font-size: clamp(0.85rem, 2vw, 0.95rem);
+      padding: 0.4rem 0.8rem;
+      color: var(--link-color) !important;
+      text-decoration: none;
+      transition: color 0.2s ease;
+      border: none;
+      background: none;
     }
     
-    /* Ensure consistent rounded corners for all navbar buttons */
-    .navbar .btn {
-      border-radius: clamp(6px, 1.5vw, 12px) !important;
-      text-align: center;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+    .navbar-nav .nav-link:hover {
+      color: var(--link-hover-color) !important;
+      background: none;
+    }
+    
+    [data-theme="dark"] .navbar-nav .nav-link {
+      color: var(--link-color) !important;
+    }
+    
+    [data-theme="dark"] .navbar-nav .nav-link:hover {
+      color: var(--link-hover-color) !important;
     }
     
     /* Container fluid adjustments */
@@ -300,13 +285,13 @@
     .social-icons {
       display: flex;
       justify-content: center;
-      gap: 18px;
+      gap: 12px;
       align-items: center;
     }
     .social-icon {
-      width: 40px !important;
-      height: 40px !important;
-      font-size: 40px !important;
+      width: 20px !important;
+      height: 20px !important;
+      font-size: 20px !important;
       display: inline-flex !important;
       align-items: center;
       justify-content: center;
@@ -322,9 +307,20 @@
     }
     .social-icon img,
     .social-icon svg {
-      width: 40px !important;
-      height: 40px !important;
+      width: 20px !important;
+      height: 20px !important;
       display: block;
+    }
+    
+    /* Footer version text styling */
+    .footer-version-text {
+      font-size: 0.75rem;
+      color: #888;
+      margin-top: 4px;
+    }
+    
+    [data-theme="dark"] .footer-version-text {
+      color: #999;
     }
     
     /* Dark mode specific styles */
@@ -348,182 +344,6 @@
       background-color: rgba(40, 40, 40, 0.9);
       border-color: var(--border-color);
       color: var(--text-color);
-    }
-    
-    /* Contemporary Navbar Button Styling for Light Mode */
-    .navbar .btn-outline-primary {
-      border-color: #4A90E2 !important;
-      color: #4A90E2 !important;
-      background: rgba(74, 144, 226, 0.08) !important;
-      font-weight: 500;
-      transition: all 0.2s ease;
-    }
-    
-    .navbar .btn-outline-primary:hover {
-      background-color: #4A90E2 !important;
-      border-color: #4A90E2 !important;
-      color: white !important;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
-    }
-    
-    .navbar .btn-outline-success {
-      border-color: #00C851 !important;
-      color: #00C851 !important;
-      background: rgba(0, 200, 81, 0.08) !important;
-      font-weight: 500;
-      transition: all 0.2s ease;
-    }
-    
-    .navbar .btn-outline-success:hover {
-      background-color: #00C851 !important;
-      border-color: #00C851 !important;
-      color: white !important;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(0, 200, 81, 0.3);
-    }
-    
-    .navbar .btn-outline-info {
-      border-color: #17A2B8 !important;
-      color: #17A2B8 !important;
-      background: rgba(23, 162, 184, 0.08) !important;
-      font-weight: 500;
-      transition: all 0.2s ease;
-    }
-    
-    .navbar .btn-outline-info:hover {
-      background-color: #17A2B8 !important;
-      border-color: #17A2B8 !important;
-      color: white !important;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(23, 162, 184, 0.3);
-    }
-    
-    .navbar .btn-outline-warning {
-      border-color: #FF8800 !important;
-      color: #FF8800 !important;
-      background: rgba(255, 136, 0, 0.08) !important;
-      font-weight: 500;
-      transition: all 0.2s ease;
-    }
-    
-    .navbar .btn-outline-warning:hover {
-      background-color: #FF8800 !important;
-      border-color: #FF8800 !important;
-      color: white !important;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(255, 136, 0, 0.3);
-    }
-    
-    .navbar .btn-outline-secondary {
-      border-color: #6C757D !important;
-      color: #6C757D !important;
-      background: rgba(108, 117, 125, 0.08) !important;
-      font-weight: 500;
-      transition: all 0.2s ease;
-    }
-    
-    .navbar .btn-outline-secondary:hover {
-      background-color: #6C757D !important;
-      border-color: #6C757D !important;
-      color: white !important;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(108, 117, 125, 0.3);
-    }
-    
-    .navbar .btn-outline-danger {
-      border-color: #DC3545 !important;
-      color: #DC3545 !important;
-      background: rgba(220, 53, 69, 0.08) !important;
-      font-weight: 500;
-      transition: all 0.2s ease;
-    }
-    
-    .navbar .btn-outline-danger:hover {
-      background-color: #DC3545 !important;
-      border-color: #DC3545 !important;
-      color: white !important;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
-    }
-
-    /* Contemporary Dark Mode Navbar Button Styling */
-    [data-theme="dark"] .navbar .btn-outline-primary {
-      border-color: #5A9EFF !important;
-      color: #5A9EFF !important;
-      background: rgba(90, 158, 255, 0.12) !important;
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-primary:hover {
-      background-color: #5A9EFF !important;
-      border-color: #5A9EFF !important;
-      color: #000 !important;
-      box-shadow: 0 2px 12px rgba(90, 158, 255, 0.4);
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-success {
-      border-color: #00E676 !important;
-      color: #00E676 !important;
-      background: rgba(0, 230, 118, 0.12) !important;
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-success:hover {
-      background-color: #00E676 !important;
-      border-color: #00E676 !important;
-      color: #000 !important;
-      box-shadow: 0 2px 12px rgba(0, 230, 118, 0.4);
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-info {
-      border-color: #26C6DA !important;
-      color: #26C6DA !important;
-      background: rgba(38, 198, 218, 0.12) !important;
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-info:hover {
-      background-color: #26C6DA !important;
-      border-color: #26C6DA !important;
-      color: #000 !important;
-      box-shadow: 0 2px 12px rgba(38, 198, 218, 0.4);
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-warning {
-      border-color: #FFB74D !important;
-      color: #FFB74D !important;
-      background: rgba(255, 183, 77, 0.12) !important;
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-warning:hover {
-      background-color: #FFB74D !important;
-      border-color: #FFB74D !important;
-      color: #000 !important;
-      box-shadow: 0 2px 12px rgba(255, 183, 77, 0.4);
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-secondary {
-      border-color: #9E9E9E !important;
-      color: #9E9E9E !important;
-      background: rgba(158, 158, 158, 0.12) !important;
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-secondary:hover {
-      background-color: #9E9E9E !important;
-      border-color: #9E9E9E !important;
-      color: #000 !important;
-      box-shadow: 0 2px 12px rgba(158, 158, 158, 0.4);
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-danger {
-      border-color: #FF5252 !important;
-      color: #FF5252 !important;
-      background: rgba(255, 82, 82, 0.12) !important;
-    }
-    
-    [data-theme="dark"] .navbar .btn-outline-danger:hover {
-      background-color: #FF5252 !important;
-      border-color: #FF5252 !important;
-      color: #000 !important;
-      box-shadow: 0 2px 12px rgba(255, 82, 82, 0.4);
     }
     
     /* Improved Library Status Box Styling - Fix for hover washout issue */
@@ -889,7 +709,7 @@
         <div class="collapse navbar-collapse" id="navbarNav">
           <div class="navbar-nav me-auto">
             {% if current_user.is_authenticated %}
-              <!-- Reading Streak Indicator -->
+              <!-- Reading Streak Indicator (keep as special element) -->
               {% if current_reading_streak >= 0 %}
               <a href="{{ url_for('stats.reading_journey') }}" 
                  class="btn btn-outline-warning me-2 streak-indicator streak-level-{{ streak_performance_level or 0 }}" 
@@ -904,23 +724,23 @@
               </a>
               {% endif %}
               
-              <a class="btn btn-outline-primary me-2" href="{{ url_for('main.library') }}">Library</a>
-              <a class="btn btn-outline-info me-2" href="{{ url_for('main.people') }}">People</a>
-              <a class="btn btn-outline-secondary me-2" href="{{ genre_url_for('index') }}">{{ get_genre_term_plural() }}</a>
-              <a class="btn btn-outline-success me-2" href="{{ url_for('main.stats') }}">Stats</a>
-              <a class="btn btn-outline-primary me-2" href="{{ url_for('series.list_series') }}">Series</a>
-              <a class="btn btn-outline-info me-2" href="{{ url_for('locations.manage_locations') }}">Locations</a>
-              <a class="btn btn-outline-warning me-2" href="{{ url_for('metadata.index') }}">Metadata</a>
-              <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#readingLogModal">
+              <a class="nav-link" href="{{ url_for('main.library') }}">Library</a>
+              <a class="nav-link" href="{{ url_for('main.people') }}">People</a>
+              <a class="nav-link" href="{{ genre_url_for('index') }}">{{ get_genre_term_plural() }}</a>
+              <a class="nav-link" href="{{ url_for('main.stats') }}">Stats</a>
+              <a class="nav-link" href="{{ url_for('series.list_series') }}">Series</a>
+              <a class="nav-link" href="{{ url_for('locations.manage_locations') }}">Locations</a>
+              <a class="nav-link" href="{{ url_for('metadata.index') }}">Metadata</a>
+              <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#readingLogModal">
                 <i class="bi bi-journal-plus"></i> Reading Log
-              </button>
-              <a class="btn btn-outline-secondary me-2" href="{{ url_for('auth.settings') }}">Settings</a>
+              </a>
+              <a class="nav-link" href="{{ url_for('auth.settings') }}">Settings</a>
             {% endif %}
           </div>
           
           <div class="navbar-nav">
             <!-- Dark mode toggle -->
-            <button id="theme-toggle" class="btn btn-outline-secondary me-2" title="Toggle dark mode">
+            <button id="theme-toggle" class="btn btn-sm btn-link nav-link" title="Toggle dark mode" style="border: none;">
               <i class="bi bi-moon-fill" id="theme-icon"></i>
             </button>
             
@@ -931,9 +751,9 @@
                   <span class="badge bg-danger ms-1">Admin</span>
                 {% endif %}
               </span>
-              <a class="btn btn-outline-danger" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a>
+              <a class="nav-link" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a>
             {% else %}
-              <a class="btn btn-outline-primary me-2" href="{{ url_for('auth.login') }}">Login</a>
+              <a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
             {% endif %}
           </div>
         </div>
@@ -968,12 +788,9 @@
             </svg>
           </a>
         </div>
-        <div style="font-size: 1.1em; color: #888; margin-top: 4px;">{{ site_name }} Alpha 2.0.0 | It is highly recommended to backup your database regularly.</div>
+        <div class="footer-version-text">{{ site_name }} Alpha 2.0.0 | It is highly recommended to backup your database regularly within the settings.</div>
       </div>
       {% block footer %}
-      <footer class="text-center mt-4">
-        <a href="{{ url_for('main.download_db') }}" class="btn btn-primary" style="margin-top: 8px;">Download Database</a>
-      </footer>
       {% endblock %}
     </div>
   </div>
