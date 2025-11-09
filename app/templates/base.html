@@ -540,120 +540,43 @@
       color: #000;
     }
     
-    /* Reading Streak Indicator Styles */
+    /* Compact Reading Streak Indicator - simplified for header */
     .streak-indicator {
-      position: relative;
-      font-weight: 600;
-      transition: all 0.2s ease;
-      border-radius: 12px !important;
-      padding: 0.4rem 0.6rem !important;
-      text-align: center;
-      min-width: 60px;
-      background: white !important;
-    }
-    
-    /* Dynamic Color Levels - Clean design with colored text and borders */
-    .streak-indicator.streak-level-0 {
-      border: 2px solid #28a745 !important;
-      color: #28a745 !important;
-    }
-    
-    .streak-indicator.streak-level-0:hover {
-      background: #f8f9fa !important;
-      color: #1e7e34 !important;
-    }
-    
-    .streak-indicator.streak-level-1 {
-      border: 2px solid #ffc107 !important;
-      color: #ffc107 !important;
-    }
-    
-    .streak-indicator.streak-level-1:hover {
-      background: #f8f9fa !important;
-      color: #e0a800 !important;
-    }
-    
-    .streak-indicator.streak-level-2 {
-      border: 2px solid #fd7e14 !important;
-      color: #fd7e14 !important;
-    }
-    
-    .streak-indicator.streak-level-2:hover {
-      background: #f8f9fa !important;
-      color: #e8690e !important;
-    }
-    
-    .streak-indicator.streak-level-3 {
-      border: 2px solid #dc3545 !important;
-      color: #dc3545 !important;
-    }
-    
-    .streak-indicator.streak-level-3:hover {
-      background: #f8f9fa !important;
-      color: #c82333 !important;
-    }
-    
-    .streak-indicator.streak-level-4 {
-      border: 2px solid #e83e8c !important;
-      color: #e83e8c !important;
-    }
-    
-    .streak-indicator.streak-level-4:hover {
-      background: #f8f9fa !important;
-      color: #d91a72 !important;
-    }
-    
-    .streak-indicator:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .streak-display {
-      display: flex;
-      flex-direction: column;
+      display: inline-flex;
       align-items: center;
-      line-height: 1;
-    }
-    
-    .streak-number {
-      font-size: 1.1rem;
+      gap: 0.4rem;
       font-weight: 700;
-      margin-bottom: 1px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      border-radius: 999px !important; /* pill */
+      padding: 0.25rem 0.5rem !important;
+      min-width: 44px;
+      height: 36px;
+      justify-content: center;
+      background: transparent !important;
+      border: 1.5px solid rgba(0,0,0,0.08) !important;
+      color: inherit;
+      text-decoration: none;
     }
-    
-    .streak-unit {
-      font-size: 0.6rem;
-      font-weight: 600;
-      margin-bottom: 1px;
-      opacity: 0.9;
+
+    .streak-indicator i,
+    .streak-indicator .streak-number {
+      line-height: 1;
+      vertical-align: middle;
     }
-    
-    .streak-label {
-      font-size: 0.6rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      opacity: 0.8;
-    }
-    
-    /* Mobile optimization for streak indicator */
+
+    /* Color levels - use colored border and text only for subtlety */
+    .streak-indicator.streak-level-0 { border-color: #28a745 !important; color: #28a745 !important; }
+    .streak-indicator.streak-level-1 { border-color: #ffc107 !important; color: #ffc107 !important; }
+    .streak-indicator.streak-level-2 { border-color: #fd7e14 !important; color: #fd7e14 !important; }
+    .streak-indicator.streak-level-3 { border-color: #dc3545 !important; color: #dc3545 !important; }
+    .streak-indicator.streak-level-4 { border-color: #e83e8c !important; color: #e83e8c !important; }
+
+    .streak-indicator:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+
+    /* Mobile tweaks */
     @media (max-width: 768px) {
-      .streak-indicator {
-        padding: 0.3rem 0.4rem !important;
-        min-width: 50px;
-      }
-      
-      .streak-number {
-        font-size: 0.9rem;
-      }
-      
-      .streak-unit {
-        font-size: 0.55rem;
-      }
-      
-      .streak-label {
-        font-size: 0.5rem;
-      }
+      .streak-indicator { padding: 0.2rem 0.4rem !important; height: 32px; min-width: 40px; }
+      .streak-indicator .streak-number { font-size: 0.95rem; }
     }
     /* --- Adaptive Custom Field Badges --- */
     .cf-badge {
@@ -711,30 +634,34 @@
             {% if current_user.is_authenticated %}
               <!-- Reading Streak Indicator (keep as special element) -->
               {% if current_reading_streak >= 0 %}
-              <a href="{{ url_for('stats.reading_journey') }}" 
-                 class="btn btn-outline-warning me-2 streak-indicator streak-level-{{ streak_performance_level or 0 }}" 
-                 title="🔥 {{ current_reading_streak }} day reading streak! Click to view your reading journey">
-                <div class="streak-display">
-                  <div class="streak-number">{{ current_reading_streak }}</div>
-                  <div class="streak-unit">{{ 'Day' if current_reading_streak == 1 else 'Days' }}</div>
-                  <div class="streak-label">
-                    {% if is_exceeding_record %}🔥 Streak 🔥{% else %}Streak{% endif %}
-                  </div>
-                </div>
-              </a>
+                <a href="{{ url_for('stats.reading_journey') }}"
+                   class="btn btn-outline-warning me-2 streak-indicator streak-level-{{ streak_performance_level or 0 }}"
+                   title="🔥 {{ current_reading_streak }} day reading streak! Click to view your reading journey">
+                  <!-- compact display: icon + count -->
+                  <span aria-hidden="true">🔥</span>
+                  <span class="streak-number">{{ current_reading_streak }}</span>
+                  <span class="visually-hidden">{{ 'day' if current_reading_streak == 1 else 'days' }} reading streak</span>
+                </a>
               {% endif %}
-              
+
               <a class="nav-link" href="{{ url_for('main.library') }}">Library</a>
               <a class="nav-link" href="{{ url_for('main.people') }}">People</a>
               <a class="nav-link" href="{{ genre_url_for('index') }}">{{ get_genre_term_plural() }}</a>
               <a class="nav-link" href="{{ url_for('main.stats') }}">Stats</a>
-              <a class="nav-link" href="{{ url_for('series.list_series') }}">Series</a>
-              <a class="nav-link" href="{{ url_for('locations.manage_locations') }}">Locations</a>
-              <a class="nav-link" href="{{ url_for('metadata.index') }}">Metadata</a>
+
               <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#readingLogModal">
                 <i class="bi bi-journal-plus"></i> Reading Log
               </a>
-              <a class="nav-link" href="{{ url_for('auth.settings') }}">Settings</a>
+
+              <div class="nav-item dropdown">
+                <a class="nav-link dropdown-toggle" href="#" id="moreDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">More</a>
+                <ul class="dropdown-menu" aria-labelledby="moreDropdown">
+                  <li><a class="dropdown-item" href="{{ url_for('series.list_series') }}">Series</a></li>
+                  <li><a class="dropdown-item" href="{{ url_for('locations.manage_locations') }}">Locations</a></li>
+                  <li><a class="dropdown-item" href="{{ url_for('metadata.index') }}">Metadata</a></li>
+                  <li><a class="dropdown-item" href="{{ url_for('auth.settings') }}">Settings</a></li>
+                </ul>
+              </div>
             {% endif %}
           </div>
           
