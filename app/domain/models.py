@@ -437,6 +437,7 @@ class Book:
     isbn10: Optional[str] = None
     asin: Optional[str] = None
     description: Optional[str] = None
+    notes: Optional[str] = None
     published_date: Optional[date] = None
     page_count: Optional[int] = None
     language: str = "en"

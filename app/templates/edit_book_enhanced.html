@@ -385,6 +385,14 @@
                                             <textarea class="form-control" id="description" name="description" rows="4">{{ book.description or '' }}</textarea>
                                         </div>
                                         
+                                        <div class="mb-3">
+                                            <label for="notes" class="form-label fw-medium">
+                                                <i class="bi bi-sticky me-1"></i>Notes
+                                            </label>
+                                            <textarea class="form-control" id="notes" name="notes" rows="4" placeholder="Add your personal notes about this book...">{{ book.notes or '' }}</textarea>
+                                            <div class="form-text">Add your thoughts, insights, quotes, or any other notes about this book.</div>
+                                        </div>
+                                        
                                         <div class="row">
                                             <div class="col-md-6">
                                                 <div class="mb-3">

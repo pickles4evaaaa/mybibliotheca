@@ -822,6 +822,77 @@
                     </div>
                 </div>
                 
+                <!-- 📝 NOTES SECTION - User notes for the book -->
+                <div class="accordion-item shadow-sm mb-2">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-warning text-dark" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#collapseNotes" 
+                                aria-expanded="false" aria-controls="collapseNotes">
+                            <i class="bi bi-sticky me-2"></i>Notes
+                        </button>
+                    </h2>
+                    <div id="collapseNotes" class="accordion-collapse collapse" data-bs-parent="#bookAccordion">
+                        <div class="accordion-body">
+                            <!-- Edit Button for Notes -->
+                            <div class="d-flex justify-content-end mb-3">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="editNotesToggle">
+                                    <i class="bi bi-pencil me-1"></i>Edit Notes
+                                </button>
+                            </div>
+                            
+                            <!-- View Mode -->
+                            <div class="notes-view-mode">
+                                {% if book.notes %}
+                                <div class="notes-content">
+                                    {% if book.notes|length > 500 %}
+                                        <div id="notes-short">
+                                            <p class="mb-3">{{ book.notes[:500]|safe }}...</p>
+                                            <button class="btn btn-sm btn-outline-primary expand-notes">
+                                                <i class="bi bi-chevron-down me-1"></i>Read More
+                                            </button>
+                                        </div>
+                                        <div id="notes-full" class="expanded" style="display: none;">
+                                            <p class="mb-3">{{ book.notes|safe }}</p>
+                                            <button class="btn btn-sm btn-outline-primary expand-notes">
+                                                <i class="bi bi-chevron-up me-1"></i>Show Less
+                                            </button>
+                                        </div>
+                                    {% else %}
+                                        <p class="mb-0">{{ book.notes|safe }}</p>
+                                    {% endif %}
+                                </div>
+                                {% else %}
+                                <div class="text-center text-muted py-4">
+                                    <i class="bi bi-sticky mb-2" style="font-size: 2rem;"></i>
+                                    <p class="mb-0">No notes available.</p>
+                                    <small>Click the edit button above to add notes for this book.</small>
+                                </div>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Edit Mode (Hidden by default) -->
+                            <div class="notes-edit-mode" style="display: none;">
+                                <form method="post" action="{{ url_for('book.edit_book', uid=book.uid) }}" id="notes-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    
+                                    <div class="mb-3">
+                                        <label for="edit-notes" class="form-label fw-medium">Book Notes</label>
+                                        <textarea class="form-control" id="edit-notes" name="notes" rows="8" 
+                                                  placeholder="Add your personal notes about this book...">{{ book.notes or '' }}</textarea>
+                                        <div class="form-text">Add your thoughts, insights, quotes, or any other notes about this book.</div>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="bi bi-save me-1"></i>Save Notes
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- 🔍 ADDITIONAL DETAILS SECTION - Technical and publication metadata -->
                 <div class="accordion-item shadow-sm mb-2">
                     <h2 class="accordion-header">
@@ -1749,6 +1820,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const forms = [
             document.getElementById('book-edit-form'),
             document.getElementById('description-form'),
+            document.getElementById('notes-form'),
             document.getElementById('basic-info-form'),
             document.getElementById('personal-notes-form')
         ].filter(Boolean);
@@ -1921,6 +1993,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Description section edit toggle
+    const descriptionViewMode = document.querySelector('.description-view-mode');
+    const descriptionEditMode = document.querySelector('.description-edit-mode');
+    
+    // Notes section edit toggle
+    const notesViewMode = document.querySelector('.notes-view-mode');
+    const notesEditMode = document.querySelector('.notes-edit-mode');
+    const editNotesToggle = document.getElementById('editNotesToggle');
+    
     if (editDescriptionToggle && descriptionViewMode && descriptionEditMode) {
         editDescriptionToggle.addEventListener('click', function() {
             const isEditMode = descriptionEditMode.style.display !== 'none';
@@ -1937,6 +2017,27 @@ document.addEventListener('DOMContentLoaded', function() {
                 descriptionEditMode.style.display = 'block';
                 editDescriptionToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
                 editDescriptionToggle.className = 'btn btn-sm btn-outline-secondary';
+            }
+        });
+    }
+    
+    // Notes section edit toggle
+    if (editNotesToggle && notesViewMode && notesEditMode) {
+        editNotesToggle.addEventListener('click', function() {
+            const isEditMode = notesEditMode.style.display !== 'none';
+            
+            if (isEditMode) {
+                // Switch to view mode
+                notesEditMode.style.display = 'none';
+                notesViewMode.style.display = 'block';
+                editNotesToggle.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit Notes';
+                editNotesToggle.className = 'btn btn-sm btn-outline-primary';
+            } else {
+                // Switch to edit mode
+                notesViewMode.style.display = 'none';
+                notesEditMode.style.display = 'block';
+                editNotesToggle.innerHTML = '<i class="bi bi-x me-1"></i>Cancel';
+                editNotesToggle.className = 'btn btn-sm btn-outline-secondary';
             }
         });
     }
@@ -3484,6 +3585,26 @@ function setupDescriptionToggle() {
     });
 }
 
+// Notes Toggle Functionality
+function setupNotesToggle() {
+    const expandBtns = document.querySelectorAll('.expand-notes');
+    expandBtns.forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const shortNotes = document.getElementById('notes-short');
+            const fullNotes = document.getElementById('notes-full');
+            
+            if (fullNotes.style.display === 'none' || !fullNotes.style.display) {
+                fullNotes.style.display = 'block';
+                shortNotes.style.display = 'none';
+            } else {
+                fullNotes.style.display = 'none';
+                shortNotes.style.display = 'block';
+            }
+        });
+    });
+}
+
 // Contributor functionality
 function initializeContributors() {
     let searchTimeout;
@@ -4064,6 +4185,7 @@ function removeContributor(removeBtn) {
 document.addEventListener('DOMContentLoaded', function() {
     setupCustomFieldsSearch();
     setupDescriptionToggle();
+    setupNotesToggle();
     
     // Initialize hidden inputs for contributors and categories
     // This ensures that when edit mode is activated, the current data is preserved

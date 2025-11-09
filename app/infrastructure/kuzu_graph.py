@@ -340,6 +340,7 @@ class KuzuGraphDB:
                     isbn10 STRING,
                     asin STRING,
                     description STRING,
+                    notes STRING,
                     published_date DATE,
                     page_count INT64,
                     language STRING,

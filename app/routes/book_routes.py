@@ -108,7 +108,7 @@ def _get_changed_fields(user_book, form):
     
     # All possible updatable fields (EXCLUDING cover_url - handled separately)
     all_fields = [
-        'title', 'subtitle', 'description', 'publisher', 'isbn13', 'isbn10', 'published_date',
+        'title', 'subtitle', 'description', 'notes', 'publisher', 'isbn13', 'isbn10', 'published_date',
         'language', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating',
         'rating_count', 'media_type', 'personal_notes', 'review',
         'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date'

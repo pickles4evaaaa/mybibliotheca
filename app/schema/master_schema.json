@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "generated_at": "2025-03-01T00:00:00Z",
   "nodes": {
     "Series": {
@@ -53,6 +53,7 @@
         "isbn10": "STRING",
         "asin": "STRING",
         "description": "STRING",
+        "notes": "STRING",
         "published_date": "DATE",
         "page_count": "INT64",
         "language": "STRING",
