@@ -116,6 +116,7 @@ class KuzuBookService:
             isbn10=book_data.get('isbn10'),
             asin=book_data.get('asin'),
             description=book_data.get('description'),
+            notes=book_data.get('notes'),
             published_date=book_data.get('published_date'),
             page_count=book_data.get('page_count'),
             language=book_data.get('language', 'en'),
