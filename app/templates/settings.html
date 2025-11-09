@@ -144,13 +144,14 @@
 
     <div class="settings-section" id="dataSection">
             <div class="row g-3 mb-3" id="dataActionBar">
-                <div class="col-md-4"><button data-data-panel="import_books" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-book-half"></i> Import Books</button></div>
-                <div class="col-md-4"><button data-data-panel="import_reading" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-calendar-check"></i> Import Reading</button></div>
+                <div class="col-md-3"><button data-data-panel="import_books" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-book-half"></i> Import Books</button></div>
+                <div class="col-md-3"><button data-data-panel="import_reading" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-calendar-check"></i> Import Reading</button></div>
                 {% if current_user.is_admin %}
-                <div class="col-md-4"><button data-data-panel="backup" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-cloud-download"></i> Backup Manager</button></div>
+                <div class="col-md-3"><button data-data-panel="backup" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-cloud-download"></i> Backup Manager</button></div>
                 {% else %}
-                <div class="col-md-4"><button data-data-panel="export_logs" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-file-earmark-arrow-down"></i> Export Logs</button></div>
+                <div class="col-md-3"><button data-data-panel="export_logs" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-file-earmark-arrow-down"></i> Export Logs</button></div>
                 {% endif %}
+                <div class="col-md-3"><a href="{{ url_for('main.download_db') }}" class="btn btn-outline-primary w-100"><i class="bi bi-database-down"></i> Download Database</a></div>
             </div>
             <div id="dataDynamicContainer" class="mb-3"></div>
             <div class="alert alert-light border small mb-0" role="alert">
