@@ -99,24 +99,6 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <input type="hidden" name="submit_action" id="submitActionField" value="save" />
                         
-                        <!-- Cover Preview (client-driven) -->
-                        <div class="mb-4 text-center" id="cover-preview-wrapper">
-                            <img id="cover-preview-img" src="{{ (book_data.cover if book_data and book_data.cover else url_for('serve_static', filename='bookshelf.png')) }}" alt="Book Cover" class="img-fluid rounded book-cover" style="max-height: 300px;">
-                            <div class="mt-2">
-                                <button type="button" class="btn btn-sm btn-outline-secondary" id="show-cover-options-btn" onclick="onShowCoverOptionsClicked()">
-                                    <i class="bi bi-images me-1"></i>Show cover options
-                                </button>
-                                <span id="cover-candidates-loading" class="ms-2 text-muted" style="display:none;"><i class="bi bi-arrow-repeat spin"></i> Loading…</span>
-                            </div>
-                        </div>
-
-                        <!-- Cover candidates selector (populated via AJAX) -->
-                        <div id="cover-candidates-container" class="mb-3" style="display:none;">
-                            <label class="form-label fw-medium">Cover options</label>
-                            <div id="cover-candidates" class="d-flex gap-2 flex-wrap"></div>
-                            <div class="form-text mt-1">Click a thumbnail to select it as the cover for this book.</div>
-                        </div>
-                        
                         <!-- Basic Information -->
                         <div class="accordion mb-4" id="basicInfoAccordion">
                             <div class="accordion-item">
@@ -179,19 +161,19 @@
                                             </div>
                                         </div>
                                         
+                                        <!-- Published Date -->
+                                        <div class="mb-3">
+                                            <label for="published_date" class="form-label fw-medium">Published Date</label>
+                                            <input type="date" class="form-control" id="published_date" name="published_date" 
+                                                   value="{{ request.form.published_date or '' }}">
+                                        </div>
+                                        
                                         <!-- Cover URL -->
                                         <div class="mb-3">
                                             <label for="cover_url" class="form-label fw-medium">Cover URL</label>
                                             <input type="url" class="form-control" id="cover_url" name="cover_url" 
                                                    value="{{ book_data.cover if book_data else request.form.cover_url or '' }}" 
                                                    placeholder="https://...">
-                                        </div>
-                                        
-                                        <!-- Published Date -->
-                                        <div class="mb-3">
-                                            <label for="published_date" class="form-label fw-medium">Published Date</label>
-                                            <input type="date" class="form-control" id="published_date" name="published_date" 
-                                                   value="{{ request.form.published_date or '' }}">
                                         </div>
                                         
                                         <!-- Description -->
@@ -1275,14 +1257,7 @@ function populateFormWithBookData(bookData) {
         });
     }
 
-    // Update cover preview if a cover URL was returned
-    try {
-        const preview = document.getElementById('cover-preview-img');
-        const coverVal = (bookData.cover_url || bookData.cover || document.getElementById('cover_url').value || '').trim();
-        if (preview && coverVal) {
-            preview.src = coverVal;
-        }
-    } catch (_) {}
+
 
     // Automatically fetch and show cover candidates to let the user pick a better-quality image
     try {
@@ -2193,122 +2168,7 @@ function collectContributorsAndCategories() {
 </script>
 
 <script>
-// Cover candidate picker: fetches candidates from server and renders clickable thumbnails
-function onShowCoverOptionsClicked() {
-    const isbn = (document.getElementById('isbn') || {}).value || '';
-    const title = (document.getElementById('title') || {}).value || '';
-    const authors = getSelectedAuthorsForSearch();
-    fetchAndShowCoverCandidates({isbn, title, authors});
-}
 
-function fetchAndShowCoverCandidates({isbn = '', title = '', authors = ''} = {}) {
-    const container = document.getElementById('cover-candidates');
-    const wrapper = document.getElementById('cover-candidates-container');
-    const loading = document.getElementById('cover-candidates-loading');
-    if (!container || !wrapper) return;
-
-    // Build query params (backend will accept empty fields)
-    const params = new URLSearchParams();
-    if (isbn) params.set('isbn', isbn.trim());
-    if (title) params.set('title', title.trim());
-    if (authors) params.set('author', authors.trim());
-
-    // Show loading state
-    container.innerHTML = '';
-    wrapper.style.display = 'block';
-    if (loading) loading.style.display = 'inline-block';
-
-    fetch(`/book/cover_candidates?${params.toString()}`, { credentials: 'same-origin' })
-        .then(resp => {
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            return resp.json();
-        })
-        .then(data => {
-            // Expect data to be an array of candidates; each candidate: {url, provider, size}
-            renderCoverCandidates(Array.isArray(data) ? data : (data.candidates || []));
-        })
-        .catch(err => {
-            console.error('Error fetching cover candidates:', err);
-            container.innerHTML = `<div class="text-muted">Could not load cover options.</div>`;
-        })
-        .finally(() => {
-            if (loading) loading.style.display = 'none';
-        });
-}
-
-function renderCoverCandidates(candidates) {
-    const container = document.getElementById('cover-candidates');
-    if (!container) return;
-    container.innerHTML = '';
-
-    if (!candidates || candidates.length === 0) {
-        container.innerHTML = `<div class="text-muted">No cover options available.</div>`;
-        return;
-    }
-
-    candidates.forEach((c, idx) => {
-        const url = c.url || c.cover || '';
-        const provider = c.provider || c.source || 'cover';
-        const size = c.size || '';
-
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary p-0';
-        btn.style.width = '96px';
-        btn.style.height = '136px';
-        btn.style.overflow = 'hidden';
-        btn.style.borderRadius = '6px';
-        btn.title = `${provider}${size ? ' • ' + size : ''}`;
-        btn.setAttribute('data-url', url);
-
-        const img = document.createElement('img');
-        img.src = url || '{{ url_for("serve_static", filename="bookshelf.png") }}';
-        img.alt = 'cover option';
-        img.style.width = '100%';
-        img.style.height = '100%';
-        img.style.objectFit = 'cover';
-        img.onerror = function() { this.src = '{{ url_for("serve_static", filename="bookshelf.png") }}'; };
-
-        btn.appendChild(img);
-
-        btn.addEventListener('click', function () {
-            const u = this.getAttribute('data-url');
-            selectCoverCandidate(u, this);
-        });
-
-        // Add a small provider badge
-        const badge = document.createElement('div');
-        badge.className = 'position-absolute bg-dark text-white small px-1 py-0';
-        badge.style.opacity = '0.8';
-        badge.style.bottom = '6px';
-        badge.style.left = '6px';
-        badge.style.borderRadius = '3px';
-        badge.textContent = provider;
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'position-relative me-2 mb-2';
-        wrapper.appendChild(btn);
-        wrapper.appendChild(badge);
-
-        container.appendChild(wrapper);
-    });
-}
-
-function selectCoverCandidate(url, btnEl) {
-    if (!url) return;
-    const preview = document.getElementById('cover-preview-img');
-    const coverInput = document.getElementById('cover_url');
-    if (preview) preview.src = url;
-    if (coverInput) coverInput.value = url;
-
-    // Mark selection visually
-    try {
-        document.querySelectorAll('#cover-candidates .position-relative').forEach(el => el.classList.remove('border', 'border-primary'));
-        if (btnEl && btnEl.parentElement) btnEl.parentElement.classList.add('border', 'border-primary');
-    } catch (_) {}
-
-    showMessage('Cover selected. You can change it anytime.', 'success');
-}
 </script>
 
 <!-- Title Search Results Modal -->
