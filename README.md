@@ -81,6 +81,20 @@ mybibliotheca/
 
 ---
 
+## 📚 Documentation
+
+For detailed information on configuring and using MyBibliotheca, see:
+
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Complete environment variables and settings reference
+- **[Docker Guide](DOCKER.md)** - Docker deployment instructions
+- **[Production Guide](PRODUCTION.md)** - Production deployment best practices
+- **[Authentication](docs/AUTHENTICATION.md)** - User management and authentication
+- **[Debugging](docs/DEBUGGING.md)** - Troubleshooting and debug modes
+- **[Testing](docs/TESTING.md)** - Running tests
+- **[Backup & Restore](docs/BACKUP_RESTORE.md)** - Data backup and recovery
+
+---
+
 ## 📄 License
 
 Licensed under the [MIT License](LICENSE).
