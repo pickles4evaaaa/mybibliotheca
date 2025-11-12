@@ -205,6 +205,18 @@
       border-radius: 8px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
+    
+    /* Book thumbnail styles for community stats */
+    .book-thumb-cover {
+      height: 80px;
+      width: auto;
+    }
+    
+    .book-thumb-placeholder {
+      height: 80px;
+      width: 55px;
+    }
+    
     .navbar {
       background: var(--navbar-background);
       border-bottom: 1px solid var(--border-color);
@@ -616,6 +628,406 @@
   /* Field types card readability */
   .field-types-card small { color: var(--text-color) !important; }
   [data-theme="dark"] .field-types-card strong { color: var(--heading-color); }
+  
+  /* ===== COMPREHENSIVE DARK MODE FIXES ===== */
+  
+  /* Bootstrap Utility Class Overrides for Dark Mode */
+  [data-theme="dark"] .bg-light {
+    background-color: #2d2d2d !important;
+    color: var(--text-color) !important;
+  }
+  
+  [data-theme="dark"] .bg-white {
+    background-color: #1f1f1f !important;
+    color: var(--text-color) !important;
+  }
+  
+  [data-theme="dark"] .text-dark {
+    color: var(--text-color) !important;
+  }
+  
+  [data-theme="dark"] .text-muted {
+    color: #999 !important;
+  }
+  
+  [data-theme="dark"] .text-black-50 {
+    color: rgba(255, 255, 255, 0.5) !important;
+  }
+  
+  /* List group items */
+  [data-theme="dark"] .list-group-item {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .list-group-item-action:hover {
+    background-color: #3d3d3d;
+    color: var(--text-color);
+  }
+  
+  /* Modal dark mode */
+  [data-theme="dark"] .modal-content {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .modal-header {
+    border-bottom-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .modal-footer {
+    border-top-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .modal-title {
+    color: var(--heading-color);
+  }
+  
+  [data-theme="dark"] .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+  }
+  
+  /* Dropdown menus */
+  [data-theme="dark"] .dropdown-menu {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .dropdown-item {
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .dropdown-item:hover,
+  [data-theme="dark"] .dropdown-item:focus {
+    background-color: #3d3d3d;
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .dropdown-divider {
+    border-top-color: var(--border-color);
+  }
+  
+  /* Pagination */
+  [data-theme="dark"] .page-link {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+    color: var(--link-color);
+  }
+  
+  [data-theme="dark"] .page-link:hover {
+    background-color: #3d3d3d;
+    border-color: var(--border-color);
+    color: var(--link-hover-color);
+  }
+  
+  [data-theme="dark"] .page-item.active .page-link {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+  }
+  
+  [data-theme="dark"] .page-item.disabled .page-link {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+    color: #666;
+  }
+  
+  /* Breadcrumb */
+  [data-theme="dark"] .breadcrumb {
+    background-color: transparent;
+  }
+  
+  [data-theme="dark"] .breadcrumb-item + .breadcrumb-item::before {
+    color: #999;
+  }
+  
+  /* Nav tabs and pills */
+  [data-theme="dark"] .nav-tabs {
+    border-bottom-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .nav-tabs .nav-link {
+    color: #ccc;
+  }
+  
+  [data-theme="dark"] .nav-tabs .nav-link:hover {
+    border-color: var(--border-color);
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .nav-tabs .nav-link.active {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+    color: var(--text-color);
+  }
+  
+  /* Accordion */
+  [data-theme="dark"] .accordion-item {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .accordion-button {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .accordion-button:not(.collapsed) {
+    background-color: #3d3d3d;
+    color: var(--heading-color);
+  }
+  
+  [data-theme="dark"] .accordion-button::after {
+    filter: invert(1);
+  }
+  
+  [data-theme="dark"] .accordion-body {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+  }
+  
+  /* Progress bars */
+  [data-theme="dark"] .progress {
+    background-color: #3d3d3d;
+  }
+  
+  /* Badges - Additional variants */
+  [data-theme="dark"] .badge.bg-light {
+    background-color: #495057 !important;
+    color: var(--text-color) !important;
+  }
+  
+  [data-theme="dark"] .badge.bg-secondary {
+    background-color: #6c757d !important;
+  }
+  
+  /* Alert variants */
+  [data-theme="dark"] .alert-info {
+    background-color: rgba(13, 110, 253, 0.2);
+    border-color: rgba(13, 110, 253, 0.4);
+    color: #9ec5fe;
+  }
+  
+  [data-theme="dark"] .alert-warning {
+    background-color: rgba(255, 193, 7, 0.2);
+    border-color: rgba(255, 193, 7, 0.4);
+    color: #ffe69c;
+  }
+  
+  [data-theme="dark"] .alert-danger {
+    background-color: rgba(220, 53, 69, 0.2);
+    border-color: rgba(220, 53, 69, 0.4);
+    color: #f1aeb5;
+  }
+  
+  [data-theme="dark"] .alert-success {
+    background-color: rgba(25, 135, 84, 0.2);
+    border-color: rgba(25, 135, 84, 0.4);
+    color: #a3cfbb;
+  }
+  
+  /* Input groups */
+  [data-theme="dark"] .input-group-text {
+    background-color: #3d3d3d;
+    border-color: var(--border-color);
+    color: var(--text-color);
+  }
+  
+  /* Form labels and help text */
+  [data-theme="dark"] .form-label {
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .form-text {
+    color: #999;
+  }
+  
+  /* Form check (checkboxes and radios) */
+  [data-theme="dark"] .form-check-input {
+    background-color: #2d2d2d;
+    border-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .form-check-label {
+    color: var(--text-color);
+  }
+  
+  /* Textarea */
+  [data-theme="dark"] textarea.form-control {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+    border-color: var(--border-color);
+  }
+  
+  /* Select options */
+  [data-theme="dark"] select.form-control option,
+  [data-theme="dark"] select.form-select option {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+  }
+  
+  /* Table enhancements */
+  [data-theme="dark"] .table th,
+  [data-theme="dark"] .table td {
+    border-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .table-bordered {
+    border-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .table-hover tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.075);
+  }
+  
+  /* Border utilities */
+  [data-theme="dark"] .border {
+    border-color: var(--border-color) !important;
+  }
+  
+  [data-theme="dark"] .border-top,
+  [data-theme="dark"] .border-end,
+  [data-theme="dark"] .border-bottom,
+  [data-theme="dark"] .border-start {
+    border-color: var(--border-color) !important;
+  }
+  
+  /* HR */
+  [data-theme="dark"] hr {
+    border-color: var(--border-color);
+    opacity: 1;
+  }
+  
+  /* Small text */
+  [data-theme="dark"] small {
+    color: var(--text-color);
+  }
+  
+  /* Code blocks */
+  [data-theme="dark"] code {
+    background-color: #2d2d2d;
+    color: #f8f8f2;
+  }
+  
+  /* Blockquote */
+  [data-theme="dark"] blockquote {
+    border-left-color: var(--border-color);
+  }
+  
+  /* Button variants for dark mode */
+  [data-theme="dark"] .btn-light {
+    background-color: #495057;
+    border-color: #495057;
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .btn-light:hover {
+    background-color: #5a6268;
+    border-color: #5a6268;
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .btn-outline-light {
+    color: var(--text-color);
+    border-color: #495057;
+  }
+  
+  [data-theme="dark"] .btn-outline-light:hover {
+    background-color: #495057;
+    border-color: #495057;
+    color: var(--text-color);
+  }
+  
+  /* Navbar toggler */
+  [data-theme="dark"] .navbar-toggler-icon {
+    filter: invert(1);
+  }
+  
+  /* Fix for any remaining text elements */
+  [data-theme="dark"] label {
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] legend {
+    color: var(--heading-color);
+  }
+  
+  /* Social icons in footer - Twitter/X needs light mode treatment */
+  [data-theme="dark"] .social-icon .bi-twitter-x {
+    color: #fff !important;
+  }
+  
+  /* Offcanvas (if used) */
+  [data-theme="dark"] .offcanvas {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .offcanvas-header {
+    border-bottom-color: var(--border-color);
+  }
+  
+  /* Toast notifications (if used) */
+  [data-theme="dark"] .toast {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+    border-color: var(--border-color);
+  }
+  
+  [data-theme="dark"] .toast-header {
+    background-color: #3d3d3d;
+    border-bottom-color: var(--border-color);
+    color: var(--text-color);
+  }
+  
+  /* Spinner (if used) */
+  [data-theme="dark"] .spinner-border,
+  [data-theme="dark"] .spinner-grow {
+    color: var(--link-color);
+  }
+  
+  /* Fix card body text */
+  [data-theme="dark"] .card-body {
+    color: var(--text-color);
+  }
+  
+  [data-theme="dark"] .card-title {
+    color: var(--heading-color);
+  }
+  
+  [data-theme="dark"] .card-text {
+    color: var(--text-color);
+  }
+  
+  /* Fix card footer */
+  [data-theme="dark"] .card-footer {
+    background-color: rgba(60, 60, 60, 0.8);
+    border-top-color: var(--border-color);
+  }
+  
+  /* Ensure strong and em tags are visible */
+  [data-theme="dark"] strong,
+  [data-theme="dark"] b {
+    color: inherit;
+  }
+  
+  [data-theme="dark"] em,
+  [data-theme="dark"] i:not([class]) {
+    color: inherit;
+  }
+  
+  /* Fix for disabled inputs */
+  [data-theme="dark"] .form-control:disabled,
+  [data-theme="dark"] .form-select:disabled {
+    background-color: #1a1a1a;
+    color: #666;
+  }
+  
+  /* Fix for readonly inputs */
+  [data-theme="dark"] .form-control[readonly] {
+    background-color: #2d2d2d;
+    color: var(--text-color);
+  }
   </style>
 </head>
 <body>
