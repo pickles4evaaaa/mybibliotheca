@@ -1,7 +1,19 @@
-def sync_method(self): return run_async(self.async_method())
-## MyBibliotheca – AI Engineering Guide
+# MyBibliotheca – GitHub Copilot Instructions
+
+## About This Repository
+
+**MyBibliotheca** is a self-hosted personal library and reading tracker built with Flask and KuzuDB graph database. It provides an open-source alternative to Goodreads and StoryGraph for managing your personal book collection, tracking reading progress, and generating reading statistics.
+
+**Key Technologies:** Python 3.13+, Flask, KuzuDB (graph database), Bootstrap UI, Docker
+
+## AI Engineering Guide
 
 Concise, project-specific rules so an agent can contribute safely and fast. Focus on Kuzu graph patterns, lazy services, and schema preflight.
+
+### Pattern Example
+```python
+def sync_method(self): return run_async(self.async_method())
+```
 
 ### 1. Core Architecture (Graph + Services)
 * Single KuzuDB instance (no horizontal scaling). Always assume WORKERS=1.
