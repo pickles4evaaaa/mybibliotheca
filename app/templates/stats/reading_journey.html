@@ -217,7 +217,11 @@
                                      data-time-read="{{ log.time_read or '' }}"
                                      onclick="showLogDetails('{{ log.id }}')"
                                      style="cursor: pointer;"
-                                     title="Click to view reading session details">
+                                     title="{{ log.title }} by {{ log.authors_text }}{% if log.pages_read %} - {{ log.pages_read }} pages{% endif %}{% if log.time_read %} - {{ log.time_read }} min{% endif %}
+📅 {{ log.log_date }}
+Click for details"
+                                     data-bs-toggle="tooltip" 
+                                     data-bs-placement="top">
                                     {% if log.cover_url %}
                                     <img src="{{ log.cover_url }}" 
                                          alt="{{ log.title }}" 
@@ -369,8 +373,8 @@
 /* Enhanced Calendar Day with Heatmap Intensity */
 .calendar-day {
     background: white;
-    min-height: 120px;
-    padding: 8px;
+    min-height: 140px;
+    padding: 10px;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -598,48 +602,74 @@
 /* Reading Log Items in Calendar */
 .calendar-log {
     cursor: pointer;
-    margin: 2px;
-    transition: transform 0.2s ease;
+    margin: 3px 2px;
+    transition: all 0.3s ease;
     max-width: fit-content;
     position: relative;
     z-index: 3;
+    display: inline-block;
 }
 
 .calendar-log:hover {
-    transform: scale(1.05);
+    transform: scale(1.08);
     z-index: 10;
 }
 
+/* Arrange logs in a flexible grid within each day */
+.calendar-day {
+    gap: 2px;
+}
+
+.calendar-day .day-number {
+    margin-bottom: 6px;
+}
+
+/* Container for logs within a day */
+.calendar-day .calendar-logs-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+
 .log-cover-small {
-    width: 25px;
-    height: 35px;
+    width: 40px;
+    height: 56px;
     object-fit: cover;
-    border-radius: 3px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    transition: all 0.2s ease;
+    border-radius: 4px;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    image-rendering: auto;
 }
 
 .log-cover-small:hover {
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    transform: scale(1.05);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    z-index: 5;
 }
 
 .log-placeholder-small {
-    width: 25px;
-    height: 35px;
-    border-radius: 3px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    width: 40px;
+    height: 56px;
+    border-radius: 4px;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.2);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.6rem;
+    font-size: 0.7rem;
     font-weight: 600;
     color: white;
     text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
+    cursor: pointer;
 }
 
 .log-placeholder-small:hover {
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    transform: scale(1.05);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    z-index: 5;
 }
 
 /* Cluster styling */
@@ -680,18 +710,35 @@
 }
 
 /* Responsive Design */
+@media (max-width: 1200px) {
+    .log-cover-small, .log-placeholder-small {
+        width: 35px;
+        height: 49px;
+    }
+    
+    .calendar-day {
+        min-height: 130px;
+        padding: 8px;
+    }
+}
+
 @media (max-width: 768px) {
     .calendar-container {
         font-size: 0.8rem;
     }
     
     .calendar-day {
-        min-height: 80px;
-        padding: 4px;
+        min-height: 100px;
+        padding: 6px;
+    }
+    
+    .log-cover-small, .log-placeholder-small {
+        width: 30px;
+        height: 42px;
     }
     
     .day-number {
-        font-size: 0.8rem;
+        font-size: 0.75rem;
     }
     
     .log-cover-small, .log-placeholder-small {
