@@ -18,6 +18,12 @@ import logging
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
 
+# Configurable timeouts for metadata fetching
+# Individual request timeout (default 8 seconds per request)
+_REQUEST_TIMEOUT = int(os.getenv('METADATA_REQUEST_TIMEOUT', '8'))
+# Overall fetch timeout for parallel provider requests (default 20 seconds total)
+_FETCH_TIMEOUT = int(os.getenv('METADATA_FETCH_TIMEOUT', '20'))
+
 
 def _normalize_date(val: Optional[str]) -> Optional[str]:
 	"""Normalize a date string to ISO (YYYY-MM-DD) suitable for HTML date inputs.
@@ -129,7 +135,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	"""
 	url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
 	try:
-		resp = requests.get(url, timeout=15, headers={
+		resp = requests.get(url, timeout=_REQUEST_TIMEOUT, headers={
 			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
 		resp.raise_for_status()
 		data = resp.json()
@@ -197,7 +203,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		try:
 			vol_id = item.get('id')
 			if vol_id:
-				full_resp = requests.get(f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full", timeout=15)
+				full_resp = requests.get(f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full", timeout=_REQUEST_TIMEOUT)
 				full_resp.raise_for_status()
 				full_data = full_resp.json() or {}
 				fvi = (full_data.get('volumeInfo') or {})
@@ -296,7 +302,7 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 	bibkey = f"ISBN:{isbn}"
 	url = f"https://openlibrary.org/api/books?bibkeys={bibkey}&format=json&jscmd=data"
 	try:
-		resp = requests.get(url, timeout=15, headers={
+		resp = requests.get(url, timeout=_REQUEST_TIMEOUT, headers={
 			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
 		resp.raise_for_status()
 		data = resp.json() or {}
@@ -304,7 +310,7 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 		if not ol:
 			# Fallback to edition endpoint to extract an OpenLibrary work path if possible
 			try:
-				ed_resp = requests.get(f"https://openlibrary.org/isbn/{isbn}.json", timeout=15)
+				ed_resp = requests.get(f"https://openlibrary.org/isbn/{isbn}.json", timeout=_REQUEST_TIMEOUT)
 				ed_resp.raise_for_status()
 				ed = ed_resp.json() or {}
 				work_path = None
@@ -671,17 +677,30 @@ def _unified_fetch_pair(isbn: str):
 			ex.submit(_fetch_google_by_isbn, isbn_clean): 'google',
 			ex.submit(_fetch_openlibrary_by_isbn, isbn_clean): 'openlib'
 		}
-		for fut in as_completed(future_map):
-			kind = future_map[fut]
-			try:
-				data = fut.result() or {}
-			except Exception as ex_var:  # defensive; provider funcs should swallow
-				data = {}
-				_errors[kind] = f"exception:{ex_var}"
-			if kind == 'google':
-				google = data
-			else:
-				openlib = data
+		# Add timeout to as_completed to prevent indefinite blocking
+		# This ensures the entire fetch operation doesn't exceed _FETCH_TIMEOUT
+		try:
+			for fut in as_completed(future_map, timeout=_FETCH_TIMEOUT):
+				kind = future_map[fut]
+				try:
+					# Add timeout to result() as well for additional safety
+					data = fut.result(timeout=_FETCH_TIMEOUT) or {}
+				except Exception as ex_var:  # defensive; provider funcs should swallow
+					data = {}
+					_errors[kind] = f"exception:{ex_var}"
+				if kind == 'google':
+					google = data
+				else:
+					openlib = data
+		except TimeoutError:
+			# If as_completed times out, mark all pending futures as timed out
+			for fut, kind in future_map.items():
+				if not fut.done():
+					_errors[kind] = 'timeout'
+					# Cancel any still-running futures
+					fut.cancel()
+			if _META_DEBUG:
+				_META_LOG.warning(f"[UNIFIED_METADATA][TIMEOUT] isbn={isbn} timeout={_FETCH_TIMEOUT}s")
 
 	# Record empty provider results explicitly for diagnostics
 	if not google and 'google' not in _errors:
