@@ -1,5 +1,5 @@
 # Use slim Python base image for smaller footprint
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Avoid writing .pyc files and enable unbuffered logging (good for Docker)
 ENV PYTHONDONTWRITEBYTECODE=1

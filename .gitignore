@@ -341,4 +341,4 @@ dev_tools/
 
 # Local curl cookie jars (created by curl -b/-c during debugging)
 cookiejar
-*.cookiejar
+*.cookiejar*.whl
