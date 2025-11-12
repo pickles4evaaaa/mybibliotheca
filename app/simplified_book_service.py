@@ -932,13 +932,15 @@ class SimplifiedBookService:
             return None
 
     def find_book_by_title_author(self, title: str, author: str) -> Optional[str]:
-        """Find existing book by title and author. Returns book_id if found."""
+        """Find existing book by exact title and author match. Returns book_id if found."""
         try:
             # Normalize title and author for comparison
             normalized_title = title.lower().strip()
             normalized_author = author.lower().strip()
             
-            # First, try to find books with exact title match
+            # Find books with exact title match and check for matching author
+            # This prevents false positives where similar titles (e.g., "Die Henkerstochter" 
+            # vs "Die Henkerstochter und der schwarze Mönch") are incorrectly detected as duplicates
             title_query = """
             MATCH (b:Book)
             WHERE toLower(b.title) = $title
@@ -954,6 +956,7 @@ class SimplifiedBookService:
                     book_id = result['col_0']
                     
                     # Check if this book has the author we're looking for
+                    # Use CONTAINS for author matching to handle variations in author names
                     author_query = """
                     MATCH (b:Book {id: $book_id})<-[:AUTHORED {role: 'authored'}]-(p:Person)
                     WHERE toLower(p.name) CONTAINS $author OR $author CONTAINS toLower(p.name)
@@ -971,32 +974,7 @@ class SimplifiedBookService:
                         print(f"🔍 [DUPLICATE] Found matching book: '{title}' by author containing '{author}'")
                         return book_id
             
-            # If no exact matches, try fuzzy matching on title
-            fuzzy_query = """
-            MATCH (b:Book)
-            WHERE toLower(b.title) CONTAINS $title_part OR $title_part CONTAINS toLower(b.title)
-            OPTIONAL MATCH (b)<-[:AUTHORED {role: 'authored'}]-(p:Person)
-            WHERE toLower(p.name) CONTAINS $author OR $author CONTAINS toLower(p.name)
-            RETURN b.id, b.title, p.name
-            LIMIT 1
-            """
-            
-            # Use first few words of title for fuzzy matching
-            title_words = normalized_title.split()
-            title_part = ' '.join(title_words[:3]) if len(title_words) >= 3 else normalized_title
-            
-            fuzzy_results = safe_execute_kuzu_query(fuzzy_query, {
-                "title_part": title_part,
-                "author": normalized_author
-            })
-            fuzzy_results_list = self._convert_query_result_to_list(fuzzy_results)
-            
-            if fuzzy_results_list:
-                result = fuzzy_results_list[0]
-                if result.get('col_2'):  # Has matching author
-                    print(f"🔍 [DUPLICATE] Found fuzzy matching book: '{result['col_1']}' by '{result['col_2']}'")
-                    return result['col_0']
-            
+            # No exact match found - book is unique
             return None
             
         except Exception as e:
