@@ -1109,8 +1109,15 @@ def create_app():
         print("[APP] WSGI request logger installed (MYBIBLIOTHECA_REQUEST_LOG=true)")
 
     # Readiness probe on first request with very visible stdout logs
-    @app.before_first_request  # type: ignore[attr-defined]
+    # Using before_request with a flag since before_first_request was removed in Flask 2.2+
+    first_request_handled = {'flag': False}
+    
+    @app.before_request
     def _log_startup_and_check_db():
+        if first_request_handled['flag']:
+            return
+        first_request_handled['flag'] = True
+        
         verbose_probe = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
         if verbose_probe:
             print("[APP] before_first_request: starting readiness checks ...")
