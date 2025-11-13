@@ -1,0 +1,68 @@
+# GitHub Copilot Setup Steps
+# This file helps Copilot coding agent set up the development environment
+# for MyBibliotheca - a personal library and reading tracker application
+
+name: MyBibliotheca Development Environment
+
+steps:
+  - name: Install Python dependencies
+    command: pip install -r requirements.txt
+    description: Install all required Python packages including Flask, KuzuDB, and other dependencies
+
+  - name: Copy environment template
+    command: cp .env.example .env
+    description: Create local environment file from template (requires manual SECRET_KEY configuration)
+    
+  - name: Verify Python version
+    command: python --version
+    description: Ensure Python 3.13+ is installed (required by pyproject.toml)
+
+  - name: Install development dependencies
+    command: pip install pytest pytest-asyncio
+    description: Install testing dependencies for running test suite
+
+  - name: Run unit tests
+    command: pytest -m unit
+    description: Run unit tests to verify setup
+
+notes: |
+  ## Environment Setup Notes
+  
+  ### Required Configuration
+  - Python 3.13+ is required (as specified in pyproject.toml)
+  - SECRET_KEY and SECURITY_PASSWORD_SALT must be set in .env file
+  - KuzuDB requires single-worker mode (WORKERS=1)
+  
+  ### Generate Secret Keys
+  Run these commands to generate secure keys for .env:
+  ```bash
+  python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
+  python3 -c "import secrets; print('SECURITY_PASSWORD_SALT=' + secrets.token_urlsafe(32))"
+  ```
+  
+  ### Testing
+  - Run `pytest -m unit` for quick unit tests
+  - Run `pytest tests/ -v` for full test suite
+  - Tests use pytest markers defined in pytest.ini
+  
+  ### Database Setup
+  - KuzuDB data stored in `data/kuzu/bibliotheca.db` (local dev)
+  - Set KUZU_FORCE_RESET=true to reset database (destructive)
+  - Use KUZU_DEBUG=true for detailed logging
+  
+  ### Docker Development
+  For Docker-based development:
+  ```bash
+  cp .env.docker.example .env
+  docker-compose -f docker-compose.dev.yml up -d
+  ```
+  
+  ### Important Constraints
+  - KuzuDB does not support concurrent access - always use WORKERS=1
+  - Schema changes should be additive (see copilot-instructions.md)
+  - Use SafeKuzuManager for thread-safe database access
+  
+  ### Running the Application
+  - Development: `python dev_run.py`
+  - Production: `gunicorn -w 1 -b 0.0.0.0:5054 run:app`
+  - Docker: See DOCKER.md for detailed instructions
