@@ -1,7 +1,7 @@
 # 📚 MyBibliotheca
 
-# Beta 2.0.0
-**⚠️ Warning**: This is a BETA version under active development. Always back up your data before upgrading. The developers do not guarantee data persistence or error-free operation. Please submit issues to the repository, and we will address them as soon as possible.
+# 2.0.1+
+**⚠️ Warning**: MyBibliotheca is under heavy development. Always back up your data before upgrading. The developers do not guarantee data persistence or error-free operation. Please submit issues to the repository, and we will address them as soon as possible.
 
 **MyBibliotheca** is a self-hosted personal library and reading-tracker—your open-source alternative to Goodreads, StoryGraph, and Fable! It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
 
