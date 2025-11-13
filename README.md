@@ -46,7 +46,7 @@ View comprehensive book information including genres, authors, reading status, p
 - 👤 **Admin Management**: Administrative tools and user management
 - � **Graph Database**: Powered by KuzuDB for advanced relationship modeling and queries
 
-#### 🚀 Docker Quick Start:[(https://mybibliotheca.org/)]
+#### 🚀 Docker Quick Start: [View Documentation](https://mybibliotheca.org/)
 
 
 ## 🗂️ Project Structure
