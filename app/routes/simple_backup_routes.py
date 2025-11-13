@@ -13,7 +13,7 @@ from app.services.simple_backup_service import get_simple_backup_service
 from app.admin import admin_required
 
 # Create simple backup blueprint
-simple_backup_bp = Blueprint('simple_backup', __name__, url_prefix='/admin/simple-backup')
+simple_backup_bp = Blueprint('simple_backup', __name__, url_prefix='/auth/simple-backup')
 
 
 @simple_backup_bp.route('/')
@@ -102,8 +102,8 @@ def index():
         )
     except Exception as e:
         current_app.logger.error(f"Error loading simple backup page: {e}")
-        flash('Error loading backup page.', 'danger')
-        return redirect(url_for('admin.dashboard'))
+    flash('Error loading backup page.', 'danger')
+    return redirect(url_for('auth.settings', section='data', panel='backup'))
 
 
 @simple_backup_bp.route('/create', methods=['POST'])

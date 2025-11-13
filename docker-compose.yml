@@ -1,6 +1,9 @@
 services:
   bibliotheca:
     build: .
+    # For beta testing, use a pre-built image instead of building from source:
+    # image: pickles4evaaaa/mybibliotheca:beta-latest
+    # See available beta tags at: https://hub.docker.com/repository/docker/pickles4evaaaa/mybibliotheca/tags
     ports:
       - "5054:5054"
     volumes:

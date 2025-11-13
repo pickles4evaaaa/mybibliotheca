@@ -1,0 +1,523 @@
+{% extends "base.html" %}
+{% block title %}{{ book.title }} - MyBibliotheca{% endblock %}
+{% block content %}
+
+<style>
+  :root {
+    --primary-brown: #8B4513;
+    --light-brown: #D2B48C;
+    --cream: #F5F5DC;
+    --warm-white: #FEFEFE;
+    --gold: #DAA520;
+    --shadow: rgba(0,0,0,0.1);
+    --hover-shadow: rgba(0,0,0,0.2);
+  }
+
+  .book-header {
+    background: linear-gradient(135deg, var(--primary-brown) 0%, var(--light-brown) 100%);
+    color: white;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .book-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('https://www.transparenttextures.com/patterns/paper-fibers.png');
+    opacity: 0.3;
+  }
+
+  .book-header h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 1;
+  }
+
+  .book-content {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+
+  .book-cover-section {
+    text-align: center;
+  }
+
+  .book-cover {
+    max-width: 280px;
+    max-height: 420px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 15px;
+    box-shadow: 0 8px 25px var(--shadow);
+    margin-bottom: 1rem;
+    image-rendering: auto;
+  }
+
+  .book-details {
+    background: var(--cream);
+    border-radius: 15px;
+    padding: 2rem;
+    box-shadow: 0 8px 25px var(--shadow);
+    border: 2px solid var(--light-brown);
+  }
+
+  .detail-item {
+    display: flex;
+    margin-bottom: 1rem;
+    align-items: center;
+  }
+
+  .detail-label {
+    font-weight: 600;
+    color: var(--primary-brown);
+    min-width: 120px;
+    margin-right: 1rem;
+  }
+
+  .detail-value {
+    flex: 1;
+  }
+
+  .badge-custom {
+    background: var(--primary-brown);
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    margin-right: 0.5rem;
+    margin-bottom: 0.5rem;
+    display: inline-block;
+  }
+
+  .description-section {
+    background: var(--warm-white);
+    border: 2px solid var(--light-brown);
+    border-radius: 15px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 4px 15px var(--shadow);
+  }
+
+  .status-section {
+    background: var(--cream);
+    border-radius: 15px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 8px 25px var(--shadow);
+    border: 2px solid var(--light-brown);
+  }
+
+  .checkbox-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1rem;
+    color: var(--primary-brown);
+    font-weight: 500;
+  }
+
+  .checkbox-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary-brown);
+  }
+
+  .date-section {
+    background: var(--warm-white);
+    border: 2px solid var(--light-brown);
+    border-radius: 15px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 4px 15px var(--shadow);
+  }
+
+  .date-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .date-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .date-group label {
+    font-weight: 600;
+    color: var(--primary-brown);
+  }
+
+  .date-group input {
+    padding: 0.75rem;
+    border: 2px solid var(--light-brown);
+    border-radius: 10px;
+    font-size: 1rem;
+    background: var(--warm-white);
+  }
+
+  .reading-log-section {
+    background: var(--cream);
+    border-radius: 15px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 8px 25px var(--shadow);
+    border: 2px solid var(--light-brown);
+  }
+
+  .reading-log-list {
+    background: var(--warm-white);
+    border: 1px solid var(--light-brown);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .reading-log-item {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #eee;
+    color: var(--primary-brown);
+  }
+
+  .reading-log-item:last-child {
+    border-bottom: none;
+  }
+
+  .btn-primary-custom {
+    background: linear-gradient(135deg, var(--primary-brown), var(--light-brown));
+    border: none;
+    color: white;
+    padding: 0.75rem 2rem;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(139, 69, 19, 0.3);
+  }
+
+  .btn-primary-custom:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(139, 69, 19, 0.4);
+    color: white;
+  }
+
+  .btn-success-custom {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    border: none;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+  }
+
+  .btn-success-custom:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+    color: white;
+  }
+
+  .btn-danger-custom {
+    background: linear-gradient(135deg, #dc3545, #c82333);
+    border: none;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+  }
+
+  .btn-danger-custom:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+    color: white;
+  }
+
+  .actions-section {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 2rem;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--primary-brown);
+    text-decoration: none;
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    border: 2px solid var(--light-brown);
+    border-radius: 10px;
+    transition: all 0.3s ease;
+    background: var(--warm-white);
+  }
+
+  .back-link:hover {
+    background: var(--light-brown);
+    color: white;
+    transform: translateX(-5px);
+  }
+
+  @media (max-width: 768px) {
+    .book-content {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    
+    .checkbox-group {
+      grid-template-columns: 1fr;
+    }
+    
+    .date-inputs {
+      grid-template-columns: 1fr;
+    }
+    
+    .actions-section {
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    .book-header h1 {
+      font-size: 2rem;
+    }
+  }
+</style>
+
+<div class="book-header">
+  <h1>📚 {{ book.title }}</h1>
+  <p class="mb-0">by {{ book.author }}</p>
+</div>
+
+<div class="book-content">
+  <!-- Book Cover Section -->
+  <div class="book-cover-section">
+    {% if book.cover_url %}
+      <img src="{{ book.cover_url }}" alt="Book Cover" class="book-cover"
+           onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
+    {% else %}
+      <img src="{{ url_for('static', filename='book_cover.png') }}" alt="Book Cover" class="book-cover">
+    {% endif %}
+  </div>
+
+  <!-- Book Details Section -->
+  <div class="book-details">
+    <h4 style="color: var(--primary-brown); margin-bottom: 1.5rem;">📖 Book Information</h4>
+    
+    <div class="detail-item">
+      <span class="detail-label">📚 Title:</span>
+      <span class="detail-value">{{ book.title }}</span>
+    </div>
+    
+    <div class="detail-item">
+      <span class="detail-label">✍️ Author:</span>
+      <span class="detail-value">{{ book.author }}</span>
+    </div>
+    
+    <div class="detail-item">
+      <span class="detail-label">🔢 ISBN:</span>
+      <span class="detail-value">{{ book.isbn }}</span>
+    </div>
+    
+    {% if book.published_date %}
+    <div class="detail-item">
+      <span class="detail-label">📅 Published:</span>
+      <span class="detail-value">{{ book.published_date }}</span>
+    </div>
+    {% endif %}
+    
+    {% if book.publisher %}
+    <div class="detail-item">
+      <span class="detail-label">🏢 Publisher:</span>
+      <span class="detail-value">{{ book.publisher }}</span>
+    </div>
+    {% endif %}
+    
+    {% if book.page_count %}
+    <div class="detail-item">
+      <span class="detail-label">📄 Pages:</span>
+      <span class="detail-value">{{ book.page_count }}</span>
+    </div>
+    {% endif %}
+    
+    {% if book.language %}
+    <div class="detail-item">
+      <span class="detail-label">🌐 Language:</span>
+      <span class="detail-value">{{ book.language }}</span>
+    </div>
+    {% endif %}
+    
+    {% if book.average_rating %}
+    <div class="detail-item">
+      <span class="detail-label">⭐ Rating:</span>
+      <span class="detail-value">
+        <span style="color:#f39c12;">{{ "%.1f"|format(book.average_rating) }}</span>
+        {% if book.rating_count %}({{ book.rating_count }} ratings){% endif %}
+      </span>
+    </div>
+    {% endif %}
+    
+    {% if book.categories %}
+    <div class="detail-item">
+      <span class="detail-label">🏷️ Categories:</span>
+      <div class="detail-value">
+        {% for category in book.categories.split(',') %}
+          <span class="badge-custom">{{ category.strip() }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Description Section -->
+{% if book.description %}
+<div class="description-section">
+  <h4 style="color: var(--primary-brown); margin-bottom: 1rem;">� Description</h4>
+  <p style="text-align: justify; line-height: 1.6;">{{ book.description }}</p>
+</div>
+{% endif %}
+
+<!-- Personal Notes Section -->
+{% if book.personal_notes %}
+<div class="description-section">
+  <h4 style="color: var(--primary-brown); margin-bottom: 1rem;">📝 Personal Notes</h4>
+  <p style="text-align: justify; line-height: 1.6; font-style: italic;">{{ book.personal_notes }}</p>
+</div>
+{% endif %}
+
+<!-- Reading Status Section -->
+<div class="status-section">
+  <h4 style="color: var(--primary-brown); margin-bottom: 1.5rem;">📊 Reading Status</h4>
+  
+  <form method="post" action="{{ url_for('main.update_status', uid=book.uid) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    
+    <div class="checkbox-group">
+      <label class="checkbox-item">
+        <input type="checkbox" name="currently_reading" id="currently_reading"
+          {% if not book.finish_date and not book.want_to_read and not book.library_only %}checked{% endif %}>
+        <span>📖 Currently Reading</span>
+      </label>
+      
+      <label class="checkbox-item">
+        <input type="checkbox" name="finished" id="finished"
+          {% if book.finish_date %}checked{% endif %}>
+        <span>✅ Finished</span>
+      </label>
+      
+      <label class="checkbox-item">
+        <input type="checkbox" name="want_to_read" id="want_to_read"
+          {% if book.want_to_read %}checked{% endif %}>
+        <span>📋 Want to Read</span>
+      </label>
+      
+      <label class="checkbox-item">
+        <input type="checkbox" name="library_only" id="library_only"
+          {% if book.library_only %}checked{% endif %}>
+        <span>📚 Library Only</span>
+      </label>
+    </div>
+    
+    <button type="submit" class="btn-primary-custom">
+      🔄 Update Status
+    </button>
+  </form>
+</div>
+
+<!-- Reading Dates Section -->
+<div class="date-section">
+  <h4 style="color: var(--primary-brown); margin-bottom: 1.5rem;">📅 Reading Dates</h4>
+  
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    
+    <div class="date-inputs">
+      <div class="date-group">
+        <label for="start_date">📅 Start Date</label>
+        <input name="start_date" type="date" value="{{ book.start_date }}" id="start_date">
+      </div>
+      
+      <div class="date-group">
+        <label for="finish_date">🏁 Finish Date</label>
+        <input name="finish_date" type="date" value="{{ book.finish_date }}" id="finish_date">
+      </div>
+    </div>
+    
+    <button type="submit" class="btn-primary-custom">
+      📅 Update Dates
+    </button>
+  </form>
+</div>
+
+<!-- Reading Log Section -->
+<div class="reading-log-section">
+  <h4 style="color: var(--primary-brown); margin-bottom: 1.5rem;">📊 Reading Log</h4>
+  
+  {% if book.reading_logs %}
+    <div class="reading-log-list">
+      {% for log in book.reading_logs %}
+        <div class="reading-log-item">
+          📅 {{ log.date.strftime('%B %d, %Y') if log.date.strftime else log.date }}
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p style="color: #666; font-style: italic; margin-bottom: 1.5rem;">No reading sessions logged yet.</p>
+  {% endif %}
+  
+  <form method="post" action="{{ url_for('main.log_reading', uid=book.uid) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <button type="submit" class="btn-success-custom">
+      ➕ Log Today's Reading
+    </button>
+  </form>
+</div>
+
+<!-- Actions Section -->
+<div class="actions-section">
+  <a href="{{ url_for('main.edit_book', uid=book.uid) }}" class="btn-primary-custom" style="text-decoration: none;">
+    ✏️ Edit Book
+  </a>
+  
+  <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" 
+        onsubmit="return confirm('Are you sure you want to delete this book? This action cannot be undone.')" 
+        style="display: inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <button type="submit" class="btn-danger-custom">
+      🗑️ Delete Book
+    </button>
+  </form>
+  
+  <a href="{{ url_for('main.index') }}" class="back-link">
+    ⬅️ Back to Library
+  </a>
+</div>
+
+{% endblock %}

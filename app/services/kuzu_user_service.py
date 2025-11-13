@@ -206,6 +206,7 @@ class KuzuUserService:
                 'display_name': display_name,
                 'is_admin': is_admin,
                 'is_active': is_active,
+                'password_must_change': password_must_change,
                 'timezone': timezone,
                 'bio': location  # Store location in bio field for now
             }
@@ -226,6 +227,7 @@ class KuzuUserService:
                     timezone=created_user_data.get('timezone', 'UTC'),
                     is_admin=created_user_data.get('is_admin', False),
                     is_active=created_user_data.get('is_active', True),
+                    password_must_change=created_user_data.get('password_must_change', False),
                     created_at=created_user_data.get('created_at') or datetime.now(dt_timezone.utc)
                 )
                 return user

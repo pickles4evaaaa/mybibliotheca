@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-DEFAULT_MIN_PASSWORD_LENGTH: int = 12
-MIN_ALLOWED_PASSWORD_LENGTH: int = 8
+DEFAULT_MIN_PASSWORD_LENGTH: int = 8
+MIN_ALLOWED_PASSWORD_LENGTH: int = 6
 MAX_ALLOWED_PASSWORD_LENGTH: int = 128
 ENV_PASSWORD_MIN_LENGTH_KEY: str = "PASSWORD_MIN_LENGTH"
 _PASSWORD_LENGTH_SOURCES = ("env", "config", "default")
@@ -102,9 +102,7 @@ def get_password_requirements() -> List[str]:
     min_length = resolve_min_password_length()
     return [
         f"At least {min_length} characters long",
-        "Contains at least one uppercase letter (A-Z)",
-        "Contains at least one lowercase letter (a-z)",
-        "Contains at least one number (0-9)",
-        "Contains at least one special character (!@#$%^&*()_+-=[]{};':\"\\|,.<>/?)",
-        "Not a commonly used password",
+        "Contains at least one letter (A-Z or a-z)",
+        "Contains at least one number (0-9) OR one special character (!@#$%^&*()_+-=[]{};':\"\\|,.<>/?)",
+        "Not a commonly used password"
     ]

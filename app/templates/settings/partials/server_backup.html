@@ -1,0 +1,44 @@
+<div class="card border-dark shadow-sm">
+  <div class="card-header bg-dark text-white d-flex align-items-center gap-2">
+    <i class="bi bi-archive"></i>
+    <strong>Backup Configuration</strong>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-3">Configure where automated backups are stored.</p>
+    <form method="POST"
+          action="{{ url_for('auth.save_backup_settings') }}"
+          id="backupConfigForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="inline" value="1" />
+      <div class="mb-4">
+        <h6 class="fw-bold text-dark mb-3">Backup Storage</h6>
+        <div class="row g-3">
+          <div class="col-12">
+            <label for="backup_directory" class="form-label">Backup Directory</label>
+            <input type="text" class="form-control" id="backup_directory" name="backup_directory"
+                   value="{{ backup_config.get('backup_directory', 'data/backups') if backup_config else 'data/backups' }}"
+                   placeholder="data/backups" />
+            <small class="form-text text-muted">
+              Path where backup files will be stored (relative to application root or absolute path). Default: <code>data/backups</code>.
+            </small>
+          </div>
+        </div>
+      </div>
+      <div class="settings-save-bar mt-4">
+        <button type="submit" class="btn btn-dark">
+          <i class="bi bi-save me-1"></i>Save Backup Settings
+        </button>
+      </div>
+    </form>
+    <div class="alert alert-info mt-3">
+      <strong><i class="bi bi-info-circle me-1"></i>Note:</strong><br />
+      <small>
+        • The directory will be created automatically if it doesn't exist.<br />
+        • Use relative paths (e.g., <code>data/backups</code>) or absolute paths (e.g., <code>/mnt/backups</code>).<br />
+        • For Docker deployments, ensure the path is within a mounted volume.<br />
+        • Existing backups remain in their current location until manually moved.
+      </small>
+    </div>
+  </div>
+</div>
+<script>

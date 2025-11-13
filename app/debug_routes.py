@@ -12,7 +12,7 @@ from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
 from app.services.audiobookshelf_service import get_client_from_settings
 from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 
-bp = Blueprint('debug_admin', __name__, url_prefix='/admin/debug')
+bp = Blueprint('debug_admin', __name__, url_prefix='/auth/debug')
 
 
 def admin_required(f):

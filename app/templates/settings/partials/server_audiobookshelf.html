@@ -36,9 +36,9 @@
           <div class="form-text">When enabled, user-triggered syncs run book import before listening sessions to avoid duplicates and ensure item IDs exist.</div>
         </div>
       </div>
-      <div class="mt-3 d-flex gap-2">
+      <div class="settings-save-bar mt-3">
+        <span id="absStatus" class="settings-status"></span>
         <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save</button>
-        <span id="absStatus" class="text-muted small"></span>
       </div>
     </form>
 
@@ -63,9 +63,9 @@
             <input type="number" min="1" step="1" class="form-control" name="listening_sync_every_hours" value="{{ (settings.listening_sync_every_hours or 12) if settings else 12 }}">
           </div>
         </div>
-        <div class="mt-3">
+        <div class="settings-save-bar mt-3">
+          <span id="absSchedulerStatus" class="settings-status"></span>
           <button type="submit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-save2"></i> Save Scheduler</button>
-          <small id="absSchedulerStatus" class="text-muted ms-2"></small>
         </div>
       </form>
     </div>

@@ -31,6 +31,18 @@
 .section-header { border-bottom:1px solid rgba(0,0,0,.08); margin-bottom:1.25rem; padding-bottom:.5rem; }
 [data-theme="dark"] .section-header { border-color:#333; }
 .quick-links a { text-decoration:none; }
+.settings-save-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    width: 100%;
+}
+.settings-save-bar .settings-status {
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 0.875rem;
+}
 </style>
 
 <div class="container mt-4 mb-5" id="settingsRoot">
@@ -132,13 +144,14 @@
 
     <div class="settings-section" id="dataSection">
             <div class="row g-3 mb-3" id="dataActionBar">
-                <div class="col-md-4"><button data-data-panel="import_books" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-book-half"></i> Import Books</button></div>
-                <div class="col-md-4"><button data-data-panel="import_reading" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-calendar-check"></i> Import Reading</button></div>
+                <div class="col-md-3"><button data-data-panel="import_books" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-book-half"></i> Import Books</button></div>
+                <div class="col-md-3"><button data-data-panel="import_reading" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-calendar-check"></i> Import Reading</button></div>
                 {% if current_user.is_admin %}
-                <div class="col-md-4"><button data-data-panel="backup" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-cloud-download"></i> Backup Manager</button></div>
+                <div class="col-md-3"><button data-data-panel="backup" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-cloud-download"></i> Backup Manager</button></div>
                 {% else %}
-                <div class="col-md-4"><button data-data-panel="export_logs" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-file-earmark-arrow-down"></i> Export Logs</button></div>
+                <div class="col-md-3"><button data-data-panel="export_logs" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-file-earmark-arrow-down"></i> Export Logs</button></div>
                 {% endif %}
+                <div class="col-md-3"><a href="{{ url_for('main.download_db') }}" class="btn btn-outline-primary w-100"><i class="bi bi-database-down"></i> Download Database</a></div>
             </div>
             <div id="dataDynamicContainer" class="mb-3"></div>
             <div class="alert alert-light border small mb-0" role="alert">
@@ -275,6 +288,290 @@ document.addEventListener('DOMContentLoaded', () => {
             formEl.dataset.unifiedHandlerBound = '1';
         });
         window.saveServerConfig = unifiedSaveServerConfig;
+    }
+
+    function ensureServerAIBindings(){
+        const container = document.getElementById('serverDynamicContainer');
+        const scope = container || document;
+        const form = scope.querySelector('#aiConfigForm');
+        if(!form){
+            return;
+        }
+        const hasDynamicContainer = !!container;
+        if(hasDynamicContainer && !form.dataset.ajaxBound){
+            form.addEventListener('submit', async (ev) => {
+                ev.preventDefault();
+                const submitBtn = form.querySelector('button[type="submit"]');
+                if(submitBtn){
+                    if(!submitBtn.dataset.original){
+                        submitBtn.dataset.original = submitBtn.innerHTML;
+                    }
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+                }
+                try {
+                    const resp = await fetch(form.action, {
+                        method: 'POST',
+                        body: new FormData(form),
+                        credentials: 'same-origin'
+                    });
+                    if(!resp.ok){
+                        throw new Error('Save failed');
+                    }
+                    const html = await resp.text();
+                    container.innerHTML = html;
+                    ensureServerAIBindings();
+                    const success = document.createElement('div');
+                    success.className = 'alert alert-success py-2 mb-3';
+                    success.innerHTML = '<i class="bi bi-check-circle me-1"></i>AI settings saved.';
+                    container.prepend(success);
+                    setTimeout(() => success.remove(), 3000);
+                } catch (err){
+                    const alert = document.createElement('div');
+                    alert.className = 'alert alert-danger alert-dismissible fade show mt-3';
+                    alert.innerHTML = '<i class="bi bi-x-circle me-1"></i>Failed to save AI settings.<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+                    form.parentNode.insertBefore(alert, form.nextSibling);
+                    setTimeout(() => alert.remove(), 4000);
+                } finally {
+                    if(submitBtn){
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = submitBtn.dataset.original || '<i class="bi bi-check2 me-1"></i>Save AI Settings';
+                    }
+                }
+            });
+            form.dataset.ajaxBound = '1';
+        }
+
+        const providerSelect = scope.querySelector('#ai_provider');
+        const openaiSection = scope.querySelector('#openai-settings');
+        const ollamaSection = scope.querySelector('#ollama-settings');
+        const syncProviderVisibility = () => {
+            if(!providerSelect || !openaiSection || !ollamaSection){
+                return;
+            }
+            if((providerSelect.value || '').toLowerCase() === 'openai'){
+                openaiSection.style.display = 'block';
+                ollamaSection.style.display = 'none';
+            } else {
+                openaiSection.style.display = 'none';
+                ollamaSection.style.display = 'block';
+            }
+        };
+        if(providerSelect){
+            if(!providerSelect.dataset.bound){
+                providerSelect.addEventListener('change', syncProviderVisibility);
+                providerSelect.dataset.bound = '1';
+            }
+            syncProviderVisibility();
+        }
+
+        const manualToggle = scope.querySelector('#ollama_manual_model');
+        const ollamaSelect = scope.querySelector('#ollama_model');
+        const manualInput = scope.querySelector('#ollama_model_manual');
+        const syncManualToggle = () => {
+            if(!manualToggle || !manualInput || !ollamaSelect){
+                return;
+            }
+            const manual = manualToggle.checked;
+            manualInput.style.display = manual ? 'block' : 'none';
+            manualInput.required = manual;
+            ollamaSelect.style.display = manual ? 'none' : 'block';
+            ollamaSelect.required = !manual;
+        };
+        if(manualToggle){
+            if(!manualToggle.dataset.bound){
+                manualToggle.addEventListener('change', syncManualToggle);
+                manualToggle.dataset.bound = '1';
+            }
+            syncManualToggle();
+        }
+
+        const maxTokens = scope.querySelector('#ai_max_tokens');
+        const tokenWarning = scope.querySelector('#ai-max-tokens-warning');
+        if(maxTokens && tokenWarning){
+            const applyWarning = () => {
+                const value = parseInt(maxTokens.value || '0', 10);
+                tokenWarning.style.display = value > 16000 ? 'block' : 'none';
+            };
+            if(!maxTokens.dataset.bound){
+                maxTokens.addEventListener('input', applyWarning);
+                maxTokens.dataset.bound = '1';
+            }
+            applyWarning();
+        }
+
+        const aiTestBtn = scope.querySelector('#aiTestBtn');
+        if(aiTestBtn && !aiTestBtn.dataset.bound){
+            aiTestBtn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                if(typeof window.testAIConnection === 'function'){
+                    window.testAIConnection(aiTestBtn);
+                }
+            });
+            aiTestBtn.dataset.bound = '1';
+        }
+
+        const ollamaTestBtn = scope.querySelector('#ollamaTestBtn');
+        if(ollamaTestBtn && !ollamaTestBtn.dataset.bound){
+            ollamaTestBtn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                if(typeof window.testOllamaConnection === 'function'){
+                    window.testOllamaConnection(ollamaTestBtn);
+                }
+            });
+            ollamaTestBtn.dataset.bound = '1';
+        }
+
+        if(typeof window.__initAISettings === 'function'){
+            try { window.__initAISettings(); } catch (err){ console.debug('AI init helper failed', err); }
+        }
+    }
+
+    function ensureServerSMTPBindings(){
+        const container = document.getElementById('serverDynamicContainer');
+        const scope = container || document;
+        const form = scope.querySelector('#smtpConfigForm');
+        if(!form){
+            return;
+        }
+        const hasDynamicContainer = !!container;
+        if(hasDynamicContainer && !form.dataset.ajaxBound){
+            form.addEventListener('submit', async (ev) => {
+                ev.preventDefault();
+                const submitBtn = form.querySelector('button[type="submit"]');
+                if(submitBtn){
+                    if(!submitBtn.dataset.original){
+                        submitBtn.dataset.original = submitBtn.innerHTML;
+                    }
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+                }
+                try {
+                    const resp = await fetch(form.action, {
+                        method: 'POST',
+                        body: new FormData(form),
+                        credentials: 'same-origin'
+                    });
+                    if(!resp.ok){
+                        throw new Error('Save failed');
+                    }
+                    const html = await resp.text();
+                    container.innerHTML = html;
+                    ensureServerSMTPBindings();
+                    const success = document.createElement('div');
+                    success.className = 'alert alert-success py-2 mb-3';
+                    success.innerHTML = '<i class="bi bi-check-circle me-1"></i>SMTP settings saved.';
+                    container.prepend(success);
+                    setTimeout(() => success.remove(), 3000);
+                } catch (err){
+                    const alert = document.createElement('div');
+                    alert.className = 'alert alert-danger alert-dismissible fade show mt-3';
+                    alert.innerHTML = '<i class="bi bi-x-circle me-1"></i>Failed to save SMTP settings.<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+                    form.parentNode.insertBefore(alert, form.nextSibling);
+                    setTimeout(() => alert.remove(), 4000);
+                } finally {
+                    if(submitBtn){
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = submitBtn.dataset.original || '<i class="bi bi-save me-1"></i>Save SMTP Settings';
+                    }
+                }
+            });
+            form.dataset.ajaxBound = '1';
+        }
+
+        const testBtn = scope.querySelector('#testSmtpBtn');
+        const resultDiv = scope.querySelector('#smtpTestResult');
+        if(testBtn && !testBtn.dataset.bound){
+            testBtn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                const original = testBtn.innerHTML;
+                testBtn.disabled = true;
+                testBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing...';
+                if(resultDiv){
+                    resultDiv.style.display = 'none';
+                }
+                try {
+                    const resp = await fetch("{{ url_for('auth.test_smtp_connection') }}", {
+                        method: 'POST',
+                        body: new FormData(form),
+                        credentials: 'same-origin'
+                    });
+                    const data = await resp.json();
+                    if(resultDiv){
+                        const ok = !!data.success;
+                        resultDiv.className = `alert alert-${ok ? 'success' : 'danger'} mt-3`;
+                        resultDiv.innerHTML = `<i class="bi ${ok ? 'bi-check-circle' : 'bi-x-circle'} me-1"></i>${data.message || 'Test complete.'}`;
+                        resultDiv.style.display = 'block';
+                    } else if(data && data.message){
+                        alert(data.message);
+                    }
+                } catch (error){
+                    if(resultDiv){
+                        resultDiv.className = 'alert alert-danger mt-3';
+                        resultDiv.innerHTML = '<i class="bi bi-x-circle me-1"></i>Error testing connection.';
+                        resultDiv.style.display = 'block';
+                    } else {
+                        alert('Error testing SMTP connection.');
+                    }
+                } finally {
+                    testBtn.disabled = false;
+                    testBtn.innerHTML = original;
+                }
+            });
+            testBtn.dataset.bound = '1';
+        }
+    }
+
+    function ensureServerBackupBindings(){
+        const container = document.getElementById('serverDynamicContainer');
+        if(!container){
+            return;
+        }
+        const form = container.querySelector('#backupConfigForm');
+        if(!form || form.dataset.ajaxBound){
+            return;
+        }
+        form.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const submitBtn = form.querySelector('button[type="submit"]');
+            if(submitBtn){
+                if(!submitBtn.dataset.original){
+                    submitBtn.dataset.original = submitBtn.innerHTML;
+                }
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+            }
+            try {
+                const resp = await fetch(form.action, {
+                    method: 'POST',
+                    body: new FormData(form),
+                    credentials: 'same-origin'
+                });
+                if(!resp.ok){
+                    throw new Error('Save failed');
+                }
+                const html = await resp.text();
+                container.innerHTML = html;
+                ensureServerBackupBindings();
+                const success = document.createElement('div');
+                success.className = 'alert alert-success py-2 mb-3';
+                success.innerHTML = '<i class="bi bi-check-circle me-1"></i>Backup settings saved.';
+                container.prepend(success);
+                setTimeout(() => success.remove(), 3000);
+            } catch (err){
+                const alert = document.createElement('div');
+                alert.className = 'alert alert-danger alert-dismissible fade show mt-3';
+                alert.innerHTML = '<i class="bi bi-x-circle me-1"></i>Failed to save backup settings.<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+                form.parentNode.insertBefore(alert, form.nextSibling);
+                setTimeout(() => alert.remove(), 4000);
+            } finally {
+                if(submitBtn){
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = submitBtn.dataset.original || '<i class="bi bi-save me-1"></i>Save Backup Settings';
+                }
+            }
+        });
+        form.dataset.ajaxBound = '1';
     }
     if(!window.__initOPDSPanel){
         window.__initOPDSPanel = function(){
@@ -773,12 +1070,12 @@ document.addEventListener('DOMContentLoaded', () => {
         function loadServerPanel(panel){
                 if(!serverContainer) return;
                 let endpoint;
-                if(panel==='config') endpoint = "{{ url_for('admin.settings_config_partial') }}";
+                if(panel==='config') endpoint = "{{ url_for('auth.settings_server_partial', panel='config') }}";
                 if(panel==='users') endpoint = "{{ url_for('auth.settings_server_partial', panel='users') }}";
                 if(panel==='debug') endpoint = "{{ url_for('auth.settings_server_partial', panel='debug') }}";
                 if(panel==='ai') endpoint = "{{ url_for('auth.settings_server_partial', panel='ai') }}";
-                if(panel==='smtp') endpoint = "{{ url_for('admin.settings_smtp_partial') }}";
-                if(panel==='backup') endpoint = "{{ url_for('admin.settings_backup_partial') }}";
+                if(panel==='smtp') endpoint = "{{ url_for('auth.settings_server_partial', panel='smtp') }}";
+                if(panel==='backup') endpoint = "{{ url_for('auth.settings_server_partial', panel='backup') }}";
                 if(panel==='opds') endpoint = "{{ url_for('auth.settings_server_partial', panel='opds') }}";
                 if(panel==='audiobookshelf') endpoint = "{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}";
                 if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";
@@ -983,7 +1280,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         fd.append('ollama_model', document.getElementById('ollama_model').value);
                                     }
                                     const results = document.getElementById('ai-test-results'); if(results) results.innerHTML='';
-                                    try { const resp=await fetch('/admin/test-ai-connection',{method:'POST', body:fd}); const data=await resp.json(); if(results) results.innerHTML=`<div class="alert alert-${data.success?'success':'danger'} p-2 mb-0 small">${data.message||'Test complete'}</div>`; } catch(e){ if(results) results.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error testing connection.</div>'; }
+                                    try { const resp=await fetch("{{ url_for('auth.test_ai_connection') }}",{method:'POST', body:fd}); const data=await resp.json(); if(results) results.innerHTML=`<div class="alert alert-${data.success?'success':'danger'} p-2 mb-0 small">${data.message||'Test complete'}</div>`; } catch(e){ if(results) results.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error testing connection.</div>'; }
                                     btn.disabled=false; btn.innerHTML=original;
                                 };
                             }
@@ -993,11 +1290,17 @@ document.addEventListener('DOMContentLoaded', () => {
                                     if(!baseUrlInput||!select){return;} const original=btn?btn.innerHTML:''; if(btn){btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';}
                                     resultsDiv.innerHTML='<div class="text-muted small">Testing connection...</div>';
                                     const fd=new FormData(); fd.append('ollama_base_url', baseUrlInput.value.trim()); const csrf=document.querySelector('input[name="csrf_token"]'); if(csrf) fd.append('csrf_token', csrf.value);
-                                    try { const resp=await fetch('/admin/test-ollama-connection',{method:'POST', body: fd}); const data=await resp.json(); if(data.success && data.models){ select.innerHTML='<option value="">Select a model</option>'; data.models.forEach(m=>{ const opt=document.createElement('option'); opt.value=m.name||m; opt.textContent=(m.name?`${m.name} (${m.size})`:m); select.appendChild(opt); }); resultsDiv.innerHTML=`<div class="alert alert-success p-2 mb-0 small">Loaded ${data.models.length} models.</div>`;} else { resultsDiv.innerHTML=`<div class="alert alert-danger p-2 mb-0 small">${data.message||'Connection failed'}</div>`;} } catch(e){ resultsDiv.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error contacting server.</div>'; }
+                                    try { const resp=await fetch("{{ url_for('auth.test_ollama_connection') }}",{method:'POST', body: fd}); const data=await resp.json(); if(data.success && data.models){ select.innerHTML='<option value="">Select a model</option>'; data.models.forEach(m=>{ const opt=document.createElement('option'); opt.value=m.name||m; opt.textContent=(m.name?`${m.name} (${m.size})`:m); select.appendChild(opt); }); resultsDiv.innerHTML=`<div class="alert alert-success p-2 mb-0 small">Loaded ${data.models.length} models.</div>`;} else { resultsDiv.innerHTML=`<div class="alert alert-danger p-2 mb-0 small">${data.message||'Connection failed'}</div>`;} } catch(e){ resultsDiv.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error contacting server.</div>'; }
                                     if(btn){btn.disabled=false; btn.innerHTML=original;}
                                 };
                             }
-                            try { window.__initAISettings(); } catch(e){ console.warn('AI init failed', e); }
+                            try { ensureServerAIBindings(); } catch(e){ console.warn('AI bindings refresh failed', e); }
+                        }
+                        if(panel==='smtp'){
+                            try { ensureServerSMTPBindings(); } catch(e){ console.warn('SMTP bindings refresh failed', e); }
+                        }
+                        if(panel==='backup'){
+                            try { ensureServerBackupBindings(); } catch(e){ console.warn('Backup bindings refresh failed', e); }
                         }
                         if(panel==='audiobookshelf'){
                             // Fallback: define reusable initializer so we can rebind after content replacement

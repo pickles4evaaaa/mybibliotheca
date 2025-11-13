@@ -5,6 +5,20 @@ from app.domain.models import User, MediaType
 from app.services import user_service, book_service, reading_log_service
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.services.kuzu_service_facade import _convert_query_result_to_list  # Reuse helper for query results
+from app.admin import (
+    admin_required,
+    save_ai_config,
+    load_ai_config,
+    save_system_config,
+    load_system_config,
+    get_admin_settings_context,
+    save_smtp_config,
+    load_smtp_config,
+    save_backup_config,
+    load_backup_config,
+    _log,
+    _log_force,
+)
 from app.utils.user_settings import get_default_book_format, get_effective_reading_defaults
 from wtforms import IntegerField, SubmitField
 from wtforms.validators import Optional, NumberRange
@@ -411,7 +425,6 @@ def settings():
     """Main user settings page."""
     # Resolve site name from persisted system config (fallback to env/default)
     try:
-        from app.admin import load_system_config
         cfg = load_system_config() or {}
         site_name = cfg.get('site_name') or 'MyBibliotheca'
     except Exception:
@@ -1160,7 +1173,6 @@ def settings_server_partial(panel: str):
             return '<div class="text-danger small">Error loading debug tools.</div>'
     if panel == 'config':
         # Inline server configuration management (mirrors admin.settings POST logic) without redirect
-        from app.admin import get_admin_settings_context, save_system_config
         import os, uuid
         ctx = {}
         if request.method == 'POST':
@@ -1250,9 +1262,23 @@ def settings_server_partial(panel: str):
                 flash('Failed to save system settings.', 'error')
         # Always refresh context after (or for GET)
         ctx = get_admin_settings_context()
-        return render_template('admin/partials/server_config.html', **ctx)
+        return render_template('settings/partials/server_config.html', **ctx)
+    if panel == 'smtp':
+        if not current_user.is_admin:
+            return '<div class="text-danger small">Not authorized.</div>'
+        ctx = {
+            'smtp_config': load_smtp_config(),
+            'site_name': (load_system_config() or {}).get('site_name', 'MyBibliotheca'),
+        }
+        return render_template('settings/partials/server_smtp.html', **ctx)
+    if panel == 'backup':
+        if not current_user.is_admin:
+            return '<div class="text-danger small">Not authorized.</div>'
+        ctx = {
+            'backup_config': load_backup_config(),
+        }
+        return render_template('settings/partials/server_backup.html', **ctx)
     if panel == 'ai':
-        from app.admin import get_admin_settings_context, load_ai_config
         ctx = get_admin_settings_context()
         ctx['ai_config'] = load_ai_config()
         return render_template('settings/partials/server_ai.html', **ctx)
@@ -2076,6 +2102,301 @@ def settings_server_partial(panel: str):
         return render_template('settings/partials/server_jobs.html', jobs=jobs, manager_stats=stats)
     # 'system' panel removed; info moved to overview section
     return '<div class="text-danger small">Unknown panel.</div>'
+
+
+@auth.route('/settings/server/ai', methods=['POST'])
+@login_required
+@admin_required
+def save_ai_settings():
+    """Persist AI configuration updates from the unified settings page."""
+    try:
+        config = {
+            'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
+            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
+            'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
+            'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
+            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
+            'AI_TIMEOUT': request.form.get('ai_timeout', '30'),
+            'AI_MAX_TOKENS': request.form.get('ai_max_tokens', '1000'),
+            'AI_TEMPERATURE': request.form.get('ai_temperature', '0.1'),
+            'AI_BOOK_EXTRACTION_ENABLED': 'true' if request.form.get('ai_book_extraction_enabled') else 'false',
+            'AI_BOOK_EXTRACTION_AUTO_SEARCH': 'true' if request.form.get('ai_book_extraction_auto_search') else 'false',
+        }
+        ollama_manual = (request.form.get('ollama_model_manual') or '').strip()
+        ollama_selected = (request.form.get('ollama_model') or '').strip()
+        config['OLLAMA_MODEL'] = ollama_manual or ollama_selected or 'llama3.2-vision:11b'
+
+        if save_ai_config(config):
+            flash('AI settings saved successfully!', 'success')
+        else:
+            flash('Error saving AI settings. Please try again.', 'danger')
+    except Exception as exc:
+        _log('error', f"Error updating AI settings: {exc}")
+        flash('Error saving AI settings. Please try again.', 'danger')
+
+    expects_partial = (
+        request.form.get('inline') == '1'
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.headers.get('HX-Request')
+    )
+    if expects_partial:
+        ctx = get_admin_settings_context()
+        ctx['ai_config'] = load_ai_config()
+        return render_template('settings/partials/server_ai.html', **ctx)
+    return redirect(url_for('auth.settings', section='server', panel='ai'))
+
+
+@auth.route('/settings/server/ai/test', methods=['POST'])
+@login_required
+@admin_required
+def test_ai_connection():
+    """Test connectivity for the configured AI provider."""
+    try:
+        config = {
+            'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
+            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
+            'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
+            'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
+            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
+            'OLLAMA_MODEL': request.form.get('ollama_model_manual') or request.form.get('ollama_model', 'llama3.2-vision:11b'),
+            'AI_TIMEOUT': request.form.get('ai_timeout', '30'),
+            'AI_MAX_TOKENS': request.form.get('ai_max_tokens', '1000'),
+            'AI_TEMPERATURE': request.form.get('ai_temperature', '0.1'),
+        }
+        from app.services.ai_service import AIService
+
+        ai_service = AIService(config)
+        result = ai_service.test_connection()
+        if 'success' not in result:
+            result['success'] = bool(result.get('ok', result.get('status') == 'ok'))
+        return jsonify(result)
+    except Exception as exc:
+        _log('error', f"Error testing AI connection: {exc}")
+        return jsonify({'success': False, 'message': 'Connection test failed. Please check your settings.'}), 500
+
+
+@auth.route('/settings/server/ai/ollama', methods=['POST'])
+@login_required
+@admin_required
+def test_ollama_connection():
+    """Probe an Ollama instance and return available models."""
+    try:
+        config = {
+            'AI_PROVIDER': 'ollama',
+            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
+            'AI_TIMEOUT': '10',
+        }
+        from app.services.ai_service import AIService
+
+        ai_service = AIService(config)
+        result = ai_service._test_ollama_connection()
+        if 'success' not in result:
+            result['success'] = bool(result.get('ok'))
+        return jsonify(result)
+    except Exception as exc:
+        _log('error', f"Error testing Ollama connection: {exc}")
+        return jsonify({'success': False, 'message': 'Ollama connection test failed. Please check your settings.'}), 500
+
+
+@auth.route('/settings/server/smtp', methods=['POST'])
+@login_required
+@admin_required
+def save_smtp_settings():
+    """Persist SMTP configuration from unified settings."""
+    try:
+        config = {
+            'smtp_server': (request.form.get('smtp_server') or '').strip(),
+            'smtp_username': (request.form.get('smtp_username') or '').strip(),
+            'smtp_password': (request.form.get('smtp_password') or '').strip(),
+            'smtp_from_email': (request.form.get('smtp_from_email') or '').strip(),
+            'smtp_from_name': (request.form.get('smtp_from_name') or 'MyBibliotheca').strip(),
+        }
+        raw_port = (request.form.get('smtp_port') or '').strip()
+        try:
+            smtp_port_numeric = int(raw_port or 587)
+        except (TypeError, ValueError):
+            smtp_port_numeric = 587
+        allowed_security_values = {'starttls', 'ssl', 'none'}
+        raw_security = (request.form.get('smtp_security') or '').strip().lower()
+        if raw_security not in allowed_security_values:
+            legacy_tls = (request.form.get('smtp_use_tls') or '').strip().lower()
+            raw_security = 'starttls' if legacy_tls in {'on', 'true', '1'} else 'none'
+        config['smtp_port'] = str(smtp_port_numeric)
+        config['smtp_security'] = raw_security
+        config['smtp_use_tls'] = 'true' if raw_security == 'starttls' else 'false'
+
+        if save_smtp_config(config):
+            flash('SMTP settings saved successfully!', 'success')
+        else:
+            flash('Error saving SMTP settings. Please try again.', 'danger')
+    except Exception as exc:
+        _log('error', f"Error updating SMTP settings: {exc}", extra_secrets=[request.form.get('smtp_password', '')])
+        flash('Error saving SMTP settings. Please try again.', 'danger')
+
+    expects_partial = (
+        request.form.get('inline') == '1'
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.headers.get('HX-Request')
+    )
+    if expects_partial:
+        ctx = get_admin_settings_context()
+        ctx['smtp_config'] = load_smtp_config()
+        ctx['site_name'] = (load_system_config() or {}).get('site_name', 'MyBibliotheca')
+        return render_template('settings/partials/server_smtp.html', **ctx)
+    return redirect(url_for('auth.settings', section='server', panel='smtp'))
+
+
+@auth.route('/settings/server/smtp/test', methods=['POST'])
+@login_required
+@admin_required
+def test_smtp_connection():
+    """Test SMTP connectivity with the supplied form data."""
+    import smtplib
+    import socket
+    import ssl
+
+    smtp_server = (request.form.get('smtp_server') or '').strip()
+    raw_port = (request.form.get('smtp_port') or '').strip()
+    smtp_username = (request.form.get('smtp_username') or '').strip()
+    smtp_password = (request.form.get('smtp_password') or '').strip()
+    allowed_security_values = {'starttls', 'ssl', 'none'}
+    raw_security = (request.form.get('smtp_security') or '').strip().lower()
+    if raw_security not in allowed_security_values:
+        legacy_tls = (request.form.get('smtp_use_tls') or '').strip().lower()
+        raw_security = 'starttls' if legacy_tls in {'true', '1', 'on'} else 'none'
+    try:
+        smtp_port = int(raw_port or 587)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'SMTP port must be a number.'}), 400
+
+    secret_values = [smtp_password] if smtp_password else []
+    _log_force('info', f"[SMTP] Testing connection to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+    _log_force('info', f"[SMTP] Configuration - Security: {raw_security.upper()}, Username: {smtp_username or '(none)'}", extra_secrets=secret_values)
+
+    if not smtp_server:
+        _log_force('warning', '[SMTP] Test aborted - no server specified', extra_secrets=secret_values)
+        return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
+
+    server = None
+    try:
+        _log_force('info', f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...", extra_secrets=secret_values)
+        try:
+            resolved_ip = socket.gethostbyname(smtp_server)
+            _log_force('info', f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}", extra_secrets=secret_values)
+        except socket.gaierror as dns_err:
+            _log_force('error', f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}", extra_secrets=secret_values)
+            return jsonify({'success': False, 'message': f'DNS resolution failed for {smtp_server}. Please check the server address.'}), 500
+
+        if raw_security == 'ssl':
+            _log_force('info', f"[SMTP] Step 2/4: Connecting with implicit SSL to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
+            try:
+                context = ssl.create_default_context()
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30, context=context)
+                server.set_debuglevel(0)
+                server.ehlo()
+                _log_force('info', '[SMTP] Connection established over SSL', extra_secrets=secret_values)
+            except socket.timeout:
+                _log_force('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'}), 500
+            except ConnectionRefusedError:
+                _log_force('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'}), 500
+            except socket.error as sock_err:
+                _log_force('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'Network error: {sock_err}. Check server address and port.'}), 500
+        else:
+            _log_force('info', f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
+            try:
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+                server.set_debuglevel(0)
+                server.ehlo()
+                _log_force('info', f"[SMTP] Connection established to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+            except socket.timeout:
+                _log_force('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'}), 500
+            except ConnectionRefusedError:
+                _log_force('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'}), 500
+            except socket.error as sock_err:
+                _log_force('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'Network error: {sock_err}. Check server address and port.'}), 500
+
+        if raw_security == 'starttls':
+            _log_force('info', '[SMTP] Step 3/4: Initiating STARTTLS...', extra_secrets=secret_values)
+            try:
+                context = ssl.create_default_context()
+                server.starttls(context=context)
+                server.ehlo()
+                _log_force('info', '[SMTP] STARTTLS successful', extra_secrets=secret_values)
+            except smtplib.SMTPException as tls_err:
+                _log_force('error', f"[SMTP] STARTTLS failed: {tls_err}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'TLS negotiation failed: {tls_err}'}), 500
+        elif raw_security == 'ssl':
+            _log_force('info', '[SMTP] Step 3/4: SSL negotiation completed during connection', extra_secrets=secret_values)
+        else:
+            _log_force('info', '[SMTP] Step 3/4: No TLS requested', extra_secrets=secret_values)
+
+        if smtp_username and smtp_password:
+            _log_force('info', f"[SMTP] Step 4/4: Authenticating as {smtp_username}...", extra_secrets=secret_values)
+            try:
+                server.login(smtp_username, smtp_password)
+                _log_force('info', f"[SMTP] Authentication successful for {smtp_username}", extra_secrets=secret_values)
+            except smtplib.SMTPAuthenticationError as auth_err:
+                _log_force('error', f"[SMTP] Authentication failed for {smtp_username}: {auth_err}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': 'Authentication failed. Please check your username and password.'}), 401
+            except smtplib.SMTPException as smtp_err:
+                _log_force('error', f"[SMTP] SMTP error during authentication: {smtp_err}", extra_secrets=secret_values)
+                return jsonify({'success': False, 'message': f'SMTP authentication error: {smtp_err}'}), 500
+        else:
+            _log_force('info', '[SMTP] Step 4/4: No authentication (username/password not provided)', extra_secrets=secret_values)
+
+        _log_force('info', f"[SMTP] All steps completed successfully. Closing connection...", extra_secrets=secret_values)
+        server.quit()
+        _log_force('info', f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+        return jsonify({'success': True, 'message': f'Successfully connected to {smtp_server}:{smtp_port} using {raw_security.upper()} security'})
+    except smtplib.SMTPException as exc:
+        _log_force('error', f"[SMTP] SMTP error: {type(exc).__name__}: {exc}", extra_secrets=secret_values)
+        return jsonify({'success': False, 'message': f'SMTP error: {exc}'}), 500
+    except socket.timeout:
+        _log_force('error', f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
+        return jsonify({'success': False, 'message': 'Operation timeout. The server may be slow or unreachable.'}), 500
+    except Exception as exc:
+        _log_force('error', f"[SMTP] Unexpected error: {type(exc).__name__}: {exc}", extra_secrets=secret_values, exc_info=True)
+        return jsonify({'success': False, 'message': f'Connection failed: {exc}'}), 500
+    finally:
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+
+@auth.route('/settings/server/backup', methods=['POST'])
+@login_required
+@admin_required
+def save_backup_settings():
+    """Persist backup configuration updates."""
+    try:
+        backup_directory = (request.form.get('backup_directory') or 'data/backups').strip()
+        if not backup_directory:
+            flash('Backup directory cannot be empty.', 'danger')
+        else:
+            if save_backup_config({'backup_directory': backup_directory}):
+                flash('Backup settings saved successfully!', 'success')
+            else:
+                flash('Error saving backup settings. Please try again.', 'danger')
+    except Exception as exc:
+        _log('error', f"Error updating backup settings: {exc}")
+        flash('Error saving backup settings. Please try again.', 'danger')
+
+    expects_partial = (
+        request.form.get('inline') == '1'
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.headers.get('HX-Request')
+    )
+    if expects_partial:
+        return render_template('settings/partials/server_backup.html', backup_config=load_backup_config())
+    return redirect(url_for('auth.settings', section='server', panel='backup'))
 
 
 @auth.route('/settings/opds/preview/<int:row_index>')

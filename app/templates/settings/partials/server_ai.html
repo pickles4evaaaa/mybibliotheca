@@ -4,18 +4,17 @@
     <strong>AI Configuration</strong>
   </div>
   <div class="card-body">
-    
-  <form method="POST" action="{{ url_for('admin.update_ai_settings') }}" onsubmit="return saveAISettings(this);">
+    <form method="POST" action="{{ url_for('auth.save_ai_settings') }}" id="aiConfigForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="inline" value="1" />
-  <div class="mb-3">
+      <div class="mb-3">
         <label class="form-label fw-bold">AI Provider</label>
-        <select class="form-select" name="ai_provider" id="ai_provider" onchange="toggleProviderSettings()">
+        <select class="form-select" name="ai_provider" id="ai_provider">
           <option value="openai" {{ 'selected' if ai_config and ai_config.get('AI_PROVIDER') == 'openai' else '' }}>OpenAI</option>
           <option value="ollama" {{ 'selected' if ai_config and ai_config.get('AI_PROVIDER') == 'ollama' else '' }}>Ollama (Local)</option>
         </select>
       </div>
-  <div id="openai-settings" class="provider-settings" style="display:none;">
+      <div id="openai-settings" class="provider-settings" style="display:none;">
         <h6 class="fw-bold text-primary mb-3">OpenAI Configuration</h6>
         <div class="row g-3">
           <div class="col-md-6">
@@ -37,18 +36,18 @@
           </div>
         </div>
         <div class="mt-3">
-          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testAIConnection(this)"><i class="bi bi-plug me-1"></i>Test AI Connection</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="aiTestBtn"><i class="bi bi-plug me-1"></i>Test AI Connection</button>
           <div id="ai-test-results" class="mt-2 small"></div>
         </div>
       </div>
-  <div id="ollama-settings" class="provider-settings" style="display:none;">
+      <div id="ollama-settings" class="provider-settings" style="display:none;">
         <h6 class="fw-bold text-success mb-3">Ollama Configuration</h6>
         <div class="row g-3">
           <div class="col-md-8">
             <label class="form-label">Base URL</label>
             <div class="input-group">
               <input type="url" class="form-control" id="ollama_base_url" name="ollama_base_url" value="{{ ai_config.get('OLLAMA_BASE_URL','http://localhost:11434/v1') if ai_config else 'http://localhost:11434/v1' }}" />
-              <button type="button" class="btn btn-outline-secondary" onclick="testOllamaConnection(this)"><i class="bi bi-wifi me-1"></i>Test & Load Models</button>
+              <button type="button" class="btn btn-outline-secondary" id="ollamaTestBtn"><i class="bi bi-wifi me-1"></i>Test & Load Models</button>
             </div>
           </div>
           <div class="col-md-4">
@@ -103,98 +102,9 @@
           </div>
         </div>
       </div>
-      <div class="d-flex justify-content-end mt-4">
+      <div class="settings-save-bar mt-4">
         <button type="submit" class="btn btn-primary"><i class="bi bi-check2 me-1"></i>Save AI Settings</button>
       </div>
     </form>
-    <script>
-  (function initInlineAI(){
-      const providerSelect = document.getElementById('ai_provider');
-      if(!providerSelect) return; // safety
-      const openai = document.getElementById('openai-settings');
-      const ollama = document.getElementById('ollama-settings');
-      function sync(){
-        const val = providerSelect.value;
-        if(val==='openai') { openai.style.display='block'; ollama.style.display='none'; }
-        else { openai.style.display='none'; ollama.style.display='block'; }
-      }
-      providerSelect.addEventListener('change', sync);
-      sync(); // run immediately since DOMContentLoaded already fired in dynamic load
-      const manualChk = document.getElementById('ollama_manual_model');
-      if(manualChk){
-        manualChk.addEventListener('change', ()=>{
-          const manual = document.getElementById('ollama_model_manual');
-          if(manual) manual.style.display = manualChk.checked ? 'block':'none';
-        });
-      }
-      const maxTokens = document.getElementById('ai_max_tokens');
-      const warn = document.getElementById('ai-max-tokens-warning');
-      if(maxTokens && warn){
-        const toggle=()=>{ warn.style.display = parseInt(maxTokens.value||'0',10) > 16000 ? 'block':'none'; };
-        maxTokens.addEventListener('input', toggle); toggle();
-      }
-      // expose for dynamic re-run
-      window.__initAISettings = initInlineAI;
-    })();
-    async function saveAISettings(form){
-      const fd = new FormData(form);
-      const container = document.getElementById('serverDynamicContainer');
-      const btn = form.querySelector('button[type="submit"]');
-      if(btn){ btn.disabled=true; const original=btn.innerHTML; btn.dataset.original=original; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...'; }
-      try {
-        const resp = await fetch(form.action, {method:'POST', body: fd});
-        const html = await resp.text();
-        if(container){ container.innerHTML = html; }
-        if(window.__initAISettings) window.__initAISettings();
-        // Show transient success if not already in partial
-        if(container && !container.querySelector('.alert-success')){
-          const alert=document.createElement('div'); alert.className='alert alert-success p-2 m-2 mb-0'; alert.textContent='AI settings saved.'; container.prepend(alert); setTimeout(()=>{ if(alert.parentNode) alert.remove(); },3000);
-        }
-      } catch(e){
-        alert('Failed to save AI settings.');
-      } finally { if(btn){ btn.disabled=false; btn.innerHTML=btn.dataset.original || 'Save'; } }
-      return false;
-    }
-    async function testAIConnection(btn){
-      if(!btn) return; const original = btn.innerHTML; btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';
-      const provider = document.getElementById('ai_provider').value;
-      const fd = new FormData();
-      const csrf = document.querySelector('input[name="csrf_token"]'); if(csrf) fd.append('csrf_token', csrf.value);
-      fd.append('ai_provider', provider);
-      if(provider==='openai'){
-        fd.append('openai_api_key', document.getElementById('openai_api_key').value);
-        fd.append('openai_base_url', document.querySelector('input[name="openai_base_url"]').value);
-        fd.append('openai_model', document.getElementById('openai_model').value);
-      } else {
-        fd.append('ollama_base_url', document.getElementById('ollama_base_url').value);
-        fd.append('ollama_model', document.getElementById('ollama_model').value);
-      }
-      const results = document.getElementById('ai-test-results'); if(results) results.innerHTML='';
-      try {
-        const resp = await fetch('/admin/test-ai-connection', {method:'POST', body: fd});
-        const data = await resp.json();
-        if(results) results.innerHTML = `<div class="alert alert-${data.success?'success':'danger'} p-2 mb-0 small">${data.message||'Test complete'}</div>`;
-      } catch(e){ if(results) results.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error testing connection.</div>'; }
-      btn.disabled=false; btn.innerHTML=original;
-    }
-    async function testOllamaConnection(btn){
-      const baseUrlInput=document.getElementById('ollama_base_url'); const select=document.getElementById('ollama_model'); const resultsDiv=document.getElementById('ollama-test-results');
-      if(!baseUrlInput||!select){return;} const original=btn?btn.innerHTML:''; if(btn){btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';}
-      resultsDiv.innerHTML='<div class="text-muted small">Testing connection...</div>';
-      const fd=new FormData(); fd.append('ollama_base_url', baseUrlInput.value.trim()); const csrf=document.querySelector('input[name="csrf_token"]'); if(csrf) fd.append('csrf_token', csrf.value);
-      try {
-        const resp=await fetch('/admin/test-ollama-connection',{method:'POST', body: fd});
-        const data=await resp.json();
-        if(data.success && data.models){
-          select.innerHTML='<option value="">Select a model</option>';
-          data.models.forEach(m=>{ const opt=document.createElement('option'); opt.value=m.name||m; opt.textContent=(m.name?`${m.name} (${m.size})`:m); select.appendChild(opt); });
-          resultsDiv.innerHTML=`<div class="alert alert-success p-2 mb-0 small">Loaded ${data.models.length} models.</div>`;
-        } else {
-          resultsDiv.innerHTML=`<div class="alert alert-danger p-2 mb-0 small">${data.message||'Connection failed'}</div>`;
-        }
-      } catch(e){ resultsDiv.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error contacting server.</div>'; }
-      if(btn){btn.disabled=false; btn.innerHTML=original;}
-    }
-    </script>
   </div>
 </div>

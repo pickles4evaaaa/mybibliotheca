@@ -6,9 +6,9 @@
             <div class="d-flex">
                 {% if book.cover_url %}
                     <img src="{{ book.cover_url }}" alt="{{ book.title }}" 
-                         style="height:80px;width:auto;margin-right:12px;border-radius:4px;">
+                         class="book-thumb-cover me-3 rounded">
                 {% else %}
-                    <div style="height:80px;width:55px;background:#f8f9fa;border:1px solid #dee2e6;margin-right:12px;border-radius:4px;display:flex;align-items:center;justify-content:center;">
+                    <div class="book-thumb-placeholder bg-light border me-3 rounded d-flex align-items-center justify-content-center">
                         <i class="bi bi-book text-muted"></i>
                     </div>
                 {% endif %}

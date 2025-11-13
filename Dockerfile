@@ -1,5 +1,5 @@
 # Use slim Python base image for smaller footprint
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Avoid writing .pyc files and enable unbuffered logging (good for Docker)
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -61,9 +61,9 @@ RUN echo "openssl_conf = openssl_init" >> /etc/ssl/openssl.cnf && \
 # Install Python dependencies
 COPY requirements.txt .
 # Upgrade pip and install cryptographic dependencies first
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir cryptography
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install cryptography
+RUN pip install -r requirements.txt
 
 # Copy all source code
 COPY . .

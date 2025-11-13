@@ -110,7 +110,7 @@
                         <div class="col-md-4 text-center mb-3 mb-md-0">
                             <div class="position-relative d-inline-block">
                                 {% from 'macros/cover_input.html' import render_cover_display %}
-                                {{ render_cover_display(book, css_classes="img-fluid rounded shadow-sm", style="height: 500px; min-width: 300px; width: auto;", img_id="book-cover") }}
+                                {{ render_cover_display(book, css_classes="img-fluid rounded shadow-sm", style="max-height: 490px; max-width: 350px; width: auto; height: auto; object-fit: contain;", img_id="book-cover") }}
                                 {% if book.media_type and book.media_type|lower == 'audiobook' %}
                                 <span class="position-absolute bottom-0 end-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Audiobook">
                                     <i class="bi bi-soundwave"></i>
@@ -2341,7 +2341,7 @@ function applyCoverUrl(coverUrl) {
                 } else {
                     // Replace the div with an img element
                     mainCoverImg.outerHTML = `<img src="${data.cover_url}?t=${Date.now()}" alt="{{ book.title }}" 
-                         class="img-fluid rounded shadow-sm" style="height: 500px; min-width: 300px; width: auto;" id="book-cover"
+                         class="img-fluid rounded shadow-sm" style="max-height: 490px; max-width: 350px; width: auto; height: auto; object-fit: contain;" id="book-cover"
                          onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">`;
                 }
             }
