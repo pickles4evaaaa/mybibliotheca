@@ -414,41 +414,39 @@ def site_config_step():
 
             # Capture and persist backup settings from step 2
             try:
-                backup_enabled_raw = request.form.get('backup_enabled')
-                if backup_enabled_raw is not None:
-                    # Normalize values from checkbox true/false or on/off
-                    backup_enabled = 'backup_enabled' in request.form
-                    retention_days = int(request.form.get('backup_retention_days') or 14)
-                    scheduled_hour = int(request.form.get('backup_scheduled_hour') or 2)
-                    scheduled_minute = int(request.form.get('backup_scheduled_minute') or 30)
-                    frequency = request.form.get('backup_frequency') or 'daily'
-                    if frequency not in ('daily', 'weekly'):
-                        frequency = 'daily'
+                # Checkbox is only present in form if checked, so check for its presence
+                backup_enabled = 'backup_enabled' in request.form
+                retention_days = int(request.form.get('backup_retention_days') or 14)
+                scheduled_hour = int(request.form.get('backup_scheduled_hour') or 2)
+                scheduled_minute = int(request.form.get('backup_scheduled_minute') or 30)
+                frequency = request.form.get('backup_frequency') or 'daily'
+                if frequency not in ('daily', 'weekly'):
+                    frequency = 'daily'
 
-                    backup_settings = {
-                        'enabled': backup_enabled,
-                        'retention_days': retention_days,
-                        'scheduled_hour': scheduled_hour,
-                        'scheduled_minute': scheduled_minute,
-                        'frequency': frequency
-                    }
-                    site_config['backup_settings'] = backup_settings
-                    logger.info(f"🔍 ONBOARDING DEBUG: Captured backup settings from step 2: {backup_settings}")
+                backup_settings = {
+                    'enabled': backup_enabled,
+                    'retention_days': retention_days,
+                    'scheduled_hour': scheduled_hour,
+                    'scheduled_minute': scheduled_minute,
+                    'frequency': frequency
+                }
+                site_config['backup_settings'] = backup_settings
+                logger.info(f"🔍 ONBOARDING DEBUG: Captured backup settings from step 2: {backup_settings}")
 
-                    # Persist immediately via backup service
-                    try:
-                        from .services.simple_backup_service import get_simple_backup_service
-                        svc = get_simple_backup_service()
-                        if hasattr(svc, '_settings'):
-                            svc._settings.update(backup_settings)
-                            svc._save_settings()  # internal persistence
-                            if svc._settings.get('enabled'):
-                                svc.ensure_scheduler()
-                            else:
-                                svc.stop_scheduler()
-                            logger.info("🔍 ONBOARDING DEBUG: Applied backup settings to backup service from step 2")
-                    except Exception as e:
-                        logger.warning(f"⚠️ ONBOARDING DEBUG: Failed applying backup settings during step 2: {e}")
+                # Persist immediately via backup service
+                try:
+                    from .services.simple_backup_service import get_simple_backup_service
+                    svc = get_simple_backup_service()
+                    if hasattr(svc, '_settings'):
+                        svc._settings.update(backup_settings)
+                        svc._save_settings()  # internal persistence
+                        if svc._settings.get('enabled'):
+                            svc.ensure_scheduler()
+                        else:
+                            svc.stop_scheduler()
+                        logger.info("🔍 ONBOARDING DEBUG: Applied backup settings to backup service from step 2")
+                except Exception as e:
+                    logger.warning(f"⚠️ ONBOARDING DEBUG: Failed applying backup settings during step 2: {e}")
             except Exception as e:
                 logger.warning(f"⚠️ ONBOARDING DEBUG: Error capturing backup settings in step 2: {e}")
 
