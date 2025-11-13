@@ -38,7 +38,6 @@ View comprehensive book information including genres, authors, reading status, p
 ## ✨ Features
 
 - 📖 **Add Books**: Add books quickly by ISBN with automatic cover and metadata fetching. Now featuring bulk-import from Goodreads and other CSV files!
-  - ⚠️ **Camera Scanning**: Currently limited - HTTPS required for device camera access due to browser security. Improvements planned.
 - ✅ **Track Progress**: Mark books as *Currently Reading*, *Plan to Read*, *Finished*, or *Library Only*.
 - 📅 **Reading Logs**: Log daily reading activity and maintain streaks.
 -  **Search**: Find and import books using the Google Books API.
@@ -47,9 +46,8 @@ View comprehensive book information including genres, authors, reading status, p
 - 👤 **Admin Management**: Administrative tools and user management
 - � **Graph Database**: Powered by KuzuDB for advanced relationship modeling and queries
 
-#### 🚀 Quick Start: (https://mybibliotheca.org/beta/)
+#### 🚀 Docker Quick Start: (https://mybibliotheca.org/)
 
-⚠️ **Note**: There is currently no Docker Hub image available. You must build the image from source.
 
 ## 🗂️ Project Structure
 
@@ -101,7 +99,7 @@ Licensed under the [MIT License](LICENSE).
 
 ```bash
 # Fork and clone the repository
-git clone https://github.com/YOUR_USERNAME/mybibliotheca.git
+git clone https://github.com/pickles4evaaaa/mybibliotheca.git
 cd mybibliotheca
 
 # Create a branch for your changes
