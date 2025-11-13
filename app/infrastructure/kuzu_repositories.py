@@ -212,6 +212,7 @@ class KuzuUserRepository:
                 'timezone': getattr(user, 'timezone', 'UTC'),
                 'is_admin': getattr(user, 'is_admin', False),
                 'is_active': getattr(user, 'is_active', True),
+                'password_must_change': getattr(user, 'password_must_change', False),
                 'created_at_str': getattr(user, 'created_at', datetime.now(timezone.utc)).isoformat() if hasattr(getattr(user, 'created_at', datetime.now(timezone.utc)), 'isoformat') else datetime.now(timezone.utc).isoformat()
             }
             
@@ -227,6 +228,7 @@ class KuzuUserRepository:
                 timezone: $timezone,
                 is_admin: $is_admin,
                 is_active: $is_active,
+                password_must_change: $password_must_change,
                 created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END
             })
             RETURN u.id as id
@@ -236,7 +238,7 @@ class KuzuUserRepository:
             result_data = _convert_query_result_to_list(result)
             
             if result_data:
-                logger.info(f"✅ Created user: {getattr(user, 'username', 'unknown')} (ID: {user_data['id']})")
+                logger.info(f"✅ Created user: {getattr(user, 'username', 'unknown')} (ID: {getattr(user, 'id', 'unknown')})")
                 return user
             return None
             
