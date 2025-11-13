@@ -101,8 +101,8 @@
                 <div class="text-center mt-3">
                     {% if current_user.is_authenticated and current_user.is_admin %}
                         <p>
-                            <a href="{{ url_for('admin.users') }}" class="btn btn-outline-secondary">
-                                ← Back to User Management
+                            <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-secondary">
+                                ← Back to Admin Dashboard
                             </a>
                         </p>
                     {% else %}
