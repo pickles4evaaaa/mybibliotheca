@@ -158,7 +158,8 @@ class KuzuIntegrationService:
                 bio=user_data.get('bio'),
                 timezone=user_data.get('timezone', 'UTC'),
                 is_admin=user_data.get('is_admin', False),
-                is_active=user_data.get('is_active', True)
+                is_active=user_data.get('is_active', True),
+                password_must_change=user_data.get('password_must_change', False)
             )
             
             user_repo = self._get_user_repo()
