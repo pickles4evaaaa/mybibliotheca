@@ -238,7 +238,7 @@ class KuzuUserRepository:
             result_data = _convert_query_result_to_list(result)
             
             if result_data:
-                logger.info(f"✅ Created user: {getattr(user, 'username', 'unknown')} (ID: {user_data['id']})")
+                logger.info(f"✅ Created user: {getattr(user, 'username', 'unknown')} (ID: {getattr(user, 'id', 'unknown')})")
                 return user
             return None
             
