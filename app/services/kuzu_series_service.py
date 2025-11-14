@@ -130,7 +130,7 @@ class KuzuSeriesService:
         query = (
             "MATCH (b:Book)-[rel:PART_OF_SERIES]->(s:Series) "
             "WHERE s.id = $id "
-            "RETURN b.id, b.title, b.normalized_title, b.cover_url, b.published_date, rel.volume_number, rel.volume_number_double "
+            "RETURN b.id, b.title, b.normalized_title, b.cover_url, b.published_date, rel.volume_number, rel.volume_number_double, rel.series_order "
             f"ORDER BY {order_clause}"
         )
         result = safe_execute_kuzu_query(query, {"id": series_id})
@@ -148,11 +148,10 @@ class KuzuSeriesService:
                             published_date=row[4] if len(row) > 4 else None,  # type: ignore[index]
                         )
                         book.series_volume = row[5] if len(row) > 5 else None  # type: ignore[index]
-                        if len(row) > 6 and row[6] is not None:  # type: ignore[index]
+                        # Set series_order from the actual database field, not derived from volume
+                        if len(row) > 7 and row[7] is not None:  # type: ignore[index]
                             try:
-                                dbl = float(row[6])  # type: ignore[index]
-                                if abs(dbl - round(dbl)) < 1e-9:
-                                    book.series_order = int(round(dbl))
+                                book.series_order = int(row[7])  # type: ignore[index]
                             except Exception:
                                 pass
                         books.append(book)
