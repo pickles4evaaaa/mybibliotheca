@@ -1,0 +1,63 @@
+name: 🚀 Notify Discord on New Commits
+
+on:
+  push:
+    branches: [ main, master, develop ]
+
+jobs:
+  discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get changed files
+        id: changes
+        run: |
+          # Get the list of changed files
+          ADDED=$(git diff --name-only --diff-filter=A HEAD~1 HEAD | wc -l)
+          MODIFIED=$(git diff --name-only --diff-filter=M HEAD~1 HEAD | wc -l)
+          DELETED=$(git diff --name-only --diff-filter=D HEAD~1 HEAD | wc -l)
+          
+          # Get file names (limit to first 10 for readability)
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | head -10 | sed 's/^/• /' | tr '\n' '\n')
+          
+          # Get commit stats
+          STATS=$(git diff --stat HEAD~1 HEAD | tail -1)
+          
+          echo "added=$ADDED" >> $GITHUB_OUTPUT
+          echo "modified=$MODIFIED" >> $GITHUB_OUTPUT
+          echo "deleted=$DELETED" >> $GITHUB_OUTPUT
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "stats=$STATS" >> $GITHUB_OUTPUT
+
+      - name: Send Discord Notification
+        uses: tsickert/discord-webhook@v5.3.0
+        with:
+          webhook-url: ${{ secrets.NEW_COMMIT }}
+          username: "GitHub Commits Bot"
+          avatar-url: "https://github.githubassets.com/images/modules/logos_page/Octocat.png"
+          embed-title: "🚀 New Commit"
+          embed-description: |
+            **💬 Message:** ${{ github.event.head_commit.message }}
+            **👤 Author:** ${{ github.event.head_commit.author.name }}
+            **📦 Repository:** ${{ github.repository }}
+            **🌿 Branch:** `${{ github.ref_name }}`
+            
+            **📊 Changes Summary:**
+            ✅ **Added:** ${{ steps.changes.outputs.added }} file(s)
+            ✏️ **Modified:** ${{ steps.changes.outputs.modified }} file(s)
+            ❌ **Deleted:** ${{ steps.changes.outputs.deleted }} file(s)
+            
+            **📁 Changed Files:**
+            ${{ steps.changes.outputs.changed_files }}
+            
+            **📈 Stats:** ${{ steps.changes.outputs.stats }}
+          embed-url: ${{ github.event.head_commit.url }}
+          embed-color: 3066993
+          embed-timestamp: ${{ github.event.head_commit.timestamp }}
+          embed-footer-text: "SHA: ${{ github.sha }}"

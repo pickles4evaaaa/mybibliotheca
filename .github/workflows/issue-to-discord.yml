@@ -1,0 +1,25 @@
+name: 🐛 Notify Discord on New Issues
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord Notification
+        uses: tsickert/discord-webhook@v5.3.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: "GitHub Issues Bot"
+          avatar-url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+          embed-title: "🐛 New Issue: ${{ github.event.issue.title }}"
+          embed-description: |
+            **Opened by:** ${{ github.event.issue.user.login }}
+            **Repository:** ${{ github.repository }}
+            
+            ${{ github.event.issue.body }}
+          embed-url: ${{ github.event.issue.html_url }}
+          embed-color: 15158332
+          embed-timestamp: ${{ github.event.issue.created_at }} 
