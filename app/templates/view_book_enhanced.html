@@ -85,7 +85,7 @@
             <div class="card shadow-sm mb-4 book-card">
                 <div class="card-body position-relative">
                     <!-- Action Icons in Upper Right Corner -->
-                    <div class="position-absolute top-0 end-0 mt-2 me-2" style="z-index: 100;">
+                    <div class="book-action-bar position-absolute top-0 end-0 mt-2 me-2" style="z-index: 100;">
                         <div class="d-flex gap-1">
                             <button type="button" class="btn btn-outline-primary action-icon-btn" id="editToggle" title="Edit Book Details">
                                 <i class="bi bi-pencil" id="edit-icon"></i>
@@ -4249,6 +4249,20 @@ document.addEventListener('DOMContentLoaded', function() {
     border-color: #86b7fe !important;
     color: #e0e0e0 !important;
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+}
+
+.book-action-bar {
+    display: flex;
+    align-items: center;
+}
+
+@media (max-width: 767.98px) {
+    .book-card .book-action-bar {
+        position: static !important;
+        margin: 0 0 0.75rem 0 !important;
+        justify-content: flex-end;
+        width: 100%;
+    }
 }
 
 /* Action Icon Buttons Styling */
