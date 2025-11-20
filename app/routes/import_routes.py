@@ -1845,7 +1845,7 @@ def upload_import():
                     'error_messages': [str(e)]
                 }
                 safe_update_import_job(current_user.id, task_id, error_updates)
-                current_app.logger.error(f"Import job {task_id} failed: {e}")
+                logger.error(f"Import job {task_id} failed: {e}")
 
         # Start the import process in background
         thread = threading.Thread(target=run_import)
@@ -3453,7 +3453,7 @@ def import_reading_history_execute():
                     'error_messages': [str(e)]
                 }
                 safe_update_import_job(import_config['user_id'], task_id, error_updates)
-                current_app.logger.error(f"Reading history import job {task_id} failed: {e}")
+                logger.error(f"Reading history import job {task_id} failed: {e}")
         
         thread = threading.Thread(target=run_import)
         thread.daemon = True
@@ -3968,7 +3968,7 @@ def resolve_reading_history_books(task_id):
             try:
                 asyncio.run(_process_final_reading_history_import(task_id, job_data, book_resolutions))
             except Exception as e:
-                current_app.logger.error(f"Error in final processing: {e}")
+                logger.error(f"Error in final processing: {e}")
                 safe_update_import_job(job_data['user_id'], task_id, {
                     'status': 'failed',
                     'error_messages': [str(e)]
