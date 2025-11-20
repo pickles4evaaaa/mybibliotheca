@@ -157,20 +157,14 @@ async def _ensure_unassigned_reading_log_book(user_id: str,
             if book_id:
                 return book_id
     except Exception as search_error:
-        try:
-            current_app.logger.warning(f"Quick add lookup for unassigned book failed: {search_error}")
-        except Exception:
-            pass
+        logger.warning(f"Quick add lookup for unassigned book failed: {search_error}")
 
     service = SimplifiedBookService()
     placeholder = SimplifiedBook(title=UNASSIGNED_READING_LOG_TITLE, author='System Generated')
     try:
         book_id = await service.create_standalone_book(placeholder)
     except Exception as creation_error:
-        try:
-            current_app.logger.error(f"Failed to create unassigned reading log book: {creation_error}")
-        except Exception:
-            pass
+        logger.error(f"Failed to create unassigned reading log book: {creation_error}")
         return None
 
     if not book_id:
@@ -186,12 +180,9 @@ async def _ensure_unassigned_reading_log_book(user_id: str,
             try:
                 location_service.add_book_to_location(book_id, default_location_id, user_id)
             except Exception as loc_error:
-                current_app.logger.debug(f"Unable to link unassigned book to default location: {loc_error}")
+                logger.debug(f"Unable to link unassigned book to default location: {loc_error}")
     except Exception as location_error:
-        try:
-            current_app.logger.debug(f"Location association skipped: {location_error}")
-        except Exception:
-            pass
+        logger.debug(f"Location association skipped: {location_error}")
 
     return book_id
 
@@ -1845,7 +1836,7 @@ def upload_import():
                     'error_messages': [str(e)]
                 }
                 safe_update_import_job(current_user.id, task_id, error_updates)
-                current_app.logger.error(f"Import job {task_id} failed: {e}")
+                logger.error(f"Import job {task_id} failed: {e}")
 
         # Start the import process in background
         thread = threading.Thread(target=run_import)
@@ -2225,10 +2216,10 @@ async def process_simple_import(import_config):
                         svc = get_simple_backup_service()
                         svc.create_backup(description=f'Post-import backup: {success_count} books added', reason='post_import_books')
                     except Exception as be:
-                        current_app.logger.warning(f"Post-import backup failed: {be}")
+                        logger.warning(f"Post-import backup failed: {be}")
                 threading.Thread(target=_run_backup, daemon=True).start()
             except Exception as outer_be:
-                current_app.logger.warning(f"Failed launching post-import backup thread: {outer_be}")
+                logger.warning(f"Failed launching post-import backup thread: {outer_be}")
     except Exception as e:
         traceback.print_exc()
         err = {'status': 'failed', 'error_messages': [str(e)]}
@@ -3453,7 +3444,7 @@ def import_reading_history_execute():
                     'error_messages': [str(e)]
                 }
                 safe_update_import_job(import_config['user_id'], task_id, error_updates)
-                current_app.logger.error(f"Reading history import job {task_id} failed: {e}")
+                logger.error(f"Reading history import job {task_id} failed: {e}")
         
         thread = threading.Thread(target=run_import)
         thread.daemon = True
@@ -3968,7 +3959,7 @@ def resolve_reading_history_books(task_id):
             try:
                 asyncio.run(_process_final_reading_history_import(task_id, job_data, book_resolutions))
             except Exception as e:
-                current_app.logger.error(f"Error in final processing: {e}")
+                logger.error(f"Error in final processing: {e}")
                 safe_update_import_job(job_data['user_id'], task_id, {
                     'status': 'failed',
                     'error_messages': [str(e)]
@@ -4082,7 +4073,7 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             except Exception:
                                 pass
                 except Exception as ce:
-                    current_app.logger.warning(f"Create book failed for {csv_name}: {ce}")
+                    logger.warning(f"Create book failed for {csv_name}: {ce}")
         # 2. process logs
         total_entries_processed = 0
         for block in books_for_matching:
@@ -4112,7 +4103,7 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                             default_location_id=default_location_id
                         )
                     except Exception as ue:
-                        current_app.logger.warning(f"Unassigned book preparation failed: {ue}")
+                        logger.warning(f"Unassigned book preparation failed: {ue}")
                         unassigned_book_id = None
                 if not unassigned_book_id:
                     skipped_count += len(entries)
@@ -4254,12 +4245,12 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                         svc = get_simple_backup_service()
                         svc.create_backup(description=f'Post-reading-history import backup: {success_count} logs', reason='post_import_reading_history')
                     except Exception as be:
-                        current_app.logger.warning(f"Post-reading-history backup failed: {be}")
+                        logger.warning(f"Post-reading-history backup failed: {be}")
                 threading.Thread(target=_run_backup, daemon=True).start()
             except Exception as outer_be:
-                current_app.logger.warning(f"Failed launching post-reading-history backup thread: {outer_be}")
+                logger.warning(f"Failed launching post-reading-history backup thread: {outer_be}")
     except Exception as e:
-        current_app.logger.error(f"Fatal reading history import error: {e}")
+        logger.error(f"Fatal reading history import error: {e}")
         try:
             safe_update_import_job(user_id, task_id, {
                 'status': 'failed',
