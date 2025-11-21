@@ -1,0 +1,117 @@
+{# Partial: Audiobookshelf Configuration form #}
+<form method="POST" action="{{ url_for('admin.update_audiobookshelf_settings') }}" class="mb-4" data-server-config-form="1">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <input type="hidden" name="inline" value="1"/>
+  
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="abs_enabled" name="enabled" {% if abs_settings.enabled %}checked{% endif %}>
+        <label class="form-check-label fw-bold" for="abs_enabled">Enable Audiobookshelf Integration</label>
+      </div>
+    </div>
+    
+    <div class="col-md-6">
+      <label class="form-label">Server URL</label>
+      <input type="url" name="base_url" class="form-control" value="{{ abs_settings.base_url }}" placeholder="http://localhost:13378" required />
+    </div>
+    
+    <div class="col-md-6">
+      <label class="form-label">API Key</label>
+      <div class="input-group">
+        <input type="password" name="api_key" class="form-control" value="{{ abs_settings.api_key }}" placeholder="API Key" />
+        <button class="btn btn-outline-secondary" type="button" onclick="const i=this.previousElementSibling;i.type=i.type==='password'?'text':'password';"><i class="bi bi-eye"></i></button>
+      </div>
+    </div>
+    
+    <div class="col-md-12">
+      <label class="form-label">Library IDs (comma separated)</label>
+      <input type="text" name="library_ids" class="form-control" value="{{ abs_settings.library_ids|join(',') }}" placeholder="lib_id1, lib_id2" />
+      <small class="text-muted">Leave empty to scan all libraries.</small>
+    </div>
+    
+    <div class="col-md-6">
+      <label class="form-label">ABS User ID (Optional)</label>
+      <input type="text" name="abs_user_id" class="form-control" value="{{ abs_settings.abs_user_id or '' }}" placeholder="User ID for listening sync" />
+    </div>
+    
+    <div class="col-12 mt-4">
+      <h6 class="fw-semibold">Sync Settings</h6>
+    </div>
+    
+    <div class="col-md-12">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="auto_sync_enabled" name="auto_sync_enabled" {% if abs_settings.auto_sync_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="auto_sync_enabled">Enable Background Sync</label>
+      </div>
+    </div>
+    
+    <div class="col-md-6">
+      <label class="form-label">Library Sync Interval (hours)</label>
+      <input type="number" min="1" name="library_sync_every_hours" class="form-control" value="{{ abs_settings.library_sync_every_hours }}" />
+    </div>
+    
+    <div class="col-md-6">
+      <label class="form-label">Listening Sync Interval (hours)</label>
+      <input type="number" min="1" name="listening_sync_every_hours" class="form-control" value="{{ abs_settings.listening_sync_every_hours }}" />
+    </div>
+    
+    <div class="col-md-6">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="enforce_book_first" name="enforce_book_first" {% if abs_settings.enforce_book_first %}checked{% endif %}>
+        <label class="form-check-label" for="enforce_book_first">Sync Books Before Listening Sessions</label>
+      </div>
+    </div>
+    
+    <div class="col-md-6">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="debug_listening_sync" name="debug_listening_sync" {% if abs_settings.debug_listening_sync %}checked{% endif %}>
+        <label class="form-check-label" for="debug_listening_sync">Debug Listening Sync</label>
+      </div>
+    </div>
+  </div>
+  
+  <div class="mt-4 d-flex gap-2">
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+    <button type="button" class="btn btn-outline-secondary" onclick="testAbsConnection()">Test Connection</button>
+  </div>
+</form>
+
+<div id="abs-test-result" class="mt-3"></div>
+
+<script>
+function testAbsConnection() {
+  const form = document.querySelector('form[data-server-config-form="1"]');
+  const formData = new FormData(form);
+  const resultDiv = document.getElementById('abs-test-result');
+  
+  resultDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"></div> Testing...';
+  
+  fetch("{{ url_for('admin.test_audiobookshelf_connection') }}", {
+    method: 'POST',
+    body: formData,
+    headers: {
+      'X-CSRFToken': "{{ csrf_token() }}"
+    }
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.ok) {
+      let libsHtml = '';
+      if (data.libraries && data.libraries.length > 0) {
+        libsHtml = '<ul class="mb-0 mt-2">';
+        data.libraries.forEach(lib => {
+          libsHtml += `<li>${lib.name} (${lib.mediaType}) - ID: ${lib.id}</li>`;
+        });
+        libsHtml += '</ul>';
+      }
+      resultDiv.innerHTML = `<div class="alert alert-success">Connection successful! ${data.message}${libsHtml}</div>`;
+    } else {
+      resultDiv.innerHTML = `<div class="alert alert-danger">Connection failed: ${data.message}</div>`;
+    }
+  })
+  .catch(error => {
+    resultDiv.innerHTML = `<div class="alert alert-danger">Error: ${error}</div>`;
+  });
+}
+</script>

@@ -1,6 +1,6 @@
 {
-  "version": 5,
-  "generated_at": "2025-03-01T00:00:00Z",
+  "version": 6,
+  "generated_at": "2025-11-17T00:00:00Z",
   "nodes": {
     "Series": {
       "columns": {
@@ -79,6 +79,12 @@
   "audio_duration_ms": "INT64",
   "media_type": "STRING",
   "audiobookshelf_updated_at": "STRING"
+        ,"rag_ingest_status": "STRING",
+        "rag_ingest_error": "STRING",
+        "rag_ingested_at": "TIMESTAMP",
+        "rag_chunk_count": "INT64",
+        "rag_source_url": "STRING",
+        "rag_source_format": "STRING"
       },
       "primary_key": "id"
     },

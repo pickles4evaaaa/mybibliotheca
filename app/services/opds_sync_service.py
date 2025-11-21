@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .kuzu_async_helper import run_async
 from .opds_probe_service import opds_probe_service, OPDSProbeService
+from .opds_embedding_service import get_opds_embedding_runner, ensure_opds_embedding_runner, EmbeddingJob
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
 from ..domain.models import BookContribution, ContributionType, Person
@@ -428,6 +429,7 @@ class OPDSSyncService:
         mapping: Optional[Dict[str, str]] = None,
         max_samples: Optional[int] = None,
         user_id: Optional[str] = None,
+        force_embedding: bool = False,
     ) -> Dict[str, Any]:
         requested_limit = self._normalize_limit(max_samples)
         effective_limit = self._resolve_effective_limit(requested_limit)
@@ -458,6 +460,7 @@ class OPDSSyncService:
             cover_auth=cover_auth,
             cover_headers=headers,
             user_id=user_id,
+            force_embedding=force_embedding,
         )
         return {
             "probe": probe,
@@ -540,6 +543,109 @@ class OPDSSyncService:
     def test_sync_sync(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         return run_async(self.test_sync(*args, **kwargs))
 
+    async def test_ingestion(
+        self,
+        base_url: str,
+        *,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        limit: int = 3,
+        query: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Test ingestion by fetching a few entries and running them synchronously."""
+        current_app.logger.info(f"RAG: test_ingestion started. URL={base_url} limit={limit} query='{query}'")
+        if query:
+            probe = await self._probe_service.probe_search(
+                base_url,
+                query,
+                username=username,
+                password=password,
+                max_samples=limit,
+            )
+        else:
+            probe = await self._probe_service.probe(
+                base_url,
+                username=username,
+                password=password,
+                max_samples=limit * 3,
+            )
+        
+        entries = apply_mapping_to_samples(probe.get("samples", []), None)
+        current_app.logger.info(f"RAG: Found {len(entries)} entries from probe")
+        
+        candidates = []
+        for entry in entries:
+            if entry.get("raw_links"):
+                candidates.append(entry)
+                if len(candidates) >= limit:
+                    break
+        
+        current_app.logger.info(f"RAG: Selected {len(candidates)} candidates for ingestion")
+        
+        if not candidates:
+            return {"success": False, "message": "No entries with acquisition links found in feed."}
+            
+        results = []
+        try:
+            ensure_opds_embedding_runner()
+            embedding_runner = get_opds_embedding_runner()
+        except Exception as e:
+            current_app.logger.error(f"RAG: Failed to get embedding runner: {e}")
+            return {"success": False, "message": "Embedding runner not available."}
+
+        auth = (username, password) if username and password else None
+        
+        def _run_sync() -> None:
+            # EmbeddingJob is imported at module level now
+            with safe_get_connection(operation="opds_test_ingest") as conn:
+                for entry in candidates:
+                    entry["opds_source_entry_hash"] = _compute_entry_hash(entry)
+                    oid = entry.get("opds_source_id")
+                    if not oid:
+                        current_app.logger.warning(f"RAG: Skipping entry without ID: {entry.get('title')}")
+                        continue
+                    
+                    current_app.logger.info(f"RAG: Processing candidate: {entry.get('title')} ({oid})")
+                    current_app.logger.debug(f"RAG: Candidate details: {json.dumps(entry, default=str)[:500]}...")
+                    job = EmbeddingJob(
+                        book_id=oid, # Using OPDS ID as book ID for test
+                        entry_hash=entry["opds_source_entry_hash"],
+                        opds_id=oid,
+                        title=entry.get("title"),
+                        description=entry.get("description"),
+                        raw_links=entry.get("raw_links"),
+                        media_type=None,
+                        user_id=None,
+                        auth=auth,
+                        headers=None,
+                        force=True
+                    )
+                    try:
+                        res = embedding_runner.process_job_sync(job)
+                        current_app.logger.info(f"RAG: Result for {entry.get('title')}: {res}")
+                    except Exception as e:
+                        current_app.logger.exception(f"RAG: Processing failed for {entry.get('title')}")
+                        res = {"status": "failed", "reason": str(e)}
+                    
+                    # Map result to UI expectation
+                    chunk_count = res.get("chunk_count", 0) if isinstance(res, dict) else 0
+                    results.append({
+                        "title": entry.get("title"),
+                        "id": oid,
+                        "chunks": chunk_count,
+                        "status": res.get("status") if isinstance(res, dict) else "unknown"
+                    })
+
+        # Run the sync processing in a thread to avoid blocking the async loop too much
+        # (though this is called from run_async wrapper usually)
+        await asyncio.to_thread(_run_sync)
+        
+        return {
+            "success": True, 
+            "message": f"Processed {len(results)} books.",
+            "books": results
+        }
+
     # ------------------------------------------------------------------
     # Database upsert helpers
     # ------------------------------------------------------------------
@@ -552,6 +658,7 @@ class OPDSSyncService:
         cover_auth: Optional[Tuple[str, str]] = None,
         cover_headers: Optional[Dict[str, str]] = None,
         user_id: Optional[str] = None,
+        force_embedding: bool = False,
     ) -> SyncResult:
         created = 0
         updated = 0
@@ -562,6 +669,11 @@ class OPDSSyncService:
         default_location_id: Optional[str] = None
         location_checked = False
         location_user_id = user_id or "__system__"
+        try:
+            ensure_opds_embedding_runner()
+            embedding_runner = get_opds_embedding_runner()
+        except Exception:
+            embedding_runner = None
 
         context_manager = flask_app.app_context() if flask_app is not None else nullcontext()
 
@@ -589,6 +701,7 @@ class OPDSSyncService:
                                 self._sync_contributors(book_id, entry)
                             except Exception:
                                 logger.exception("Failed to reconcile contributors for updated OPDS book %s", book_id)
+                            self._maybe_enqueue_embedding(embedding_runner, entry, book_id, user_id, cover_auth, cover_headers, force=force_embedding)
                         else:
                             skipped += 1
                     else:
@@ -628,6 +741,7 @@ class OPDSSyncService:
                                         location_service.add_book_to_location(new_id, default_location_id, location_user_id)
                                     except Exception:
                                         logger.exception("Failed to assign default location for OPDS book %s", new_id)
+                            self._maybe_enqueue_embedding(embedding_runner, entry, new_id, user_id, cover_auth, cover_headers, force=force_embedding)
                         else:
                             skipped += 1
         return SyncResult(created=created, updated=updated, skipped=skipped, entries=book_ids)
@@ -987,6 +1101,35 @@ class OPDSSyncService:
                 "Failed to assign default location via direct query for OPDS book %s", book_id
             )
             return False
+
+    def _maybe_enqueue_embedding(
+        self,
+        runner,
+        entry: Dict[str, Any],
+        book_id: str,
+        user_id: Optional[str],
+        cover_auth: Optional[Tuple[str, str]],
+        cover_headers: Optional[Dict[str, str]],
+        force: bool = False,
+    ) -> None:
+        if runner is None:
+            return
+        try:
+            runner.enqueue_entry(
+                book_id=book_id,
+                entry_hash=entry.get("opds_source_entry_hash"),
+                opds_id=entry.get("opds_source_id"),
+                title=entry.get("title"),
+                description=entry.get("description"),
+                raw_links=entry.get("raw_links") or [],
+                media_type=entry.get("media_type"),
+                auth=cover_auth,
+                headers=cover_headers,
+                user_id=user_id,
+                force=force,
+            )
+        except Exception:
+            logger.exception("Failed to enqueue OPDS embedding job for book %s", book_id)
 
     def _update_book(self, conn, book_id: str, entry: Dict[str, Any], now: datetime) -> bool:  # type: ignore[no-untyped-def]
         raw_categories_value = entry.get("raw_categories")

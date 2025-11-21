@@ -7,6 +7,7 @@
     <form method="POST" action="{{ url_for('auth.save_ai_settings') }}" id="aiConfigForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="inline" value="1" />
+      <script type="application/json" id="aiModelCatalogData" data-model-catalog="true">{{ ai_model_catalog | tojson }}</script>
       <div class="mb-3">
         <label class="form-label fw-bold">AI Provider</label>
         <select class="form-select" name="ai_provider" id="ai_provider">
@@ -46,7 +47,7 @@
           <div class="col-md-8">
             <label class="form-label">Base URL</label>
             <div class="input-group">
-              <input type="url" class="form-control" id="ollama_base_url" name="ollama_base_url" value="{{ ai_config.get('OLLAMA_BASE_URL','http://localhost:11434/v1') if ai_config else 'http://localhost:11434/v1' }}" />
+              <input type="url" class="form-control" id="ollama_base_url" name="ollama_base_url" value="{{ ai_config.get('OLLAMA_BASE_URL','http://localhost:11434') if ai_config else 'http://localhost:11434' }}" />
               <button type="button" class="btn btn-outline-secondary" id="ollamaTestBtn"><i class="bi bi-wifi me-1"></i>Test & Load Models</button>
             </div>
           </div>
@@ -66,6 +67,168 @@
         </div>
         <div id="ollama-test-results" class="mt-3"></div>
       </div>
+      {% set _openai_model = ai_config.get('OPENAI_MODEL','gpt-4o') %}
+      {% set _ollama_model = ai_config.get('OLLAMA_MODEL','llama3.2-vision:11b') %}
+      {% set _vision_provider = (ai_config.get('AI_VISION_PROVIDER') or ai_config.get('AI_PROVIDER') or 'openai') %}
+      {% set _vision_model = ai_config.get('AI_VISION_MODEL') or (_openai_model if _vision_provider == 'openai' else _ollama_model) %}
+      {% set _genre_provider = (ai_config.get('AI_GENRE_PROVIDER') or ai_config.get('AI_PROVIDER') or 'openai') %}
+      {% set _genre_model = ai_config.get('AI_GENRE_MODEL') or (_openai_model if _genre_provider == 'openai' else _ollama_model) %}
+      {% set _chat_provider = (ai_config.get('AI_CHAT_PROVIDER') or ai_config.get('AI_PROVIDER') or 'openai') %}
+      {% set _chat_model = ai_config.get('AI_CHAT_MODEL') or (_openai_model if _chat_provider == 'openai' else _ollama_model) %}
+      {% set _reasoning_options = ai_reasoning_options or [
+        {'value': 'none', 'label': 'None (faster)'},
+        {'value': 'light', 'label': 'Light'},
+        {'value': 'medium', 'label': 'Medium'},
+        {'value': 'heavy', 'label': 'Heavy'}
+      ] %}
+      <div class="mt-4">
+        <h6 class="fw-bold text-dark mb-3">Task-Specific Models &amp; Tuning</h6>
+        <div class="row g-3">
+          <div class="col-lg-4">
+            <div class="border rounded p-3 h-100" data-ai-scope="vision">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-semibold">Vision Tasks</span>
+                <span class="badge text-bg-primary">Covers</span>
+              </div>
+              <input type="hidden" name="ai_vision_model" id="aiVisionModelValue" value="{{ _vision_model }}" data-role="model-final" />
+              <label class="form-label">Provider</label>
+              <select class="form-select form-select-sm" name="ai_vision_provider" data-role="provider-select">
+                <option value="openai" {{ 'selected' if _vision_provider == 'openai' else '' }}>OpenAI</option>
+                <option value="ollama" {{ 'selected' if _vision_provider == 'ollama' else '' }}>Ollama</option>
+              </select>
+              <div class="d-flex justify-content-between align-items-center mt-2 gap-2">
+                <label class="form-label mb-0">Model ID</label>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-role="refresh-models">
+                  <i class="bi bi-arrow-repeat me-1"></i>Refresh models
+                </button>
+              </div>
+              <select class="form-select form-select-sm ai-model-select" id="aiVisionModelSelect" data-current-value="{{ _vision_model }}" data-target-input="#aiVisionModelValue">
+                <option value="{{ _vision_model }}">{{ _vision_model }}</option>
+              </select>
+              <div class="form-check form-switch mt-2 small">
+                <input class="form-check-input ai-model-custom-toggle" type="checkbox" id="aiVisionManualToggle" data-custom-input="#aiVisionManualInput" data-select="#aiVisionModelSelect" data-target-input="#aiVisionModelValue">
+                <label class="form-check-label" for="aiVisionManualToggle">Manual model ID</label>
+              </div>
+              <input type="text" class="form-control form-control-sm mt-2 d-none ai-model-custom-input" id="aiVisionManualInput" placeholder="llama3.2-vision:11b" value="{{ _vision_model }}" />
+              <div class="mt-2 d-none" data-role="refresh-status"></div>
+              <div class="row g-2 mt-3">
+                <div class="col-4">
+                  <label class="form-label small">Max Tokens</label>
+                  <input type="number" class="form-control form-control-sm" name="ai_vision_max_tokens" value="{{ ai_config.get('AI_VISION_MAX_TOKENS', ai_config.get('AI_MAX_TOKENS')) or ai_config.get('AI_MAX_TOKENS') or '1000' }}" min="100" max="128000" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">Temperature</label>
+                  <input type="number" class="form-control form-control-sm" name="ai_vision_temperature" value="{{ ai_config.get('AI_VISION_TEMPERATURE', ai_config.get('AI_TEMPERATURE')) or ai_config.get('AI_TEMPERATURE') or '0.1' }}" min="0" max="2" step="0.05" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">Reasoning</label>
+                  <select class="form-select form-select-sm" name="ai_vision_reasoning">
+                    {% for opt in _reasoning_options %}
+                    <option value="{{ opt.value }}" {{ 'selected' if ai_config.get('AI_VISION_REASONING', ai_config.get('AI_REASONING_MODE','none')) == opt.value else '' }}>{{ opt.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="border rounded p-3 h-100" data-ai-scope="genre">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-semibold">Genre Suggestions</span>
+                <span class="badge text-bg-info">Metadata</span>
+              </div>
+              <input type="hidden" name="ai_genre_model" id="aiGenreModelValue" value="{{ _genre_model }}" data-role="model-final" />
+              <label class="form-label">Provider</label>
+              <select class="form-select form-select-sm" name="ai_genre_provider" data-role="provider-select">
+                <option value="openai" {{ 'selected' if _genre_provider == 'openai' else '' }}>OpenAI</option>
+                <option value="ollama" {{ 'selected' if _genre_provider == 'ollama' else '' }}>Ollama</option>
+              </select>
+              <div class="d-flex justify-content-between align-items-center mt-2 gap-2">
+                <label class="form-label mb-0">Model ID</label>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-role="refresh-models">
+                  <i class="bi bi-arrow-repeat me-1"></i>Refresh models
+                </button>
+              </div>
+              <select class="form-select form-select-sm ai-model-select" id="aiGenreModelSelect" data-current-value="{{ _genre_model }}" data-target-input="#aiGenreModelValue">
+                <option value="{{ _genre_model }}">{{ _genre_model }}</option>
+              </select>
+              <div class="form-check form-switch mt-2 small">
+                <input class="form-check-input ai-model-custom-toggle" type="checkbox" id="aiGenreManualToggle" data-custom-input="#aiGenreManualInput" data-select="#aiGenreModelSelect" data-target-input="#aiGenreModelValue">
+                <label class="form-check-label" for="aiGenreManualToggle">Manual model ID</label>
+              </div>
+              <input type="text" class="form-control form-control-sm mt-2 d-none ai-model-custom-input" id="aiGenreManualInput" placeholder="gpt-4o-mini" value="{{ _genre_model }}" />
+              <div class="mt-2 d-none" data-role="refresh-status"></div>
+              <div class="row g-2 mt-3">
+                <div class="col-4">
+                  <label class="form-label small">Max Tokens</label>
+                  <input type="number" class="form-control form-control-sm" name="ai_genre_max_tokens" value="{{ ai_config.get('AI_GENRE_MAX_TOKENS', ai_config.get('AI_MAX_TOKENS')) or ai_config.get('AI_MAX_TOKENS') or '1000' }}" min="100" max="128000" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">Temperature</label>
+                  <input type="number" class="form-control form-control-sm" name="ai_genre_temperature" value="{{ ai_config.get('AI_GENRE_TEMPERATURE', ai_config.get('AI_TEMPERATURE')) or ai_config.get('AI_TEMPERATURE') or '0.1' }}" min="0" max="2" step="0.05" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">Reasoning</label>
+                  <select class="form-select form-select-sm" name="ai_genre_reasoning">
+                    {% for opt in _reasoning_options %}
+                    <option value="{{ opt.value }}" {{ 'selected' if ai_config.get('AI_GENRE_REASONING', ai_config.get('AI_REASONING_MODE','none')) == opt.value else '' }}>{{ opt.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="border rounded p-3 h-100" data-ai-scope="chat">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-semibold">Library Chat</span>
+                <span class="badge text-bg-secondary">Reader Q&amp;A</span>
+              </div>
+              <input type="hidden" name="ai_chat_model" id="aiChatModelValue" value="{{ _chat_model }}" data-role="model-final" />
+              <label class="form-label">Provider</label>
+              <select class="form-select form-select-sm" name="ai_chat_provider" data-role="provider-select">
+                <option value="openai" {{ 'selected' if _chat_provider == 'openai' else '' }}>OpenAI</option>
+                <option value="ollama" {{ 'selected' if _chat_provider == 'ollama' else '' }}>Ollama</option>
+              </select>
+              <div class="d-flex justify-content-between align-items-center mt-2 gap-2">
+                <label class="form-label mb-0">Model ID</label>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-role="refresh-models">
+                  <i class="bi bi-arrow-repeat me-1"></i>Refresh models
+                </button>
+              </div>
+              <select class="form-select form-select-sm ai-model-select" id="aiChatModelSelect" data-current-value="{{ _chat_model }}" data-target-input="#aiChatModelValue">
+                <option value="{{ _chat_model }}">{{ _chat_model }}</option>
+              </select>
+              <div class="form-check form-switch mt-2 small">
+                <input class="form-check-input ai-model-custom-toggle" type="checkbox" id="aiChatManualToggle" data-custom-input="#aiChatManualInput" data-select="#aiChatModelSelect" data-target-input="#aiChatModelValue">
+                <label class="form-check-label" for="aiChatManualToggle">Manual model ID</label>
+              </div>
+              <input type="text" class="form-control form-control-sm mt-2 d-none ai-model-custom-input" id="aiChatManualInput" placeholder="gpt-4o-mini" value="{{ _chat_model }}" />
+              <div class="mt-2 d-none" data-role="refresh-status"></div>
+              <div class="row g-2 mt-3">
+                <div class="col-4">
+                  <label class="form-label small">Max Tokens</label>
+                  <input type="number" class="form-control form-control-sm" name="ai_chat_max_tokens" value="{{ ai_config.get('AI_CHAT_MAX_TOKENS', ai_config.get('AI_MAX_TOKENS')) or ai_config.get('AI_MAX_TOKENS') or '1000' }}" min="100" max="128000" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">Temperature</label>
+                  <input type="number" class="form-control form-control-sm" name="ai_chat_temperature" value="{{ ai_config.get('AI_CHAT_TEMPERATURE', ai_config.get('AI_TEMPERATURE')) or ai_config.get('AI_TEMPERATURE') or '0.1' }}" min="0" max="2" step="0.05" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">Reasoning</label>
+                  <select class="form-select form-select-sm" name="ai_chat_reasoning">
+                    {% for opt in _reasoning_options %}
+                    <option value="{{ opt.value }}" {{ 'selected' if ai_config.get('AI_CHAT_REASONING', ai_config.get('AI_REASONING_MODE','none')) == opt.value else '' }}>{{ opt.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              <label class="form-label mt-3">System Prompt</label>
+              <textarea class="form-control" name="ai_chat_system_prompt" rows="3">{{ ai_config.get('AI_CHAT_SYSTEM_PROMPT','You are MyBibliotheca\'s helpful librarian.')|trim }}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="mt-4">
         <h6 class="fw-bold text-secondary mb-3">General Settings</h6>
         <div class="row g-3">
@@ -82,6 +245,14 @@
           <div class="col-md-4">
             <label class="form-label">Temperature</label>
             <input type="number" class="form-control" name="ai_temperature" value="{{ ai_config.get('AI_TEMPERATURE','0.1') if ai_config else '0.1' }}" min="0" max="1" step="0.1" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Reasoning Mode (default)</label>
+            <select class="form-select" name="ai_reasoning_mode">
+              {% for opt in _reasoning_options %}
+              <option value="{{ opt.value }}" {{ 'selected' if ai_config.get('AI_REASONING_MODE','none') == opt.value else '' }}>{{ opt.label }}</option>
+              {% endfor %}
+            </select>
           </div>
         </div>
       </div>

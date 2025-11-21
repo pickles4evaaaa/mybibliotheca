@@ -46,6 +46,7 @@
       <input type="hidden" name="action" id="opdsActionInput" value="save-settings">
       <input type="hidden" name="mapping_json" id="opdsMappingJson" value="">
       <input type="hidden" name="clear_password" id="opdsClearPassword" value="">
+      <input type="hidden" name="auto_embed_formats_present" value="1">
 
       <div class="row g-3">
         <div class="col-md-7">
@@ -108,6 +109,51 @@
               <input type="number" min="1" max="50" name="test_limit" id="opdsTestLimitInput" class="form-control" value="10">
               <div class="form-text">Preview up to 50 items without importing.</div>
             </div>
+          </div>
+        </div>
+      </div>
+      <div class="row g-3 mt-1">
+        <div class="col-md-6">
+          {% set embed_formats = settings.auto_embed_formats or [] %}
+          {% set last_embed_summary = settings.last_embed_summary or {} %}
+          <label class="form-label small text-uppercase text-muted">Auto Embedding</label>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="auto_embed_enabled" id="opdsAutoEmbedEnabled" value="1" {% if settings.auto_embed_enabled %}checked{% endif %}>
+            <label class="form-check-label" for="opdsAutoEmbedEnabled">Embed new OPDS titles into the vector store</label>
+          </div>
+          <div class="mt-2">
+            <label class="form-label mb-1">Allowed formats</label>
+            <div class="d-flex flex-wrap gap-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="auto_embed_formats" id="opdsEmbedFormatEpub" value="epub" {% if 'epub' in embed_formats %}checked{% endif %}>
+                <label class="form-check-label" for="opdsEmbedFormatEpub">EPUB</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="auto_embed_formats" id="opdsEmbedFormatPdf" value="pdf" {% if 'pdf' in embed_formats %}checked{% endif %}>
+                <label class="form-check-label" for="opdsEmbedFormatPdf">PDF</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="auto_embed_formats" id="opdsEmbedFormatText" value="text" {% if 'text' in embed_formats %}checked{% endif %}>
+                <label class="form-check-label" for="opdsEmbedFormatText">Plain text</label>
+              </div>
+            </div>
+          </div>
+          <div class="row g-2 mt-1">
+            <div class="col-sm-6">
+              <label class="form-label">Max file size (MB)</label>
+              <input type="number" min="1" name="auto_embed_max_file_mb" class="form-control" value="{{ settings.auto_embed_max_file_mb or 80 }}">
+            </div>
+          </div>
+          <div class="small text-muted mt-2">
+            Last embedding: {% if settings.last_embed_at %}{{ settings.last_embed_at }} ({{ settings.last_embed_status or 'status unknown' }}){% else %}never{% endif %}
+            {% if last_embed_summary %}
+              {% set last_embed_book = last_embed_summary.get('book_id') %}
+              {% set last_embed_chunks = last_embed_summary.get('chunks') %}
+              {% set last_embed_format = last_embed_summary.get('source_format') %}
+              {% if last_embed_book %} · Book {{ last_embed_book }}{% endif %}
+              {% if last_embed_chunks is not none %} · {{ last_embed_chunks }} chunks{% endif %}
+              {% if last_embed_format %} · {{ last_embed_format|upper }}{% endif %}
+            {% endif %}
           </div>
         </div>
       </div>

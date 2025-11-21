@@ -1063,7 +1063,7 @@ def add_book_from_image_ai():
 
         # Process image with AI
         from app.services.ai_service import AIService
-        ai_service = AIService(ai_config)
+        ai_service = AIService(ai_config, task_scope='vision')
 
         # Read file content
         file.seek(0)  # Reset file pointer

@@ -223,6 +223,49 @@ class OPDSProbeService:
             )
         )
 
+    async def probe_search(
+        self,
+        base_url: str,
+        query: str,
+        *,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        max_samples: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Probe an OPDS feed by executing a search query.
+        Finds the search link, executes the search, and returns parsed entries.
+        """
+        normalized_max_samples: Optional[int]
+        if max_samples is None:
+            normalized_max_samples = self._default_config.max_samples
+        else:
+            try:
+                candidate = int(max_samples)
+            except (TypeError, ValueError):
+                candidate = self._default_config.max_samples or 0
+            if candidate <= 0:
+                normalized_max_samples = None
+            else:
+                normalized_max_samples = candidate
+
+        config = ProbeConfig(
+            max_depth=0,  # Search is single-level
+            max_samples=normalized_max_samples,
+            timeout=self._default_config.timeout,
+        )
+
+        return await asyncio.to_thread(
+            self._probe_search_in_thread,
+            base_url,
+            query,
+            username,
+            password,
+            user_agent,
+            config,
+        )
+
     # ------------------------------------------------------------------
     # Environment helpers
     # ------------------------------------------------------------------
@@ -381,6 +424,146 @@ class OPDSProbeService:
             },
             "mapping_suggestions": mapping_suggestions,
         }
+
+    def _probe_search_in_thread(
+        self,
+        base_url: str,
+        query: str,
+        username: Optional[str],
+        password: Optional[str],
+        user_agent: Optional[str],
+        config: ProbeConfig,
+    ) -> Dict[str, Any]:
+        base_url = (base_url or "").strip()
+        if not base_url:
+            raise ValueError("Base URL is required for OPDS probing")
+
+        session = requests.Session()
+        if user_agent:
+            session.headers["User-Agent"] = user_agent
+        elif "User-Agent" not in session.headers:
+            session.headers["User-Agent"] = "MyBibliotheca/OPDSProbe"
+
+        if username and password:
+            session.auth = HTTPBasicAuth(username, password)
+
+        attempts: List[Dict[str, Any]] = []
+        field_inventory: Dict[str, List[str]] = {
+            "entry": [],
+            "link_rels": [],
+            "link_types": [],
+        }
+
+        try:
+            # 1. Fetch Base URL to find search link
+            try:
+                response = session.get(base_url, timeout=config.timeout)
+                response.raise_for_status()
+            except Exception as err:
+                return {
+                    "samples": [],
+                    "field_inventory": field_inventory,
+                    "diagnostics": {"error": f"Failed to fetch base URL: {err}"}
+                }
+
+            # 2. Find Search Link
+            root = ET.fromstring(response.content)
+            search_href = None
+            search_type = None
+
+            for link in root.findall(f"{ATOM_NS}link"):
+                if link.get("rel") == "search":
+                    search_href = link.get("href")
+                    search_type = link.get("type")
+                    break
+
+            if not search_href:
+                return {
+                    "samples": [],
+                    "field_inventory": field_inventory,
+                    "diagnostics": {"error": "No search link found in OPDS feed"}
+                }
+
+            search_url = urljoin(base_url, search_href)
+
+            # 3. Fetch Search Description (if OpenSearch) or execute directly
+            final_search_url = None
+
+            if search_type == "application/opensearchdescription+xml":
+                try:
+                    desc_resp = session.get(search_url, timeout=config.timeout)
+                    desc_resp.raise_for_status()
+                    desc_root = ET.fromstring(desc_resp.content)
+                    # Namespace for OpenSearch Description
+                    OS_NS = "{http://a9.com/-/spec/opensearch/1.1/}"
+                    # Find Url element
+                    url_elem = desc_root.find(f"{OS_NS}Url")
+                    if url_elem is not None:
+                        template = url_elem.get("template")
+                        if template:
+                            final_search_url = template.replace("{searchTerms}", query)
+                except Exception as err:
+                    return {
+                        "samples": [],
+                        "field_inventory": field_inventory,
+                        "diagnostics": {"error": f"Failed to parse OpenSearch description: {err}"}
+                    }
+            else:
+                # Assume simple template or direct link?
+                # Usually OPDS provides OpenSearch description.
+                # If it's not OpenSearch, we might be stuck or it's a direct search template (unlikely for rel="search" pointing to XML)
+                # Some feeds might use a template directly in href?
+                if "{searchTerms}" in search_url:
+                    final_search_url = search_url.replace("{searchTerms}", query)
+                else:
+                    return {
+                        "samples": [],
+                        "field_inventory": field_inventory,
+                        "diagnostics": {"error": f"Unsupported search type: {search_type}"}
+                    }
+
+            if not final_search_url:
+                return {
+                    "samples": [],
+                    "field_inventory": field_inventory,
+                    "diagnostics": {"error": "Could not determine search URL"}
+                }
+
+            # 4. Execute Search
+            try:
+                search_resp = session.get(final_search_url, timeout=config.timeout)
+                search_resp.raise_for_status()
+            except Exception as err:
+                return {
+                    "samples": [],
+                    "field_inventory": field_inventory,
+                    "diagnostics": {"error": f"Search request failed: {err}"}
+                }
+
+            # 5. Parse Results
+            parsed = self._parse_feed(search_resp, field_inventory, final_search_url)
+
+            # Filter for acquisition links only?
+            samples = []
+            for entry in parsed.entries:
+                if any(self._is_acquisition_link(l.get("rel"), l.get("type")) for l in entry.get("raw_links", [])):
+                    samples.append(entry)
+
+            if config.max_samples:
+                samples = samples[:config.max_samples]
+
+            return {
+                "samples": samples,
+                "field_inventory": field_inventory,
+                "diagnostics": {
+                    "search_url": final_search_url,
+                    "found": len(samples)
+                },
+                "mapping_suggestions": self._suggest_mapping(field_inventory),
+            }
+
+        finally:
+            session.close()
 
     # ------------------------------------------------------------------
 

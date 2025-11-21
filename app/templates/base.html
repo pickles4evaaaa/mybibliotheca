@@ -1071,7 +1071,7 @@
                   <li><a class="dropdown-item" href="{{ url_for('series.list_series') }}">Series</a></li>
                   <li><a class="dropdown-item" href="{{ url_for('locations.manage_locations') }}">Locations</a></li>
                   <li><a class="dropdown-item" href="{{ url_for('metadata.index') }}">Metadata</a></li>
-                  <li><a class="dropdown-item" href="{{ url_for('auth.settings') }}">Settings</a></li>
+                  <li><a class="dropdown-item" id="settingsNavLink" href="{{ url_for('auth.settings') }}">Settings</a></li>
                 </ul>
               </div>
             {% endif %}
@@ -1992,6 +1992,33 @@
     });
   </script>
   {% endif %}
+  <script>
+    (function ensureSettingsNavAccessibility(){
+      const settingsLink = document.getElementById('settingsNavLink');
+      if(!settingsLink){
+        return;
+      }
+      const navigate = () => {
+        const target = settingsLink.getAttribute('href');
+        if(target){
+          window.location.assign(target);
+        }
+      };
+      settingsLink.addEventListener('click', (event) => {
+        if(event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey){
+          return;
+        }
+        event.preventDefault();
+        navigate();
+      });
+      settingsLink.addEventListener('keydown', (event) => {
+        if(event.key === 'Enter' || event.key === ' '){
+          event.preventDefault();
+          navigate();
+        }
+      });
+    })();
+  </script>
   {# Injection point for page-specific modal/dialog markup placed outside main container #}
   {% block extra_modals %}{% endblock %}
   {# Injection point for page-specific scripts that must run after global utilities #}

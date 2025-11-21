@@ -25,6 +25,7 @@ services:
       
       # CRITICAL: Single worker for KuzuDB compatibility
       - WORKERS=1
+      - LOG_LEVEL=info
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5054/"]

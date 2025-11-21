@@ -75,6 +75,16 @@ mybibliotheca/
 ├── requirements.txt             # Python dependencies
 ├── run.py                       # Application entry point
 └── README.md                    # This file
+
+### Vector Store Persistence
+
+
+### OPDS Automation & Embeddings
+
+- Head to **Settings → Server → OPDS** to configure two background workers: `Auto Sync` (pulls new entries from your Calibre/OPDS catalog) and `Auto Embedding` (downloads EPUB/PDF/TXT acquisitions after each sync and streams their text into the vector store).
+- Auto-embed settings let you pick allowed formats and a maximum download size so large PDFs or unsupported media are skipped safely.
+- Status chips for the most recent sync and embedding run live alongside the form, with all preferences persisted inside `data/opds_settings.json`.
+- Make sure **Vector Search** is enabled before turning on auto-embedding; otherwise OPDS ingestion will enqueue jobs but skip them when RAG is disabled.
 ```
 
 ---

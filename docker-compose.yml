@@ -29,7 +29,7 @@ services:
       # CRITICAL: Use single worker for KuzuDB compatibility
       WORKERS: "1"
       # Central log level (controls Gunicorn and Flask loggers)
-      LOG_LEVEL: ${LOG_LEVEL}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
 
       # Logging settings - disable verbose initialization to prevent duplicate messages
       MYBIBLIOTHECA_VERBOSE_INIT: ${MYBIBLIOTHECA_VERBOSE_INIT:-false}

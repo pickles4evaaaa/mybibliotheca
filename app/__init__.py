@@ -60,6 +60,30 @@ def unauthorized():
     # For web requests, redirect to login page as usual
     return redirect(url_for('auth.login', next=request.endpoint))
 
+def configure_logging(app):
+    """Configure logging for the application."""
+    import logging
+    
+    # Force log level to INFO or DEBUG based on config, overriding Gunicorn if needed
+    log_level_name = os.environ.get('LOG_LEVEL', 'INFO').upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    
+    app.logger.setLevel(log_level)
+    
+    # Also configure the root logger to capture libraries
+    logging.getLogger().setLevel(log_level)
+    
+    # Ensure we have a handler if none exists
+    if not app.logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(log_level)
+        formatter = logging.Formatter('[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
+        handler.setFormatter(formatter)
+        app.logger.addHandler(handler)
+        logging.getLogger().addHandler(handler)
+        
+    app.logger.info(f"📝 Logging configured with level: {log_level_name}")
+
 def create_development_admin():
     """Create development admin user from environment variables if specified."""
     dev_username = os.getenv('DEV_ADMIN_USERNAME')
@@ -332,15 +356,8 @@ def create_app():
     app = Flask(__name__, static_folder=None, static_url_path=None)
     app.config.from_object(Config)
     
-    # Configure Python logging level from LOG_LEVEL env (default ERROR)
-    try:
-        log_level_name = os.getenv('LOG_LEVEL', 'ERROR').upper()
-        log_level = getattr(logging, log_level_name, logging.ERROR)
-        logging.getLogger().setLevel(log_level)
-        # Also set Flask app logger level
-        app.logger.setLevel(log_level)
-    except Exception:
-        pass
+    # Configure logging
+    configure_logging(app)
     
     # Explicitly set the secret key for Flask-Session compatibility
     # Must be set before Flask-Session initialization

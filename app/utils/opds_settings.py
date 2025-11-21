@@ -32,6 +32,12 @@ DEFAULTS: Dict[str, Any] = {
     "last_sync_task_id": None,
     "last_sync_task_api_url": None,
     "last_sync_task_progress_url": None,
+    "auto_embed_enabled": False,
+    "auto_embed_formats": ["epub", "pdf", "text"],
+    "auto_embed_max_file_mb": 80,
+    "last_embed_status": None,
+    "last_embed_at": None,
+    "last_embed_summary": None,
 }
 
 
@@ -63,12 +69,23 @@ def load_opds_settings() -> Dict[str, Any]:
                         elif key == "last_field_inventory":
                             inv = data.get(key)
                             merged[key] = inv if isinstance(inv, dict) else {}
-                        elif key in {"auto_sync_enabled"}:
+                        elif key in {"auto_sync_enabled", "auto_embed_enabled"}:
                             merged[key] = bool(data.get(key))
                         elif key in {"auto_sync_every_hours"}:
                             try:
                                 raw_value = data.get(key)
                                 merged[key] = max(1, int(raw_value if raw_value not in (None, "") else DEFAULTS[key]))
+                            except Exception:
+                                merged[key] = DEFAULTS[key]
+                        elif key == "auto_embed_formats":
+                            formats_value = data.get(key)
+                            if isinstance(formats_value, list):
+                                merged[key] = [str(item) for item in formats_value]
+                            else:
+                                merged[key] = list(DEFAULTS[key])
+                        elif key == "auto_embed_max_file_mb":
+                            try:
+                                merged[key] = max(1, int(data.get(key) or DEFAULTS[key]))
                             except Exception:
                                 merged[key] = DEFAULTS[key]
                         elif key in data:
@@ -113,6 +130,17 @@ def save_opds_settings(update: Dict[str, Any]) -> bool:
                 payload[key] = value
             elif key == "last_test_preview":
                 payload[key] = value if isinstance(value, list) else []
+            elif key in {"auto_embed_enabled"}:
+                payload[key] = bool(value)
+            elif key == "auto_embed_formats":
+                payload[key] = [str(item) for item in value] if isinstance(value, list) else list(DEFAULTS[key])
+            elif key == "auto_embed_max_file_mb":
+                try:
+                    payload[key] = max(1, int(value if value not in (None, "") else DEFAULTS[key]))
+                except Exception:
+                    payload[key] = DEFAULTS[key]
+            elif key in {"last_embed_status", "last_embed_at", "last_embed_summary"}:
+                payload[key] = value
             elif key == "password":
                 if value is None:
                     # No change requested.

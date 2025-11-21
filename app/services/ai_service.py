@@ -13,24 +13,97 @@ import os
 
 class AIService:
     """Service for AI-powered book information extraction"""
+
+    _SCOPE_KEYS = {
+        'vision': ('AI_VISION_PROVIDER', 'AI_VISION_MODEL'),
+        'genre': ('AI_GENRE_PROVIDER', 'AI_GENRE_MODEL'),
+        'chat': ('AI_CHAT_PROVIDER', 'AI_CHAT_MODEL'),
+    }
+    _SCOPE_OPTION_KEYS = {
+        'vision': {
+            'max_tokens': 'AI_VISION_MAX_TOKENS',
+            'temperature': 'AI_VISION_TEMPERATURE',
+            'reasoning': 'AI_VISION_REASONING',
+        },
+        'genre': {
+            'max_tokens': 'AI_GENRE_MAX_TOKENS',
+            'temperature': 'AI_GENRE_TEMPERATURE',
+            'reasoning': 'AI_GENRE_REASONING',
+        },
+        'chat': {
+            'max_tokens': 'AI_CHAT_MAX_TOKENS',
+            'temperature': 'AI_CHAT_TEMPERATURE',
+            'reasoning': 'AI_CHAT_REASONING',
+        },
+    }
+
+    def __init__(self, config: Dict[str, str] | None, task_scope: str = 'vision'):
+        self.config = config or {}
+        self.task_scope = (task_scope or 'vision').lower()
+        self._provider_key, self._model_key = self._SCOPE_KEYS.get(
+            self.task_scope,
+            ('AI_PROVIDER', 'OPENAI_MODEL'),
+        )
+        self.provider = self._resolve_provider()
+        self._scope_model_override = (self.config.get(self._model_key) or '').strip()
+        self.timeout = int(self.config.get('AI_TIMEOUT', '30'))
+        self.max_tokens = self._resolve_scope_max_tokens()
+        self.temperature = self._resolve_scope_temperature()
+        self.reasoning_effort = self._resolve_reasoning_effort()
     
-    def __init__(self, config: Dict[str, str]):
-        self.config = config
-        self.provider = config.get('AI_PROVIDER', 'openai')
-        self.timeout = int(config.get('AI_TIMEOUT', '30'))
-        # Normalize and clamp max tokens (100..128000), warn >16k
+    def _resolve_provider(self) -> str:
+        candidate = (self.config.get(self._provider_key) or self.config.get('AI_PROVIDER') or 'openai').strip().lower()
+        if candidate in {'openai', 'ollama'}:
+            return candidate
+        return 'openai'
+
+    def _resolve_model_for_provider(self, provider: str) -> str:
+        if provider == self.provider and self._scope_model_override:
+            return self._scope_model_override
+        if provider == 'openai':
+            return (self.config.get('OPENAI_MODEL') or 'gpt-4o-mini').strip()
+        return (self.config.get('OLLAMA_MODEL') or 'llama3.2-vision:11b').strip()
+
+    def _resolve_scope_option(self, option: str, fallback_key: str) -> str:
+        scope_opts = self._SCOPE_OPTION_KEYS.get(self.task_scope, {})
+        scope_key = scope_opts.get(option)
+        raw_value = self.config.get(scope_key, '') if scope_key else ''
+        if raw_value not in (None, ''):
+            return str(raw_value)
+        return str(self.config.get(fallback_key, ''))
+
+    def _resolve_scope_max_tokens(self) -> int:
+        raw = self._resolve_scope_option('max_tokens', 'AI_MAX_TOKENS')
         try:
-            requested_max = int(config.get('AI_MAX_TOKENS', '1000'))
-        except ValueError:
-            requested_max = 1000
-        self.max_tokens = min(max(requested_max, 100), 128000)
-        if self.max_tokens > 16000:
+            value = int(str(raw))
+        except (TypeError, ValueError):
+            value = 1000
+        value = min(max(value, 100), 128000)
+        if value > 16000:
             try:
                 current_app.logger.warning(
-                    f"AI_MAX_TOKENS set to {self.max_tokens}. Values above 16k may be slow or unsupported by some providers/models."
+                    f"AI max tokens set to {value}. Values above 16k may be slow or unsupported by some providers/models."
                 )
             except Exception:
                 pass
+        return value
+
+    def _resolve_scope_temperature(self) -> float:
+        raw = self._resolve_scope_option('temperature', 'AI_TEMPERATURE')
+        try:
+            value = float(str(raw))
+        except (TypeError, ValueError):
+            value = 0.1
+        value = max(0.0, min(value, 2.0))
+        return value
+
+    def _resolve_reasoning_effort(self) -> str:
+        raw = self._resolve_scope_option('reasoning', 'AI_REASONING_MODE')
+        normalized = str(raw or '').strip().lower()
+        allowed = {'none', 'light', 'medium', 'heavy'}
+        if normalized not in allowed:
+            return 'none'
+        return normalized
         
     def extract_book_info_from_image(self, image_data: bytes, filename: str) -> Optional[Dict[str, Any]]:
         """
@@ -147,7 +220,7 @@ class AIService:
             }
             
             payload = {
-                'model': self.config.get('OPENAI_MODEL', 'gpt-4o-mini'),
+                'model': self._resolve_model_for_provider('openai'),
                 'messages': [
                     {
                         'role': 'user',
@@ -166,8 +239,10 @@ class AIService:
                     }
                 ],
                 'max_tokens': self.max_tokens,
-                'temperature': float(self.config.get('AI_TEMPERATURE', '0.1'))
+                'temperature': self.temperature
             }
+            if self.reasoning_effort != 'none':
+                payload['reasoning'] = {'effort': self.reasoning_effort}
             
             base_url = self.config.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
             url = f"{base_url}/chat/completions"
@@ -214,7 +289,7 @@ class AIService:
             }
             
             payload = {
-                'model': self.config.get('OLLAMA_MODEL', 'llama3.2-vision:11b'),
+                'model': self._resolve_model_for_provider('ollama'),
                 'messages': [
                     {
                         'role': 'user',
@@ -224,7 +299,7 @@ class AIService:
                 ],
                 'stream': False,
                 'options': {
-                    'temperature': float(self.config.get('AI_TEMPERATURE', '0.1')),
+                    'temperature': self.temperature,
                     'num_predict': self.max_tokens
                 }
             }
@@ -408,7 +483,10 @@ class AIService:
         except requests.exceptions.Timeout:
             return {'success': False, 'message': 'Connection timeout - is Ollama running?'}
         except requests.exceptions.ConnectionError:
-            return {'success': False, 'message': 'Could not connect to Ollama server'}
+            msg = 'Could not connect to Ollama server.'
+            if 'localhost' in base_url or '127.0.0.1' in base_url:
+                msg += ' If running in Docker, try http://host.docker.internal:11434 instead of localhost.'
+            return {'success': False, 'message': msg}
         except Exception as e:
             current_app.logger.error(f"Ollama connection test error: {e}", exc_info=True)
             return {'success': False, 'message': f'Connection error: {str(e)}'}

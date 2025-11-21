@@ -1,0 +1,249 @@
+<div class="card shadow-sm">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-diagram-3"></i>
+    <strong>RAG Configuration</strong>
+  </div>
+  <div class="card-body">
+    {% set rag_enabled = rag_config.get('RAG_ENABLED', 'false') == 'true' %}
+    <form method="POST"
+          action="{{ url_for('auth.save_rag_settings') }}"
+          id="ragSettingsForm"
+          autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="inline" value="1" />
+      <div class="form-check form-switch mb-4">
+        <input class="form-check-input" type="checkbox" name="rag_enabled" id="rag_enabled_toggle" {% if rag_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="rag_enabled_toggle">
+          Enable the local ChromaDB backing store for Retrieval-Augmented Generation workflows
+        </label>
+      </div>
+      {% if not rag_enabled %}
+      <div class="alert alert-warning py-2" data-rag-disabled-alert>
+        <i class="bi bi-pause-circle me-1"></i>RAG is currently disabled. Toggle it on to allow chunking + embeddings during ingestion.
+      </div>
+      {% endif %}
+
+      <div class="row g-3 align-items-end">
+        <div class="col-md-5">
+          <label class="form-label">Chroma Directory</label>
+          <input type="text" class="form-control" name="rag_db_path" value="{{ rag_config.get('RAG_DB_PATH', 'data/chroma') }}">
+          <small class="text-muted d-block">Relative to project root. Directory is created automatically.</small>
+          <small class="text-muted d-block">Resolves to <code>{{ rag_db_absolute_path or rag_config.get('RAG_DB_PATH', 'data/chroma') }}</code></small>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Collection Name</label>
+          <input type="text" class="form-control" name="rag_collection_name" value="{{ rag_config.get('RAG_COLLECTION_NAME', 'book-snippets') }}">
+        </div>
+        <div class="col-md-2">
+          {% set metric = rag_config.get('RAG_DISTANCE_METRIC', 'cosine') %}
+          <label class="form-label">Metric</label>
+          <select class="form-select" name="rag_distance_metric">
+            <option value="cosine" {% if metric == 'cosine' %}selected{% endif %}>Cosine</option>
+            <option value="l2" {% if metric == 'l2' %}selected{% endif %}>L2</option>
+            <option value="ip" {% if metric == 'ip' %}selected{% endif %}>Inner Product</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Emb Dim</label>
+          <input type="number" class="form-control" min="128" max="4096" step="1" name="rag_embedding_dimensions" value="{{ rag_config.get('RAG_EMBEDDING_DIMENSIONS', '768') }}">
+        </div>
+      </div>
+      <div class="alert alert-info py-2 small mt-2">
+        <i class="bi bi-hdd-fill me-1"></i>Chroma uses a persistent store at <code>{{ rag_db_absolute_path or rag_config.get('RAG_DB_PATH', 'data/chroma') }}</code>. Include this folder in backups to retain vectors across upgrades or rebuilds.
+      </div>
+
+      <div class="row g-3 mt-3">
+        <div class="col-md-4">
+          <label class="form-label">Chunk Size (words)</label>
+          <input type="number" class="form-control" min="100" max="4000" step="50" name="rag_chunk_size" value="{{ rag_config.get('RAG_CHUNK_SIZE', '800') }}">
+          <small class="text-muted">800 words keeps ~3-4 paragraphs per chunk.</small>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Chunk Overlap (words)</label>
+          <input type="number" class="form-control" min="0" max="2000" step="10" name="rag_chunk_overlap" value="{{ rag_config.get('RAG_CHUNK_OVERLAP', '120') }}">
+          <small class="text-muted">~15% overlap preserves context continuity.</small>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Notes</label>
+          <div class="alert alert-info py-2 mb-0 small">
+            <strong>Cooldown tip:</strong> Telemetry stays disabled and backups include <code>data/rag_config.json</code>.
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="btn-group btn-group-sm mt-2" role="group">
+            <button type="button" class="btn btn-outline-secondary" data-chunk-preset="dense">Dense · 500/80</button>
+            <button type="button" class="btn btn-outline-secondary" data-chunk-preset="balanced">Balanced · 800/120</button>
+            <button type="button" class="btn btn-outline-secondary" data-chunk-preset="sparse">Sparse · 1200/180</button>
+          </div>
+          <small class="text-muted d-block mt-1">Pick a preset or fine-tune the chunk size/overlap above.</small>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-4">
+        {% set rag_llm_provider = rag_config.get('RAG_LLM_PROVIDER', 'ollama') %}
+        {% set rag_llm_model = rag_config.get('RAG_LLM_MODEL', 'llama3.1:8b-instruct') %}
+        <div class="col-md-3">
+          <label class="form-label">LLM Provider</label>
+          <select class="form-select" name="rag_llm_provider" id="ragLlmProviderSelect">
+            <option value="ollama" {% if rag_llm_provider == 'ollama' %}selected{% endif %}>Ollama (Local)</option>
+            <option value="openai" {% if rag_llm_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">LLM Base URL</label>
+          <input type="text" class="form-control" name="rag_llm_base_url" value="{{ rag_config.get('RAG_LLM_BASE_URL', 'http://localhost:11434') }}">
+          <small class="text-muted">Ollama endpoints can include /v1; native calls drop it automatically.</small>
+        </div>
+        <div class="col-md-4">
+          <div class="d-flex justify-content-between align-items-center">
+            <label class="form-label mb-0">LLM Model</label>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="ragLlmRefreshBtn">
+              <i class="bi bi-arrow-repeat me-1"></i>Refresh models
+            </button>
+          </div>
+          <input type="hidden" name="rag_llm_model" id="ragLlmModelValue" value="{{ rag_llm_model }}">
+          <select class="form-select form-select-sm" id="ragLlmModelSelect" data-current-value="{{ rag_llm_model }}">
+            <option value="{{ rag_llm_model }}">{{ rag_llm_model }}</option>
+          </select>
+          <div class="form-check form-switch mt-2 small">
+            <input class="form-check-input" type="checkbox" id="ragLlmManualToggle">
+            <label class="form-check-label" for="ragLlmManualToggle">Manual model ID</label>
+          </div>
+          <input type="text" class="form-control form-control-sm mt-2 d-none" id="ragLlmManualInput" value="{{ rag_llm_model }}" placeholder="llama3.1:8b-instruct">
+          <div class="mt-2 d-none" id="ragLlmRefreshStatus"></div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">LLM API Key (cloud providers)</label>
+          <input type="password" class="form-control" name="rag_llm_api_key" value="{{ rag_config.get('RAG_LLM_API_KEY', '') }}">
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        {% set rag_emb_provider = rag_config.get('RAG_EMBEDDING_PROVIDER', 'ollama') %}
+        {% set rag_emb_model = rag_config.get('RAG_EMBEDDING_MODEL', 'nomic-embed-text') %}
+        <div class="col-md-3">
+          <label class="form-label">Embedding Provider</label>
+          <select class="form-select" name="rag_embedding_provider" id="ragEmbeddingProviderSelect">
+            <option value="ollama" {% if rag_emb_provider == 'ollama' %}selected{% endif %}>Ollama (Local)</option>
+            <option value="openai" {% if rag_emb_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">Embedding Base URL</label>
+          <input type="text" class="form-control" name="rag_embedding_base_url" value="{{ rag_config.get('RAG_EMBEDDING_BASE_URL', 'http://localhost:11434') }}">
+          <small class="text-muted">Ollama embeddings use <code>/api/embeddings</code> (<a href="https://docs.ollama.com/capabilities/embeddings" target="_blank" rel="noopener">docs</a>).</small>
+        </div>
+        <div class="col-md-4">
+          <div class="d-flex justify-content-between align-items-center">
+            <label class="form-label mb-0">Embedding Model</label>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="ragEmbeddingRefreshBtn">
+              <i class="bi bi-arrow-repeat me-1"></i>Refresh models
+            </button>
+          </div>
+          <input type="hidden" name="rag_embedding_model" id="ragEmbeddingModelValue" value="{{ rag_emb_model }}">
+          <select class="form-select form-select-sm" id="ragEmbeddingModelSelect" data-current-value="{{ rag_emb_model }}">
+            <option value="{{ rag_emb_model }}">{{ rag_emb_model }}</option>
+          </select>
+          <div class="form-check form-switch mt-2 small">
+            <input class="form-check-input" type="checkbox" id="ragEmbeddingManualToggle">
+            <label class="form-check-label" for="ragEmbeddingManualToggle">Manual model ID</label>
+          </div>
+          <input type="text" class="form-control form-control-sm mt-2 d-none" id="ragEmbeddingManualInput" value="{{ rag_emb_model }}" placeholder="nomic-embed-text">
+          <div class="mt-2 d-none" id="ragEmbeddingRefreshStatus"></div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Embedding API Key (optional)</label>
+          <input type="password" class="form-control" name="rag_embedding_api_key" value="{{ rag_config.get('RAG_EMBEDDING_API_KEY', '') }}">
+        </div>
+      </div>
+
+      <div class="settings-save-bar mt-4">
+        <span class="settings-status small">
+          <i class="bi bi-hdd-network me-1"></i>
+          Persistent at <code>{{ rag_config.get('RAG_DB_PATH', 'data/chroma') }}</code>
+          <span class="text-muted">({{ rag_db_absolute_path or 'resolves on save' }})</span> · telemetry disabled
+        </span>
+        <button type="submit" class="btn btn-secondary" id="ragSettingsSubmit">
+          <i class="bi bi-check2 me-1"></i>Save RAG Settings
+        </button>
+      </div>
+    </form>
+
+    <hr class="my-4">
+
+    <div class="d-flex flex-column gap-3">
+      <div class="d-flex align-items-center justify-content-between">
+        <div>
+          <h6 class="mb-1"><i class="bi bi-lightning-charge me-1"></i>RAG Operations</h6>
+          <small class="text-muted">Manage ingestion and test vector generation.</small>
+        </div>
+        <button type="button" class="btn btn-outline-primary btn-sm" id="ragIngestBtn">
+          <i class="bi bi-play-fill me-1"></i>Start Full Ingestion
+        </button>
+      </div>
+
+      <div class="card bg-light border-0">
+        <div class="card-body p-3">
+          <h6 class="card-title small text-uppercase text-muted mb-3">Test Ingestion</h6>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <button type="button" class="btn btn-outline-secondary w-100" id="ragTestRandomBtn">
+                <i class="bi bi-dice-3 me-1"></i>Test Random 3 Books
+              </button>
+            </div>
+            <div class="col-md-8">
+              <div class="input-group">
+                <input type="text" class="form-control" id="ragTestSearchInput" placeholder="Search book title...">
+                <button class="btn btn-outline-secondary" type="button" id="ragTestSearchBtn">
+                  <i class="bi bi-search me-1"></i>Test Specific
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="mt-3 d-none" id="ragTestResults"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-4">
+      <div class="card-header">
+        <i class="bi bi-chat-dots"></i> <strong>RAG Playground</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">Test your RAG chunking strategy by searching the vector database.</p>
+        
+        <div class="input-group mb-3">
+          <input type="text" class="form-control" id="ragChatQuery" placeholder="Ask a question or search for a concept...">
+          <button class="btn btn-primary" type="button" id="ragChatBtn">
+            <i class="bi bi-search"></i> Search
+          </button>
+        </div>
+        
+        <div id="ragChatResults" class="mt-3" style="display: none;">
+          <h6>Retrieval Results</h6>
+          <div class="list-group" id="ragChatResultsList">
+            <!-- Results will be injected here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-collection"></i> <strong>Indexed Books</strong></span>
+        <button class="btn btn-sm btn-outline-secondary" id="ragRefreshBooksBtn">
+          <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush" id="ragIndexedBooksList">
+          <div class="list-group-item text-muted small text-center py-3">
+            Click refresh to load indexed books.
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+  </div>
+</div>

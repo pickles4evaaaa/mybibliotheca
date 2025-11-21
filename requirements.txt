@@ -36,3 +36,7 @@ pytest-cov==7.0.0
 
 # AI Service Dependencies
 pystache==0.6.8
+chromadb>=0.5.3
+ebooklib>=0.18
+beautifulsoup4>=4.12.0
+pypdf>=4.0.0

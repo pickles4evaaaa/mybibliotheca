@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request,
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from app.domain.models import User, MediaType
-from app.services import user_service, book_service, reading_log_service
+from app.services import user_service, book_service, reading_log_service, rag_vector_service
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.services.kuzu_service_facade import _convert_query_result_to_list  # Reuse helper for query results
 from app.admin import (
@@ -18,7 +18,10 @@ from app.admin import (
     load_backup_config,
     _log,
     _log_force,
+    DEFAULT_LIBRARY_CHAT_PROMPT,
+    AI_MODEL_CATALOG,
 )
+from app.rag_config import load_rag_config, save_rag_config, build_rag_config_payload, resolve_rag_db_path
 from app.utils.user_settings import get_default_book_format, get_effective_reading_defaults
 from wtforms import IntegerField, SubmitField
 from wtforms.validators import Optional, NumberRange
@@ -487,7 +490,13 @@ def settings():
                 stats['app_version'] = data.get('project', {}).get('version', stats['app_version'])
     except Exception as e:
         current_app.logger.debug(f"Version load failed: {e}")
-    return render_template('settings.html', title='Settings', site_name=site_name, stats=stats)
+    return render_template(
+        'settings.html',
+        title='Settings',
+        site_name=site_name,
+        stats=stats,
+        ai_model_catalog=AI_MODEL_CATALOG,
+    )
 
 # ---------------- Inline Settings Partials (AJAX) -----------------
 @auth.route('/settings/partial/profile', methods=['GET', 'POST'])
@@ -1282,6 +1291,14 @@ def settings_server_partial(panel: str):
         ctx = get_admin_settings_context()
         ctx['ai_config'] = load_ai_config()
         return render_template('settings/partials/server_ai.html', **ctx)
+    if panel == 'rag':
+        ctx = get_admin_settings_context()
+        ctx['rag_config'] = load_rag_config()
+        try:
+            ctx['rag_db_absolute_path'] = str(resolve_rag_db_path(ctx['rag_config'].get('RAG_DB_PATH')))
+        except Exception:
+            ctx['rag_db_absolute_path'] = ctx['rag_config'].get('RAG_DB_PATH')
+        return render_template('settings/partials/server_rag.html', **ctx)
     if panel == 'opds':
         from app.utils.opds_settings import load_opds_settings, save_opds_settings
         from app.utils.opds_mapping import clean_mapping, build_source_options, MB_FIELD_WHITELIST, MB_FIELD_LABELS
@@ -1375,6 +1392,17 @@ def settings_server_partial(panel: str):
             auto_user_id = form.get('auto_sync_user_id')
             if auto_user_id is not None:
                 update_payload['auto_sync_user_id'] = auto_user_id.strip()
+
+            auto_embed_flag = form.get('auto_embed_enabled')
+            if auto_embed_flag is not None:
+                update_payload['auto_embed_enabled'] = str(auto_embed_flag).strip().lower() in ('1', 'true', 'yes', 'on')
+            embed_formats_present = form.get('auto_embed_formats_present')
+            if embed_formats_present is not None:
+                embed_formats = [value.strip().lower() for value in form.getlist('auto_embed_formats') if value and value.strip()]
+                update_payload['auto_embed_formats'] = embed_formats
+            embed_max_raw = form.get('auto_embed_max_file_mb')
+            if embed_max_raw is not None:
+                update_payload['auto_embed_max_file_mb'] = embed_max_raw
 
             password_for_request = stored_password
             if clear_password:
@@ -2115,16 +2143,51 @@ def save_ai_settings():
             'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
             'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
             'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
-            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
+            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434'),
             'AI_TIMEOUT': request.form.get('ai_timeout', '30'),
             'AI_MAX_TOKENS': request.form.get('ai_max_tokens', '1000'),
             'AI_TEMPERATURE': request.form.get('ai_temperature', '0.1'),
+            'AI_REASONING_MODE': (request.form.get('ai_reasoning_mode') or 'none').strip().lower() or 'none',
             'AI_BOOK_EXTRACTION_ENABLED': 'true' if request.form.get('ai_book_extraction_enabled') else 'false',
             'AI_BOOK_EXTRACTION_AUTO_SEARCH': 'true' if request.form.get('ai_book_extraction_auto_search') else 'false',
         }
         ollama_manual = (request.form.get('ollama_model_manual') or '').strip()
         ollama_selected = (request.form.get('ollama_model') or '').strip()
         config['OLLAMA_MODEL'] = ollama_manual or ollama_selected or 'llama3.2-vision:11b'
+
+        def _resolve_role_provider(field_name: str) -> str:
+            return (request.form.get(field_name) or config['AI_PROVIDER']).strip().lower() or config['AI_PROVIDER']
+
+        def _resolve_role_model(field_name: str, provider_value: str) -> str:
+            candidate = (request.form.get(field_name) or '').strip()
+            if candidate:
+                return candidate
+            return config['OPENAI_MODEL'] if provider_value == 'openai' else config['OLLAMA_MODEL']
+
+        vision_provider = _resolve_role_provider('ai_vision_provider')
+        config['AI_VISION_PROVIDER'] = vision_provider
+        config['AI_VISION_MODEL'] = _resolve_role_model('ai_vision_model', vision_provider)
+
+        genre_provider = _resolve_role_provider('ai_genre_provider')
+        config['AI_GENRE_PROVIDER'] = genre_provider
+        config['AI_GENRE_MODEL'] = _resolve_role_model('ai_genre_model', genre_provider)
+
+        chat_provider = _resolve_role_provider('ai_chat_provider')
+        config['AI_CHAT_PROVIDER'] = chat_provider
+        config['AI_CHAT_MODEL'] = _resolve_role_model('ai_chat_model', chat_provider)
+        config['AI_CHAT_SYSTEM_PROMPT'] = (request.form.get('ai_chat_system_prompt') or DEFAULT_LIBRARY_CHAT_PROMPT).strip()
+
+        def _resolve_scope_tuning(scope: str, field: str, fallback_key: str, default_value: str) -> str:
+            raw = (request.form.get(f'ai_{scope}_{field}') or '').strip()
+            if raw:
+                return raw
+            return str(config.get(fallback_key, default_value))
+
+        for scope in ('vision', 'genre', 'chat'):
+            upper = scope.upper()
+            config[f'AI_{upper}_MAX_TOKENS'] = _resolve_scope_tuning(scope, 'max_tokens', 'AI_MAX_TOKENS', config['AI_MAX_TOKENS'])
+            config[f'AI_{upper}_TEMPERATURE'] = _resolve_scope_tuning(scope, 'temperature', 'AI_TEMPERATURE', config['AI_TEMPERATURE'])
+            config[f'AI_{upper}_REASONING'] = _resolve_scope_tuning(scope, 'reasoning', 'AI_REASONING_MODE', config['AI_REASONING_MODE'])
 
         if save_ai_config(config):
             flash('AI settings saved successfully!', 'success')
@@ -2146,92 +2209,24 @@ def save_ai_settings():
     return redirect(url_for('auth.settings', section='server', panel='ai'))
 
 
-@auth.route('/settings/server/ai/test', methods=['POST'])
+@auth.route('/settings/server/rag', methods=['POST'])
 @login_required
 @admin_required
-def test_ai_connection():
-    """Test connectivity for the configured AI provider."""
+def save_rag_settings():
+    """Persist vector search settings from unified server panel."""
     try:
-        config = {
-            'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
-            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
-            'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
-            'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
-            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
-            'OLLAMA_MODEL': request.form.get('ollama_model_manual') or request.form.get('ollama_model', 'llama3.2-vision:11b'),
-            'AI_TIMEOUT': request.form.get('ai_timeout', '30'),
-            'AI_MAX_TOKENS': request.form.get('ai_max_tokens', '1000'),
-            'AI_TEMPERATURE': request.form.get('ai_temperature', '0.1'),
-        }
-        from app.services.ai_service import AIService
-
-        ai_service = AIService(config)
-        result = ai_service.test_connection()
-        if 'success' not in result:
-            result['success'] = bool(result.get('ok', result.get('status') == 'ok'))
-        return jsonify(result)
-    except Exception as exc:
-        _log('error', f"Error testing AI connection: {exc}")
-        return jsonify({'success': False, 'message': 'Connection test failed. Please check your settings.'}), 500
-
-
-@auth.route('/settings/server/ai/ollama', methods=['POST'])
-@login_required
-@admin_required
-def test_ollama_connection():
-    """Probe an Ollama instance and return available models."""
-    try:
-        config = {
-            'AI_PROVIDER': 'ollama',
-            'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
-            'AI_TIMEOUT': '10',
-        }
-        from app.services.ai_service import AIService
-
-        ai_service = AIService(config)
-        result = ai_service._test_ollama_connection()
-        if 'success' not in result:
-            result['success'] = bool(result.get('ok'))
-        return jsonify(result)
-    except Exception as exc:
-        _log('error', f"Error testing Ollama connection: {exc}")
-        return jsonify({'success': False, 'message': 'Ollama connection test failed. Please check your settings.'}), 500
-
-
-@auth.route('/settings/server/smtp', methods=['POST'])
-@login_required
-@admin_required
-def save_smtp_settings():
-    """Persist SMTP configuration from unified settings."""
-    try:
-        config = {
-            'smtp_server': (request.form.get('smtp_server') or '').strip(),
-            'smtp_username': (request.form.get('smtp_username') or '').strip(),
-            'smtp_password': (request.form.get('smtp_password') or '').strip(),
-            'smtp_from_email': (request.form.get('smtp_from_email') or '').strip(),
-            'smtp_from_name': (request.form.get('smtp_from_name') or 'MyBibliotheca').strip(),
-        }
-        raw_port = (request.form.get('smtp_port') or '').strip()
-        try:
-            smtp_port_numeric = int(raw_port or 587)
-        except (TypeError, ValueError):
-            smtp_port_numeric = 587
-        allowed_security_values = {'starttls', 'ssl', 'none'}
-        raw_security = (request.form.get('smtp_security') or '').strip().lower()
-        if raw_security not in allowed_security_values:
-            legacy_tls = (request.form.get('smtp_use_tls') or '').strip().lower()
-            raw_security = 'starttls' if legacy_tls in {'on', 'true', '1'} else 'none'
-        config['smtp_port'] = str(smtp_port_numeric)
-        config['smtp_security'] = raw_security
-        config['smtp_use_tls'] = 'true' if raw_security == 'starttls' else 'false'
-
-        if save_smtp_config(config):
-            flash('SMTP settings saved successfully!', 'success')
+        config = build_rag_config_payload(request.form)
+        if save_rag_config(config):
+            try:
+                rag_vector_service.reload_configuration()
+            except Exception as svc_err:
+                _log('warning', f"RAG service reload failed: {svc_err}")
+            flash('RAG settings saved.', 'success')
         else:
-            flash('Error saving SMTP settings. Please try again.', 'danger')
+            flash('Failed to save RAG settings.', 'danger')
     except Exception as exc:
-        _log('error', f"Error updating SMTP settings: {exc}", extra_secrets=[request.form.get('smtp_password', '')])
-        flash('Error saving SMTP settings. Please try again.', 'danger')
+        _log('error', f"Error saving RAG settings: {exc}")
+        flash('Error saving RAG settings.', 'danger')
 
     expects_partial = (
         request.form.get('inline') == '1'
@@ -2240,421 +2235,116 @@ def save_smtp_settings():
     )
     if expects_partial:
         ctx = get_admin_settings_context()
-        ctx['smtp_config'] = load_smtp_config()
-        ctx['site_name'] = (load_system_config() or {}).get('site_name', 'MyBibliotheca')
-        return render_template('settings/partials/server_smtp.html', **ctx)
-    return redirect(url_for('auth.settings', section='server', panel='smtp'))
-
-
-@auth.route('/settings/server/smtp/test', methods=['POST'])
-@login_required
-@admin_required
-def test_smtp_connection():
-    """Test SMTP connectivity with the supplied form data."""
-    import smtplib
-    import socket
-    import ssl
-
-    smtp_server = (request.form.get('smtp_server') or '').strip()
-    raw_port = (request.form.get('smtp_port') or '').strip()
-    smtp_username = (request.form.get('smtp_username') or '').strip()
-    smtp_password = (request.form.get('smtp_password') or '').strip()
-    allowed_security_values = {'starttls', 'ssl', 'none'}
-    raw_security = (request.form.get('smtp_security') or '').strip().lower()
-    if raw_security not in allowed_security_values:
-        legacy_tls = (request.form.get('smtp_use_tls') or '').strip().lower()
-        raw_security = 'starttls' if legacy_tls in {'true', '1', 'on'} else 'none'
-    try:
-        smtp_port = int(raw_port or 587)
-    except (TypeError, ValueError):
-        return jsonify({'success': False, 'message': 'SMTP port must be a number.'}), 400
-
-    secret_values = [smtp_password] if smtp_password else []
-    _log_force('info', f"[SMTP] Testing connection to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-    _log_force('info', f"[SMTP] Configuration - Security: {raw_security.upper()}, Username: {smtp_username or '(none)'}", extra_secrets=secret_values)
-
-    if not smtp_server:
-        _log_force('warning', '[SMTP] Test aborted - no server specified', extra_secrets=secret_values)
-        return jsonify({'success': False, 'message': 'SMTP server is required'}), 400
-
-    server = None
-    try:
-        _log_force('info', f"[SMTP] Step 1/4: Resolving DNS for {smtp_server}...", extra_secrets=secret_values)
+        ctx['rag_config'] = load_rag_config()
         try:
-            resolved_ip = socket.gethostbyname(smtp_server)
-            _log_force('info', f"[SMTP] DNS resolved: {smtp_server} -> {resolved_ip}", extra_secrets=secret_values)
-        except socket.gaierror as dns_err:
-            _log_force('error', f"[SMTP] DNS resolution failed for {smtp_server}: {dns_err}", extra_secrets=secret_values)
-            return jsonify({'success': False, 'message': f'DNS resolution failed for {smtp_server}. Please check the server address.'}), 500
-
-        if raw_security == 'ssl':
-            _log_force('info', f"[SMTP] Step 2/4: Connecting with implicit SSL to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
-            try:
-                context = ssl.create_default_context()
-                server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30, context=context)
-                server.set_debuglevel(0)
-                server.ehlo()
-                _log_force('info', '[SMTP] Connection established over SSL', extra_secrets=secret_values)
-            except socket.timeout:
-                _log_force('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'}), 500
-            except ConnectionRefusedError:
-                _log_force('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'}), 500
-            except socket.error as sock_err:
-                _log_force('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'Network error: {sock_err}. Check server address and port.'}), 500
-        else:
-            _log_force('info', f"[SMTP] Step 2/4: Connecting to {smtp_server}:{smtp_port} (timeout: 30s)...", extra_secrets=secret_values)
-            try:
-                server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
-                server.set_debuglevel(0)
-                server.ehlo()
-                _log_force('info', f"[SMTP] Connection established to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-            except socket.timeout:
-                _log_force('error', f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'Connection timeout to {smtp_server}:{smtp_port}. Check firewall settings or try a different port.'}), 500
-            except ConnectionRefusedError:
-                _log_force('error', f"[SMTP] Connection refused by {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.'}), 500
-            except socket.error as sock_err:
-                _log_force('error', f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'Network error: {sock_err}. Check server address and port.'}), 500
-
-        if raw_security == 'starttls':
-            _log_force('info', '[SMTP] Step 3/4: Initiating STARTTLS...', extra_secrets=secret_values)
-            try:
-                context = ssl.create_default_context()
-                server.starttls(context=context)
-                server.ehlo()
-                _log_force('info', '[SMTP] STARTTLS successful', extra_secrets=secret_values)
-            except smtplib.SMTPException as tls_err:
-                _log_force('error', f"[SMTP] STARTTLS failed: {tls_err}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'TLS negotiation failed: {tls_err}'}), 500
-        elif raw_security == 'ssl':
-            _log_force('info', '[SMTP] Step 3/4: SSL negotiation completed during connection', extra_secrets=secret_values)
-        else:
-            _log_force('info', '[SMTP] Step 3/4: No TLS requested', extra_secrets=secret_values)
-
-        if smtp_username and smtp_password:
-            _log_force('info', f"[SMTP] Step 4/4: Authenticating as {smtp_username}...", extra_secrets=secret_values)
-            try:
-                server.login(smtp_username, smtp_password)
-                _log_force('info', f"[SMTP] Authentication successful for {smtp_username}", extra_secrets=secret_values)
-            except smtplib.SMTPAuthenticationError as auth_err:
-                _log_force('error', f"[SMTP] Authentication failed for {smtp_username}: {auth_err}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': 'Authentication failed. Please check your username and password.'}), 401
-            except smtplib.SMTPException as smtp_err:
-                _log_force('error', f"[SMTP] SMTP error during authentication: {smtp_err}", extra_secrets=secret_values)
-                return jsonify({'success': False, 'message': f'SMTP authentication error: {smtp_err}'}), 500
-        else:
-            _log_force('info', '[SMTP] Step 4/4: No authentication (username/password not provided)', extra_secrets=secret_values)
-
-        _log_force('info', f"[SMTP] All steps completed successfully. Closing connection...", extra_secrets=secret_values)
-        server.quit()
-        _log_force('info', f"[SMTP] Test completed successfully for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-        return jsonify({'success': True, 'message': f'Successfully connected to {smtp_server}:{smtp_port} using {raw_security.upper()} security'})
-    except smtplib.SMTPException as exc:
-        _log_force('error', f"[SMTP] SMTP error: {type(exc).__name__}: {exc}", extra_secrets=secret_values)
-        return jsonify({'success': False, 'message': f'SMTP error: {exc}'}), 500
-    except socket.timeout:
-        _log_force('error', f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}", extra_secrets=secret_values)
-        return jsonify({'success': False, 'message': 'Operation timeout. The server may be slow or unreachable.'}), 500
-    except Exception as exc:
-        _log_force('error', f"[SMTP] Unexpected error: {type(exc).__name__}: {exc}", extra_secrets=secret_values, exc_info=True)
-        return jsonify({'success': False, 'message': f'Connection failed: {exc}'}), 500
-    finally:
-        if server:
-            try:
-                server.quit()
-            except Exception:
-                pass
+            ctx['rag_db_absolute_path'] = str(resolve_rag_db_path(ctx['rag_config'].get('RAG_DB_PATH')))
+        except Exception:
+            ctx['rag_db_absolute_path'] = ctx['rag_config'].get('RAG_DB_PATH')
+        return render_template('settings/partials/server_rag.html', **ctx)
+    return redirect(url_for('auth.settings', section='server', panel='rag'))
 
 
-@auth.route('/settings/server/backup', methods=['POST'])
+@auth.route('/settings/server/rag/ingest', methods=['POST'])
 @login_required
 @admin_required
-def save_backup_settings():
-    """Persist backup configuration updates."""
+def trigger_rag_ingestion():
+    """Trigger full RAG ingestion via OPDS sync."""
     try:
-        backup_directory = (request.form.get('backup_directory') or 'data/backups').strip()
-        if not backup_directory:
-            flash('Backup directory cannot be empty.', 'danger')
-        else:
-            if save_backup_config({'backup_directory': backup_directory}):
-                flash('Backup settings saved successfully!', 'success')
-            else:
-                flash('Error saving backup settings. Please try again.', 'danger')
-    except Exception as exc:
-        _log('error', f"Error updating backup settings: {exc}")
-        flash('Error saving backup settings. Please try again.', 'danger')
+        from app.services import opds_sync_service
+        from app.utils.opds_settings import load_opds_settings
+        
+        settings = load_opds_settings()
+        feeds = settings.get("feeds", [])
+        
+        # Fallback for legacy single-feed settings
+        if not feeds and settings.get("base_url"):
+            feeds = [{
+                "url": settings.get("base_url"),
+                "username": settings.get("username"),
+                "password": settings.get("password")
+            }]
+            
+        if not feeds:
+             return jsonify({'success': False, 'message': 'No OPDS feeds configured.'}), 400
+             
+        def _run_background():
+            with current_app.app_context():
+                for feed in feeds:
+                    try:
+                        opds_sync_service.quick_probe_sync_sync(
+                            feed["url"],
+                            username=feed.get("username"),
+                            password=feed.get("password"),
+                            force_embedding=True
+                        )
+                    except Exception as e:
+                        current_app.logger.error(f"Failed to ingest feed {feed.get('url')}: {e}")
 
-    expects_partial = (
-        request.form.get('inline') == '1'
-        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-        or request.headers.get('HX-Request')
-    )
-    if expects_partial:
-        return render_template('settings/partials/server_backup.html', backup_config=load_backup_config())
-    return redirect(url_for('auth.settings', section='server', panel='backup'))
+        import threading
+        threading.Thread(target=_run_background, daemon=True).start()
+        
+        return jsonify({'success': True, 'message': 'Ingestion started in background.'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
-@auth.route('/settings/opds/preview/<int:row_index>')
+@auth.route('/settings/server/rag/test', methods=['POST'])
 @login_required
-def opds_preview_detail(row_index: int):
-    if not current_user.is_admin:
-        abort(403)
-    from app.utils.opds_settings import load_opds_settings
-    from app.utils.opds_mapping import MB_FIELD_LABELS
-
-    settings = load_opds_settings()
-    preview_list = settings.get('last_test_preview') or []
-    if not isinstance(preview_list, list) or row_index < 0 or row_index >= len(preview_list):
-        abort(404)
-
-    entry_obj = preview_list[row_index]
-    entry_payload = entry_obj if isinstance(entry_obj, dict) else {}
-    mapped_payload = entry_payload.get('entry') if isinstance(entry_payload, dict) else {}
-    if not isinstance(mapped_payload, dict):
-        mapped_payload = entry_payload if isinstance(entry_payload, dict) else {}
-
-    opds_id = None
-    if isinstance(entry_payload, dict):
-        opds_id = entry_payload.get('opds_source_id') or mapped_payload.get('opds_source_id')
-    raw_links = mapped_payload.get('raw_links') if isinstance(mapped_payload, dict) else None
-    inspect_link = None
-    if isinstance(raw_links, list):
-        for link in raw_links:
-            if not isinstance(link, dict):
-                continue
-            href = link.get('href')
-            if not isinstance(href, str) or not href:
-                continue
-            rel = str(link.get('rel') or '').lower()
-            if rel in {'self', 'alternate'} or rel.endswith('/self'):
-                inspect_link = href
-                break
-        if not inspect_link:
-            for link in raw_links:
-                if not isinstance(link, dict):
-                    continue
-                href = link.get('href')
-                if isinstance(href, str) and href:
-                    inspect_link = href
-                    break
-
-    summary = settings.get('last_test_summary') or {}
-    payload_json = json.dumps(mapped_payload, indent=2, ensure_ascii=False)
-
-    column_map_obj = entry_payload.get('columns') if isinstance(entry_payload, dict) else None
-    column_map = column_map_obj if isinstance(column_map_obj, dict) else {}
-
-    mapping_raw = settings.get('mapping')
-    mapping_config = mapping_raw if isinstance(mapping_raw, dict) else {}
-    mapped_field_order: list[str] = []
-    for key in mapping_config.keys():
-        field_name = str(key)
-        if field_name and field_name not in mapped_field_order:
-            mapped_field_order.append(field_name)
-    for field_name in column_map.keys():
-        if field_name not in mapped_field_order:
-            mapped_field_order.append(field_name)
-
-    def _stringify_detail_value(value: Any) -> str:
-        if value is None or value == "":
-            return ""
-        if isinstance(value, list):
-            return ", ".join(str(item) for item in value if item not in (None, ""))
-        if isinstance(value, dict):
-            try:
-                return json.dumps(value, ensure_ascii=False)
-            except Exception:
-                return str(value)
-        return str(value)
-
-    mapped_fields: list[dict[str, Any]] = []
-    for field_name in mapped_field_order:
-        cell = column_map.get(field_name) if isinstance(column_map, dict) else None
-        raw_value = mapped_payload.get(field_name) if isinstance(mapped_payload, dict) else None
-        text_value: str
-        link_url: Optional[str] = None
-        if isinstance(cell, dict):
-            text_value = cell.get('text') or ''
-            link_url = cell.get('url') if isinstance(cell.get('url'), str) else None
-        else:
-            if field_name.startswith('contributors.') and isinstance(mapped_payload.get('contributors'), list):
-                role = field_name.split('.', 1)[1].upper() if '.' in field_name else ''
-                contributor_names = []
-                for contributor in mapped_payload.get('contributors', []):
-                    if not isinstance(contributor, dict):
-                        continue
-                    c_role = str(contributor.get('role') or '').upper()
-                    if c_role == role and contributor.get('name'):
-                        contributor_names.append(str(contributor['name']))
-                text_value = ", ".join(contributor_names)
-            else:
-                text_value = _stringify_detail_value(raw_value)
-            if isinstance(raw_value, str) and raw_value.lower().startswith(('http://', 'https://', '/')):
-                link_url = raw_value
-        if not text_value:
-            text_value = '—'
-        elif link_url and text_value == link_url:
-            # Avoid duplicating long URLs as both text and link
-            text_value = link_url
-        friendly_label = MB_FIELD_LABELS.get(field_name)
-        if not friendly_label:
-            friendly_label = field_name.replace('contributors.', 'Contributor · ').replace('_', ' ').title()
-        mapped_fields.append({
-            'name': field_name,
-            'label': friendly_label,
-            'text': text_value,
-            'url': link_url,
-        })
-
-    if request.args.get('format') == 'json':
-        return jsonify(mapped_payload)
-
-    return render_template(
-        'settings/opds_preview_detail.html',
-        row_index=row_index,
-        preview_entry=entry_payload,
-        mapped_payload=mapped_payload,
-        payload_json=payload_json,
-        opds_id=opds_id,
-        inspect_link=inspect_link,
-        summary=summary,
-        mapped_fields=mapped_fields,
-    )
-
-# Lightweight endpoint to test ABS connection via AJAX
-@auth.route('/settings/audiobookshelf/test', methods=['POST'])
-@login_required
-def test_audiobookshelf_connection():
-    if not current_user.is_admin:
-        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
+@admin_required
+def test_rag_ingestion():
+    """Test RAG ingestion on a few books."""
+    current_app.logger.info("RAG: test_rag_ingestion route called")
     try:
-        from app.utils.audiobookshelf_settings import load_abs_settings
-        from app.services.audiobookshelf_service import get_client_from_settings
-        settings = load_abs_settings()
-        client = get_client_from_settings(settings)
-        result = client.test_connection() if client else { 'ok': False, 'message': 'Missing base_url or api_key' }
+        from app.services import opds_sync_service
+        from app.utils.opds_settings import load_opds_settings
+        from app.services.kuzu_async_helper import run_async
+        
+        settings = load_opds_settings()
+        current_app.logger.debug(f"RAG: Loaded settings keys: {list(settings.keys())}")
+        feeds = settings.get("feeds", [])
+        
+        # Fallback for legacy single-feed settings
+        if not feeds and settings.get("base_url"):
+            current_app.logger.info("RAG: Using legacy single-feed configuration fallback")
+            feeds = [{
+                "url": settings.get("base_url"),
+                "username": settings.get("username"),
+                "password": settings.get("password")
+            }]
+            
+        if not feeds:
+             current_app.logger.warning("RAG: No OPDS feeds configured")
+             return jsonify({'success': False, 'message': 'No OPDS feeds configured.'}), 400
+             
+        feed = feeds[0] # Use first feed
+        current_app.logger.info(f"RAG: Using feed {feed.get('url')}")
+        
+        data = request.get_json() or {}
+        mode = data.get('mode', 'random')
+        query = data.get('query')
+        limit = int(data.get('limit', 3))
+        
+        current_app.logger.info(f"RAG: Test mode={mode} query='{query}' limit={limit}")
+        
+        if mode == 'search' and not query:
+            return jsonify({'success': False, 'message': 'Query required for search mode.'}), 400
+            
+        result = run_async(opds_sync_service.test_ingestion(
+            feed["url"],
+            username=feed.get("username"),
+            password=feed.get("password"),
+            limit=limit,
+            query=query if mode == 'search' else None
+        ))
+        
+        current_app.logger.info(f"RAG: Test ingestion result: {result}")
         return jsonify(result)
+        
     except Exception as e:
-        current_app.logger.error(f"ABS test error: {e}")
-        return jsonify({'ok': False, 'message': 'error'}), 500
+        current_app.logger.exception("RAG: Test ingestion failed")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
-# Start a background ABS Test Sync (limited import)
-@auth.route('/settings/audiobookshelf/test-sync', methods=['POST'])
-@login_required
-def audiobookshelf_test_sync():
-    # Only admins can trigger a library-level sync test
-    if not current_user.is_admin:
-        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
-    try:
-        # Load settings and enqueue job into ABS runner
-        from app.utils.audiobookshelf_settings import load_abs_settings
-        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
-        settings = load_abs_settings()
-        library_ids = settings.get('library_ids') or []
-        if isinstance(library_ids, str):
-            library_ids = [s.strip() for s in library_ids.split(',') if s.strip()]
-        # Limit from request JSON (optional)
-        limit = 5
-        try:
-            payload = request.get_json(silent=True) or {}
-            limit = int(payload.get('limit') or 5)
-        except Exception:
-            limit = 5
-        runner = get_abs_sync_runner()
-        task_id = runner.enqueue_test_sync(str(current_user.id), library_ids, limit=limit)
-        # Reuse legacy import progress UI endpoints
-        from app.routes.import_routes import import_bp
-        progress_url = url_for('import.import_books_progress', task_id=task_id)
-        api_progress_url = url_for('import.api_import_progress', task_id=task_id)
-        return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
-    except Exception as e:
-        current_app.logger.error(f"ABS test sync error: {e}")
-        return jsonify({'ok': False, 'message': 'error'}), 500
-
-# Start a background ABS Full Sync (all items)
-@auth.route('/settings/audiobookshelf/full-sync', methods=['POST'])
-@login_required
-def audiobookshelf_full_sync():
-    if not current_user.is_admin:
-        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
-    try:
-        # Trigger a composite sync for ALL users to respect per-user credentials and prefs
-        from app.utils.audiobookshelf_settings import load_abs_settings
-        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
-        from app.services import user_service, run_async
-
-        settings = load_abs_settings()
-        if not settings.get('enabled'):
-            return jsonify({'ok': False, 'message': 'Audiobookshelf is disabled in settings'}), 400
-
-        # Get users (async service wrapped to sync)
-        try:
-            users = run_async(user_service.get_all_users(limit=1000))  # type: ignore[attr-defined]
-        except Exception as e:
-            current_app.logger.error(f"ABS full sync: failed to load users: {e}")
-            users = []
-        if not users:
-            return jsonify({'ok': False, 'message': 'No users found to sync'}), 400
-
-        runner = get_abs_sync_runner()
-        task_ids = []
-        for u in users:
-            try:
-                if not getattr(u, 'is_active', True):
-                    continue
-                tid = runner.enqueue_user_composite_sync(
-                    str(getattr(u, 'id')),
-                    page_size=50,
-                    force_books=True,
-                    force_listening=True,
-                )
-                task_ids.append(tid)
-            except Exception as e:
-                current_app.logger.error(
-                    f"ABS full sync: failed to enqueue for user {getattr(u, 'id', 'unknown')}: {e}"
-                )
-        current_app.logger.info(f"ABS full sync queued {len(task_ids)} user jobs")
-        # Provide progress URLs for the first task so UI can poll status
-        progress_url = url_for('import.import_books_progress', task_id=task_ids[0]) if task_ids else None
-        api_progress_url = url_for('import.api_import_progress', task_id=task_ids[0]) if task_ids else None
-        return jsonify({'ok': True, 'queued': len(task_ids), 'task_ids': task_ids, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
-    except Exception as e:
-        current_app.logger.error(f"ABS full sync error: {e}")
-        return jsonify({'ok': False, 'message': 'error'}), 500
-
-# Start a background ABS Listening-only Test (no book import, just sessions/progress)
-@auth.route('/settings/audiobookshelf/listen-test', methods=['POST'])
-@login_required
-def audiobookshelf_listen_test():
-    if not current_user.is_admin:
-        return jsonify({'ok': False, 'error': 'not_authorized'}), 403
-    try:
-        # Optional page_size from body
-        page_size = 200
-        try:
-            payload = request.get_json(silent=True) or {}
-            page_size = int(payload.get('page_size') or 200)
-        except Exception:
-            page_size = 200
-        from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
-        runner = get_abs_sync_runner()
-        task_id = runner.enqueue_listening_sync(str(current_user.id), page_size=page_size)
-        try:
-            current_app.logger.info(f"[ABS Listen] Enqueued listening-only test task={task_id} user={current_user.id} page_size={page_size}")
-        except Exception:
-            pass
-        from app.routes.import_routes import import_bp  # noqa: F401
-        progress_url = url_for('import.import_books_progress', task_id=task_id)
-        api_progress_url = url_for('import.api_import_progress', task_id=task_id)
-        return jsonify({'ok': True, 'task_id': task_id, 'progress_url': progress_url, 'api_progress_url': api_progress_url})
-    except Exception as e:
-        current_app.logger.error(f"ABS listen test error: {e}")
-        return jsonify({'ok': False, 'message': 'error'}), 500
 
 @auth.route('/privacy_settings', methods=['GET', 'POST'])
 @login_required

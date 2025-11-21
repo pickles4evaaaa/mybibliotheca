@@ -23,7 +23,7 @@
 .settings-tile.active { border-color: var(--bs-primary); box-shadow: 0 0 0 4px rgba(var(--bs-primary-rgb), .15); background: linear-gradient(135deg,var(--bs-light),#eef5ff); }
 [data-theme="dark"] .settings-tile.active { background: linear-gradient(135deg,#2b2b2b,#1e2533); }
 .settings-tile h3 { font-size: 1.05rem; font-weight:600; margin:0 0 .35rem; display:flex; align-items:center; gap:.5rem; }
-.settings-tile .stat { font-size: .9rem; opacity:.85; }
+.settings-tile .stat { font-size:.9rem; opacity:.85; }
 .settings-tile small { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; opacity:.6; }
 .settings-section { display:none; animation: fade .35s ease; }
 .settings-section.active { display:block; }
@@ -128,7 +128,7 @@
             </div>
         </div>
 
-    <div class="settings-section" id="personalSection">
+        <div class="settings-section" id="personalSection">
             <div class="d-flex flex-wrap gap-2 mb-3" id="personalActionBar">
                 <button data-personal-panel="profile" data-color="primary" class="btn btn-primary personal-nav flex-fill"><i class="bi bi-person"></i> Profile</button>
                 <button data-personal-panel="password" data-color="warning" class="btn btn-warning personal-nav flex-fill"><i class="bi bi-lock"></i> Password</button>
@@ -142,7 +142,7 @@
             </div>
         </div>
 
-    <div class="settings-section" id="dataSection">
+        <div class="settings-section" id="dataSection">
             <div class="row g-3 mb-3" id="dataActionBar">
                 <div class="col-md-3"><button data-data-panel="import_books" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-book-half"></i> Import Books</button></div>
                 <div class="col-md-3"><button data-data-panel="import_reading" class="btn btn-outline-success w-100 data-nav"><i class="bi bi-calendar-check"></i> Import Reading</button></div>
@@ -166,6 +166,7 @@
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="users" data-color="danger" class="btn btn-outline-danger w-100 server-nav"><i class="bi bi-people"></i> Users</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="metadata" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-collection"></i> Metadata Providers</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="ai" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-robot"></i> AI</button></div>
+                <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="rag" data-color="secondary" class="btn btn-outline-secondary w-100 server-nav"><i class="bi bi-diagram-3"></i> RAG</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="smtp" data-color="success" class="btn btn-outline-success w-100 server-nav"><i class="bi bi-envelope-at"></i> SMTP</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="backup" data-color="dark" class="btn btn-outline-dark w-100 server-nav"><i class="bi bi-archive"></i> Backup</button></div>
                 <div class="col-6 col-sm-4 col-md-2"><button data-server-panel="opds" data-color="primary" class="btn btn-outline-primary w-100 server-nav"><i class="bi bi-rss"></i> OPDS</button></div>
@@ -183,8 +184,730 @@
     </div>
 </div>
 
+<script type="application/json" id="globalModelCatalogData" data-model-catalog="true">{{ ai_model_catalog | tojson }}</script>
+
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    const sortCatalogEntries = (entries) => {
+        return [...entries].sort((a, b) => {
+            const labelA = (a.label || a.value || '').toLowerCase();
+            const labelB = (b.label || b.value || '').toLowerCase();
+            if(labelA === labelB){
+                return (a.value || '').localeCompare(b.value || '');
+            }
+            return labelA.localeCompare(labelB);
+        });
+    };
+
+    const normalizeCatalogEntries = (entries) => {
+        if(!Array.isArray(entries)){
+            return [];
+        }
+        const normalized = [];
+        const seen = new Set();
+        entries.forEach(item => {
+            let value = '';
+            let label = '';
+            if(typeof item === 'string'){
+                value = item.trim();
+                label = value;
+            } else if(item && typeof item === 'object'){
+                value = (item.value || item.name || '').trim();
+                label = item.label || item.name || value;
+            }
+            if(!value || seen.has(value)){
+                return;
+            }
+            seen.add(value);
+            normalized.push({ value, label });
+        });
+        return sortCatalogEntries(normalized);
+    };
+
+    const setInlineStatus = (target, variant, message) => {
+        if(!target){
+            return;
+        }
+        target.classList.remove('d-none');
+        target.innerHTML = `<div class="alert alert-${variant} p-2 mb-0 small">${message}</div>`;
+    };
+
+    const clearInlineStatus = (target) => {
+        if(!target){
+            return;
+        }
+        target.classList.add('d-none');
+        target.innerHTML = '';
+    };
+
+    const aiCatalogManager = (() => {
+        const state = {};
+        const subscribers = {};
+
+        const canonicalKey = (providerKey, channel) => {
+            const provider = (providerKey || '').toLowerCase();
+            const normalizedChannel = (channel || 'llm').toLowerCase();
+            if(provider.includes('::')){
+                const [base, ch] = provider.split('::');
+                return `${base}::${ch || normalizedChannel}`;
+            }
+            return `${provider || 'unknown'}::${normalizedChannel}`;
+        };
+
+        const splitKey = (key) => {
+            const [provider, channel] = key.split('::');
+            return [provider || 'unknown', (channel || 'llm').toLowerCase()];
+        };
+
+        const applyEntries = (providerKey, entries, channel) => {
+            const key = canonicalKey(providerKey, channel);
+            state[key] = normalizeCatalogEntries(entries);
+        };
+
+        const syncFromWindow = () => {
+            const source = window.aiModelCatalog;
+            if(!source || typeof source !== 'object'){
+                return;
+            }
+            Object.entries(source).forEach(([providerKey, entry]) => {
+                if(Array.isArray(entry)){
+                    applyEntries(providerKey, entry, 'llm');
+                    return;
+                }
+                if(entry && typeof entry === 'object'){
+                    Object.entries(entry).forEach(([channelKey, channelEntries]) => {
+                        const keyName = channelKey === 'default' ? 'llm' : channelKey;
+                        applyEntries(providerKey, channelEntries, keyName);
+                    });
+                }
+            });
+        };
+
+        const exportToWindow = () => {
+            const snapshot = {};
+            Object.entries(state).forEach(([key, entries]) => {
+                const [provider, channel] = splitKey(key);
+                if(!snapshot[provider]){
+                    snapshot[provider] = {};
+                }
+                snapshot[provider][channel] = entries;
+            });
+            window.aiModelCatalog = snapshot;
+        };
+
+        const notifyKey = (key) => {
+            const handlers = subscribers[key];
+            if(!handlers){
+                return;
+            }
+            handlers.forEach(handler => {
+                try {
+                    handler(state[key] || []);
+                } catch(err){
+                    console.warn('AI catalog subscriber failure', err);
+                }
+            });
+        };
+
+        const broadcastAll = (channel) => {
+            Object.keys(subscribers).forEach(key => {
+                if(!channel){
+                    notifyKey(key);
+                    return;
+                }
+                const [, ch] = splitKey(key);
+                if(ch === channel){
+                    notifyKey(key);
+                }
+            });
+        };
+
+        syncFromWindow();
+
+        return {
+            get(providerKey, channel){
+                const key = canonicalKey(providerKey, channel);
+                return state[key] || [];
+            },
+            set(providerKey, entries, channel){
+                const key = canonicalKey(providerKey, channel);
+                state[key] = normalizeCatalogEntries(entries);
+                exportToWindow();
+                notifyKey(key);
+            },
+            ensure(providerKey, entries, channel){
+                const key = canonicalKey(providerKey, channel);
+                if(!state[key] || !state[key].length){
+                    this.set(providerKey, entries || [], channel);
+                }
+            },
+            subscribe(providerKey, handler, options = {}){
+                const key = canonicalKey(providerKey, options.channel);
+                if(!subscribers[key]){
+                    subscribers[key] = new Set();
+                }
+                subscribers[key].add(handler);
+                handler(state[key] || []);
+                return () => {
+                    subscribers[key].delete(handler);
+                };
+            },
+            notify(providerKey, channel){
+                notifyKey(canonicalKey(providerKey, channel));
+            },
+            notifyAll(channel){
+                const normalizedChannel = channel ? channel.toLowerCase() : undefined;
+                broadcastAll(normalizedChannel);
+            }
+        };
+    })();
+
+    const seedCatalogDataElement = (dataEl) => {
+        if(!dataEl || dataEl.dataset.catalogSeeded){
+            return;
+        }
+        let parsed = {};
+        try {
+            parsed = JSON.parse(dataEl.textContent || dataEl.value || '{}') || {};
+        } catch(err){
+            parsed = {};
+        }
+        Object.entries(parsed).forEach(([providerKey, entry]) => {
+            if(Array.isArray(entry)){
+                aiCatalogManager.ensure(providerKey, entry, 'llm');
+                return;
+            }
+            if(entry && typeof entry === 'object'){
+                Object.entries(entry).forEach(([channelKey, channelEntries]) => {
+                    aiCatalogManager.ensure(providerKey, channelEntries, channelKey);
+                });
+            }
+        });
+        dataEl.dataset.catalogSeeded = '1';
+    };
+
+    const seedCatalogFromScope = (scope) => {
+        const dataEl = scope.querySelector('[data-model-catalog]');
+        seedCatalogDataElement(dataEl);
+    };
+
+    seedCatalogDataElement(document.getElementById('globalModelCatalogData'));
+
+    const resolveElement = (ref) => {
+        if(!ref){
+            return null;
+        }
+        if(typeof ref === 'string'){
+            return document.querySelector(ref);
+        }
+        if(ref instanceof Element){
+            return ref;
+        }
+        return null;
+    };
+
+    const setScopedLoadingState = (button, isLoading, fallbackHtml) => {
+        if(!button){
+            return;
+        }
+        if(isLoading){
+            if(!button.dataset.original){
+                button.dataset.original = button.innerHTML;
+            }
+            button.disabled = true;
+            button.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Loading...';
+        } else {
+            button.disabled = false;
+            button.innerHTML = button.dataset.original || fallbackHtml;
+        }
+    };
+
+    const refreshOllamaCatalog = async (options = {}) => {
+        const button = options.button || null;
+        const target = options.statusTarget || null;
+        const silentButton = !!options.silentButton;
+        const resultsElement = options.resultsElement || target;
+        const statusMessage = options.statusMessage || 'Refreshing Ollama models...';
+        const channel = (options.channel || 'llm').toLowerCase();
+        const baseUrlInput = resolveElement(options.baseUrlInput);
+        const modelSelect = resolveElement(options.modelSelect);
+        
+        // Explicitly resolve the base URL value to ensure we use the scoped input
+        let baseUrlOverride = options.baseUrl || '';
+        if (!baseUrlOverride && baseUrlInput) {
+            baseUrlOverride = baseUrlInput.value || '';
+        }
+
+        if(typeof window.testOllamaConnection !== 'function'){
+            setInlineStatus(target, 'danger', 'Ollama helper is not ready yet.');
+            return false;
+        }
+        if(button && !silentButton){
+            setScopedLoadingState(button, true, '<i class="bi bi-wifi me-1"></i>Test & Load Models');
+        }
+        try {
+            const success = await window.testOllamaConnection(button || null, {
+                statusMessage,
+                resultsElement,
+                baseUrlInput,
+                baseUrl: baseUrlOverride,
+                modelSelect,
+                channel,
+            });
+            return success;
+        } catch(err){
+            console.warn('Ollama refresh failed', err);
+            if(target){
+                setInlineStatus(target, 'danger', 'Unexpected error while contacting Ollama.');
+            }
+            return false;
+        } finally {
+            if(button && !silentButton){
+                setScopedLoadingState(button, false, '<i class="bi bi-wifi me-1"></i>Test & Load Models');
+            }
+        }
+    };
+
+    const refreshProviderCatalog = (providerKey, options = {}) => {
+        const normalized = (providerKey || '').toLowerCase();
+        const channel = (options.channel || 'llm').toLowerCase();
+        if(normalized === 'ollama'){
+            return refreshOllamaCatalog({ ...options, channel });
+        }
+        aiCatalogManager.notify(normalized, channel);
+        if(options.statusTarget){
+            setInlineStatus(options.statusTarget, 'info', 'Using cached models for this provider.');
+            setTimeout(() => clearInlineStatus(options.statusTarget), 3000);
+        }
+        return Promise.resolve(true);
+    };
+
+    const ensureOllamaHelper = () => {
+        if(typeof window.testOllamaConnection === 'function'){
+            return;
+        }
+        window.testOllamaConnection = async function(btn, opts){
+            const options = opts || {};
+            const baseUrlInput = resolveElement(options.baseUrlInput) || document.getElementById('ollama_base_url');
+            const select = resolveElement(options.modelSelect) || document.getElementById('ollama_model');
+            const resultsDiv = resolveElement(options.resultsElement) || document.getElementById('ollama-test-results');
+            const baseValueRaw = options.baseUrl || (baseUrlInput ? baseUrlInput.value : '');
+            const baseValue = (baseValueRaw || '').trim();
+            if(!baseValue){
+                if(resultsDiv){
+                    resultsDiv.classList.remove('d-none');
+                    resultsDiv.innerHTML = '<div class="alert alert-warning p-2 mb-0 small">Set an Ollama base URL first.</div>';
+                }
+                return false;
+            }
+            const original = btn ? btn.innerHTML : '';
+            if(btn){
+                btn.disabled = true;
+                btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';
+            }
+            const statusMsg = options.statusMessage || 'Testing connection...';
+            if(resultsDiv){
+                resultsDiv.classList.remove('d-none');
+                resultsDiv.innerHTML = `<div class="text-muted small">${statusMsg}</div>`;
+            }
+            const fd = new FormData();
+            fd.append('ollama_base_url', baseValue);
+            const csrf = document.querySelector('input[name="csrf_token"]');
+            if(csrf){
+                fd.append('csrf_token', csrf.value);
+            }
+            try {
+                const resp = await fetch("{{ url_for('admin.test_ollama_connection') }}",{method:'POST', body: fd});
+                const data = await resp.json();
+                if(data.success && data.models){
+                    const normalized = [];
+                    data.models.forEach(m => {
+                        const name = typeof m === 'string' ? m : (m.name || '');
+                        const label = typeof m === 'string' ? m : (m.size ? `${m.name} (${m.size})` : (m.name || ''));
+                        if(!name){
+                            return;
+                        }
+                        normalized.push({ value: name, label });
+                    });
+                    const sortedModels = sortCatalogEntries(normalized);
+                    if(select){
+                        select.innerHTML = '<option value="">Select a model</option>';
+                        sortedModels.forEach(item => {
+                            const opt = document.createElement('option');
+                            opt.value = item.value;
+                            opt.textContent = item.label || item.value;
+                            select.appendChild(opt);
+                        });
+                        if(options.defaultModel){
+                            select.value = options.defaultModel;
+                        }
+                    }
+                    aiCatalogManager.set('ollama', sortedModels, options.channel || 'llm');
+                    if(resultsDiv){
+                        resultsDiv.innerHTML = `<div class="alert alert-success p-2 mb-0 small">Loaded ${sortedModels.length} model${sortedModels.length===1?'':'s'} from Ollama.</div>`;
+                    }
+                } else {
+                    if(resultsDiv){
+                        const message = data && data.message ? data.message : 'Unable to load models from Ollama.';
+                        resultsDiv.innerHTML = `<div class="alert alert-danger p-2 mb-0 small">${message}</div>`;
+                    }
+                }
+                return !!(data && data.success);
+            } catch(err){
+                console.warn('Ollama test failed', err);
+                if(resultsDiv){
+                    resultsDiv.innerHTML = '<div class="alert alert-danger p-2 mb-0 small">Unexpected error contacting Ollama.</div>';
+                }
+                return false;
+            } finally {
+                if(btn){
+                    btn.disabled = false;
+                    btn.innerHTML = original || '<i class="bi bi-wifi me-1"></i>Test & Load Models';
+                }
+            }
+        };
+    };
+
+    ensureOllamaHelper();
+
+    const attachModelSelector = (config = {}) => {
+        const providerSelect = resolveElement(config.providerSelect);
+        const modelSelect = resolveElement(config.modelSelect);
+        const manualToggle = resolveElement(config.manualToggle);
+        const manualInput = resolveElement(config.manualInput);
+        const finalInput = resolveElement(config.finalInput) || modelSelect;
+        const refreshBtn = resolveElement(config.refreshBtn);
+        const refreshStatus = resolveElement(config.refreshStatus);
+        const capability = (config.capability || 'llm').toLowerCase();
+        const baseUrlInput = resolveElement(config.baseUrlInput);
+        const resultsElement = resolveElement(config.resultsElement) || refreshStatus;
+        const autoRefresh = config.autoRefresh !== false;
+        if(!modelSelect || !finalInput){
+            return null;
+        }
+
+        const getProviderValue = () => (providerSelect && providerSelect.value ? providerSelect.value : 'openai').toLowerCase();
+        const state = {
+            provider: getProviderValue(),
+            unsubscribe: null,
+        };
+
+        const syncManualUI = (forceValue) => {
+            const manual = typeof forceValue === 'boolean' ? forceValue : (manualToggle ? manualToggle.checked : false);
+            if(manualInput){
+                manualInput.classList.toggle('d-none', !manual);
+                manualInput.disabled = !manual;
+            }
+            modelSelect.disabled = !!manual;
+            if(manual){
+                if(manualToggle){
+                    manualToggle.checked = true;
+                }
+                if(manualInput){
+                    finalInput.value = manualInput.value || '';
+                }
+            } else {
+                if(manualToggle){
+                    manualToggle.checked = false;
+                }
+                finalInput.value = modelSelect.value || '';
+            }
+        };
+
+        const renderOptions = (models) => {
+            const currentValue = finalInput.value || modelSelect.dataset.currentValue || '';
+            modelSelect.innerHTML = '';
+            if(!Array.isArray(models) || !models.length){
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = state.provider === 'ollama'
+                    ? 'No Ollama models loaded'
+                    : 'No catalog entries loaded';
+                modelSelect.appendChild(placeholder);
+                if(manualInput && currentValue){
+                    manualInput.value = currentValue;
+                }
+                syncManualUI(true);
+                if(state.provider === 'ollama'){
+                    setInlineStatus(refreshStatus, 'warning', 'No Ollama catalog entries yet. Use refresh to fetch models.');
+                } else {
+                    setInlineStatus(refreshStatus, 'info', 'List is static. Enter a manual model if needed.');
+                }
+                return;
+            }
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Select a model';
+            modelSelect.appendChild(placeholder);
+            const sortedOptions = sortCatalogEntries(models);
+            sortedOptions.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.value;
+                opt.textContent = item.label || item.value;
+                modelSelect.appendChild(opt);
+            });
+            const matched = sortedOptions.some(item => item.value === currentValue);
+            if(matched){
+                modelSelect.value = currentValue;
+                finalInput.value = currentValue;
+                syncManualUI(false);
+            } else if(currentValue){
+                if(manualInput){
+                    manualInput.value = currentValue;
+                }
+                syncManualUI(true);
+            } else {
+                modelSelect.value = '';
+                syncManualUI(false);
+            }
+            clearInlineStatus(refreshStatus);
+        };
+
+        const subscribeToProvider = () => {
+            state.provider = getProviderValue();
+            if(state.unsubscribe){
+                state.unsubscribe();
+            }
+            state.unsubscribe = aiCatalogManager.subscribe(state.provider, (models) => {
+                renderOptions(models);
+            }, { channel: capability });
+            const cached = aiCatalogManager.get(state.provider, capability);
+            if(!cached.length && autoRefresh && state.provider === 'ollama'){
+                refreshProviderCatalog('ollama', {
+                    channel: capability,
+                    statusTarget: refreshStatus,
+                    silentButton: true,
+                    baseUrlInput,
+                    resultsElement,
+                    modelSelect,
+                });
+            }
+        };
+
+        if(providerSelect && !providerSelect.dataset.boundModelSelector){
+            providerSelect.addEventListener('change', () => {
+                subscribeToProvider();
+                if(state.provider === 'ollama' && !aiCatalogManager.get('ollama', capability).length){
+                    refreshProviderCatalog('ollama', {
+                        channel: capability,
+                        statusTarget: refreshStatus,
+                        silentButton: true,
+                        baseUrlInput,
+                        resultsElement,
+                        modelSelect,
+                    });
+                }
+            });
+            providerSelect.dataset.boundModelSelector = '1';
+        }
+
+        if(refreshBtn && !refreshBtn.dataset.boundModelSelector){
+            refreshBtn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                refreshProviderCatalog(state.provider, {
+                    channel: capability,
+                    button: refreshBtn,
+                    statusTarget: refreshStatus,
+                    baseUrlInput,
+                    resultsElement,
+                    modelSelect,
+                });
+            });
+            refreshBtn.dataset.boundModelSelector = '1';
+        }
+
+        if(manualToggle && !manualToggle.dataset.boundModelSelector){
+            manualToggle.addEventListener('change', () => syncManualUI());
+            manualToggle.dataset.boundModelSelector = '1';
+        }
+
+        if(manualInput && !manualInput.dataset.boundModelSelector){
+            manualInput.addEventListener('input', () => {
+                if(manualToggle && manualToggle.checked){
+                    finalInput.value = manualInput.value || '';
+                }
+            });
+            manualInput.dataset.boundModelSelector = '1';
+        }
+
+        modelSelect.addEventListener('change', () => {
+            if(manualToggle){
+                manualToggle.checked = false;
+            }
+            finalInput.value = modelSelect.value || '';
+            syncManualUI(false);
+        });
+
+        syncManualUI(false);
+        subscribeToProvider();
+        return {
+            refresh: () => refreshProviderCatalog(state.provider, {
+                channel: capability,
+                button: refreshBtn,
+                statusTarget: refreshStatus,
+                baseUrlInput,
+                resultsElement,
+                modelSelect,
+            })
+        };
+    };
+
+    window.refreshScopedModelDropdowns = (providerFilter, options = {}) => {
+        const channel = (options.channel || 'llm').toLowerCase();
+        if(providerFilter){
+            aiCatalogManager.notify((providerFilter || '').toLowerCase(), channel);
+        } else {
+            aiCatalogManager.notifyAll(channel);
+        }
+    };
+
+    function ensureAiModelScopeDropdowns(scope){
+        const form = scope.querySelector('#aiConfigForm');
+        if(!form){
+            return;
+        }
+        seedCatalogFromScope(form);
+        const scopeCards = form.querySelectorAll('[data-ai-scope]');
+        const cards = Array.from(scopeCards);
+        cards.forEach(card => setupScopeCard(card));
+        form.__aiScopeCards = cards;
+
+        function setupScopeCard(card){
+            const providerSelect = card.querySelector('[data-role="provider-select"]');
+            const modelSelect = card.querySelector('.ai-model-select');
+            const manualToggle = card.querySelector('.ai-model-custom-toggle');
+            const manualInput = card.querySelector('.ai-model-custom-input');
+            const finalInput = card.querySelector('[data-role="model-final"]');
+            const refreshBtn = card.querySelector('[data-role="refresh-models"]');
+            const refreshStatus = card.querySelector('[data-role="refresh-status"]');
+            if(!modelSelect || !finalInput){
+                return;
+            }
+
+            const syncManualUI = (forceValue) => {
+                const enable = typeof forceValue === 'boolean' ? forceValue : (manualToggle ? manualToggle.checked : false);
+                if(manualInput){
+                    manualInput.classList.toggle('d-none', !enable);
+                    manualInput.disabled = !enable;
+                }
+                modelSelect.disabled = !!enable;
+                if(enable){
+                    if(manualToggle){
+                        manualToggle.checked = true;
+                    }
+                    if(manualInput){
+                        finalInput.value = manualInput.value || '';
+                    }
+                } else {
+                    if(manualToggle){
+                        manualToggle.checked = false;
+                    }
+                    finalInput.value = modelSelect.value || '';
+                }
+            };
+
+            const renderOptions = (providerKey, catalogOptions) => {
+                const currentValue = finalInput.value || modelSelect.dataset.currentValue || '';
+                modelSelect.innerHTML = '';
+                if(!catalogOptions.length){
+                    const placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = providerKey === 'ollama' ? 'No Ollama models loaded' : 'No catalog entries loaded';
+                    modelSelect.appendChild(placeholder);
+                    if(manualInput && currentValue){
+                        manualInput.value = currentValue;
+                    }
+                    syncManualUI(true);
+                    if(providerKey === 'ollama'){
+                        setInlineStatus(refreshStatus, 'warning', 'No Ollama catalog entries yet. Use refresh to fetch models.');
+                    } else {
+                        setInlineStatus(refreshStatus, 'info', 'OpenAI list is static. Enter a manual model if needed.');
+                    }
+                    return;
+                }
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'Select a model';
+                modelSelect.appendChild(placeholder);
+                const sortedOptions = sortCatalogEntries(catalogOptions);
+                sortedOptions.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.value;
+                    opt.textContent = item.label || item.value;
+                    modelSelect.appendChild(opt);
+                });
+                const matched = sortedOptions.some(item => item.value === currentValue);
+                if(matched){
+                    modelSelect.value = currentValue;
+                    finalInput.value = currentValue;
+                    syncManualUI(false);
+                } else if(currentValue){
+                    if(manualInput){
+                        manualInput.value = currentValue;
+                    }
+                    syncManualUI(true);
+                } else {
+                    modelSelect.value = '';
+                    syncManualUI(false);
+                }
+                clearInlineStatus(refreshStatus);
+            };
+
+            const subscribeToProvider = () => {
+                const providerValue = (providerSelect && providerSelect.value ? providerSelect.value : 'openai').toLowerCase();
+                if(card.__providerUnsub){
+                    card.__providerUnsub();
+                }
+                card.__providerUnsub = aiCatalogManager.subscribe(providerValue, (models) => {
+                    renderOptions(providerValue, models);
+                });
+            };
+
+            if(providerSelect && !providerSelect.dataset.bound){
+                providerSelect.addEventListener('change', () => {
+                    subscribeToProvider();
+                    if((providerSelect.value || '').toLowerCase() === 'ollama' && !aiCatalogManager.get('ollama').length){
+                        refreshProviderCatalog('ollama', {
+                            statusTarget: refreshStatus,
+                            silentButton: true,
+                            silent: true
+                        });
+                    }
+                });
+                providerSelect.dataset.bound = '1';
+            }
+
+            modelSelect.addEventListener('change', () => {
+                finalInput.value = modelSelect.value || '';
+                syncManualUI(false);
+            });
+
+            if(manualToggle && manualInput && !manualToggle.dataset.bound){
+                manualToggle.addEventListener('change', () => {
+                    syncManualUI(manualToggle.checked);
+                });
+                manualInput.addEventListener('input', () => {
+                    finalInput.value = manualInput.value || '';
+                });
+                manualToggle.dataset.bound = '1';
+            }
+
+            if(refreshBtn && !refreshBtn.dataset.bound){
+                refreshBtn.addEventListener('click', () => {
+                    const providerValue = (providerSelect && providerSelect.value ? providerSelect.value : 'openai').toLowerCase();
+                    refreshProviderCatalog(providerValue, {
+                        button: providerValue === 'ollama' ? refreshBtn : null,
+                        statusTarget: refreshStatus,
+                        silentButton: true,
+                        silent: true
+                    });
+                });
+                refreshBtn.dataset.bound = '1';
+            }
+
+            subscribeToProvider();
+        }
+    }
     const tiles = document.querySelectorAll('.settings-tile');
     function activate(tile){
         const target = tile.getAttribute('data-target');
@@ -225,7 +948,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Saving...';
         }
         try {
-            const endpoint = "{{ url_for('auth.settings_server_partial', panel='config') }}";
+            const endpoint = "{{ url_for('admin.settings_server_partial', panel='config') }}";
             const resp = await fetch(endpoint, {
                 method: 'POST',
                 body: fd,
@@ -297,6 +1020,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if(!form){
             return;
         }
+        ensureAiModelScopeDropdowns(scope);
         const hasDynamicContainer = !!container;
         if(hasDynamicContainer && !form.dataset.ajaxBound){
             form.addEventListener('submit', async (ev) => {
@@ -345,6 +1069,45 @@ document.addEventListener('DOMContentLoaded', () => {
         const providerSelect = scope.querySelector('#ai_provider');
         const openaiSection = scope.querySelector('#openai-settings');
         const ollamaSection = scope.querySelector('#ollama-settings');
+        const hasOllamaCatalogEntries = () => {
+            const catalog = window.aiModelCatalog || {};
+            const raw = catalog.ollama || catalog['ollama'] || [];
+            const entries = Array.isArray(raw) ? raw : (raw && (raw.llm || raw.default)) || [];
+            return Array.isArray(entries) && entries.length > 0;
+        };
+        const triggerOllamaAutoRefresh = (reason, attempt = 0) => {
+            if(typeof window.testOllamaConnection !== 'function'){
+                if(attempt < 5){
+                    setTimeout(() => triggerOllamaAutoRefresh(reason, attempt + 1), 120);
+                }
+                return;
+            }
+            if(window.__ollamaCatalogLoading){
+                return;
+            }
+            const baseInput = scope.querySelector('#ollama_base_url');
+            const baseKey = (baseInput && baseInput.value ? baseInput.value.trim() : '__default__');
+            window.__ollamaAutoLoadedFor = window.__ollamaAutoLoadedFor || {};
+            if(!attempt && !['force','provider-switch'].includes(reason || '') && window.__ollamaAutoLoadedFor[baseKey]){
+                return;
+            }
+            const btnEl = scope.querySelector('#ollamaTestBtn');
+            const statusMessage = reason === 'provider-switch' ? 'Loading Ollama models...' : 'Contacting Ollama...';
+            window.__ollamaCatalogLoading = true;
+            Promise.resolve(window.testOllamaConnection(btnEl || null, { statusMessage }))
+                .then(success => {
+                    if(success){
+                        window.__ollamaAutoLoadedFor[baseKey] = Date.now();
+                    } else {
+                        delete window.__ollamaAutoLoadedFor[baseKey];
+                    }
+                })
+                .catch(err => {
+                    console.warn('Auto Ollama model refresh failed', err);
+                    delete window.__ollamaAutoLoadedFor[baseKey];
+                })
+                .finally(() => { window.__ollamaCatalogLoading = false; });
+        };
         const syncProviderVisibility = () => {
             if(!providerSelect || !openaiSection || !ollamaSection){
                 return;
@@ -358,10 +1121,25 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
         if(providerSelect){
+            const handleProviderChange = (reason) => {
+                const previous = providerSelect.dataset.lastProvider || '';
+                syncProviderVisibility();
+                const current = (providerSelect.value || '').toLowerCase();
+                if(current === 'ollama' && previous !== 'ollama'){
+                    triggerOllamaAutoRefresh(reason || 'provider-switch');
+                }
+                providerSelect.dataset.lastProvider = current;
+            };
             if(!providerSelect.dataset.bound){
-                providerSelect.addEventListener('change', syncProviderVisibility);
+                providerSelect.addEventListener('change', () => handleProviderChange('provider-switch'));
                 providerSelect.dataset.bound = '1';
             }
+            providerSelect.dataset.lastProvider = (providerSelect.value || '').toLowerCase();
+            syncProviderVisibility();
+            if(providerSelect.dataset.lastProvider === 'ollama'){
+                triggerOllamaAutoRefresh('initial-load');
+            }
+        } else {
             syncProviderVisibility();
         }
 
@@ -415,15 +1193,363 @@ document.addEventListener('DOMContentLoaded', () => {
         if(ollamaTestBtn && !ollamaTestBtn.dataset.bound){
             ollamaTestBtn.addEventListener('click', (ev) => {
                 ev.preventDefault();
+                ensureOllamaHelper();
                 if(typeof window.testOllamaConnection === 'function'){
                     window.testOllamaConnection(ollamaTestBtn);
                 }
             });
             ollamaTestBtn.dataset.bound = '1';
         }
+    }
 
-        if(typeof window.__initAISettings === 'function'){
-            try { window.__initAISettings(); } catch (err){ console.debug('AI init helper failed', err); }
+    function ensureServerRagBindings(){
+        const container = document.getElementById('serverDynamicContainer');
+        const scope = container || document;
+        const form = scope.querySelector('#ragSettingsForm');
+        if(!form){
+            return;
+        }
+
+        attachModelSelector({
+            providerSelect: form.querySelector('#ragLlmProviderSelect'),
+            modelSelect: form.querySelector('#ragLlmModelSelect'),
+            manualToggle: form.querySelector('#ragLlmManualToggle'),
+            manualInput: form.querySelector('#ragLlmManualInput'),
+            finalInput: form.querySelector('#ragLlmModelValue'),
+            refreshBtn: form.querySelector('#ragLlmRefreshBtn'),
+            refreshStatus: form.querySelector('#ragLlmRefreshStatus'),
+            capability: 'llm',
+            baseUrlInput: form.querySelector('input[name="rag_llm_base_url"]'),
+            resultsElement: form.querySelector('#ragLlmRefreshStatus'),
+            autoRefresh: false,
+        });
+
+        attachModelSelector({
+            providerSelect: form.querySelector('#ragEmbeddingProviderSelect'),
+            modelSelect: form.querySelector('#ragEmbeddingModelSelect'),
+            manualToggle: form.querySelector('#ragEmbeddingManualToggle'),
+            manualInput: form.querySelector('#ragEmbeddingManualInput'),
+            finalInput: form.querySelector('#ragEmbeddingModelValue'),
+            refreshBtn: form.querySelector('#ragEmbeddingRefreshBtn'),
+            refreshStatus: form.querySelector('#ragEmbeddingRefreshStatus'),
+            capability: 'embedding',
+            baseUrlInput: form.querySelector('input[name="rag_embedding_base_url"]'),
+            resultsElement: form.querySelector('#ragEmbeddingRefreshStatus'),
+            autoRefresh: false,
+        });
+
+        const hasDynamicContainer = !!container;
+        if(hasDynamicContainer && !form.dataset.ajaxBound){
+            form.addEventListener('submit', async (ev) => {
+                ev.preventDefault();
+                const submitBtn = scope.querySelector('#ragSettingsSubmit');
+                if(submitBtn){
+                    if(!submitBtn.dataset.original){
+                        submitBtn.dataset.original = submitBtn.innerHTML;
+                    }
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<i class="bi bi-arrow-repeat spin me-1"></i>Saving...';
+                }
+                try {
+                    const resp = await fetch(form.action, {
+                        method: 'POST',
+                        body: new FormData(form),
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    const html = await resp.text();
+                    container.innerHTML = html;
+                    ensureServerRagBindings();
+                    const notice = document.createElement('div');
+                    notice.className = 'alert alert-success py-2 mb-3';
+                    notice.innerHTML = '<i class="bi bi-check-circle me-1"></i>RAG settings saved.';
+                    container.prepend(notice);
+                    setTimeout(() => notice.remove(), 3500);
+                } catch (err){
+                    console.warn('RAG settings save failed', err);
+                    if(submitBtn){
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = submitBtn.dataset.original || '<i class="bi bi-check2 me-1"></i>Save RAG Settings';
+                    }
+                    const warning = document.createElement('div');
+                    warning.className = 'alert alert-danger py-2 mb-3';
+                    warning.innerHTML = '<i class="bi bi-x-circle me-1"></i>Failed to save RAG settings. Please retry.';
+                    if(container){
+                        container.prepend(warning);
+                        setTimeout(() => warning.remove(), 4000);
+                    }
+                }
+            });
+            form.dataset.ajaxBound = '1';
+        }
+
+        // --- RAG Test & Ingestion Logic (Moved from partial) ---
+        
+        // Ingest Button
+        const ingestBtn = scope.querySelector('#ragIngestBtn');
+        const statusDiv = document.createElement('div');
+        statusDiv.id = 'ragIngestStatus';
+        statusDiv.className = 'mt-2 small text-muted';
+        statusDiv.style.display = 'none';
+        if (ingestBtn && ingestBtn.parentNode) {
+            // Check if status div already exists to avoid duplicates
+            if(!ingestBtn.parentNode.querySelector('#ragIngestStatus')) {
+                ingestBtn.parentNode.appendChild(statusDiv);
+            }
+        }
+
+        const pollStatus = async () => {
+            try {
+                const resp = await fetch("{{ url_for('admin.rag_ingestion_status') }}");
+                const data = await resp.json();
+                const currentStatusDiv = scope.querySelector('#ragIngestStatus');
+                if (currentStatusDiv) {
+                    if (data.running || data.queue_size > 0) {
+                        currentStatusDiv.style.display = 'block';
+                        let msg = `<i class="bi bi-arrow-repeat spinner-border spinner-border-sm me-1"></i> Ingestion running. Queue: ${data.queue_size}`;
+                        if (data.current_job) {
+                            msg += `<br>Processing: <strong>${data.current_job.title || data.current_job.book_id}</strong>`;
+                        }
+                        currentStatusDiv.innerHTML = msg;
+                        setTimeout(pollStatus, 2000);
+                    } else {
+                        currentStatusDiv.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                console.error('Status poll failed', e);
+            }
+        };
+        
+        // Start polling if we are on the RAG panel
+        if(ingestBtn) pollStatus();
+
+        if (ingestBtn && !ingestBtn.dataset.bound) {
+          ingestBtn.addEventListener('click', async () => {
+            if (!confirm('Start full RAG ingestion? This may take a while.')) return;
+            
+            const original = ingestBtn.innerHTML;
+            ingestBtn.disabled = true;
+            ingestBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Starting...';
+            
+            try {
+              const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+              const resp = await fetch("{{ url_for('auth.trigger_rag_ingestion') }}", {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRFToken': csrf
+                }
+              });
+              const data = await resp.json();
+              alert(data.message || (data.success ? 'Ingestion started' : 'Failed'));
+              pollStatus(); // Start polling immediately
+            } catch (e) {
+              alert('Error starting ingestion: ' + e);
+            } finally {
+              ingestBtn.disabled = false;
+              ingestBtn.innerHTML = original;
+            }
+          });
+          ingestBtn.dataset.bound = '1';
+        }
+
+        // Test Logic
+        const resultsDiv = scope.querySelector('#ragTestResults');
+        const runTest = async (payload, btn) => {
+          console.log('RAG Test started:', payload);
+          const original = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing...';
+          if (resultsDiv) {
+            resultsDiv.classList.remove('d-none');
+            resultsDiv.innerHTML = '<div class="text-muted small">Running test...</div>';
+          }
+
+          try {
+            const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+            const resp = await fetch("{{ url_for('auth.test_rag_ingestion') }}", {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrf
+              },
+              body: JSON.stringify(payload)
+            });
+            
+            if (!resp.ok) {
+                throw new Error(`Server returned ${resp.status}: ${resp.statusText}`);
+            }
+            
+            const data = await resp.json();
+            console.log('RAG Test response:', data);
+            
+            if (resultsDiv) {
+              if (data.success) {
+                let html = '<div class="alert alert-success p-2 mb-0 small">';
+                html += `<strong>Success!</strong> ${data.message}<br>`;
+                if (data.books && data.books.length) {
+                  html += '<ul class="mb-0 mt-1 ps-3">';
+                  data.books.forEach(b => {
+                    html += `<li>${b.title} (${b.chunks} chunks) - ${b.status}</li>`;
+                  });
+                  html += '</ul>';
+                }
+                html += '</div>';
+                resultsDiv.innerHTML = html;
+              } else {
+                resultsDiv.innerHTML = `<div class="alert alert-danger p-2 mb-0 small">${data.message || 'Test failed'}</div>`;
+              }
+            }
+          } catch (e) {
+            console.error('RAG Test error:', e);
+            if (resultsDiv) resultsDiv.innerHTML = `<div class="alert alert-danger p-2 mb-0 small">Error: ${e}</div>`;
+            alert('Test failed: ' + e);
+          } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+          }
+        };
+
+        // Random Test
+        const randomBtn = scope.querySelector('#ragTestRandomBtn');
+        if (randomBtn && !randomBtn.dataset.bound) {
+          randomBtn.addEventListener('click', () => runTest({ mode: 'random', limit: 3 }, randomBtn));
+          randomBtn.dataset.bound = '1';
+        }
+
+        // Search Test
+        const searchBtn = scope.querySelector('#ragTestSearchBtn');
+        const searchInput = scope.querySelector('#ragTestSearchInput');
+        if (searchBtn && searchInput && !searchBtn.dataset.bound) {
+          searchBtn.addEventListener('click', () => {
+            const query = searchInput.value.trim();
+            if (!query) {
+              alert('Please enter a search term');
+              return;
+            }
+            runTest({ mode: 'search', query: query }, searchBtn);
+          });
+          searchBtn.dataset.bound = '1';
+        }
+
+        // Chat Playground
+        const chatBtn = scope.querySelector('#ragChatBtn');
+        if (chatBtn && !chatBtn.dataset.bound) {
+          chatBtn.addEventListener('click', function() {
+            const queryInput = scope.querySelector('#ragChatQuery');
+            const query = queryInput ? queryInput.value : '';
+            if (!query) return;
+            
+            const btn = this;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Searching...';
+            
+            fetch("{{ url_for('admin.test_rag_chat') }}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': "{{ csrf_token() }}"
+                },
+                body: 'query=' + encodeURIComponent(query)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const list = scope.querySelector('#ragChatResultsList');
+                    if(list) {
+                        list.innerHTML = '';
+                        
+                        if (data.results.length === 0) {
+                            list.innerHTML = '<div class="list-group-item text-muted">No matching chunks found.</div>';
+                        } else {
+                            data.results.forEach(result => {
+                                const item = document.createElement('div');
+                                item.className = 'list-group-item';
+                                
+                                // Format metadata
+                                let metaHtml = '';
+                                if (result.metadata) {
+                                    metaHtml = '<div class="mt-2 small text-muted">';
+                                    for (const [key, value] of Object.entries(result.metadata)) {
+                                        metaHtml += `<span class="badge bg-light text-dark border me-1">${key}: ${value}</span>`;
+                                    }
+                                    metaHtml += '</div>';
+                                }
+                                
+                                item.innerHTML = `
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1">Distance: ${result.distance.toFixed(4)}</h6>
+                                    </div>
+                                    <p class="mb-1" style="white-space: pre-wrap;">${result.text}</p>
+                                    ${metaHtml}
+                                `;
+                                list.appendChild(item);
+                            });
+                        }
+                        const resultsContainer = scope.querySelector('#ragChatResults');
+                        if(resultsContainer) resultsContainer.style.display = 'block';
+                    }
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while searching.');
+            })
+            .finally(() => {
+              btn.disabled = false;
+              btn.innerHTML = originalText;
+            });
+          });
+          chatBtn.dataset.bound = '1';
+        }
+
+        // Indexed Books Logic
+        const refreshBooksBtn = scope.querySelector('#ragRefreshBooksBtn');
+        const booksList = scope.querySelector('#ragIndexedBooksList');
+        
+        const loadIndexedBooks = async () => {
+            if (!booksList) return;
+            
+            booksList.innerHTML = '<div class="list-group-item text-center py-3"><div class="spinner-border spinner-border-sm text-secondary" role="status"></div></div>';
+            
+            try {
+                const resp = await fetch("{{ url_for('admin.rag_indexed_books') }}");
+                const data = await resp.json();
+                
+                if (data.success) {
+                    if (data.books.length === 0) {
+                        booksList.innerHTML = '<div class="list-group-item text-muted small text-center py-3">No books indexed yet.</div>';
+                    } else {
+                        booksList.innerHTML = '';
+                        data.books.forEach(book => {
+                            const item = document.createElement('div');
+                            item.className = 'list-group-item d-flex justify-content-between align-items-center';
+                            item.innerHTML = `
+                                <div>
+                                    <div class="fw-bold">${book.title}</div>
+                                    <small class="text-muted">ID: ${book.book_id}</small>
+                                </div>
+                                <span class="badge bg-secondary rounded-pill">${book.chunk_count} chunks</span>
+                            `;
+                            booksList.appendChild(item);
+                        });
+                    }
+                } else {
+                    booksList.innerHTML = `<div class="list-group-item text-danger small text-center py-3">Error: ${data.message}</div>`;
+                }
+            } catch (e) {
+                booksList.innerHTML = `<div class="list-group-item text-danger small text-center py-3">Error loading books: ${e}</div>`;
+            }
+        };
+        
+        if (refreshBooksBtn && !refreshBooksBtn.dataset.bound) {
+            refreshBooksBtn.addEventListener('click', loadIndexedBooks);
+            refreshBooksBtn.dataset.bound = '1';
+            // Auto-load on first view
+            loadIndexedBooks();
         }
     }
 
@@ -491,7 +1617,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     resultDiv.style.display = 'none';
                 }
                 try {
-                    const resp = await fetch("{{ url_for('auth.test_smtp_connection') }}", {
+                    const resp = await fetch("{{ url_for('admin.test_smtp_connection') }}", {
                         method: 'POST',
                         body: new FormData(form),
                         credentials: 'same-origin'
@@ -825,6 +1951,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
                 const fd = new FormData(form);
+                if(!fd.has('auto_sync_enabled')){
+                    fd.set('auto_sync_enabled', '0');
+                }
+                if(!fd.has('auto_embed_enabled')){
+                    fd.set('auto_embed_enabled', '0');
+                }
+                fd.set('auto_embed_formats_present', '1');
                 if(statusEl){
                     if(action === 'probe') statusEl.textContent = 'Probing feed...';
                     else if(action === 'sync-now') statusEl.textContent = 'Sync job queuing...';
@@ -875,7 +2008,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if(typeof loadServerPanel === 'function'){
                             loadServerPanel('opds');
                         } else if(serverContainer){
-                            const endpoint = root.dataset.refreshUrl || "{{ url_for('auth.settings_server_partial', panel='opds') }}";
+                            const endpoint = root.dataset.refreshUrl || "{{ url_for('admin.settings_server_partial', panel='opds') }}";
                             fetch(endpoint, { credentials:'same-origin' })
                                 .then(r=> r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`)))
                                 .then(html=>{
@@ -1070,17 +2203,18 @@ document.addEventListener('DOMContentLoaded', () => {
         function loadServerPanel(panel){
                 if(!serverContainer) return;
                 let endpoint;
-                if(panel==='config') endpoint = "{{ url_for('auth.settings_server_partial', panel='config') }}";
-                if(panel==='users') endpoint = "{{ url_for('auth.settings_server_partial', panel='users') }}";
-                if(panel==='debug') endpoint = "{{ url_for('auth.settings_server_partial', panel='debug') }}";
-                if(panel==='ai') endpoint = "{{ url_for('auth.settings_server_partial', panel='ai') }}";
-                if(panel==='smtp') endpoint = "{{ url_for('auth.settings_server_partial', panel='smtp') }}";
-                if(panel==='backup') endpoint = "{{ url_for('auth.settings_server_partial', panel='backup') }}";
-                if(panel==='opds') endpoint = "{{ url_for('auth.settings_server_partial', panel='opds') }}";
-                if(panel==='audiobookshelf') endpoint = "{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}";
-                if(panel==='metadata') endpoint = "{{ url_for('auth.settings_server_partial', panel='metadata') }}";
-                if(panel==='repairs') endpoint = "{{ url_for('auth.settings_server_partial', panel='repairs') }}";
-                if(panel==='jobs') endpoint = "{{ url_for('auth.settings_server_partial', panel='jobs') }}";
+                if(panel==='config') endpoint = "{{ url_for('admin.settings_server_partial', panel='config') }}";
+                if(panel==='users') endpoint = "{{ url_for('admin.settings_server_partial', panel='users') }}";
+                if(panel==='debug') endpoint = "{{ url_for('admin.settings_server_partial', panel='debug') }}";
+                if(panel==='ai') endpoint = "{{ url_for('admin.settings_server_partial', panel='ai') }}";
+                if(panel==='rag') endpoint = "{{ url_for('admin.settings_server_partial', panel='rag') }}";
+                if(panel==='smtp') endpoint = "{{ url_for('admin.settings_server_partial', panel='smtp') }}";
+                if(panel==='backup') endpoint = "{{ url_for('admin.settings_server_partial', panel='backup') }}";
+                if(panel==='opds') endpoint = "{{ url_for('admin.settings_server_partial', panel='opds') }}";
+                if(panel==='audiobookshelf') endpoint = "{{ url_for('admin.settings_server_partial', panel='audiobookshelf') }}";
+                if(panel==='metadata') endpoint = "{{ url_for('admin.settings_server_partial', panel='metadata') }}";
+                if(panel==='repairs') endpoint = "{{ url_for('admin.settings_server_partial', panel='repairs') }}";
+                if(panel==='jobs') endpoint = "{{ url_for('admin.settings_server_partial', panel='jobs') }}";
                 if(!endpoint){ serverContainer.innerHTML = '<div class="text-danger small">Unknown panel.</div>'; return; }
                 serverContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
                 fetch(endpoint, { credentials:'same-origin' })
@@ -1097,6 +2231,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                         if(panel==='config'){
                             ensureServerConfigBindings();
+                        }
+                        if(panel==='rag'){
+                            ensureServerRagBindings();
                         }
                                                 // Re-bind scripts for panels whose inline <script> won't auto-run after fetch
                                                 if(panel==='audiobookshelf'){
@@ -1178,10 +2315,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                                         testBtn.addEventListener('click', function(){
                                                                                             if(status) status.textContent='Testing...';
                                                                                             const headers = {}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
-                                                                                            fetch("{{ url_for('auth.test_audiobookshelf_connection') }}", { method:'POST', credentials:'same-origin', headers })
+                                                                                            fetch("{{ url_for('admin.test_audiobookshelf_connection') }}", { method:'POST', credentials:'same-origin', headers })
                                                                                                 .then(r=>r.json()).then(j=>{
                                                                                                     if(status) status.textContent=(j.ok?'OK: ':'Fail: ')+(j.message||'');
-                                                                                        fetch("{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}?test=1", { credentials:'same-origin' })
+                                                                                        fetch("{{ url_for('admin.settings_server_partial', panel='audiobookshelf') }}?test=1", { credentials:'same-origin' })
                                                                                             .then(r=>r.text()).then(html=>{ serverContainer.innerHTML = html; if (window.__initAudiobookshelfPanel) window.__initAudiobookshelfPanel(); });
                                                                                                 }).catch(()=>{ if(status) status.textContent='Test failed'; });
                                                                                         });
@@ -1191,7 +2328,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                                             if(status) status.textContent='Starting test sync...';
                                                                                             const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
                                                                                             try {
-                                                                                                const resp = await fetch("{{ url_for('auth.audiobookshelf_test_sync') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5})});
+                                                                                                const resp = await fetch("{{ url_for('admin.audiobookshelf_test_sync') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5})});
                                                                                                 const j = await resp.json();
                                                                                                 if(j.ok){ try{ startInlineProgressPolling(j); }catch(e){}
                                                                                                     const to = j.progress_url || j.api_progress_url || '#'; if(to && to !== '#'){ setTimeout(()=>{ window.location.assign(to); }, 150); }
@@ -1205,7 +2342,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                                             if(status) status.textContent='Starting listening-only test...';
                                                                                             const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
                                                                                             try {
-                                                                                                const resp = await fetch("{{ url_for('auth.audiobookshelf_listen_test') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size: 200})});
+                                                                                                const resp = await fetch("{{ url_for('admin.audiobookshelf_listen_test') }}", {method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size: 200})});
                                                                                                 const j = await resp.json();
                                                                                                 if(j.ok){ try{ startInlineProgressPolling(j); }catch(e){}
                                                                                                     const to = j.progress_url || j.api_progress_url || '#'; if(to && to !== '#'){ setTimeout(()=>{ window.location.assign(to); }, 150); }
@@ -1219,7 +2356,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                                             if(status) status.textContent='Starting full sync...';
                                                                                             const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
                                                                                             try {
-                                                                                                const resp = await fetch("{{ url_for('auth.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
+                                                                                                const resp = await fetch("{{ url_for('admin.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
                                                                                                 const j = await resp.json();
                                                                                                 if(j.ok){ const queued = j.queued || (j.task_ids ? j.task_ids.length : 0);
                                                                                                     if(status) status.textContent = `Queued ${queued} user job${queued===1?'':'s'}...`;
@@ -1232,7 +2369,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                                 }
                                                                 window.__initAudiobookshelfPanel();
                                                         } catch(e) { console.warn('ABS panel init failed', e); }
-                                                }
+                        }
                         if(panel==='config'){
                             try { ensureServerConfigBindings(); } catch(e){ console.warn('Config bindings refresh failed', e); }
                         }
@@ -1261,6 +2398,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                     const maxTokens = document.getElementById('ai_max_tokens');
                                     const warn = document.getElementById('ai-max-tokens-warning');
                                     if(maxTokens && warn){ const toggle=()=>{ warn.style.display = parseInt(maxTokens.value||'0',10) > 16000 ? 'block':'none'; }; maxTokens.addEventListener('input', toggle); toggle(); }
+                                    if(typeof window.refreshScopedModelDropdowns === 'function'){
+                                        try { window.refreshScopedModelDropdowns(); } catch(_){}
+                                    }
                                 };
                             }
                             // Fallback test functions if inline script not executed
@@ -1280,18 +2420,87 @@ document.addEventListener('DOMContentLoaded', () => {
                                         fd.append('ollama_model', document.getElementById('ollama_model').value);
                                     }
                                     const results = document.getElementById('ai-test-results'); if(results) results.innerHTML='';
-                                    try { const resp=await fetch("{{ url_for('auth.test_ai_connection') }}",{method:'POST', body:fd}); const data=await resp.json(); if(results) results.innerHTML=`<div class="alert alert-${data.success?'success':'danger'} p-2 mb-0 small">${data.message||'Test complete'}</div>`; } catch(e){ if(results) results.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error testing connection.</div>'; }
+                                    try { const resp=await fetch("{{ url_for('admin.test_ai_connection') }}",{method:'POST', body:fd}); const data=await resp.json(); if(results) results.innerHTML=`<div class="alert alert-${data.success?'success':'danger'} p-2 mb-0 small">${data.message||'Test complete'}</div>`; } catch(e){ if(results) results.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error testing connection.</div>'; }
                                     btn.disabled=false; btn.innerHTML=original;
                                 };
                             }
                             if(typeof window.testOllamaConnection !== 'function'){
-                                window.testOllamaConnection = async function(btn){
-                                    const baseUrlInput=document.getElementById('ollama_base_url'); const select=document.getElementById('ollama_model'); const resultsDiv=document.getElementById('ollama-test-results');
-                                    if(!baseUrlInput||!select){return;} const original=btn?btn.innerHTML:''; if(btn){btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...';}
-                                    resultsDiv.innerHTML='<div class="text-muted small">Testing connection...</div>';
-                                    const fd=new FormData(); fd.append('ollama_base_url', baseUrlInput.value.trim()); const csrf=document.querySelector('input[name="csrf_token"]'); if(csrf) fd.append('csrf_token', csrf.value);
-                                    try { const resp=await fetch("{{ url_for('auth.test_ollama_connection') }}",{method:'POST', body: fd}); const data=await resp.json(); if(data.success && data.models){ select.innerHTML='<option value="">Select a model</option>'; data.models.forEach(m=>{ const opt=document.createElement('option'); opt.value=m.name||m; opt.textContent=(m.name?`${m.name} (${m.size})`:m); select.appendChild(opt); }); resultsDiv.innerHTML=`<div class="alert alert-success p-2 mb-0 small">Loaded ${data.models.length} models.</div>`;} else { resultsDiv.innerHTML=`<div class="alert alert-danger p-2 mb-0 small">${data.message||'Connection failed'}</div>`;} } catch(e){ resultsDiv.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Error contacting server.</div>'; }
-                                    if(btn){btn.disabled=false; btn.innerHTML=original;}
+                                window.testOllamaConnection = async function(btn, opts){
+                                    const options = opts || {};
+                                    const baseUrlInput = resolveElement(options.baseUrlInput) || document.getElementById('ollama_base_url');
+                                    const select = resolveElement(options.modelSelect) || document.getElementById('ollama_model');
+                                    const resultsDiv = resolveElement(options.resultsElement) || document.getElementById('ollama-test-results');
+                                    const baseValueRaw = options.baseUrl || (baseUrlInput ? baseUrlInput.value : '');
+                                    const baseValue = (baseValueRaw || '').trim();
+                                    if(!baseValue){
+                                        if(resultsDiv){
+                                            resultsDiv.classList.remove('d-none');
+                                            resultsDiv.innerHTML = '<div class="alert alert-warning p-2 mb-0 small">Set an Ollama base URL first.</div>';
+                                        }
+                                        return false;
+                                    }
+                                    const original=btn?btn.innerHTML:'';
+                                    if(btn){ btn.disabled=true; btn.innerHTML='<i class="bi bi-arrow-clockwise spin me-1"></i>Testing...'; }
+                                    const statusMsg = options.statusMessage || 'Testing connection...';
+                                    if(resultsDiv){
+                                        resultsDiv.classList.remove('d-none');
+                                        resultsDiv.innerHTML=`<div class="text-muted small">${statusMsg}</div>`;
+                                    }
+                                    const fd=new FormData();
+                                    fd.append('ollama_base_url', baseValue);
+                                    const csrf=document.querySelector('input[name="csrf_token"]');
+                                    if(csrf){
+                                        fd.append('csrf_token', csrf.value);
+                                    }
+                                    try {
+                                        const resp=await fetch("{{ url_for('admin.test_ollama_connection') }}",{method:'POST', body: fd});
+                                        const data=await resp.json();
+                                        if(data.success && data.models){
+                                            const normalized = [];
+                                            data.models.forEach(m => {
+                                                const name = typeof m === 'string' ? m : (m.name || '');
+                                                const label = typeof m === 'string' ? m : (m.size ? `${m.name} (${m.size})` : (m.name || ''));
+                                                if(!name){
+                                                    return;
+                                                }
+                                                normalized.push({ value: name, label });
+                                            });
+                                            const sortedModels = sortCatalogEntries(normalized);
+                                            if(select){
+                                                select.innerHTML = '<option value="">Select a model</option>';
+                                                sortedModels.forEach(item => {
+                                                    const opt=document.createElement('option');
+                                                    opt.value=item.value;
+                                                    opt.textContent=item.label || item.value;
+                                                    select.appendChild(opt);
+                                                });
+                                                if(options.defaultModel){
+                                                    select.value = options.defaultModel;
+                                                }
+                                            }
+                                            aiCatalogManager.set('ollama', sortedModels, options.channel || 'llm');
+                                            if(resultsDiv){
+                                                resultsDiv.innerHTML=`<div class="alert alert-success p-2 mb-0 small">Loaded ${sortedModels.length} model${sortedModels.length===1?'':'s'} from Ollama.</div>`;
+                                            }
+                                        } else {
+                                            if(resultsDiv){
+                                                const message = data && data.message ? data.message : 'Unable to load models from Ollama.';
+                                                resultsDiv.innerHTML = `<div class="alert alert-danger p-2 mb-0 small">${message}</div>`;
+                                            }
+                                        }
+                                        return !!(data && data.success);
+                                    } catch(err){
+                                        console.warn('Ollama test failed', err);
+                                        if(resultsDiv){
+                                            resultsDiv.innerHTML='<div class="alert alert-danger p-2 mb-0 small">Unexpected error contacting Ollama.</div>';
+                                        }
+                                        return false;
+                                    } finally {
+                                        if(btn){
+                                            btn.disabled = false;
+                                            btn.innerHTML = original || '<i class="bi bi-wifi me-1"></i>Test & Load Models';
+                                        }
+                                    }
                                 };
                             }
                             try { ensureServerAIBindings(); } catch(e){ console.warn('AI bindings refresh failed', e); }
@@ -1337,7 +2546,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                               .then(j=>{
                                                   if(status) status.textContent = (j.ok ? 'OK: ' : 'Fail: ') + (j.message || '');
                                                   // Reload panel with libraries list and rebind
-                                                  fetch("{{ url_for('auth.settings_server_partial', panel='audiobookshelf') }}?test=1")
+                                                  fetch("{{ url_for('admin.settings_server_partial', panel='audiobookshelf') }}?test=1")
                                                     .then(r=>r.text())
                                                     .then(html=>{ container.innerHTML = html; window.__initABSPanel(); });
                                               })
@@ -1349,7 +2558,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         syncTestBtn.addEventListener('click', function(){
                                             if(status) status.textContent = 'Starting test sync...';
                                             const headers = csrf ? {'X-CSRFToken': csrf, 'Content-Type':'application/json'} : {'Content-Type':'application/json'};
-                                            fetch("{{ url_for('auth.audiobookshelf_test_sync') }}", { method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5}) })
+                                            fetch("{{ url_for('admin.audiobookshelf_test_sync') }}", { method:'POST', headers, credentials:'same-origin', body: JSON.stringify({limit:5}) })
                                               .then(r=>r.json().catch(()=>({ok:false,message:'bad json'})))
                                               .then(j=>{
                                                   if(j.ok && j.progress_url){
@@ -1366,7 +2575,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         listenTestBtn.addEventListener('click', function(){
                                             if(status) status.textContent = 'Starting listening-only test...';
                                             const headers = csrf ? {'X-CSRFToken': csrf, 'Content-Type':'application/json'} : {'Content-Type':'application/json'};
-                                            fetch("{{ url_for('auth.audiobookshelf_listen_test') }}", { method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size:200}) })
+                                            fetch("{{ url_for('admin.audiobookshelf_listen_test') }}", { method:'POST', headers, credentials:'same-origin', body: JSON.stringify({page_size:200}) })
                                               .then(r=>r.json().catch(()=>({ok:false,message:'bad json'})))
                                               .then(j=>{
                                                   if(j.ok && j.progress_url){ if(status) status.innerHTML = 'Listening sync started. <a href="'+j.progress_url+'" class="link-primary">View progress</a>'; }
@@ -1375,6 +2584,21 @@ document.addEventListener('DOMContentLoaded', () => {
                                               .catch(()=>{ if(status) status.textContent = 'Failed to start listening-only test'; });
                                         });
                                         listenTestBtn.dataset.bound = '1';
+                                    }
+                                    if(fullSyncBtn && !fullSyncBtn.dataset.bound){
+                                        fullSyncBtn.addEventListener('click', async function(){
+                                            if(status) status.textContent = 'Starting full sync...';
+                                            const headers={'Content-Type':'application/json'}; const tok=getCsrf(); if(tok) headers['X-CSRFToken']=tok;
+                                            try {
+                                                const resp = await fetch("{{ url_for('admin.audiobookshelf_full_sync') }}", {method:'POST', headers, credentials:'same-origin'});
+                                                const j = await resp.json();
+                                                if(j.ok){ const queued = j.queued || (j.task_ids ? j.task_ids.length : 0);
+                                                    if(status) status.textContent = `Queued ${queued} user job${queued===1?'':'s'}...`;
+                                                    if (j.api_progress_url) { try{ startInlineProgressPolling(j); }catch(e){} setTimeout(()=>{ window.location.assign(j.progress_url); }, 200); }
+                                                } else { if(status) status.textContent = 'Failed: ' + (j.message||''); }
+                                            } catch(e){ if(status) status.textContent='Failed to start full sync'; }
+                                        });
+                                        fullSyncBtn.dataset.bound = '1';
                                     }
                                 };
                             }
@@ -1386,7 +2610,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 window.editUserInline = function(uid){
                                     const container = document.getElementById('serverDynamicContainer');
                                     if(!container) return;
-                                    const url = `{{ url_for('auth.settings_server_partial', panel='user_edit') }}?user_id=`+encodeURIComponent(uid);
+                                    const url = `{{ url_for('admin.settings_server_partial', panel='user_edit') }}?user_id=`+encodeURIComponent(uid);
                                     container.innerHTML = '<div class="text-muted small p-3">Loading editor...</div>';
                                     fetch(url, {credentials:'same-origin'}).then(r=>{ if(!r.ok) throw new Error(r.status); return r.text();}).then(html=> { container.innerHTML = html; ensureUserEditDelegation(); }).catch(err=> container.innerHTML='<div class="text-danger small p-3">Failed to load editor ('+err+').</div>');
                                 };
@@ -1394,7 +2618,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             if(typeof window.loadServerUsersFull !== 'function'){
                                 window.loadServerUsersFull = function(search){
                                     const container = document.getElementById('serverDynamicContainer'); if(!container) return;
-                                    const urlObj = new URL("{{ url_for('auth.settings_server_partial', panel='users') }}", window.location.origin);
+                                    const urlObj = new URL("{{ url_for('admin.settings_server_partial', panel='users') }}", window.location.origin);
                                     if(search) urlObj.searchParams.set('search', search);
                                     container.innerHTML = '<div class="text-muted small p-3">Loading...</div>';
                                     fetch(urlObj.toString()).then(r=>r.text()).then(html=> container.innerHTML=html).catch(()=> container.innerHTML='<div class="text-danger small p-3">Failed to load users.</div>');
@@ -1405,7 +2629,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             if(typeof window.submitUserEdit !== 'function'){
                                 window.submitUserEdit = function(form){
                                     const fd = new FormData(form);
-                                    fetch(`{{ url_for('auth.settings_server_partial', panel='user_edit') }}`, {method:'POST', body:fd, credentials:'same-origin'})
+                                    fetch(`{{ url_for('admin.settings_server_partial', panel='user_edit') }}`, {method:'POST', body:fd, credentials:'same-origin'})
                                       .then(r=>r.text())
                                       .then(html=> document.getElementById('serverDynamicContainer').innerHTML = html)
                                       .catch(()=> alert('Failed to submit.'));

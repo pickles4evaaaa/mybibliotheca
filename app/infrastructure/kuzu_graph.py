@@ -297,6 +297,28 @@ class KuzuGraphDB:
                                     logger.info("Added %s column to Book table", column_name)
                             except Exception as alter_e:
                                 print(f"Note: Could not add {column_name} to Book table: {alter_e}")
+                
+                    # Add RAG ingestion tracking columns if missing
+                    rag_columns = [
+                        ("rag_ingest_status", "STRING"),
+                        ("rag_ingest_error", "STRING"),
+                        ("rag_ingested_at", "TIMESTAMP"),
+                        ("rag_chunk_count", "INT64"),
+                        ("rag_source_url", "STRING"),
+                        ("rag_source_format", "STRING"),
+                    ]
+                    for column_name, column_type in rag_columns:
+                        try:
+                            if self._connection:
+                                self._connection.execute(f"MATCH (b:Book) RETURN b.{column_name} LIMIT 1")
+                        except Exception as e:
+                            if "Cannot find property" in str(e) and column_name in str(e):
+                                try:
+                                    if self._connection:
+                                        self._connection.execute(f"ALTER TABLE Book ADD {column_name} {column_type}")
+                                        logger.info("Added %s column to Book table", column_name)
+                                except Exception as alter_e:
+                                    print(f"Note: Could not add {column_name} to Book table: {alter_e}")
                         
             else:
                 logger.info("🔧 Creating new database schema...")
@@ -364,6 +386,12 @@ class KuzuGraphDB:
                     audio_duration_ms INT64,
                     media_type STRING,
                     audiobookshelf_updated_at STRING,
+                    rag_ingest_status STRING,
+                    rag_ingest_error STRING,
+                    rag_ingested_at TIMESTAMP,
+                    rag_chunk_count INT64,
+                    rag_source_url STRING,
+                    rag_source_format STRING,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP,
                     PRIMARY KEY(id)

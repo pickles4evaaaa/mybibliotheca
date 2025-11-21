@@ -29,7 +29,7 @@ def get_ai_service():
         cfg = dict(getattr(current_app, 'config', {})) if current_app else {}
     except Exception:
         cfg = {}
-    return AIService(cfg)
+    return AIService(cfg, task_scope="genre")
 
 
 @dataclass

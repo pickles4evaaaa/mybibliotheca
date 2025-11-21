@@ -456,8 +456,8 @@
                                         <div class="col-md-8">
                                             <label for="ollama_base_url" class="form-label">Base URL</label>
                                             <div class="input-group">
-                                                <input type="url" class="form-control" id="ollama_base_url" name="ollama_base_url" 
-                                                       value="{{ ai_config.get('OLLAMA_BASE_URL', 'http://localhost:11434/v1') if ai_config else 'http://localhost:11434/v1' }}">
+                                                      <input type="url" class="form-control" id="ollama_base_url" name="ollama_base_url" 
+                                                          value="{{ ai_config.get('OLLAMA_BASE_URL', 'http://localhost:11434') if ai_config else 'http://localhost:11434' }}">
                                                 <button type="button" class="btn btn-outline-secondary" onclick="testOllamaConnection()">
                                                     <i class="bi bi-wifi me-1"></i>Test & Load Models
                                                 </button>
@@ -485,6 +485,84 @@
                                     </div>
                                     <!-- Ollama Test Results Area -->
                                     <div id="ollama-test-results" class="mt-3"></div>
+                                </div>
+
+                                <!-- Task-specific Model Overrides -->
+                                {% set _openai_model = ai_config.get('OPENAI_MODEL', 'gpt-4o') %}
+                                {% set _ollama_model = ai_config.get('OLLAMA_MODEL', 'llama3.2-vision:11b') %}
+                                {% set _vision_provider = (ai_config.get('AI_VISION_PROVIDER') or ai_config.get('AI_PROVIDER') or 'openai') %}
+                                {% set _vision_model = ai_config.get('AI_VISION_MODEL') or (_openai_model if _vision_provider == 'openai' else _ollama_model) %}
+                                {% set _genre_provider = (ai_config.get('AI_GENRE_PROVIDER') or ai_config.get('AI_PROVIDER') or 'openai') %}
+                                {% set _genre_model = ai_config.get('AI_GENRE_MODEL') or (_openai_model if _genre_provider == 'openai' else _ollama_model) %}
+                                {% set _chat_provider = (ai_config.get('AI_CHAT_PROVIDER') or ai_config.get('AI_PROVIDER') or 'openai') %}
+                                {% set _chat_model = ai_config.get('AI_CHAT_MODEL') or (_openai_model if _chat_provider == 'openai' else _ollama_model) %}
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-dark mb-3">Task-Specific Model Overrides</h6>
+                                    <div class="row g-3 align-items-stretch">
+                                        <div class="col-lg-4">
+                                            <div class="border rounded p-3 h-100">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <span class="fw-semibold">Vision Tasks</span>
+                                                    <span class="badge text-bg-primary">Covers &amp; OCR</span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Provider</label>
+                                                    <select class="form-select form-select-sm" name="ai_vision_provider" id="ai_vision_provider">
+                                                        <option value="openai" {{ 'selected' if _vision_provider == 'openai' else '' }}>OpenAI</option>
+                                                        <option value="ollama" {{ 'selected' if _vision_provider == 'ollama' else '' }}>Ollama</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Model ID</label>
+                                                    <input type="text" class="form-control form-control-sm" name="ai_vision_model" id="ai_vision_model" value="{{ _vision_model }}" placeholder="llama3.2-vision:11b" />
+                                                </div>
+                                                <small class="text-muted">Used for book cover extraction, barcode OCR, and other image-heavy workflows.</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <div class="border rounded p-3 h-100">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <span class="fw-semibold">Genre Suggestions</span>
+                                                    <span class="badge text-bg-info">Metadata AI</span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Provider</label>
+                                                    <select class="form-select form-select-sm" name="ai_genre_provider" id="ai_genre_provider">
+                                                        <option value="openai" {{ 'selected' if _genre_provider == 'openai' else '' }}>OpenAI</option>
+                                                        <option value="ollama" {{ 'selected' if _genre_provider == 'ollama' else '' }}>Ollama</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Model ID</label>
+                                                    <input type="text" class="form-control form-control-sm" name="ai_genre_model" id="ai_genre_model" value="{{ _genre_model }}" placeholder="gpt-4o-mini" />
+                                                </div>
+                                                <small class="text-muted">Powers taxonomy analysis and automatic category proposals.</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <div class="border rounded p-3 h-100">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <span class="fw-semibold">Library Chat</span>
+                                                    <span class="badge text-bg-secondary">Reader Q&amp;A</span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Provider</label>
+                                                    <select class="form-select form-select-sm" name="ai_chat_provider" id="ai_chat_provider">
+                                                        <option value="openai" {{ 'selected' if _chat_provider == 'openai' else '' }}>OpenAI</option>
+                                                        <option value="ollama" {{ 'selected' if _chat_provider == 'ollama' else '' }}>Ollama</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label class="form-label">Model ID</label>
+                                                    <input type="text" class="form-control form-control-sm" name="ai_chat_model" id="ai_chat_model" value="{{ _chat_model }}" placeholder="gpt-4o-mini" />
+                                                </div>
+                                                <div>
+                                                    <label class="form-label">System Prompt</label>
+                                                    <textarea class="form-control" name="ai_chat_system_prompt" id="ai_chat_system_prompt" rows="4">{{ ai_config.get('AI_CHAT_SYSTEM_PROMPT', 'You are MyBibliotheca\'s helpful librarian.')|trim }}</textarea>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <!-- General AI Settings -->
@@ -560,6 +638,129 @@
                                 }
                             });
                             </script>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vector Search / RAG Configuration -->
+                <div class="accordion-item shadow-sm mb-3">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed bg-secondary text-white" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#collapseRAGConfig"
+                                aria-expanded="false" aria-controls="collapseRAGConfig">
+                            <i class="bi bi-diagram-3 me-2"></i>Vector Search &amp; RAG
+                        </button>
+                    </h2>
+                    <div id="collapseRAGConfig" class="accordion-collapse collapse" data-bs-parent="#adminSettingsAccordion">
+                        <div class="accordion-body">
+                            <p class="text-muted mb-3">Configure the embedded ChromaDB instance used for Retrieval-Augmented Generation workflows.</p>
+                            <form method="POST" action="{{ url_for('admin.update_rag_settings') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                                <div class="form-check form-switch mb-4">
+                                    <input class="form-check-input" type="checkbox" id="rag_enabled" name="rag_enabled" {% if rag_config.get('RAG_ENABLED') == 'true' %}checked{% endif %}>
+                                    <label class="form-check-label" for="rag_enabled">Enable Vector Search &amp; Retrieval</label>
+                                </div>
+
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Chroma Directory</label>
+                                        <input type="text" class="form-control" name="rag_db_path" value="{{ rag_config.get('RAG_DB_PATH', 'data/chroma') }}">
+                                        <small class="form-text text-muted">Directory is created under the project root (default: <code>data/chroma</code>). Telemetry is disabled automatically.</small>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Collection Name</label>
+                                        <input type="text" class="form-control" name="rag_collection_name" value="{{ rag_config.get('RAG_COLLECTION_NAME', 'book-snippets') }}">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Distance Metric</label>
+                                        {% set metric = rag_config.get('RAG_DISTANCE_METRIC', 'cosine') %}
+                                        <select class="form-select" name="rag_distance_metric">
+                                            <option value="cosine" {% if metric == 'cosine' %}selected{% endif %}>Cosine</option>
+                                            <option value="l2" {% if metric == 'l2' %}selected{% endif %}>Euclidean (L2)</option>
+                                            <option value="ip" {% if metric == 'ip' %}selected{% endif %}>Inner Product</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Chunk Size (words)</label>
+                                        <input type="number" min="100" max="4000" class="form-control" name="rag_chunk_size" value="{{ rag_config.get('RAG_CHUNK_SIZE', '800') }}">
+                                        <small class="form-text text-muted">Suggested default 800 words keeps ~3-4 paragraphs per chunk.</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Chunk Overlap (words)</label>
+                                        <input type="number" min="0" max="2000" class="form-control" name="rag_chunk_overlap" value="{{ rag_config.get('RAG_CHUNK_OVERLAP', '120') }}">
+                                        <small class="form-text text-muted">Leave at ~15% of chunk size to preserve flow.</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Embedding Dimensions</label>
+                                        <input type="number" min="128" max="4096" class="form-control" name="rag_embedding_dimensions" value="{{ rag_config.get('RAG_EMBEDDING_DIMENSIONS', '768') }}">
+                                        <small class="form-text text-muted">Match the embedding model output (768 for <code>nomic-embed-text</code>).</small>
+                                    </div>
+                                </div>
+
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-secondary mb-2">LLM Provider</h6>
+                                    {% set rag_llm_provider = rag_config.get('RAG_LLM_PROVIDER', 'ollama') %}
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">Provider</label>
+                                            <select class="form-select" name="rag_llm_provider" id="ragLlmProvider">
+                                                <option value="ollama" {% if rag_llm_provider == 'ollama' %}selected{% endif %}>Ollama (Local)</option>
+                                                <option value="openai" {% if rag_llm_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Base URL</label>
+                                            <input type="text" class="form-control" name="rag_llm_base_url" value="{{ rag_config.get('RAG_LLM_BASE_URL', 'http://localhost:11434') }}">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Model</label>
+                                            <input type="text" class="form-control" name="rag_llm_model" value="{{ rag_config.get('RAG_LLM_MODEL', 'llama3.1:8b-instruct') }}">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">API Key (cloud providers)</label>
+                                            <input type="password" class="form-control" name="rag_llm_api_key" value="{{ rag_config.get('RAG_LLM_API_KEY', '') }}" autocomplete="off">
+                                            <small class="form-text text-muted">Leave blank for Ollama or other local endpoints.</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-secondary mb-2">Embedding Provider</h6>
+                                    {% set rag_embedding_provider = rag_config.get('RAG_EMBEDDING_PROVIDER', 'ollama') %}
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">Provider</label>
+                                            <select class="form-select" name="rag_embedding_provider" id="ragEmbeddingProvider">
+                                                <option value="ollama" {% if rag_embedding_provider == 'ollama' %}selected{% endif %}>Ollama (Local)</option>
+                                                <option value="openai" {% if rag_embedding_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Base URL</label>
+                                            <input type="text" class="form-control" name="rag_embedding_base_url" value="{{ rag_config.get('RAG_EMBEDDING_BASE_URL', 'http://localhost:11434') }}">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Model</label>
+                                            <input type="text" class="form-control" name="rag_embedding_model" value="{{ rag_config.get('RAG_EMBEDDING_MODEL', 'nomic-embed-text') }}">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">API Key (optional)</label>
+                                            <input type="password" class="form-control" name="rag_embedding_api_key" value="{{ rag_config.get('RAG_EMBEDDING_API_KEY', '') }}" autocomplete="off">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="alert alert-info mt-4">
+                                    <strong>Chunking guidance:</strong> 800-word chunks with ~120-word overlap tested well for long-form books &mdash; enough context for QA prompts without diluting relevance. Adjust only if your content is unusually short or long-form transcripts.
+                                </div>
+
+                                <div class="mt-4 text-end">
+                                    <button type="submit" class="btn btn-secondary"><i class="bi bi-check2 me-1"></i>Save Vector Settings</button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 </div>

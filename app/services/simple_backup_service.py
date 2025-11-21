@@ -93,6 +93,7 @@ class SimpleBackupService:
         self.uploads_dir = self.data_dir / "uploads"
         self.env_file = self.base_dir / ".env"
         self.ai_config_file = self.data_dir / "ai_config.json"
+        self.rag_config_file = self.data_dir / "rag_config.json"
         
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -371,6 +372,8 @@ class SimpleBackupService:
                             settings_added += 1
                         if self.ai_config_file.exists():
                             zipf.write(self.ai_config_file, "config/ai_config.json")
+                        if self.rag_config_file.exists():
+                            zipf.write(self.rag_config_file, "config/rag_config.json")
                             settings_added += 1
                         if self.backup_settings_file.exists():
                             zipf.write(self.backup_settings_file, "config/backup_settings.json")
@@ -501,6 +504,8 @@ class SimpleBackupService:
                                 zipf.write(self.env_file, f"config/.env")
                             if self.ai_config_file.exists():
                                 zipf.write(self.ai_config_file, f"config/ai_config.json")
+                            if self.rag_config_file.exists():
+                                zipf.write(self.rag_config_file, f"config/rag_config.json")
                             if self.backup_settings_file.exists():
                                 zipf.write(self.backup_settings_file, f"config/backup_settings.json")
                         except Exception as se:
