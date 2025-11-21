@@ -38,12 +38,23 @@ class KuzuUserService:
                     id=user_data['id'],
                     username=user_data['username'],
                     email=user_data['email'],
+                    password_hash=user_data.get('password_hash', ''),
                     display_name=user_data.get('display_name'),
                     bio=user_data.get('bio'),
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
+                    password_must_change=user_data.get('password_must_change', False),
+                    failed_login_attempts=user_data.get('failed_login_attempts', 0),
+                    share_current_reading=user_data.get('share_current_reading', True),
+                    share_reading_activity=user_data.get('share_reading_activity', True),
+                    share_library=user_data.get('share_library', False),
+                    reading_streak_offset=user_data.get('reading_streak_offset', 0),
+                    locked_until=user_data.get('locked_until'),
+                    last_login=user_data.get('last_login'),
+                    password_changed_at=user_data.get('password_changed_at'),
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc),
+                    updated_at=user_data.get('updated_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -65,7 +76,17 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
+                    password_must_change=user_data.get('password_must_change', False),
+                    failed_login_attempts=user_data.get('failed_login_attempts', 0),
+                    share_current_reading=user_data.get('share_current_reading', True),
+                    share_reading_activity=user_data.get('share_reading_activity', True),
+                    share_library=user_data.get('share_library', False),
+                    reading_streak_offset=user_data.get('reading_streak_offset', 0),
+                    locked_until=user_data.get('locked_until'),
+                    last_login=user_data.get('last_login'),
+                    password_changed_at=user_data.get('password_changed_at'),
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc),
+                    updated_at=user_data.get('updated_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:
@@ -87,7 +108,17 @@ class KuzuUserService:
                     timezone=user_data.get('timezone', 'UTC'),
                     is_admin=user_data.get('is_admin', False),
                     is_active=user_data.get('is_active', True),
-                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc)
+                    password_must_change=user_data.get('password_must_change', False),
+                    failed_login_attempts=user_data.get('failed_login_attempts', 0),
+                    share_current_reading=user_data.get('share_current_reading', True),
+                    share_reading_activity=user_data.get('share_reading_activity', True),
+                    share_library=user_data.get('share_library', False),
+                    reading_streak_offset=user_data.get('reading_streak_offset', 0),
+                    locked_until=user_data.get('locked_until'),
+                    last_login=user_data.get('last_login'),
+                    password_changed_at=user_data.get('password_changed_at'),
+                    created_at=user_data.get('created_at') or datetime.now(dt_timezone.utc),
+                    updated_at=user_data.get('updated_at') or datetime.now(dt_timezone.utc)
                 )
                 return user
             return None
@@ -296,7 +327,17 @@ class KuzuUserService:
                 'bio': user.bio,
                 'timezone': user.timezone,
                 'is_admin': user.is_admin,
-                'is_active': user.is_active
+                'is_active': user.is_active,
+                'password_must_change': user.password_must_change,
+                'failed_login_attempts': user.failed_login_attempts,
+                'share_current_reading': user.share_current_reading,
+                'share_reading_activity': user.share_reading_activity,
+                'share_library': user.share_library,
+                'reading_streak_offset': user.reading_streak_offset,
+                'locked_until': user.locked_until,
+                'last_login': user.last_login,
+                'password_changed_at': user.password_changed_at,
+                'updated_at': datetime.now(dt_timezone.utc)
             }
             
             updated_user_data = await self.kuzu_service.update_user(user.id or "", user_data)
@@ -311,7 +352,17 @@ class KuzuUserService:
                     timezone=updated_user_data.get('timezone', 'UTC'),
                     is_admin=updated_user_data.get('is_admin', False),
                     is_active=updated_user_data.get('is_active', True),
-                    created_at=updated_user_data.get('created_at') or datetime.now(dt_timezone.utc)
+                    password_must_change=updated_user_data.get('password_must_change', False),
+                    failed_login_attempts=updated_user_data.get('failed_login_attempts', 0),
+                    share_current_reading=updated_user_data.get('share_current_reading', True),
+                    share_reading_activity=updated_user_data.get('share_reading_activity', True),
+                    share_library=updated_user_data.get('share_library', False),
+                    reading_streak_offset=updated_user_data.get('reading_streak_offset', 0),
+                    locked_until=updated_user_data.get('locked_until'),
+                    last_login=updated_user_data.get('last_login'),
+                    password_changed_at=updated_user_data.get('password_changed_at'),
+                    created_at=updated_user_data.get('created_at') or datetime.now(dt_timezone.utc),
+                    updated_at=updated_user_data.get('updated_at') or datetime.now(dt_timezone.utc)
                 )
             return None
         except Exception as e:

@@ -324,27 +324,18 @@ class KuzuIntegrationService:
         
         try:
             user_repo = self._get_user_repo()
-            # Get the existing user first
-            existing_user_raw = await user_repo.get_by_id(user_id)
-            if not existing_user_raw:
-                logger.error(f"User {user_id} not found for update")
+            
+            # Call repository update with the provided data
+            updated_user_raw = await user_repo.update(user_id, user_data)
+            if not updated_user_raw:
+                logger.error(f"Failed to update user {user_id}")
                 return None
-
-            # Normalize to dict so we can modify safely
-            if isinstance(existing_user_raw, dict):
-                mutable = dict(existing_user_raw)
+            
+            # Convert to dict format
+            if isinstance(updated_user_raw, dict):
+                return dict(updated_user_raw)
             else:
-                # Extract attributes into dict
-                mutable = self._user_to_dict(existing_user_raw)
-
-            # Apply incoming changes (only known keys)
-            for key in ['username','email','password_hash','display_name','bio','timezone','is_admin','is_active']:
-                if key in user_data:
-                    mutable[key] = user_data[key]
-
-            # No underlying persistence yet (repository lacks update) so log at INFO not WARNING
-            logger.info("User update requested but persistence not implemented; returning merged view only")
-            return mutable
+                return self._user_to_dict(updated_user_raw)
             
         except Exception as e:
             logger.error(f"Failed to update user {user_id}: {e}")

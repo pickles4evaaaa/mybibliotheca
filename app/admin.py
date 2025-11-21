@@ -1661,8 +1661,8 @@ def reset_user_password(user_id):
         
         if form.validate_on_submit():
             try:
-                # Update password using service - would need implementation
-                # user.set_password(form.new_password.data)
+                # Update password using service
+                user.set_password(form.new_password.data)
                 # Set force password change if requested
                 if form.force_change.data:
                     user.password_must_change = True
@@ -1672,7 +1672,7 @@ def reset_user_password(user_id):
                 user_service.update_user_sync(user)
                 
                 force_msg = " User will be required to change password on next login." if form.force_change.data else ""
-                flash(f'Password reset functionality not fully implemented for Kuzu backend. User {user.username} would be updated.{force_msg}', 'warning')
+                flash(f'Password has been reset for user {user.username}.{force_msg}', 'success')
                 return redirect(url_for('admin.user_detail', user_id=user.id))
             except ValueError as e:
                 flash(str(e), 'error')
