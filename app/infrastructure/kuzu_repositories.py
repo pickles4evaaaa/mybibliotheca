@@ -314,8 +314,17 @@ class KuzuUserRepository:
             return []
 
     async def update(self, user_id: str, updates: Dict[str, Any]) -> Optional[Any]:
-        """Update an existing user with the provided fields."""
+        """Update an existing user with the provided fields.
+        
+        Note: This method does not enforce authorization checks. Authorization
+        must be handled by the service layer before calling this method.
+        """
         try:
+            # Validate user_id parameter
+            if not user_id or not isinstance(user_id, str):
+                logger.error("❌ Invalid user_id provided for update")
+                return None
+            
             # First check if user exists
             existing_user = await self.get_by_id(user_id)
             if not existing_user:
@@ -323,6 +332,8 @@ class KuzuUserRepository:
                 return None
             
             # Build SET clause dynamically for provided fields
+            # Note: is_admin and is_active are security-sensitive fields
+            # Authorization should be enforced at the service/route layer
             allowed_fields = [
                 'username', 'email', 'password_hash', 'display_name', 'bio', 
                 'timezone', 'is_admin', 'is_active', 'password_must_change',
