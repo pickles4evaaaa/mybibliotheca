@@ -325,21 +325,74 @@
     background-color: #0d6efd;
     color: white;
   }
+
+  /* Standalone search box styles */
+  .library-search-box {
+    max-width: 400px;
+    flex: 1;
+  }
+
+  .library-search-box input {
+    border-radius: 20px;
+    padding: 0.5rem 1rem;
+    border: 1px solid #dee2e6;
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
+    transition: all 0.2s ease;
+  }
+
+  .library-search-box input:focus {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+  }
+
+  [data-theme="dark"] .library-search-box input {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+  }
+
+  [data-theme="dark"] .library-search-box input:focus {
+    border-color: #6b5b73;
+    box-shadow: 0 0 0 0.2rem rgba(107, 91, 115, 0.25);
+  }
+
+  @media (max-width: 768px) {
+    .library-search-box {
+      max-width: 100%;
+      margin-top: 1rem;
+    }
+  }
 </style>
 
 <div class="container-fluid px-4 py-4">
-    <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h2 mb-0">
-            <i class="bi bi-book me-2"></i>My Library
-        </h1>
-        <div class="btn-group">
-            <a href="{{ url_for('stats.library_journey') }}" class="btn btn-outline-primary">
-                <i class="bi bi-diagram-3 me-1"></i>Journey Timeline
-            </a>
-            <a href="{{ url_for('stats.index') }}" class="btn btn-outline-secondary">
-                <i class="bi bi-graph-up me-1"></i>Full Stats
-            </a>
+    <!-- Page Header with Search -->
+    <div class="mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <h1 class="h2 mb-0">
+                <i class="bi bi-book me-2"></i>My Library
+            </h1>
+            <form method="GET" action="{{ url_for('main.library') }}" class="library-search-box">
+                <input type="hidden" name="status_filter" value="{{ current_status_filter or 'all' }}">
+                {% if current_category %}<input type="hidden" name="category" value="{{ current_category }}">{% endif %}
+                {% if current_publisher %}<input type="hidden" name="publisher" value="{{ current_publisher }}">{% endif %}
+                {% if current_language %}<input type="hidden" name="language" value="{{ current_language }}">{% endif %}
+                {% if current_location %}<input type="hidden" name="location" value="{{ current_location }}">{% endif %}
+                {% if current_media_type %}<input type="hidden" name="media_type" value="{{ current_media_type }}">{% endif %}
+                {% if current_sort %}<input type="hidden" name="sort" value="{{ current_sort }}">{% endif %}
+                <input type="text" class="form-control" name="search" 
+                       value="{{ current_search }}" 
+                       placeholder="Search books by title, author, or description..."
+                       aria-label="Search library">
+            </form>
+            <div class="btn-group">
+                <a href="{{ url_for('stats.library_journey') }}" class="btn btn-outline-primary">
+                    <i class="bi bi-diagram-3 me-1"></i>Journey Timeline
+                </a>
+                <a href="{{ url_for('stats.index') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-graph-up me-1"></i>Full Stats
+                </a>
+            </div>
         </div>
     </div>
     <!-- Library pagination meta (for JS) -->
@@ -418,12 +471,8 @@
                     <div class="card-body">
                         <form method="GET" id="filter-form">
                             <input type="hidden" name="status_filter" id="status_filter" value="{{ current_status_filter or 'all' }}">
+                            {% if current_search %}<input type="hidden" name="search" value="{{ current_search }}">{% endif %}
                             <div class="row g-3">
-                                <div class="col-md-3">
-                                    <label for="search" class="form-label">Search</label>
-                                    <input type="text" class="form-control" id="search" name="search" 
-                                           value="{{ current_search }}" placeholder="Title, author, description...">
-                                </div>
                                 <div class="col-md-3">
                                     <label for="category" class="form-label">{{ get_genre_term() }}</label>
                                     <div class="dropdown-search-wrapper">

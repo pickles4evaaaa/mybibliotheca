@@ -2025,17 +2025,21 @@ def library():
         filtered_books.sort(key=lambda x: get_author_last_first(x).lower(), reverse=True)
     elif sort_option == 'date_added_desc':
         # Sort by date added (newest first) - use added_at or created_at
+        # Use title as secondary key for stable sorting when timestamps are identical (bulk imports)
         filtered_books.sort(key=lambda x: (
             x.get('added_at') or x.get('created_at') or '' 
             if isinstance(x, dict) 
-            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or ''
+            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or '',
+            (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower()
         ), reverse=True)
     elif sort_option == 'date_added_asc':
         # Sort by date added (oldest first)
+        # Use title as secondary key for stable sorting when timestamps are identical (bulk imports)
         filtered_books.sort(key=lambda x: (
             x.get('added_at') or x.get('created_at') or '' 
             if isinstance(x, dict) 
-            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or ''
+            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or '',
+            (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower()
         ))
     elif sort_option == 'publication_date_desc':
         # Sort by publication date (newest first) - handle various date formats

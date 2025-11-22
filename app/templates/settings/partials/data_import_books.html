@@ -4,16 +4,10 @@
     <strong>Import Books</strong>
   </div>
   <div class="card-body">
-    <p class="text-muted small">Upload a CSV/TSV of books. We'll analyze headers and let you map fields before committing.</p>
-    <form id="importBooksForm" enctype="multipart/form-data" method="post" action="{{ url_for('import.import_books') }}" target="_blank">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-      <div class="mb-3">
-        <label for="booksFile" class="form-label">Select file</label>
-        <input class="form-control" type="file" id="booksFile" name="file" accept=".csv,.tsv,.txt" required>
-      </div>
-      <div class="d-flex flex-wrap gap-2">
-        <button type="submit" class="btn btn-success"><i class="bi bi-upload"></i> Start Import (opens workflow)</button>
-      </div>
-    </form>
+    <p class="text-muted small">Import books from CSV/TSV files with field mapping and validation.</p>
+    <p class="mb-3">Use the dedicated import workflow page to upload and process your book data files.</p>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{{ url_for('import.import_books') }}" class="btn btn-success"><i class="bi bi-upload me-1"></i> Go to Import Books Page</a>
+    </div>
   </div>
 </div>
