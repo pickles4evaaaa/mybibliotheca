@@ -313,6 +313,80 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to get users: {e}")
             return []
 
+    async def update(self, user_id: str, updates: Dict[str, Any]) -> Optional[Any]:
+        """Update an existing user with the provided fields.
+        
+        Note: This method does not enforce authorization checks. Authorization
+        must be handled by the service layer before calling this method.
+        """
+        try:
+            # Validate user_id parameter
+            if not user_id or not isinstance(user_id, str):
+                logger.error("❌ Invalid user_id provided for update")
+                return None
+            
+            # First check if user exists
+            existing_user = await self.get_by_id(user_id)
+            if not existing_user:
+                logger.error(f"❌ User {user_id} not found for update")
+                return None
+            
+            # Build SET clause dynamically for provided fields
+            # Note: is_admin and is_active are security-sensitive fields
+            # Authorization should be enforced at the service/route layer
+            allowed_fields = [
+                'username', 'email', 'password_hash', 'display_name', 'bio', 
+                'timezone', 'is_admin', 'is_active', 'password_must_change',
+                'failed_login_attempts', 'share_current_reading', 'share_reading_activity',
+                'share_library', 'reading_streak_offset'
+            ]
+            
+            set_clauses = []
+            params = {'user_id': user_id}
+            
+            for field in allowed_fields:
+                if field in updates:
+                    set_clauses.append(f"u.{field} = ${field}")
+                    params[field] = updates[field]
+            
+            # Handle timestamp fields separately
+            timestamp_fields = ['locked_until', 'last_login', 'password_changed_at', 'updated_at']
+            for field in timestamp_fields:
+                if field in updates:
+                    value = updates[field]
+                    if value is not None:
+                        # Convert datetime to ISO string for Kuzu timestamp
+                        if hasattr(value, 'isoformat'):
+                            params[f'{field}_str'] = value.isoformat()
+                        else:
+                            params[f'{field}_str'] = value
+                        set_clauses.append(f"u.{field} = timestamp(${field}_str)")
+                    else:
+                        set_clauses.append(f"u.{field} = NULL")
+            
+            if not set_clauses:
+                logger.warning(f"No valid fields to update for user {user_id}")
+                return existing_user
+            
+            # Build and execute update query
+            update_query = f"""
+            MATCH (u:User {{id: $user_id}})
+            SET {', '.join(set_clauses)}
+            RETURN u
+            """
+            
+            result = self.safe_manager.execute_query(update_query, params)
+            result_data = _convert_query_result_to_list(result)
+            
+            if result_data:
+                logger.info(f"✅ Updated user: {user_id}")
+                return result_data[0]['u']
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to update user {user_id}: {e}")
+            return None
+
     async def delete(self, user_id: str) -> bool:
         """Delete a user by ID (DETACH DELETE). Returns True only if user existed."""
         try:
