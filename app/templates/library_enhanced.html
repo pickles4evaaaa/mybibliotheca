@@ -670,23 +670,25 @@
 
                                     <!-- Reading Status Badge -->
                                     <div class="mb-2">
-                                        {% if book.reading_status in ['reading', 'currently_reading'] %}
+                                        {% set display_status = book.normalized_reading_status if book.normalized_reading_status is not none else (book.reading_status or '') %}
+                                        {% if display_status in ['reading', 'currently_reading'] %}
                                             <span class="badge bg-warning text-dark">📖 Reading</span>
-                                        {% elif book.reading_status == 'read' %}
+                                        {% elif display_status == 'read' %}
                                             <span class="badge bg-success">✅ Read</span>
-                                        {% elif book.reading_status == 'plan_to_read' %}
+                                        {% elif display_status == 'plan_to_read' %}
                                             <span class="badge bg-info">📚 Plan to Read</span>
-                                        {% elif book.reading_status == 'on_hold' %}
+                                        {% elif display_status == 'on_hold' %}
                                             <span class="badge bg-secondary">⏸️ On Hold</span>
-                                        {% elif book.reading_status == 'did_not_finish' %}
+                                        {% elif display_status == 'did_not_finish' %}
                                             <span class="badge bg-danger">❌ DNF</span>
                                         {% endif %}
 
-                                        {% if book.ownership_status == 'wishlist' %}
+                                        {% set display_ownership = book.normalized_ownership_status if book.normalized_ownership_status else (book.ownership_status or '') %}
+                                        {% if display_ownership == 'wishlist' %}
                                             <span class="badge bg-primary">⭐ Wishlist</span>
-                                        {% elif book.ownership_status == 'borrowed' %}
+                                        {% elif display_ownership == 'borrowed' %}
                                             <span class="badge bg-warning">📚 Borrowed</span>
-                                        {% elif book.ownership_status == 'loaned' %}
+                                        {% elif display_ownership == 'loaned' %}
                                             <span class="badge bg-info">📤 Loaned</span>
                                         {% endif %}
                                     </div>

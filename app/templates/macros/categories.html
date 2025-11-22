@@ -2,6 +2,7 @@
 
 {% macro display_categories(book, compact=false, show_icon=true, style_class="", max_display=5, book_categories=None) %}
   {% set categories = book_categories if book_categories else (book.categories if book.categories else []) %}
+  {% set book_id = book.uid if book.uid else (book.id if book.id else 'book') %}
   
   {% if categories %}
     {% if compact %}
@@ -23,8 +24,8 @@
       </div>
     {% else %}
       <!-- Full display for book details -->
-      <div class="category-tags d-inline-flex flex-wrap gap-1">
-        {% for category in categories %}
+      <div class="category-tags d-inline-flex flex-wrap gap-1 align-items-center">
+        {% for category in categories[:3] %}
           <span class="category-tag-display" 
                 {% if category.color %}style="background-color: {{ category.color }}20; border-color: {{ category.color }}; color: {{ category.color }}"{% endif %}>
             <a href="{{ url_for('genres.category_details', category_id=category.id) }}" 
@@ -41,6 +42,27 @@
             </a>
           </span>
         {% endfor %}
+        {% if categories|length > 3 %}
+          <div class="dropdown d-inline-block">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle genre-more-btn" type="button" id="moreGenresDropdown-{{ book_id }}" data-bs-toggle="dropdown" aria-expanded="false">
+              +{{ categories|length - 3 }} more
+            </button>
+            <ul class="dropdown-menu genre-dropdown-menu" aria-labelledby="moreGenresDropdown-{{ book_id }}">
+              {% for category in categories[3:] %}
+                <li>
+                  <a class="dropdown-item d-flex align-items-center" href="{{ url_for('genres.category_details', category_id=category.id) }}">
+                    {% if category.icon %}
+                      <span class="me-2">{{ category.icon }}</span>
+                    {% else %}
+                      <i class="bi bi-tag-fill me-2"></i>
+                    {% endif %}
+                    {{ category.name }}
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
       </div>
     {% endif %}
   {% endif %}
