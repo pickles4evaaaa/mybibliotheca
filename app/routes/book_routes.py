@@ -2011,6 +2011,19 @@ def library():
             return f"{last_name}, {first_names}"
         return author_name
     
+    def get_date_added_sort_key(book):
+        """Helper function to get date added with title as secondary sort key.
+        
+        Returns tuple of (date, title) for stable sorting when dates are identical (bulk imports).
+        """
+        date_value = (
+            book.get('added_at') or book.get('created_at') or '' 
+            if isinstance(book, dict) 
+            else getattr(book, 'added_at', None) or getattr(book, 'created_at', None) or ''
+        )
+        title_value = (book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')).lower()
+        return (date_value, title_value)
+    
     if sort_option == 'title_asc':
         filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower())
     elif sort_option == 'title_desc':
@@ -2026,21 +2039,11 @@ def library():
     elif sort_option == 'date_added_desc':
         # Sort by date added (newest first) - use added_at or created_at
         # Use title as secondary key for stable sorting when timestamps are identical (bulk imports)
-        filtered_books.sort(key=lambda x: (
-            x.get('added_at') or x.get('created_at') or '' 
-            if isinstance(x, dict) 
-            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or '',
-            (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower()
-        ), reverse=True)
+        filtered_books.sort(key=get_date_added_sort_key, reverse=True)
     elif sort_option == 'date_added_asc':
         # Sort by date added (oldest first)
         # Use title as secondary key for stable sorting when timestamps are identical (bulk imports)
-        filtered_books.sort(key=lambda x: (
-            x.get('added_at') or x.get('created_at') or '' 
-            if isinstance(x, dict) 
-            else getattr(x, 'added_at', None) or getattr(x, 'created_at', None) or '',
-            (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower()
-        ))
+        filtered_books.sort(key=get_date_added_sort_key)
     elif sort_option == 'publication_date_desc':
         # Sort by publication date (newest first) - handle various date formats
         def get_pub_date(book):
