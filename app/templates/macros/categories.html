@@ -2,6 +2,7 @@
 
 {% macro display_categories(book, compact=false, show_icon=true, style_class="", max_display=5, book_categories=None) %}
   {% set categories = book_categories if book_categories else (book.categories if book.categories else []) %}
+  {% set book_id = book.uid if book.uid else (book.id if book.id else 'book') %}
   
   {% if categories %}
     {% if compact %}
@@ -43,10 +44,10 @@
         {% endfor %}
         {% if categories|length > 3 %}
           <div class="dropdown d-inline-block">
-            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="moreGenresDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle genre-more-btn" type="button" id="moreGenresDropdown-{{ book_id }}" data-bs-toggle="dropdown" aria-expanded="false">
               +{{ categories|length - 3 }} more
             </button>
-            <ul class="dropdown-menu" aria-labelledby="moreGenresDropdown" style="max-height: 300px; overflow-y: auto;">
+            <ul class="dropdown-menu genre-dropdown-menu" aria-labelledby="moreGenresDropdown-{{ book_id }}">
               {% for category in categories[3:] %}
                 <li>
                   <a class="dropdown-item d-flex align-items-center" href="{{ url_for('genres.category_details', category_id=category.id) }}">
