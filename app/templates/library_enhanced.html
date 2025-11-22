@@ -403,44 +403,45 @@
         <div class="col-12">
             <div class="card shadow-sm">
                 <div class="card-body">
+                    {% set stat_buttons = [
+                        {'filter': 'reading', 'outline': 'warning', 'text': 'warning', 'label': 'Currently Reading', 'value': stats.currently_reading},
+                        {'filter': 'read', 'outline': 'success', 'text': 'success', 'label': 'Books Read', 'value': stats.books_read},
+                        {'filter': 'plan_to_read', 'outline': 'info', 'text': 'info', 'label': 'Plan to Read', 'value': stats.want_to_read},
+                        {'filter': 'wishlist', 'outline': 'primary', 'text': 'primary', 'label': 'Wishlist', 'value': stats.wishlist},
+                        {'filter': 'on_hold', 'outline': 'secondary', 'text': 'secondary', 'label': 'On Hold', 'value': stats.on_hold},
+                        {'filter': 'all', 'outline': 'dark', 'text': 'dark', 'label': 'Total Books', 'value': stats.total_books}
+                    ] %}
                     <div class="row align-items-center">
                         <div class="col-lg-10 col-md-9">
-                            <div class="row text-center">
-                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
-                                    <button class="btn btn-outline-warning w-100 filter-btn" data-filter="reading">
-                                        <div class="h4 mb-0 text-warning">{{ stats.currently_reading }}</div>
-                                        <small class="text-muted">Currently Reading</small>
-                                    </button>
+                            <div class="d-none d-md-block">
+                                <div class="row text-center">
+                                    {% for btn in stat_buttons %}
+                                        <div class="col-lg-2 col-md-4 mb-3 mb-lg-0">
+                                            <button class="btn btn-outline-{{ btn.outline }} w-100 filter-btn" data-filter="{{ btn.filter }}">
+                                                <div class="h4 mb-0 text-{{ btn.text }}">{{ btn.value }}</div>
+                                                <small class="text-muted">{{ btn.label }}</small>
+                                            </button>
+                                        </div>
+                                    {% endfor %}
                                 </div>
-                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
-                                    <button class="btn btn-outline-success w-100 filter-btn" data-filter="read">
-                                        <div class="h4 mb-0 text-success">{{ stats.books_read }}</div>
-                                        <small class="text-muted">Books Read</small>
-                                    </button>
-                                </div>
-                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
-                                    <button class="btn btn-outline-info w-100 filter-btn" data-filter="plan_to_read">
-                                        <div class="h4 mb-0 text-info">{{ stats.want_to_read }}</div>
-                                        <small class="text-muted">Plan to Read</small>
-                                    </button>
-                                </div>
-                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
-                                    <button class="btn btn-outline-primary w-100 filter-btn" data-filter="wishlist">
-                                        <div class="h4 mb-0 text-primary">{{ stats.wishlist }}</div>
-                                        <small class="text-muted">Wishlist</small>
-                                    </button>
-                                </div>
-                                <div class="col-lg-2 col-md-4 col-6 mb-3 mb-lg-0">
-                                    <button class="btn btn-outline-secondary w-100 filter-btn" data-filter="on_hold">
-                                        <div class="h4 mb-0 text-secondary">{{ stats.on_hold }}</div>
-                                        <small class="text-muted">On Hold</small>
-                                    </button>
-                                </div>
-                                <div class="col-lg-2 col-md-4 col-6">
-                                    <button class="btn btn-outline-dark w-100 filter-btn" data-filter="all">
-                                        <div class="h4 mb-0 text-dark">{{ stats.total_books }}</div>
-                                        <small class="text-muted">Total Books</small>
-                                    </button>
+                            </div>
+                            <div class="d-md-none">
+                                <button class="btn btn-outline-primary w-100 mb-3" type="button"
+                                        data-bs-toggle="collapse" data-bs-target="#mobileLibraryStats"
+                                        aria-expanded="false" aria-controls="mobileLibraryStats">
+                                    Library Stats<i class="bi bi-chevron-down ms-2"></i>
+                                </button>
+                                <div class="collapse" id="mobileLibraryStats">
+                                    <div class="row g-2 text-center">
+                                        {% for btn in stat_buttons %}
+                                            <div class="col-6">
+                                                <button class="btn btn-outline-{{ btn.outline }} w-100 filter-btn" data-filter="{{ btn.filter }}">
+                                                    <div class="h5 mb-0 text-{{ btn.text }}">{{ btn.value }}</div>
+                                                    <small class="text-muted d-block">{{ btn.label }}</small>
+                                                </button>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
                                 </div>
                             </div>
                         </div>
