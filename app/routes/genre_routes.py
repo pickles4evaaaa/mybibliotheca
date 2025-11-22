@@ -579,22 +579,17 @@ def delete_category(category_id):
         
         category_name = get_attr(category, 'name', 'Unknown')
         
-        # Check if category has books or subcategories
-        category_books = book_service.get_books_by_category_sync(category_id, str(current_user.id))
+        # Check if category has subcategories (prevent deletion to maintain hierarchy integrity)
         subcategories = book_service.get_category_children_sync(category_id, str(current_user.id))
-        
-        if category_books and len(category_books) > 0:
-            flash(f'Cannot delete category "{category_name}" because it contains {len(category_books)} books.', 'error')
-            return redirect(url_for('genres.category_details', category_id=category_id))
         
         if subcategories and len(subcategories) > 0:
             flash(f'Cannot delete category "{category_name}" because it contains {len(subcategories)} subcategories.', 'error')
             return redirect(url_for('genres.category_details', category_id=category_id))
         
-        # Delete the category
+        # Delete the category (DETACH DELETE will automatically remove book associations)
         success = book_service.delete_category_sync(category_id)
         if success:
-            flash(f'Category "{category_name}" deleted successfully.', 'success')
+            flash(f'Category "{category_name}" deleted successfully. All book associations have been removed.', 'success')
             return redirect(url_for('genres.index'))
         else:
             flash('Error deleting category.', 'error')
@@ -633,13 +628,12 @@ def bulk_delete_categories():
                 
                 category_name = get_attr(category, 'name', 'Unknown')
                 
-                # Check if category has books or subcategories
+                # Only check for subcategories (not books) unless force_delete is enabled
                 if not force_delete:
-                    category_books = book_service.get_books_by_category_sync(category_id, str(current_user.id))
                     subcategories = book_service.get_category_children_sync(category_id, str(current_user.id))
                     
-                    if (category_books and len(category_books) > 0) or (subcategories and len(subcategories) > 0):
-                        current_app.logger.warning(f"Skipping category {category_name} - has books or subcategories")
+                    if subcategories and len(subcategories) > 0:
+                        current_app.logger.warning(f"Skipping category {category_name} - has subcategories")
                         skipped_count += 1
                         continue
                 
@@ -658,9 +652,9 @@ def bulk_delete_categories():
         
         # Provide feedback
         if deleted_count > 0:
-            flash(f'Successfully deleted {deleted_count} categories.', 'success')
+            flash(f'Successfully deleted {deleted_count} categories and removed their book associations.', 'success')
         if skipped_count > 0:
-            flash(f'Skipped {skipped_count} categories (had books or subcategories).', 'warning')
+            flash(f'Skipped {skipped_count} categories (had subcategories).', 'warning')
         if error_count > 0:
             flash(f'Failed to delete {error_count} categories.', 'error')
         

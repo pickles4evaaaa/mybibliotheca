@@ -95,9 +95,9 @@
                                 <a href="{{ url_for('genres.hierarchy_view', highlight=category.id) }}" class="btn btn-outline-secondary btn-sm" title="View in Hierarchy">
                                     <i class="bi bi-diagram-3"></i>
                                 </a>
-                                {% if category.book_count == 0 and (not children or children|length == 0) %}
+                                {% if not children or children|length == 0 %}
                                 <form method="POST" action="{{ url_for('genres.delete_category', category_id=category.id) }}" 
-                                      class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ category.name }}? This action cannot be undone.')">
+                                      class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ category.name }}?{% if category.book_count > 0 %} This will remove the category from {{ category.book_count }} book(s).{% endif %} This action cannot be undone.')">
                                     <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete Category">
                                         <i class="bi bi-trash"></i>
                                     </button>
