@@ -1696,7 +1696,8 @@ def library():
     location_filter = request.args.get('location', '')
     media_type_filter_raw = request.args.get('media_type', '')
     media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
-    search_query = request.args.get('search', '')
+    raw_search_query = request.args.get('search', '')
+    search_query = raw_search_query.strip() if isinstance(raw_search_query, str) else ''
     raw_sort_option = request.args.get('sort')
     sort_option = (raw_sort_option.strip().lower() if isinstance(raw_sort_option, str) else '') or default_sort
 
@@ -1733,7 +1734,7 @@ def library():
     offset = (page - 1) * per_page
     has_filter = any([
         status_filter and status_filter != 'all',
-        bool(search_query.strip()) if isinstance(search_query, str) else False,
+        bool(search_query),
         bool(category_filter.strip()) if isinstance(category_filter, str) else False,
         bool(publisher_filter.strip()) if isinstance(publisher_filter, str) else False,
         bool(language_filter.strip()) if isinstance(language_filter, str) else False,
@@ -1917,12 +1918,14 @@ def library():
     
     # Apply other filters
     if search_query:
-        search_lower = search_query.lower()
+        search_lower = search_query.casefold()
         filtered_books = [
             book for book in filtered_books 
-            if (search_lower in ((book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')) or '').lower()) or
-               (search_lower in ((book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')) or '').lower()) or
-               (search_lower in ((book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')) or '').lower())
+            if (search_lower in (((book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')) or '').casefold())) or
+               (search_lower in (((book.get('normalized_title', '') if isinstance(book, dict) else getattr(book, 'normalized_title', '')) or '').casefold())) or
+               (search_lower in (((book.get('subtitle', '') if isinstance(book, dict) else getattr(book, 'subtitle', '')) or '').casefold())) or
+               (search_lower in (((book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')) or '').casefold())) or
+               (search_lower in (((book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')) or '').casefold()))
         ]
     
     if publisher_filter:
@@ -2403,6 +2406,11 @@ def library():
             # Preserve existing args but override page and add format=json
             # request.args may be a MultiDict; use flat values for cleanliness
             flat_params = {k: request.args.get(k) for k in request.args.keys()}
+            if raw_search_query is not None:
+                if search_query:
+                    flat_params['search'] = search_query
+                else:
+                    flat_params.pop('search', None)
             flat_params['page'] = str(page + 1)
             flat_params['format'] = 'json'
             next_json_url = f"{request.base_url}?{urlencode(flat_params)}"

@@ -110,7 +110,7 @@ def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
             # Library defaults (sort/status)
             sort_token = normalize_library_sort_option(data.get('library_default_sort'))
             status_token = normalize_library_status_filter(data.get('library_default_status'))
-            data['library_default_sort'] = sort_token or 'date_added_desc'
+            data['library_default_sort'] = sort_token or 'title_asc'
             data['library_default_status'] = status_token or 'all'
             return data
         return {}
@@ -127,7 +127,7 @@ def save_user_settings(user_id: Optional[str], updates: Dict[str, Any]) -> bool:
     for key, value in updates.items():
         if key == 'library_default_sort':
             norm = normalize_library_sort_option(value)
-            normalized_updates[key] = norm or 'date_added_desc'
+            normalized_updates[key] = norm or 'title_asc'
         elif key == 'library_default_status':
             norm = normalize_library_status_filter(value)
             normalized_updates[key] = norm or 'all'
@@ -220,7 +220,7 @@ def get_library_view_defaults(user_id: Optional[str]) -> Tuple[str, str]:
     """Return (status_filter, sort_option) defaults for the library view."""
     settings = load_user_settings(user_id)
     status = normalize_library_status_filter(settings.get('library_default_status')) or 'all'
-    sort = normalize_library_sort_option(settings.get('library_default_sort')) or 'date_added_desc'
+    sort = normalize_library_sort_option(settings.get('library_default_sort')) or 'title_asc'
     return status, sort
 
 
