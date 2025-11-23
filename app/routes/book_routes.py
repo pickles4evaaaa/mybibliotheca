@@ -311,6 +311,12 @@ def _handle_edit_book_post(uid, user_book, form):
         try:
             ok = book_service.update_book_sync(uid, str(current_user.id), **changes)
             if ok:
+                # Invalidate cache so UI updates immediately
+                try:
+                    from app.utils.simple_cache import bump_user_library_version
+                    bump_user_library_version(str(current_user.id))
+                except Exception:
+                    pass  # Don't fail the request if cache bump fails
                 field_names = ', '.join(sorted(changes.keys()))
                 flash(f"Updated: {field_names}", 'success')
             else:
@@ -1675,6 +1681,14 @@ def update_status(uid):
         })
 
     book_service.update_book_sync(uid, str(current_user.id), **update_data)
+    
+    # Invalidate cache so UI updates immediately
+    try:
+        from app.utils.simple_cache import bump_user_library_version
+        bump_user_library_version(str(current_user.id))
+    except Exception:
+        pass  # Don't fail the request if cache bump fails
+    
     flash('Book status updated.')
     return redirect(url_for('book.view_book_enhanced', uid=uid))
 
@@ -2930,6 +2944,12 @@ def edit_book(uid):
                 pass
         
         if success:
+            # Invalidate cache so UI updates immediately
+            try:
+                from app.utils.simple_cache import bump_user_library_version
+                bump_user_library_version(str(current_user.id))
+            except Exception:
+                pass  # Don't fail the request if cache bump fails
             flash('Book updated successfully.', 'success')
         else:
             flash('Failed to update book.', 'error')
