@@ -147,6 +147,9 @@ CREATE REL TABLE {self.REL_NAME}(
     personal_notes STRING,
     start_date TIMESTAMP,
     finish_date TIMESTAMP,
+    reading_status STRING,
+    ownership_status STRING,
+    user_rating DOUBLE,
     personal_custom_fields STRING,
     created_at TIMESTAMP,
     updated_at TIMESTAMP
@@ -458,13 +461,15 @@ CREATE REL TABLE {self.REL_NAME}(
             blob = json.loads(blob_raw) if blob_raw else {}
         except Exception:
             blob = {}
-        # Normalize keys
+        # Normalize keys - prefer first-class columns, fallback to JSON blob
         meta = {
             "personal_notes": rel.get("personal_notes") or blob.get("personal_notes"),
             "user_review": blob.get("user_review"),
-            # Prefer first-class columns if present; fallback to JSON
             "start_date": rel.get("start_date") or blob.get("start_date"),
             "finish_date": rel.get("finish_date") or blob.get("finish_date"),
+            "reading_status": rel.get("reading_status") or blob.get("reading_status"),
+            "ownership_status": rel.get("ownership_status") or blob.get("ownership_status"),
+            "user_rating": rel.get("user_rating") or blob.get("user_rating"),
         }
         # Merge remaining custom keys (excluding ones we already hoisted)
         for k, v in blob.items():
@@ -507,11 +512,14 @@ CREATE REL TABLE {self.REL_NAME}(
                 existing[k] = v
 
         # Persist:
-        # - personal_notes in column
+        # - personal_notes, reading_status, ownership_status, user_rating in columns
         # - start_date/finish_date in dedicated columns when available
         # - keep full JSON blob for remaining/custom keys (also mirror dates into JSON for backward compatibility)
         json_blob = existing.copy()
         column_notes = json_blob.pop("personal_notes", None)
+        column_reading_status = json_blob.pop("reading_status", None)
+        column_ownership_status = json_blob.pop("ownership_status", None)
+        column_user_rating = json_blob.pop("user_rating", None)
         # Pull out ISO strings for dates (if explicitly cleared, value may be None)
         start_raw = json_blob.get("start_date")
         finish_raw = json_blob.get("finish_date")
@@ -564,8 +572,11 @@ CREATE REL TABLE {self.REL_NAME}(
         SET r.personal_notes = $personal_notes,
             r.start_date = CASE WHEN $start_date IS NULL OR $start_date = '' THEN NULL ELSE timestamp($start_date) END,
             r.finish_date = CASE WHEN $finish_date IS NULL OR $finish_date = '' THEN NULL ELSE timestamp($finish_date) END,
+            r.reading_status = $reading_status,
+            r.ownership_status = $ownership_status,
+            r.user_rating = $user_rating,
             r.personal_custom_fields = $json_blob
-        RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields
+        RETURN r.personal_notes, r.start_date, r.finish_date, r.reading_status, r.ownership_status, r.user_rating, r.personal_custom_fields
         """
         query_legacy = f"""
         MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
@@ -590,6 +601,9 @@ CREATE REL TABLE {self.REL_NAME}(
                                 # Kuzu supports TIMESTAMP nulls; pass ISO if string, else None
                                 "start_date": start_iso,
                                 "finish_date": finish_iso,
+                                "reading_status": column_reading_status,
+                                "ownership_status": column_ownership_status,
+                                "user_rating": column_user_rating,
                                 "json_blob": json.dumps(json_blob) if json_blob else None,
                             },
                         )
@@ -645,8 +659,11 @@ CREATE REL TABLE {self.REL_NAME}(
     # If the above failed due to missing table (race condition), attempt one retry
     # NOTE: SafeKuzuManager will have already logged the error; we just inspect logs via exception here
     # (We cannot capture exception because safe_execute_kuzu_query re-raises; so we wrap in try above if needed.)
-        # Reconstruct final metadata (include notes)
+        # Reconstruct final metadata (include columns)
         existing["personal_notes"] = column_notes
+        existing["reading_status"] = column_reading_status
+        existing["ownership_status"] = column_ownership_status
+        existing["user_rating"] = column_user_rating
         return existing
 
     def ensure_start_date(self, user_id: str, book_id: str, start_date: datetime) -> None:
