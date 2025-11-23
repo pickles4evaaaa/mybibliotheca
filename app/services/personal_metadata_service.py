@@ -163,10 +163,46 @@ CREATE REL TABLE {self.REL_NAME}(
             msg = str(e).lower()
             if 'already exists' in msg:
                 self._rel_schema_ensured = True
+                # Table exists, but might be missing new columns - attempt to add them
+                self._ensure_columns_exist()
             else:
                 if not getattr(self, '_rel_schema_error_logged', False):
                     logger.warning(f"Lazy creation of {self.REL_NAME} failed: {e}")
                     self._rel_schema_error_logged = True
+    
+    def _ensure_columns_exist(self) -> None:
+        """Ensure new columns exist on the HAS_PERSONAL_METADATA relationship.
+        
+        This is called when the relationship table already exists but might be missing
+        new columns that were added in schema updates.
+        """
+        # Check and add reading_status column if missing
+        new_columns = [
+            ("reading_status", "STRING"),
+            ("ownership_status", "STRING"),
+            ("user_rating", "DOUBLE"),
+        ]
+        
+        for col_name, col_type in new_columns:
+            try:
+                # Try to query the column - if it doesn't exist, we'll get an error
+                test_query = f"MATCH ()-[r:{self.REL_NAME}]->() RETURN r.{col_name} LIMIT 1"
+                safe_execute_kuzu_query(test_query)
+                logger.debug(f"Column {col_name} already exists on {self.REL_NAME}")
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "cannot find property" in err_msg or "unknown" in err_msg:
+                    # Column doesn't exist, try to add it
+                    try:
+                        alter_query = f"ALTER TABLE {self.REL_NAME} ADD {col_name} {col_type}"
+                        safe_execute_kuzu_query(alter_query)
+                        logger.info(f"Added column {col_name} to {self.REL_NAME}")
+                    except Exception as alter_err:
+                        # Log but don't fail - the column might have been added by another process
+                        logger.debug(f"Could not add column {col_name} to {self.REL_NAME}: {alter_err}")
+                else:
+                    # Some other error - log but don't fail
+                    logger.debug(f"Unexpected error checking column {col_name}: {e}")
 
     def _maybe_run_owns_migration(self):
         """Detect legacy OWNS relationships and migrate per-user data into HAS_PERSONAL_METADATA.
