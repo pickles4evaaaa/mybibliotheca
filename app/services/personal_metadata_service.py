@@ -408,7 +408,7 @@ CREATE REL TABLE {self.REL_NAME}(
     def _fetch_relationship(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
         query_new = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
-        RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields, r.created_at, r.updated_at
+        RETURN r.personal_notes, r.start_date, r.finish_date, r.reading_status, r.ownership_status, r.user_rating, r.personal_custom_fields, r.created_at, r.updated_at
         """
         query_legacy = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
@@ -433,20 +433,29 @@ CREATE REL TABLE {self.REL_NAME}(
                 personal_notes = row.get('col_0') or row.get('personal_notes')
                 start_date = row.get('col_1') or row.get('start_date')
                 finish_date = row.get('col_2') or row.get('finish_date')
-                custom_fields = row.get('col_3') or row.get('personal_custom_fields')
-                created_at = row.get('col_4') or row.get('created_at')
-                updated_at = row.get('col_5') or row.get('updated_at')
+                reading_status = row.get('col_3') or row.get('reading_status')
+                ownership_status = row.get('col_4') or row.get('ownership_status')
+                user_rating = row.get('col_5') or row.get('user_rating')
+                custom_fields = row.get('col_6') or row.get('personal_custom_fields')
+                created_at = row.get('col_7') or row.get('created_at')
+                updated_at = row.get('col_8') or row.get('updated_at')
             else:
                 personal_notes = row[0] if len(row) > 0 else None  # type: ignore[index]
                 start_date = row[1] if len(row) > 1 else None  # type: ignore[index]
                 finish_date = row[2] if len(row) > 2 else None  # type: ignore[index]
-                custom_fields = row[3] if len(row) > 3 else None  # type: ignore[index]
-                created_at = row[4] if len(row) > 4 else None  # type: ignore[index]
-                updated_at = row[5] if len(row) > 5 else None  # type: ignore[index]
+                reading_status = row[3] if len(row) > 3 else None  # type: ignore[index]
+                ownership_status = row[4] if len(row) > 4 else None  # type: ignore[index]
+                user_rating = row[5] if len(row) > 5 else None  # type: ignore[index]
+                custom_fields = row[6] if len(row) > 6 else None  # type: ignore[index]
+                created_at = row[7] if len(row) > 7 else None  # type: ignore[index]
+                updated_at = row[8] if len(row) > 8 else None  # type: ignore[index]
             return {
                 "personal_notes": personal_notes,
                 "start_date": start_date,
                 "finish_date": finish_date,
+                "reading_status": reading_status,
+                "ownership_status": ownership_status,
+                "user_rating": user_rating,
                 "personal_custom_fields": custom_fields,
                 "created_at": created_at,
                 "updated_at": updated_at,
