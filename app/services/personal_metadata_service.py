@@ -176,7 +176,7 @@ CREATE REL TABLE {self.REL_NAME}(
         This is called when the relationship table already exists but might be missing
         new columns that were added in schema updates.
         """
-        # Check and add reading_status column if missing
+        # Check and add new columns if missing (reading_status, ownership_status, user_rating)
         new_columns = [
             ("reading_status", "STRING"),
             ("ownership_status", "STRING"),
@@ -185,8 +185,9 @@ CREATE REL TABLE {self.REL_NAME}(
         
         for col_name, col_type in new_columns:
             try:
-                # Try to query the column - if it doesn't exist, we'll get an error
-                test_query = f"MATCH ()-[r:{self.REL_NAME}]->() RETURN r.{col_name} LIMIT 1"
+                # Try to access the column directly - if it doesn't exist, we'll get an error
+                # Use OPTIONAL MATCH to handle empty tables gracefully
+                test_query = f"OPTIONAL MATCH ()-[r:{self.REL_NAME}]->() RETURN r.{col_name} LIMIT 1"
                 safe_execute_kuzu_query(test_query)
                 logger.debug(f"Column {col_name} already exists on {self.REL_NAME}")
             except Exception as e:
@@ -507,6 +508,7 @@ CREATE REL TABLE {self.REL_NAME}(
         except Exception:
             blob = {}
         # Normalize keys - prefer first-class columns, fallback to JSON blob
+        # Use explicit None checks for numeric fields to handle 0 correctly
         meta = {
             "personal_notes": rel.get("personal_notes") or blob.get("personal_notes"),
             "user_review": blob.get("user_review"),
@@ -514,7 +516,7 @@ CREATE REL TABLE {self.REL_NAME}(
             "finish_date": rel.get("finish_date") or blob.get("finish_date"),
             "reading_status": rel.get("reading_status") or blob.get("reading_status"),
             "ownership_status": rel.get("ownership_status") or blob.get("ownership_status"),
-            "user_rating": rel.get("user_rating") or blob.get("user_rating"),
+            "user_rating": rel.get("user_rating") if rel.get("user_rating") is not None else blob.get("user_rating"),
         }
         # Merge remaining custom keys (excluding ones we already hoisted)
         for k, v in blob.items():
