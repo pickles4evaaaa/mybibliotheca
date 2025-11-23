@@ -147,6 +147,9 @@ CREATE REL TABLE {self.REL_NAME}(
     personal_notes STRING,
     start_date TIMESTAMP,
     finish_date TIMESTAMP,
+    reading_status STRING,
+    ownership_status STRING,
+    user_rating DOUBLE,
     personal_custom_fields STRING,
     created_at TIMESTAMP,
     updated_at TIMESTAMP
@@ -160,10 +163,47 @@ CREATE REL TABLE {self.REL_NAME}(
             msg = str(e).lower()
             if 'already exists' in msg:
                 self._rel_schema_ensured = True
+                # Table exists, but might be missing new columns - attempt to add them
+                self._ensure_columns_exist()
             else:
                 if not getattr(self, '_rel_schema_error_logged', False):
                     logger.warning(f"Lazy creation of {self.REL_NAME} failed: {e}")
                     self._rel_schema_error_logged = True
+    
+    def _ensure_columns_exist(self) -> None:
+        """Ensure new columns exist on the HAS_PERSONAL_METADATA relationship.
+        
+        This is called when the relationship table already exists but might be missing
+        new columns that were added in schema updates.
+        """
+        # Check and add new columns if missing (reading_status, ownership_status, user_rating)
+        new_columns = [
+            ("reading_status", "STRING"),
+            ("ownership_status", "STRING"),
+            ("user_rating", "DOUBLE"),
+        ]
+        
+        for col_name, col_type in new_columns:
+            try:
+                # Try to access the column directly - if it doesn't exist, we'll get an error
+                # Use OPTIONAL MATCH to handle empty tables gracefully
+                test_query = f"OPTIONAL MATCH ()-[r:{self.REL_NAME}]->() RETURN r.{col_name} LIMIT 1"
+                safe_execute_kuzu_query(test_query)
+                logger.debug(f"Column {col_name} already exists on {self.REL_NAME}")
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "cannot find property" in err_msg or "unknown" in err_msg:
+                    # Column doesn't exist, try to add it
+                    try:
+                        alter_query = f"ALTER TABLE {self.REL_NAME} ADD {col_name} {col_type}"
+                        safe_execute_kuzu_query(alter_query)
+                        logger.info(f"Added column {col_name} to {self.REL_NAME}")
+                    except Exception as alter_err:
+                        # Log but don't fail - the column might have been added by another process
+                        logger.debug(f"Could not add column {col_name} to {self.REL_NAME}: {alter_err}")
+                else:
+                    # Some other error - log but don't fail
+                    logger.debug(f"Unexpected error checking column {col_name}: {e}")
 
     def _maybe_run_owns_migration(self):
         """Detect legacy OWNS relationships and migrate per-user data into HAS_PERSONAL_METADATA.
@@ -369,7 +409,7 @@ CREATE REL TABLE {self.REL_NAME}(
     def _fetch_relationship(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
         query_new = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
-        RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields, r.created_at, r.updated_at
+        RETURN r.personal_notes, r.start_date, r.finish_date, r.reading_status, r.ownership_status, r.user_rating, r.personal_custom_fields, r.created_at, r.updated_at
         """
         query_legacy = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
@@ -394,20 +434,29 @@ CREATE REL TABLE {self.REL_NAME}(
                 personal_notes = row.get('col_0') or row.get('personal_notes')
                 start_date = row.get('col_1') or row.get('start_date')
                 finish_date = row.get('col_2') or row.get('finish_date')
-                custom_fields = row.get('col_3') or row.get('personal_custom_fields')
-                created_at = row.get('col_4') or row.get('created_at')
-                updated_at = row.get('col_5') or row.get('updated_at')
+                reading_status = row.get('col_3') or row.get('reading_status')
+                ownership_status = row.get('col_4') or row.get('ownership_status')
+                user_rating = row.get('col_5') or row.get('user_rating')
+                custom_fields = row.get('col_6') or row.get('personal_custom_fields')
+                created_at = row.get('col_7') or row.get('created_at')
+                updated_at = row.get('col_8') or row.get('updated_at')
             else:
                 personal_notes = row[0] if len(row) > 0 else None  # type: ignore[index]
                 start_date = row[1] if len(row) > 1 else None  # type: ignore[index]
                 finish_date = row[2] if len(row) > 2 else None  # type: ignore[index]
-                custom_fields = row[3] if len(row) > 3 else None  # type: ignore[index]
-                created_at = row[4] if len(row) > 4 else None  # type: ignore[index]
-                updated_at = row[5] if len(row) > 5 else None  # type: ignore[index]
+                reading_status = row[3] if len(row) > 3 else None  # type: ignore[index]
+                ownership_status = row[4] if len(row) > 4 else None  # type: ignore[index]
+                user_rating = row[5] if len(row) > 5 else None  # type: ignore[index]
+                custom_fields = row[6] if len(row) > 6 else None  # type: ignore[index]
+                created_at = row[7] if len(row) > 7 else None  # type: ignore[index]
+                updated_at = row[8] if len(row) > 8 else None  # type: ignore[index]
             return {
                 "personal_notes": personal_notes,
                 "start_date": start_date,
                 "finish_date": finish_date,
+                "reading_status": reading_status,
+                "ownership_status": ownership_status,
+                "user_rating": user_rating,
                 "personal_custom_fields": custom_fields,
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -458,13 +507,16 @@ CREATE REL TABLE {self.REL_NAME}(
             blob = json.loads(blob_raw) if blob_raw else {}
         except Exception:
             blob = {}
-        # Normalize keys
+        # Normalize keys - prefer first-class columns, fallback to JSON blob
+        # Use explicit None checks for numeric fields to handle 0 correctly
         meta = {
             "personal_notes": rel.get("personal_notes") or blob.get("personal_notes"),
             "user_review": blob.get("user_review"),
-            # Prefer first-class columns if present; fallback to JSON
             "start_date": rel.get("start_date") or blob.get("start_date"),
             "finish_date": rel.get("finish_date") or blob.get("finish_date"),
+            "reading_status": rel.get("reading_status") or blob.get("reading_status"),
+            "ownership_status": rel.get("ownership_status") or blob.get("ownership_status"),
+            "user_rating": rel.get("user_rating") if rel.get("user_rating") is not None else blob.get("user_rating"),
         }
         # Merge remaining custom keys (excluding ones we already hoisted)
         for k, v in blob.items():
@@ -507,11 +559,14 @@ CREATE REL TABLE {self.REL_NAME}(
                 existing[k] = v
 
         # Persist:
-        # - personal_notes in column
+        # - personal_notes, reading_status, ownership_status, user_rating in columns
         # - start_date/finish_date in dedicated columns when available
         # - keep full JSON blob for remaining/custom keys (also mirror dates into JSON for backward compatibility)
         json_blob = existing.copy()
         column_notes = json_blob.pop("personal_notes", None)
+        column_reading_status = json_blob.pop("reading_status", None)
+        column_ownership_status = json_blob.pop("ownership_status", None)
+        column_user_rating = json_blob.pop("user_rating", None)
         # Pull out ISO strings for dates (if explicitly cleared, value may be None)
         start_raw = json_blob.get("start_date")
         finish_raw = json_blob.get("finish_date")
@@ -564,8 +619,11 @@ CREATE REL TABLE {self.REL_NAME}(
         SET r.personal_notes = $personal_notes,
             r.start_date = CASE WHEN $start_date IS NULL OR $start_date = '' THEN NULL ELSE timestamp($start_date) END,
             r.finish_date = CASE WHEN $finish_date IS NULL OR $finish_date = '' THEN NULL ELSE timestamp($finish_date) END,
+            r.reading_status = $reading_status,
+            r.ownership_status = $ownership_status,
+            r.user_rating = $user_rating,
             r.personal_custom_fields = $json_blob
-        RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields
+        RETURN r.personal_notes, r.start_date, r.finish_date, r.reading_status, r.ownership_status, r.user_rating, r.personal_custom_fields
         """
         query_legacy = f"""
         MATCH (u:User {{id: $user_id}}), (b:Book {{id: $book_id}})
@@ -590,6 +648,9 @@ CREATE REL TABLE {self.REL_NAME}(
                                 # Kuzu supports TIMESTAMP nulls; pass ISO if string, else None
                                 "start_date": start_iso,
                                 "finish_date": finish_iso,
+                                "reading_status": column_reading_status,
+                                "ownership_status": column_ownership_status,
+                                "user_rating": column_user_rating,
                                 "json_blob": json.dumps(json_blob) if json_blob else None,
                             },
                         )
@@ -645,8 +706,11 @@ CREATE REL TABLE {self.REL_NAME}(
     # If the above failed due to missing table (race condition), attempt one retry
     # NOTE: SafeKuzuManager will have already logged the error; we just inspect logs via exception here
     # (We cannot capture exception because safe_execute_kuzu_query re-raises; so we wrap in try above if needed.)
-        # Reconstruct final metadata (include notes)
+        # Reconstruct final metadata (include columns)
         existing["personal_notes"] = column_notes
+        existing["reading_status"] = column_reading_status
+        existing["ownership_status"] = column_ownership_status
+        existing["user_rating"] = column_user_rating
         return existing
 
     def ensure_start_date(self, user_id: str, book_id: str, start_date: datetime) -> None:
