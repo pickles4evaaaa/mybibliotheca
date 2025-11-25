@@ -20,71 +20,6 @@
         <strong>Quick Start:</strong> Enter an ISBN and click "Fetch Book" to automatically populate book details, or manually fill in the information in the sections below. All fields except the title are optional.
     </div>
 
-    <!-- Quick Add Options Accordion -->
-    <div class="accordion mb-4" id="quickAddAccordion">
-        <div class="accordion-item">
-            <h2 class="accordion-header">
-                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseQuickAdd" aria-expanded="true" aria-controls="collapseQuickAdd">
-                    <i class="bi bi-lightning me-2"></i>Quick Add Options
-                </button>
-            </h2>
-            <div id="collapseQuickAdd" class="accordion-collapse collapse show" data-bs-parent="#quickAddAccordion">
-                <div class="accordion-body">
-                    <div class="row">
-                        <!-- ISBN Lookup -->
-                        <div class="col-md-6">
-                            <div class="card h-100">
-                                <div class="card-body">
-                                    <h6 class="card-title">
-                                        <i class="bi bi-upc-scan me-1"></i>ISBN Lookup
-                                        <i class="bi bi-info-circle text-muted ms-1" title="Look up book details using ISBN-10 or ISBN-13"></i>
-                                    </h6>
-                                    <div class="input-group mb-3">
-                         <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
-                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13" autofocus><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
-                                        <button id="fetchBookButton" name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
-                                            <i class="bi bi-search me-1"></i>Fetch Book
-                                        </button>
-                                    </div>
-                                    <div class="text-center">
-                                        <small class="text-muted">
-                                            <i class="bi bi-info-circle me-1"></i>
-                                            Enter an ISBN above and click "Fetch Book" to automatically populate book details
-                                        </small>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- File Upload -->
-                        <div class="col-md-6">
-                            <div class="card h-100">
-                                <div class="card-body">
-                                    <h6 class="card-title">
-                                        <i class="bi bi-cloud-upload me-1"></i>File Upload
-                                        <i class="bi bi-info-circle text-muted ms-1" title="Upload cover images or CSV files for bulk import"></i>
-                                    </h6>
-                                    <div class="upload-area border border-2 border-dashed rounded p-4 text-center" 
-                                         style="min-height: 120px; cursor: pointer;" 
-                                         id="upload-area" 
-                                         onclick="document.getElementById('file-input').click()">
-                                        <i class="bi bi-cloud-arrow-up fs-1 text-muted"></i>
-                                        <p class="mt-2 mb-0">Drop files here or click to browse</p>
-                                        <small class="text-muted">Supports images (JPG, PNG) and CSV files</small>
-                                    </div>
-                                    <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.csv" style="display: none;" onchange="handleFileUpload(this)">
-                                    <div id="file-preview" class="mt-2"></div>
-                                    
-                                    <!-- CSV Import button removed; Proceed button handles CSV processing -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Book Details Form -->
     <div class="accordion" id="bookDetailsAccordion">
         <div class="accordion-item">
@@ -552,6 +487,71 @@
         </div>
     </div>
 </div>
+
+    <!-- Quick Add Options Accordion -->
+    <div class="accordion mb-4" id="quickAddAccordion">
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseQuickAdd" aria-expanded="true" aria-controls="collapseQuickAdd">
+                    <i class="bi bi-lightning me-2"></i>Quick Add Options
+                </button>
+            </h2>
+            <div id="collapseQuickAdd" class="accordion-collapse collapse show" data-bs-parent="#quickAddAccordion">
+                <div class="accordion-body">
+                    <div class="row">
+                        <!-- ISBN Lookup -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-title">
+                                        <i class="bi bi-upc-scan me-1"></i>ISBN Lookup
+                                        <i class="bi bi-info-circle text-muted ms-1" title="Look up book details using ISBN-10 or ISBN-13"></i>
+                                    </h6>
+                                    <div class="input-group mb-3">
+                         <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
+                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13" autofocus><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
+                                        <button id="fetchBookButton" name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
+                                            <i class="bi bi-search me-1"></i>Fetch Book
+                                        </button>
+                                    </div>
+                                    <div class="text-center">
+                                        <small class="text-muted">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Enter an ISBN above and click "Fetch Book" to automatically populate book details
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- File Upload -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-title">
+                                        <i class="bi bi-cloud-upload me-1"></i>File Upload
+                                        <i class="bi bi-info-circle text-muted ms-1" title="Upload cover images or CSV files for bulk import"></i>
+                                    </h6>
+                                    <div class="upload-area border border-2 border-dashed rounded p-4 text-center" 
+                                         style="min-height: 120px; cursor: pointer;" 
+                                         id="upload-area" 
+                                         onclick="document.getElementById('file-input').click()">
+                                        <i class="bi bi-cloud-arrow-up fs-1 text-muted"></i>
+                                        <p class="mt-2 mb-0">Drop files here or click to browse</p>
+                                        <small class="text-muted">Supports images (JPG, PNG) and CSV files</small>
+                                    </div>
+                                    <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.csv" style="display: none;" onchange="handleFileUpload(this)">
+                                    <div id="file-preview" class="mt-2"></div>
+                                    
+                                    <!-- CSV Import button removed; Proceed button handles CSV processing -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
 <!-- CSS for Contributors and Categories -->
 <style>

@@ -84,6 +84,16 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
     return rows
 
 
+def _book_id_key(service, book_id):
+    uid = getattr(service, 'user_id', 'none')
+    return f"book:{uid}:{book_id}"
+
+
+def _book_isbn_key(service, isbn):
+    uid = getattr(service, 'user_id', 'none')
+    return f"book_isbn:{uid}:{isbn}"
+
+
 class KuzuBookService:
     """
     Service for core book CRUD operations using Kuzu with thread-safe operations.
@@ -650,11 +660,4 @@ class KuzuBookService:
     def get_book_by_isbn_sync(self, isbn: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_isbn."""
         return run_async(self.get_book_by_isbn(isbn))
-    
-def _book_id_key(service, book_id):
-    uid = getattr(service, 'user_id', 'none')
-    return f"book:{uid}:{book_id}"
 
-def _book_isbn_key(service, isbn):
-    uid = getattr(service, 'user_id', 'none')
-    return f"book_isbn:{uid}:{isbn}"
