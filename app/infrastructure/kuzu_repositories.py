@@ -2112,22 +2112,31 @@ class KuzuCategoryRepository:
             logger.info(f"📁 [CREATE_CATEGORY] Creating category '{category_name}' with parent_id: {parent_id} (type: {type(parent_id)})")
             
             # Include all properties that exist in the Category schema
+            # Use _str suffix for timestamps to enable proper conversion in create_node
+            created_at = getattr(category, 'created_at', datetime.now(timezone.utc))
+            updated_at = getattr(category, 'updated_at', datetime.now(timezone.utc))
+            created_at_str = created_at.isoformat() if hasattr(created_at, 'isoformat') else datetime.now(timezone.utc).isoformat()
+            updated_at_str = updated_at.isoformat() if hasattr(updated_at, 'isoformat') else datetime.now(timezone.utc).isoformat()
+            
+            # Convert aliases list to string (schema defines aliases as STRING)
+            aliases_list = getattr(category, 'aliases', [])
+            aliases_str = '\n'.join(aliases_list) if isinstance(aliases_list, list) else str(aliases_list or '')
+            
             category_data = {
                 'id': category_id,
                 'name': category_name,
                 'normalized_name': category_name.strip().lower(),
-                'description': getattr(category, 'description', ''),
+                'description': getattr(category, 'description', '') or '',
                 'parent_id': parent_id,  # Include parent_id
                 'level': getattr(category, 'level', 0),  # Default to root level
-                'color': getattr(category, 'color', ''),
-                'icon': getattr(category, 'icon', ''),
-                'aliases': getattr(category, 'aliases', []),
+                'color': getattr(category, 'color', '') or '',
+                'icon': getattr(category, 'icon', '') or '',
+                'aliases': aliases_str,
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
-                'created_at': getattr(category, 'created_at', datetime.now(timezone.utc)),
-                'updated_at': getattr(category, 'updated_at', datetime.now(timezone.utc))
+                'created_at_str': created_at_str,
+                'updated_at_str': updated_at_str
             }
-            # Note: parent_id and aliases need special handling
             
             success = self.db.create_node('Category', category_data)
             if success:
@@ -2238,21 +2247,28 @@ class KuzuCategoryRepository:
                 logger.error("❌ Category ID is required for update")
                 return None
             
+            # Convert updated_at to ISO string for timestamp() function
+            updated_at_str = datetime.now(timezone.utc).isoformat()
+            
+            # Convert aliases list to string (schema defines aliases as STRING)
+            aliases_list = getattr(category, 'aliases', [])
+            aliases_str = '\n'.join(aliases_list) if isinstance(aliases_list, list) else str(aliases_list or '')
+            
             # Prepare update data
             category_data = {
                 'id': category_id,
                 'name': getattr(category, 'name', ''),
                 'normalized_name': getattr(category, 'name', '').strip().lower(),
-                'description': getattr(category, 'description', ''),
+                'description': getattr(category, 'description', '') or '',
                 'parent_id': getattr(category, 'parent_id', None),
                 'level': getattr(category, 'level', 0),
-                'color': getattr(category, 'color', ''),
-                'icon': getattr(category, 'icon', ''),
-                'aliases': getattr(category, 'aliases', []),
-                'updated_at': datetime.now(timezone.utc)  # KuzuDB requires datetime objects for TIMESTAMP fields
+                'color': getattr(category, 'color', '') or '',
+                'icon': getattr(category, 'icon', '') or '',
+                'aliases': aliases_str,
+                'updated_at_str': updated_at_str
             }
             
-            # Update using Kuzu query
+            # Update using Kuzu query with timestamp() function for proper conversion
             query = """
             MATCH (c:Category {id: $id})
             SET c.name = $name,
@@ -2263,7 +2279,7 @@ class KuzuCategoryRepository:
                 c.color = $color,
                 c.icon = $icon,
                 c.aliases = $aliases,
-                c.updated_at = $updated_at
+                c.updated_at = timestamp($updated_at_str)
             RETURN c
             """
             
