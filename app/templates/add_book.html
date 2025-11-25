@@ -1757,8 +1757,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Focus ISBN input for quick scanning and select existing text if present
     const isbnInput = document.getElementById('isbn');
     if (isbnInput) {
-        isbnInput.focus();
-        isbnInput.select();
         isbnInput.addEventListener('keydown', event => {
             if (event.key === 'Enter') {
                 event.preventDefault();
