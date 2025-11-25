@@ -2205,7 +2205,7 @@ function showCoverEditOptions() {
     const searchISBNBtn = document.getElementById('searchByISBN');
     if (searchISBNBtn) {
         searchISBNBtn.addEventListener('click', function() {
-            dropdown.remove();
+            // Don't remove dropdown yet so we can show loading state on the button
             let queryIsbn = isbn;
             try { queryIsbn = (queryIsbn || '').toString(); } catch(e) { queryIsbn = ''; }
             if (!queryIsbn) {
@@ -2222,7 +2222,7 @@ function showCoverEditOptions() {
         const searchTitleBtn = document.getElementById('searchByTitle');
         if (searchTitleBtn) {
             searchTitleBtn.addEventListener('click', function() {
-                dropdown.remove();
+                // Don't remove dropdown yet so we can show loading state on the button
                 fetchCoverFromAPI(`${title} ${author}`, 'title');
             });
         }
@@ -2306,6 +2306,11 @@ function fetchCoverFromAPI(query, type) {
             if (fetchBtn) {
                 fetchBtn.innerHTML = originalText;
                 fetchBtn.disabled = false;
+            }
+            // Close dropdown if it exists
+            const dropdown = document.getElementById('coverEditDropdown');
+            if (dropdown) {
+                dropdown.remove();
             }
         });
 }
