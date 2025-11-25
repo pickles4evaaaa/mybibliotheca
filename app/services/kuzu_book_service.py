@@ -19,6 +19,7 @@ from ..domain.models import Book, ReadingStatus
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query, safe_get_kuzu_connection
 from .kuzu_async_helper import run_async
+from ..utils.simple_cache import cached, cache_delete
 import logging
 
 logger = logging.getLogger(__name__)
@@ -394,6 +395,7 @@ class KuzuBookService:
             traceback.print_exc()
             raise
     
+    @cached(ttl_seconds=300, key_builder=_book_id_key)
     async def get_book_by_id(self, book_id: str) -> Optional[Book]:
         """Get a book by ID."""
         try:
@@ -496,6 +498,9 @@ class KuzuBookService:
             results = _convert_query_result_to_list(raw_result)
             if not results:
                 return None
+            
+            # Invalidate cache
+            cache_delete(_book_id_key(self, book_id))
                 
             return book
             
@@ -521,12 +526,17 @@ class KuzuBookService:
                 user_id=self.user_id,
                 operation="delete_book"
             )
+            
+            # Invalidate cache
+            cache_delete(_book_id_key(self, book_id))
+            
             return True
             
         except Exception as e:
             traceback.print_exc()
             return False
     
+    @cached(ttl_seconds=300, key_builder=_book_isbn_key)
     async def get_book_by_isbn(self, isbn: str) -> Optional[Book]:
         """Get a book by ISBN (13 or 10)."""
         try:
@@ -622,9 +632,11 @@ class KuzuBookService:
             pass
         return book
     
+    @cached(ttl_seconds=300, key_builder=_book_id_key)
     def get_book_by_id_sync(self, book_id: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_id."""
         return run_async(self.get_book_by_id(book_id))
+
     
     def update_book_sync(self, book_id: str, updates: Dict[str, Any]) -> Optional[Book]:
         """Sync wrapper for update_book."""
@@ -634,6 +646,15 @@ class KuzuBookService:
         """Sync wrapper for delete_book."""
         return run_async(self.delete_book(book_id))
     
+    @cached(ttl_seconds=300, key_builder=_book_isbn_key)
     def get_book_by_isbn_sync(self, isbn: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_isbn."""
         return run_async(self.get_book_by_isbn(isbn))
+    
+def _book_id_key(service, book_id):
+    uid = getattr(service, 'user_id', 'none')
+    return f"book:{uid}:{book_id}"
+
+def _book_isbn_key(service, isbn):
+    uid = getattr(service, 'user_id', 'none')
+    return f"book_isbn:{uid}:{isbn}"

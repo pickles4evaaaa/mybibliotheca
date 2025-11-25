@@ -1,6 +1,9 @@
 import time
 import threading
-from typing import Any, Optional, Tuple, Dict
+import functools
+import asyncio
+import hashlib
+from typing import Any, Optional, Tuple, Dict, Callable, Union
 
 
 class TTLCache:
@@ -58,3 +61,69 @@ def bump_user_library_version(user_id: str) -> int:
         current = int(_user_versions.get(user_id, 0)) + 1
         _user_versions[user_id] = current
         return current
+
+
+def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):
+    """
+    Decorator to cache function results.
+    Supports both sync and async functions.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Build cache key
+            if key_builder:
+                key = key_builder(*args, **kwargs)
+            else:
+                # Simple default key builder
+                key_parts = [func.__module__, func.__name__]
+                key_parts.extend([str(arg) for arg in args])
+                key_parts.extend([f"{k}={v}" for k, v in sorted(kwargs.items())])
+                key_str = ":".join(key_parts)
+                key = hashlib.md5(key_str.encode()).hexdigest()
+
+            # Check cache
+            cached_value = cache_get(key)
+            if cached_value is not None:
+                return cached_value
+
+            # Call function
+            result = func(*args, **kwargs)
+            
+            # Store result
+            cache_set(key, result, ttl_seconds)
+            return result
+
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+             # Build cache key (same logic)
+            if key_builder:
+                key = key_builder(*args, **kwargs)
+            else:
+                key_parts = [func.__module__, func.__name__]
+                key_parts.extend([str(arg) for arg in args])
+                key_parts.extend([f"{k}={v}" for k, v in sorted(kwargs.items())])
+                key_str = ":".join(key_parts)
+                key = hashlib.md5(key_str.encode()).hexdigest()
+
+            # Check cache
+            cached_value = cache_get(key)
+            if cached_value is not None:
+                return cached_value
+
+            # Call function
+            result = await func(*args, **kwargs)
+            
+            # Store result
+            cache_set(key, result, ttl_seconds)
+            return result
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return wrapper
+    return decorator
+
+
+def cache_delete(key: str) -> None:
+    _cache.delete(key)
