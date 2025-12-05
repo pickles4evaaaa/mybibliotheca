@@ -13,10 +13,25 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 from flask import current_app
 
-from app.domain.models import MediaType
+from app.domain.models import MediaType, ReadingStatus
 
 
 _MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
+
+# Valid reading status values for default selection
+# Includes empty string to represent "Not Set" option
+_READING_STATUS_VALUES = {'', 'plan_to_read', 'reading', 'read', 'on_hold', 'did_not_finish', 'library_only'}
+
+# Reading status choices for the default reading status dropdown
+_DEFAULT_READING_STATUS_ORDER: Tuple[Tuple[str, str], ...] = (
+    ('', 'Not Set'),
+    ('plan_to_read', 'Plan to Read'),
+    ('reading', 'Currently Reading'),
+    ('read', 'Read'),
+    ('on_hold', 'On Hold'),
+    ('did_not_finish', 'Did Not Finish'),
+    ('library_only', 'Library Only'),
+)
 
 _LIBRARY_SORT_ORDER: Tuple[Tuple[str, str], ...] = (
     ('title_asc', 'Title A-Z'),
@@ -78,6 +93,30 @@ def get_library_status_choices() -> List[Tuple[str, str]]:
     return list(_LIBRARY_STATUS_ORDER)
 
 
+def normalize_default_reading_status(raw: Optional[str]) -> str:
+    """Normalize a default reading status to a known value.
+    
+    Returns empty string if not a valid reading status value.
+    """
+    if raw is None:
+        return ''
+    candidate = str(raw).strip().lower()
+    # Handle common aliases
+    aliases = {
+        'currently_reading': 'reading',
+        'currently reading': 'reading',
+        'want_to_read': 'plan_to_read',
+        'dnf': 'did_not_finish',
+    }
+    candidate = aliases.get(candidate, candidate)
+    return candidate if candidate in _READING_STATUS_VALUES else ''
+
+
+def get_default_reading_status_choices() -> List[Tuple[str, str]]:
+    """Return available default reading status options as (value, label) pairs."""
+    return list(_DEFAULT_READING_STATUS_ORDER)
+
+
 def _data_dir() -> str:
     try:
         return current_app.config.get('DATA_DIR', 'data')
@@ -112,6 +151,10 @@ def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
             status_token = normalize_library_status_filter(data.get('library_default_status'))
             data['library_default_sort'] = sort_token or 'title_asc'
             data['library_default_status'] = status_token or 'all'
+            # Default reading status for new books
+            data['default_reading_status'] = normalize_default_reading_status(
+                data.get('default_reading_status')
+            )
             return data
         return {}
     except Exception:
@@ -131,6 +174,8 @@ def save_user_settings(user_id: Optional[str], updates: Dict[str, Any]) -> bool:
         elif key == 'library_default_status':
             norm = normalize_library_status_filter(value)
             normalized_updates[key] = norm or 'all'
+        elif key == 'default_reading_status':
+            normalized_updates[key] = normalize_default_reading_status(value)
         else:
             if value is not None:
                 normalized_updates[key] = value
@@ -222,6 +267,15 @@ def get_library_view_defaults(user_id: Optional[str]) -> Tuple[str, str]:
     status = normalize_library_status_filter(settings.get('library_default_status')) or 'all'
     sort = normalize_library_sort_option(settings.get('library_default_sort')) or 'title_asc'
     return status, sort
+
+
+def get_default_reading_status(user_id: Optional[str]) -> str:
+    """Return the user's default reading status for newly added books.
+    
+    Returns empty string if not set (meaning "Not Set" in the UI).
+    """
+    settings = load_user_settings(user_id)
+    return normalize_default_reading_status(settings.get('default_reading_status'))
 
 
 def get_default_book_format() -> str:

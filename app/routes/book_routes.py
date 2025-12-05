@@ -895,10 +895,15 @@ def add_book():
             current_app.logger.error(f"Error loading AI config: {e}")
             ai_config = {}
         
+        # Load user's default reading status
+        from app.utils.user_settings import get_default_reading_status
+        default_reading_status = get_default_reading_status(str(current_user.id))
+        
         return render_template('add_book.html', 
                              personal_fields=personal_fields,
                              global_fields=global_fields,
-                             ai_config=ai_config)
+                             ai_config=ai_config,
+                             default_reading_status=default_reading_status)
     
     # Handle POST request for adding book
     # Forward to the manual add handler
