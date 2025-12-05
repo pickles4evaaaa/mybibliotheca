@@ -514,7 +514,7 @@
                                     </h6>
                                     <div class="input-group mb-3">
                          <input id="isbn" name="isbn" class="form-control" value="{{ request.form.isbn or '' }}" 
-                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13" autofocus><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
+                             type="text" pattern="[0-9Xx-]+" title="Enter a valid ISBN (digits, X, and hyphens only)" placeholder="Enter ISBN-10 or ISBN-13"><!-- pattern simplified (avoid \\d for some browsers w/ /v flag) and allow X check digit -->
                                         <button id="fetchBookButton" name="fetch" value="1" type="button" class="btn btn-primary" onclick="fetchBookData()">
                                             <i class="bi bi-search me-1"></i>Fetch Book
                                         </button>

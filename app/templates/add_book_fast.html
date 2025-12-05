@@ -819,9 +819,6 @@ function updateRecentlyAddedUI() {
                 <small class="text-muted">${escapeHtml(book.author)}</small>
             </div>
             <div class="d-flex gap-2">
-                <a href="/book/${escapeHtml(book.id)}" class="btn btn-sm btn-outline-primary" title="View">
-                    <i class="bi bi-eye"></i>
-                </a>
                 <button class="btn btn-sm btn-outline-danger undo-btn" onclick="undoAdd('${escapeHtml(book.id)}')" title="Undo">
                     <i class="bi bi-arrow-counterclockwise"></i>
                 </button>
