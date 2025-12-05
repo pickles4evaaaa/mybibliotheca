@@ -909,6 +909,162 @@ def add_book():
     # Forward to the manual add handler
     return add_book_manual()
 
+@book_bp.route('/add/fast', methods=['GET'])
+@login_required
+def add_book_fast():
+    """Fast Add mode for rapid ISBN entry with auto-save functionality."""
+    return render_template('add_book_fast.html')
+
+@book_bp.route('/add/fast/save', methods=['POST'])
+@login_required
+def fast_add_save():
+    """
+    API endpoint for Fast Add mode - saves book with minimal validation.
+    Returns JSON response for AJAX handling.
+    """
+    import json
+    
+    try:
+        title = (request.form.get('title') or '').strip()
+        if not title:
+            return jsonify({'success': False, 'message': 'Title is required'}), 400
+        
+        author = (request.form.get('author') or '').strip() or 'Unknown Author'
+        
+        # ISBN handling
+        isbn10 = (request.form.get('isbn10') or '').strip().upper()
+        isbn13 = (request.form.get('isbn13') or '').strip().upper()
+        
+        # Clean up ISBNs
+        isbn10 = re.sub(r'[^0-9X]', '', isbn10) if isbn10 else None
+        isbn13 = re.sub(r'[^0-9]', '', isbn13) if isbn13 else None
+        
+        # Validate ISBN lengths
+        if isbn10 and len(isbn10) != 10:
+            isbn10 = None
+        if isbn13 and len(isbn13) != 13:
+            isbn13 = None
+        
+        # Other fields
+        subtitle = (request.form.get('subtitle') or '').strip() or None
+        publisher_name = (request.form.get('publisher') or '').strip() or None
+        description = (request.form.get('description') or '').strip() or None
+        page_count = None
+        pcs = (request.form.get('page_count') or '').strip()
+        if pcs:
+            try:
+                page_count = int(pcs)
+            except ValueError:
+                pass
+        language = (request.form.get('language') or 'en').strip() or 'en'
+        cover_url = (request.form.get('cover_url') or '').strip() or None
+        published_date = (request.form.get('published_date') or '').strip() or None
+        
+        # Categories handling
+        raw_categories = None
+        raw_cat_val = request.form.get('raw_categories')
+        if raw_cat_val:
+            try:
+                raw_categories = json.loads(raw_cat_val)
+            except Exception:
+                raw_categories = [s.strip() for s in raw_cat_val.split(',') if s.strip()]
+        
+        # Media type
+        submitted_media_type = (request.form.get('media_type') or '').strip().lower()
+        if submitted_media_type:
+            try:
+                media_type = MediaType(submitted_media_type).value
+            except ValueError:
+                media_type = get_default_book_format()
+        else:
+            media_type = get_default_book_format()
+        
+        # Build SimplifiedBook object
+        book_data = SimplifiedBook(
+            title=title,
+            author=author,
+            isbn13=isbn13,
+            isbn10=isbn10,
+            subtitle=subtitle,
+            description=description,
+            publisher=publisher_name,
+            published_date=published_date,
+            page_count=page_count,
+            language=language,
+            cover_url=cover_url,
+            series=None,
+            series_volume=None,
+            categories=raw_categories if raw_categories else [],
+            additional_authors=None,
+            editor=None,
+            translator=None,
+            narrator=None,
+            illustrator=None,
+            google_books_id=(request.form.get('google_books_id') or '').strip() or None,
+            openlibrary_id=(request.form.get('openlibrary_id') or '').strip() or None
+        )
+        
+        # Try to add the book
+        try:
+            added = SimplifiedBookService().add_book_to_user_library_sync(
+                book_data=book_data,
+                user_id=current_user.id,
+                reading_status=request.form.get('reading_status', ''),
+                ownership_status=request.form.get('ownership_status', 'owned'),
+                media_type=media_type,
+                location_id=request.form.get('location_id')
+            )
+        except BookAlreadyExistsError as dup:
+            # Book already exists - return success with existing book ID
+            existing_id = getattr(dup, 'book_id', None)
+            return jsonify({
+                'success': True,
+                'message': f'Book "{title}" already exists in your library',
+                'book_id': existing_id,
+                'already_exists': True
+            })
+        
+        if not added:
+            return jsonify({'success': False, 'message': 'Failed to add book'}), 500
+        
+        # Find created book by ISBN (more efficient than searching all books by title)
+        book_id = None
+        try:
+            # Try to find by ISBN first since that's unique and indexed
+            if isbn13 or isbn10:
+                search_isbn = isbn13 or isbn10
+                results = book_service.search_user_books_sync(current_user.id, search_isbn, limit=1)
+                if results:
+                    book_id = results[0].get('uid') or results[0].get('id')
+            
+            # Fallback: search by exact title match if ISBN lookup fails
+            if not book_id:
+                results = book_service.search_user_books_sync(current_user.id, title, limit=5)
+                for r in results:
+                    if r.get('title', '').lower() == title.lower():
+                        book_id = r.get('uid') or r.get('id')
+                        break
+        except Exception as e:
+            current_app.logger.warning(f"Could not retrieve book ID after creation: {e}")
+            book_id = None
+        
+        # Invalidate cache
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(str(current_user.id))
+        except Exception:
+            pass
+        
+        return jsonify({
+            'success': True,
+            'message': f'Added "{title}"',
+            'book_id': book_id
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Fast add error: {type(e).__name__}")
+        return jsonify({'success': False, 'message': 'An error occurred while adding the book'}), 500
+
 @book_bp.route('/add/image', methods=['POST'])
 @login_required
 def add_book_from_image():

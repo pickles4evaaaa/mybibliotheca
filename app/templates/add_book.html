@@ -8,6 +8,9 @@
             <i class="bi bi-plus-circle me-2"></i>Add Book
         </h1>
         <div>
+            <a href="{{ url_for('book.add_book_fast') }}" class="btn btn-warning me-2" title="Rapid ISBN entry with auto-save">
+                <i class="bi bi-lightning-charge me-1"></i>Fast Add
+            </a>
             <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left me-1"></i>Back to Library
             </a>
@@ -18,6 +21,7 @@
     <div class="alert alert-info" role="alert">
         <i class="bi bi-lightbulb me-2"></i>
         <strong>Quick Start:</strong> Enter an ISBN and click "Fetch Book" to automatically populate book details, or manually fill in the information in the sections below. All fields except the title are optional.
+        <br><small class="mt-1 d-block"><i class="bi bi-lightning-charge me-1"></i>Need to add many books quickly? Try <a href="{{ url_for('book.add_book_fast') }}">Fast Add Mode</a> for rapid ISBN scanning with auto-save!</small>
     </div>
 
     <!-- Book Details Form -->
