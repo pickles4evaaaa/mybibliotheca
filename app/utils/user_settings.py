@@ -18,19 +18,32 @@ from app.domain.models import MediaType, ReadingStatus
 
 _MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
 
-# Valid reading status values for default selection
+# Valid reading status values for default selection (derived from enum)
 # Includes empty string to represent "Not Set" option
-_READING_STATUS_VALUES = {'', 'plan_to_read', 'reading', 'read', 'on_hold', 'did_not_finish', 'library_only'}
+# Use a set comprehension to get unique values (handles enum aliases)
+_READING_STATUS_VALUES = {rs.value for rs in ReadingStatus} | {''}
+
+# Display labels for reading status values
+_READING_STATUS_LABELS = {
+    '': 'Not Set',
+    'plan_to_read': 'Plan to Read',
+    'reading': 'Currently Reading',
+    'read': 'Read',
+    'on_hold': 'On Hold',
+    'did_not_finish': 'Did Not Finish',
+    'library_only': 'Library Only',
+}
 
 # Reading status choices for the default reading status dropdown
+# Ordered list of (value, label) pairs for display
 _DEFAULT_READING_STATUS_ORDER: Tuple[Tuple[str, str], ...] = (
-    ('', 'Not Set'),
-    ('plan_to_read', 'Plan to Read'),
-    ('reading', 'Currently Reading'),
-    ('read', 'Read'),
-    ('on_hold', 'On Hold'),
-    ('did_not_finish', 'Did Not Finish'),
-    ('library_only', 'Library Only'),
+    ('', _READING_STATUS_LABELS['']),
+    (ReadingStatus.PLAN_TO_READ.value, _READING_STATUS_LABELS[ReadingStatus.PLAN_TO_READ.value]),
+    (ReadingStatus.READING.value, _READING_STATUS_LABELS[ReadingStatus.READING.value]),
+    (ReadingStatus.READ.value, _READING_STATUS_LABELS[ReadingStatus.READ.value]),
+    (ReadingStatus.ON_HOLD.value, _READING_STATUS_LABELS[ReadingStatus.ON_HOLD.value]),
+    (ReadingStatus.DNF.value, _READING_STATUS_LABELS[ReadingStatus.DNF.value]),
+    (ReadingStatus.LIBRARY_ONLY.value, _READING_STATUS_LABELS[ReadingStatus.LIBRARY_ONLY.value]),
 )
 
 _LIBRARY_SORT_ORDER: Tuple[Tuple[str, str], ...] = (

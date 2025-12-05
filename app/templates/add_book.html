@@ -295,7 +295,7 @@
                                         <!-- Reading Status -->
                                         <div class="mb-3">
                                             <label for="reading_status" class="form-label fw-medium">Reading Status</label>
-                                            {% set selected_reading_status = request.form.reading_status if request.form.reading_status is defined else default_reading_status %}
+                                            {% set selected_reading_status = request.form.get('reading_status') or default_reading_status or '' %}
                                             <select class="form-select" id="reading_status" name="reading_status">
                                                 <option value="" {% if not selected_reading_status %}selected{% endif %}>📭 Not set</option>
                                                 <option value="plan_to_read" {% if selected_reading_status == 'plan_to_read' %}selected{% endif %}>📚 Plan to Read</option>
