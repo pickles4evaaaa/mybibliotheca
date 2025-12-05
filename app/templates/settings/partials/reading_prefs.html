@@ -46,6 +46,16 @@
       </select>
       <small class="text-muted">Controls how books are ordered on first load.</small>
     </div>
+    <div class="col-md-4">
+      <label class="form-label">Default Reading Status for New Books</label>
+      <select name="default_reading_status" class="form-select">
+        {% set current_reading_status = settings.default_reading_status or '' %}
+        {% for value, label in default_reading_status_choices %}
+          <option value="{{ value }}" {% if current_reading_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">Automatically applied when adding new books. Can be changed per book.</small>
+    </div>
   </div>
   <div class="mt-3">
     <button class="btn btn-primary"><i class="bi bi-save"></i> Save Library Preferences</button>

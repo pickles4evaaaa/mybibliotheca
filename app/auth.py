@@ -607,6 +607,7 @@ def settings_reading_prefs_partial():
     from app.utils.user_settings import (
         get_library_sort_choices,
         get_library_status_choices,
+        get_default_reading_status_choices,
         load_user_settings,
         save_user_settings,
     )
@@ -616,6 +617,7 @@ def settings_reading_prefs_partial():
         dm_raw = (request.form.get('default_minutes_per_log') or '').strip()
         status_raw = (request.form.get('library_default_status') or 'all').strip()
         sort_raw = (request.form.get('library_default_sort') or 'title_asc').strip()
+        reading_status_raw = (request.form.get('default_reading_status') or '').strip()
         def _to_int_or_none(v: str):
             try:
                 return int(v) if v not in (None, '',) else None
@@ -626,7 +628,8 @@ def settings_reading_prefs_partial():
             'default_pages_per_log': _to_int_or_none(dp_raw),
             'default_minutes_per_log': _to_int_or_none(dm_raw),
             'library_default_status': status_raw or 'all',
-            'library_default_sort': sort_raw or 'title_asc'
+            'library_default_sort': sort_raw or 'title_asc',
+            'default_reading_status': reading_status_raw
         }
         ok = save_user_settings(getattr(current_user, 'id', None), payload)
         if ok:
@@ -639,7 +642,8 @@ def settings_reading_prefs_partial():
         'settings/partials/reading_prefs.html',
         settings=settings,
         library_status_choices=get_library_status_choices(),
-        library_sort_choices=get_library_sort_choices()
+        library_sort_choices=get_library_sort_choices(),
+        default_reading_status_choices=get_default_reading_status_choices()
     )
 
 # New: Personal Audiobookshelf partial (per-user ABS settings)
