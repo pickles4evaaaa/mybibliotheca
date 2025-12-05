@@ -1022,28 +1022,26 @@ def fast_add_save():
         if not added:
             return jsonify({'success': False, 'message': 'Failed to add book'}), 500
         
-        # Find created book to get its ID
-        created = None
+        # Find created book by ISBN (more efficient than searching all books by title)
+        book_id = None
         try:
-            for b in book_service.get_user_books_sync(current_user.id):
-                if b.title == title:
-                    created = b
-                    break
-        except Exception:
-            created = None
-        
-        book_id = getattr(created, 'uid', None) or getattr(created, 'id', None) if created else None
-        
-        # Apply additional updates if we have the book
-        if created:
-            updates = {}
-            if raw_categories:
-                updates['raw_categories'] = raw_categories
-            if updates:
-                try:
-                    book_service.update_book_sync(created.uid, str(current_user.id), **updates)
-                except Exception:
-                    pass
+            # Try to find by ISBN first since that's unique and indexed
+            if isbn13 or isbn10:
+                search_isbn = isbn13 or isbn10
+                results = book_service.search_user_books_sync(current_user.id, search_isbn, limit=1)
+                if results:
+                    book_id = results[0].get('uid') or results[0].get('id')
+            
+            # Fallback: search by exact title match if ISBN lookup fails
+            if not book_id:
+                results = book_service.search_user_books_sync(current_user.id, title, limit=5)
+                for r in results:
+                    if r.get('title', '').lower() == title.lower():
+                        book_id = r.get('uid') or r.get('id')
+                        break
+        except Exception as e:
+            current_app.logger.warning(f"Could not retrieve book ID after creation: {e}")
+            book_id = None
         
         # Invalidate cache
         try:
@@ -1059,8 +1057,7 @@ def fast_add_save():
         })
         
     except Exception as e:
-        current_app.logger.error(f"Fast add error: {e}")
-        traceback.print_exc()
+        current_app.logger.error(f"Fast add error: {type(e).__name__}")
         return jsonify({'success': False, 'message': 'An error occurred while adding the book'}), 500
 
 @book_bp.route('/add/image', methods=['POST'])

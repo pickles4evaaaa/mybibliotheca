@@ -346,7 +346,23 @@
 </style>
 
 <script>
-// Configuration
+// Configuration - URLs from Flask for proper routing
+const API_URLS = {
+    unifiedMetadata: '/api/v1/books/unified-metadata',
+    fastAddSave: '{{ url_for("book.fast_add_save") }}',
+    deleteBook: function(bookId) { return `/book/${bookId}/delete`; }
+};
+
+// CSRF Token helper
+function getCsrfToken() {
+    const csrfInput = document.querySelector('input[name="csrf_token"]');
+    if (!csrfInput) {
+        console.error('CSRF token input not found');
+        return '';
+    }
+    return csrfInput.value || '';
+}
+
 let autoSaveTimer = null;
 let countdownInterval = null;
 let currentBookData = null;
@@ -465,7 +481,7 @@ async function lookupISBN() {
     
     try {
         // Use the unified metadata API
-        const response = await fetch(`/api/v1/books/unified-metadata?isbn=${encodeURIComponent(isbn)}`, {
+        const response = await fetch(`${API_URLS.unifiedMetadata}?isbn=${encodeURIComponent(isbn)}`, {
             method: 'GET',
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
@@ -602,7 +618,7 @@ async function saveBook() {
     
     try {
         const formData = new FormData();
-        formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+        formData.append('csrf_token', getCsrfToken());
         formData.append('title', saveData.title);
         formData.append('author', saveData.author);
         formData.append('isbn13', saveData.isbn13 || '');
@@ -624,7 +640,7 @@ async function saveBook() {
             formData.append('raw_categories', JSON.stringify(saveData.categories));
         }
         
-        const response = await fetch('{{ url_for("book.fast_add_save") }}', {
+        const response = await fetch(API_URLS.fastAddSave, {
             method: 'POST',
             body: formData,
             credentials: 'same-origin'
@@ -698,7 +714,7 @@ function formatDateForInput(dateStr) {
 async function saveEditedBook() {
     const form = document.getElementById('editBookForm');
     const formData = new FormData(form);
-    formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+    formData.append('csrf_token', getCsrfToken());
     
     // Add ISBN fields
     const isbn = document.getElementById('editISBN').value;
@@ -718,7 +734,7 @@ async function saveEditedBook() {
     }
     
     try {
-        const response = await fetch('{{ url_for("book.fast_add_save") }}', {
+        const response = await fetch(API_URLS.fastAddSave, {
             method: 'POST',
             body: formData,
             credentials: 'same-origin'
@@ -818,13 +834,13 @@ async function undoAdd(bookId) {
     if (!confirm('Remove this book from your library?')) return;
     
     try {
-        const response = await fetch(`/book/${bookId}/delete`, {
+        const response = await fetch(API_URLS.deleteBook(bookId), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'X-Requested-With': 'XMLHttpRequest'
             },
-            body: 'csrf_token=' + encodeURIComponent(document.querySelector('input[name="csrf_token"]').value),
+            body: 'csrf_token=' + encodeURIComponent(getCsrfToken()),
             credentials: 'same-origin'
         });
         
