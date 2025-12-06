@@ -1132,7 +1132,7 @@
                                         <div class="mb-3">
                                             <small class="text-muted d-block mb-1">Notes:</small>
                                             <div class="bg-light rounded p-2">
-                                                <p class="small mb-0">{{ book.personal_notes }}</p>
+                                                <div class="small mb-0">{{ book.personal_notes | markdown }}</div>
                                             </div>
                                         </div>
                                         {% endif %}
@@ -1278,6 +1278,9 @@
                                                 </label>
                                                 <textarea class="form-control" id="personal_notes" name="personal_notes" rows="4" 
                                                           placeholder="Your personal thoughts about this book...">{{ book.personal_notes or '' }}</textarea>
+                                                <small class="form-text text-muted">
+                                                    <i class="bi bi-markdown me-1"></i>Markdown formatting supported (e.g., **bold**, *italic*, - lists)
+                                                </small>
                                             </div>
                                         </div>
                                         <div class="col-md-6">

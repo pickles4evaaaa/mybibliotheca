@@ -36,3 +36,6 @@ pytest-cov==7.0.0
 
 # AI Service Dependencies
 pystache==0.6.8
+
+# Markdown support for personal notes
+mistune==3.0.2
