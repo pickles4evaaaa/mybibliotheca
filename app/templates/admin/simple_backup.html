@@ -374,6 +374,9 @@ setInterval(() => {
 // Backup settings form submission
 document.getElementById('backupSettingsForm')?.addEventListener('submit', function(e) {
     e.preventDefault();
+    const el = document.getElementById('settingsFeedback');
+    el.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split me-1"></i>Saving...</span>';
+    
     const payload = {
         enabled: document.getElementById('enabledToggle').checked,
         retention_days: parseInt(document.getElementById('retentionDays').value, 10),
@@ -381,23 +384,39 @@ document.getElementById('backupSettingsForm')?.addEventListener('submit', functi
         scheduled_minute: parseInt(document.getElementById('scheduledMinute').value, 10),
         frequency: document.getElementById('frequency').value
     };
+    
     fetch('{{ url_for("simple_backup.api_backup_settings") }}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     })
-    .then(r => r.json())
+    .then(r => {
+        if (!r.ok) {
+            return r.json().then(err => {
+                throw new Error(err.error || 'Save failed');
+            });
+        }
+        return r.json();
+    })
     .then(data => {
-        const el = document.getElementById('settingsFeedback');
         if (data.status === 'ok') {
-            el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Settings saved</span>';
+            el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Settings saved successfully! Changes: ' + 
+                Object.keys(data.changed).join(', ') + '</span>';
+            // Update form with confirmed values from server
+            if (data.settings) {
+                document.getElementById('enabledToggle').checked = data.settings.enabled;
+                document.getElementById('retentionDays').value = data.settings.retention_days;
+                document.getElementById('scheduledHour').value = data.settings.scheduled_hour;
+                document.getElementById('scheduledMinute').value = data.settings.scheduled_minute;
+                document.getElementById('frequency').value = data.settings.frequency;
+            }
         } else {
             el.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>' + (data.error || 'Save failed') + '</span>';
         }
     })
     .catch(err => {
-        const el = document.getElementById('settingsFeedback');
-        el.innerHTML = '<span class="text-danger">Error: ' + err + '</span>';
+        el.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Error: ' + err.message + '</span>';
+        console.error('Backup settings save error:', err);
     });
 });
 </script>
