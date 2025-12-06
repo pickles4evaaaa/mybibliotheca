@@ -328,9 +328,12 @@ def api_backup_settings():
                 if key == 'enabled':
                     settings[key] = bool(data[key])
                 elif key == 'frequency':
-                    if data[key] not in VALID_BACKUP_FREQUENCIES:
-                        return jsonify({'error': f'Invalid frequency: {data[key]}. Must be one of: {", ".join(VALID_BACKUP_FREQUENCIES)}'}), 400
-                    settings[key] = str(data[key])
+                    # Validate and sanitize frequency value
+                    freq_value = str(data[key]) if data[key] else ''
+                    if freq_value not in VALID_BACKUP_FREQUENCIES:
+                        # Don't include user input in error message to prevent injection
+                        return jsonify({'error': f'Invalid frequency value. Must be one of: {", ".join(VALID_BACKUP_FREQUENCIES)}'}), 400
+                    settings[key] = freq_value
                 elif key == 'retention_days':
                     try:
                         val = int(data[key])

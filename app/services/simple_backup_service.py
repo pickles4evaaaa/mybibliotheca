@@ -163,11 +163,11 @@ class SimpleBackupService:
             return True
         except Exception as e:
             logger.error(f"Failed saving backup settings: {e}", exc_info=True)
-            # Clean up temp file if it exists
+            # Clean up temp file if it exists (using the same path calculation as above)
             try:
-                temp_file = self.backup_settings_file.with_suffix('.json.tmp')
-                if temp_file.exists():
-                    temp_file.unlink()
+                cleanup_temp = self.backup_settings_file.with_suffix('.json.tmp')
+                if cleanup_temp.exists():
+                    cleanup_temp.unlink()
             except Exception:
                 pass
             return False
