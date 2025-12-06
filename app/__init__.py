@@ -479,6 +479,13 @@ def create_app():
         """Check if book has a valid cover using UnifiedCoverManager."""
         from app.services.unified_cover_manager import cover_manager
         return cover_manager.get_cover_info(book).has_cover
+    
+    # Markdown rendering filter
+    @app.template_filter('markdown')
+    def markdown_filter(text):
+        """Convert markdown text to HTML."""
+        from app.template_filters.markdown_filters import render_markdown
+        return render_markdown(text)
 
     # CSRF error handler
     @app.errorhandler(400)

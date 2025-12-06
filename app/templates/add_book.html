@@ -371,6 +371,9 @@
                                                     <label for="personal_notes" class="form-label fw-medium">Personal Notes</label>
                                                     <textarea class="form-control" id="personal_notes" name="personal_notes" rows="3" 
                                                               placeholder="Your personal thoughts and notes about this book...">{{ request.form.personal_notes or '' }}</textarea>
+                                                    <small class="form-text text-muted">
+                                                        <i class="bi bi-markdown me-1"></i>Markdown formatting supported (e.g., **bold**, *italic*, - lists)
+                                                    </small>
                                                 </div>
                                             </div>
                                             <div class="col-md-6">
