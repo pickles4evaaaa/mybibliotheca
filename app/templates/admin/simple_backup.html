@@ -375,7 +375,15 @@ setInterval(() => {
 document.getElementById('backupSettingsForm')?.addEventListener('submit', function(e) {
     e.preventDefault();
     const el = document.getElementById('settingsFeedback');
-    el.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split me-1"></i>Saving...</span>';
+    // Safely show saving message
+    const savingSpan = document.createElement('span');
+    savingSpan.className = 'text-info';
+    const savingIcon = document.createElement('i');
+    savingIcon.className = 'bi bi-hourglass-split me-1';
+    savingSpan.appendChild(savingIcon);
+    savingSpan.appendChild(document.createTextNode('Saving...'));
+    el.innerHTML = '';
+    el.appendChild(savingSpan);
     
     const payload = {
         enabled: document.getElementById('enabledToggle').checked,

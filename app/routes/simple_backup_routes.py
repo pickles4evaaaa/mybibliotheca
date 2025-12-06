@@ -15,6 +15,9 @@ from app.admin import admin_required
 # Create simple backup blueprint
 simple_backup_bp = Blueprint('simple_backup', __name__, url_prefix='/auth/simple-backup')
 
+# Constants for backup settings validation
+VALID_BACKUP_FREQUENCIES = ['daily', 'weekly']
+
 
 @simple_backup_bp.route('/')
 @login_required
@@ -325,10 +328,8 @@ def api_backup_settings():
                 if key == 'enabled':
                     settings[key] = bool(data[key])
                 elif key == 'frequency':
-                    # Valid frequency values
-                    VALID_FREQUENCIES = ['daily', 'weekly']
-                    if data[key] not in VALID_FREQUENCIES:
-                        return jsonify({'error': f'Invalid frequency: {data[key]}. Must be one of: {", ".join(VALID_FREQUENCIES)}'}), 400
+                    if data[key] not in VALID_BACKUP_FREQUENCIES:
+                        return jsonify({'error': f'Invalid frequency: {data[key]}. Must be one of: {", ".join(VALID_BACKUP_FREQUENCIES)}'}), 400
                     settings[key] = str(data[key])
                 elif key == 'retention_days':
                     try:

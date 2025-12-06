@@ -113,7 +113,17 @@ if(settingsForm){
   settingsForm.addEventListener('submit', function(e){
     e.preventDefault();
     var fb = document.getElementById('settingsFeedback');
-    if(fb) fb.innerHTML='<span class="text-info"><i class="bi bi-hourglass-split me-1"></i>Saving...</span>';
+    if(fb) {
+      // Safely show saving message
+      var savingSpan = document.createElement('span');
+      savingSpan.className = 'text-info';
+      var savingIcon = document.createElement('i');
+      savingIcon.className = 'bi bi-hourglass-split me-1';
+      savingSpan.appendChild(savingIcon);
+      savingSpan.appendChild(document.createTextNode('Saving...'));
+      fb.innerHTML = '';
+      fb.appendChild(savingSpan);
+    }
     
     var payload = {
       enabled: document.getElementById('enabledToggle').checked,

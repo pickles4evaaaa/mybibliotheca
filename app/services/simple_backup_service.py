@@ -148,16 +148,28 @@ class SimpleBackupService:
             with open(temp_file, 'w') as f:
                 json.dump(self._settings, f, indent=2)
             
-            # Verify the file was written correctly by reading it back
+            # Verify the file was written correctly by reading it back and comparing
             with open(temp_file, 'r') as f:
                 verified = json.load(f)
             
+            # Validate that all critical settings were saved correctly
+            for key in ['enabled', 'frequency', 'retention_days', 'scheduled_hour', 'scheduled_minute']:
+                if key in self._settings and verified.get(key) != self._settings[key]:
+                    raise ValueError(f"Setting '{key}' verification failed: expected {self._settings[key]}, got {verified.get(key)}")
+            
             # If verification succeeds, rename temp file to actual file
             temp_file.replace(self.backup_settings_file)
-            logger.info(f"Backup settings saved successfully: {self._settings}")
+            logger.info(f"Backup settings saved and verified successfully: {self._settings}")
             return True
         except Exception as e:
             logger.error(f"Failed saving backup settings: {e}", exc_info=True)
+            # Clean up temp file if it exists
+            try:
+                temp_file = self.backup_settings_file.with_suffix('.json.tmp')
+                if temp_file.exists():
+                    temp_file.unlink()
+            except Exception:
+                pass
             return False
 
     def ensure_scheduler(self):
