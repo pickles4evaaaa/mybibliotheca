@@ -400,8 +400,17 @@ document.getElementById('backupSettingsForm')?.addEventListener('submit', functi
     })
     .then(data => {
         if (data.status === 'ok') {
-            el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Settings saved successfully! Changes: ' + 
-                Object.keys(data.changed).join(', ') + '</span>';
+            // Safely construct the message using textContent to prevent XSS
+            const successSpan = document.createElement('span');
+            successSpan.className = 'text-success';
+            const icon = document.createElement('i');
+            icon.className = 'bi bi-check-circle me-1';
+            successSpan.appendChild(icon);
+            const changedKeys = Object.keys(data.changed).join(', ');
+            successSpan.appendChild(document.createTextNode('Settings saved successfully! Changes: ' + changedKeys));
+            el.innerHTML = '';
+            el.appendChild(successSpan);
+            
             // Update form with confirmed values from server
             if (data.settings) {
                 document.getElementById('enabledToggle').checked = data.settings.enabled;
@@ -411,11 +420,27 @@ document.getElementById('backupSettingsForm')?.addEventListener('submit', functi
                 document.getElementById('frequency').value = data.settings.frequency;
             }
         } else {
-            el.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>' + (data.error || 'Save failed') + '</span>';
+            // Safely construct error message
+            const errorSpan = document.createElement('span');
+            errorSpan.className = 'text-danger';
+            const icon = document.createElement('i');
+            icon.className = 'bi bi-exclamation-triangle me-1';
+            errorSpan.appendChild(icon);
+            errorSpan.appendChild(document.createTextNode(data.error || 'Save failed'));
+            el.innerHTML = '';
+            el.appendChild(errorSpan);
         }
     })
     .catch(err => {
-        el.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Error: ' + err.message + '</span>';
+        // Safely construct error message
+        const errorSpan = document.createElement('span');
+        errorSpan.className = 'text-danger';
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-exclamation-triangle me-1';
+        errorSpan.appendChild(icon);
+        errorSpan.appendChild(document.createTextNode('Error: ' + err.message));
+        el.innerHTML = '';
+        el.appendChild(errorSpan);
         console.error('Backup settings save error:', err);
     });
 });

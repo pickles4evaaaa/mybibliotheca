@@ -134,7 +134,17 @@ if(settingsForm){
     }).then(d=>{
       if(!fb) return;
       if(d.status==='ok') {
-        fb.innerHTML='<span class="text-success"><i class="bi bi-check-circle me-1"></i>Saved: '+Object.keys(d.changed).join(', ')+'</span>';
+        // Safely construct the message to prevent XSS
+        var successSpan = document.createElement('span');
+        successSpan.className = 'text-success';
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-check-circle me-1';
+        successSpan.appendChild(icon);
+        var changedKeys = Object.keys(d.changed).join(', ');
+        successSpan.appendChild(document.createTextNode('Saved: ' + changedKeys));
+        fb.innerHTML = '';
+        fb.appendChild(successSpan);
+        
         // Update form with confirmed values from server
         if(d.settings){
           document.getElementById('enabledToggle').checked = d.settings.enabled;
@@ -144,9 +154,26 @@ if(settingsForm){
           document.getElementById('frequency').value = d.settings.frequency;
         }
       }
-      else fb.innerHTML='<span class="text-danger">'+(d.error||'Failed')+'</span>';
+      else {
+        // Safely construct error message
+        var errorSpan = document.createElement('span');
+        errorSpan.className = 'text-danger';
+        errorSpan.appendChild(document.createTextNode(d.error||'Failed'));
+        fb.innerHTML = '';
+        fb.appendChild(errorSpan);
+      }
     }).catch(err=>{
-      if(fb) fb.innerHTML='<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>'+err.message+'</span>';
+      if(fb) {
+        // Safely construct error message
+        var errorSpan = document.createElement('span');
+        errorSpan.className = 'text-danger';
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-exclamation-triangle me-1';
+        errorSpan.appendChild(icon);
+        errorSpan.appendChild(document.createTextNode(err.message));
+        fb.innerHTML = '';
+        fb.appendChild(errorSpan);
+      }
       console.error('Backup settings error:',err);
     });
   });
