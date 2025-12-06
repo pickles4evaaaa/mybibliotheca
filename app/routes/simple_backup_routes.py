@@ -15,6 +15,9 @@ from app.admin import admin_required
 # Create simple backup blueprint
 simple_backup_bp = Blueprint('simple_backup', __name__, url_prefix='/auth/simple-backup')
 
+# Constants for backup settings validation
+VALID_BACKUP_FREQUENCIES = ['daily', 'weekly']
+
 
 @simple_backup_bp.route('/')
 @login_required
@@ -309,31 +312,72 @@ def api_backup_settings():
             return jsonify(backup_service._settings if hasattr(backup_service, '_settings') else {})
         # POST update
         data = request.get_json(silent=True) or {}
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
         changed = {}
-        if hasattr(backup_service, '_settings'):
-            settings = backup_service._settings
-            for key in ['enabled', 'frequency', 'retention_days', 'scheduled_hour', 'scheduled_minute']:
-                if key in data:
-                    settings[key] = data[key]
-                    changed[key] = data[key]
-            # Persist
+        if not hasattr(backup_service, '_settings'):
+            return jsonify({'error': 'Settings not available'}), 500
+            
+        settings = backup_service._settings
+        
+        # Validate and update settings
+        for key in ['enabled', 'frequency', 'retention_days', 'scheduled_hour', 'scheduled_minute']:
+            if key in data:
+                # Type validation
+                if key == 'enabled':
+                    settings[key] = bool(data[key])
+                elif key == 'frequency':
+                    # Validate and sanitize frequency value
+                    freq_value = str(data[key]) if data[key] else ''
+                    if freq_value not in VALID_BACKUP_FREQUENCIES:
+                        # Don't include user input in error message to prevent injection
+                        return jsonify({'error': f'Invalid frequency value. Must be one of: {", ".join(VALID_BACKUP_FREQUENCIES)}'}), 400
+                    settings[key] = freq_value
+                elif key == 'retention_days':
+                    try:
+                        val = int(data[key])
+                        if val < 1:
+                            return jsonify({'error': 'Retention days must be at least 1'}), 400
+                        settings[key] = val
+                    except (ValueError, TypeError):
+                        return jsonify({'error': 'Invalid retention_days value'}), 400
+                elif key in ['scheduled_hour', 'scheduled_minute']:
+                    try:
+                        val = int(data[key])
+                        if key == 'scheduled_hour' and not (0 <= val <= 23):
+                            return jsonify({'error': 'Hour must be between 0 and 23'}), 400
+                        if key == 'scheduled_minute' and not (0 <= val <= 59):
+                            return jsonify({'error': 'Minute must be between 0 and 59'}), 400
+                        settings[key] = val
+                    except (ValueError, TypeError):
+                        return jsonify({'error': f'Invalid {key} value'}), 400
+                changed[key] = settings[key]
+        
+        # Persist changes
+        if not backup_service._save_settings():
+            current_app.logger.error(f"Failed to save backup settings. Attempted changes: {changed}")
+            return jsonify({
+                'error': 'Failed to save settings to disk. Check file permissions and disk space.',
+                'changed': changed
+            }), 500
+        
+        # Restart scheduler if needed
+        if settings.get('enabled'):
             try:
-                backup_service._save_settings()
-            except Exception as se:
-                current_app.logger.warning(f"Failed saving backup settings via API: {se}")
-            # Restart scheduler if needed
-            if settings.get('enabled'):
-                try:
-                    backup_service.ensure_scheduler()
-                except Exception:
-                    pass
-            else:
-                try:
-                    backup_service.stop_scheduler()
-                except Exception:
-                    pass
-            return jsonify({'status': 'ok', 'changed': changed, 'settings': settings})
-        return jsonify({'error': 'Settings not available'}), 500
+                backup_service.ensure_scheduler()
+                current_app.logger.info("Backup scheduler started/ensured after settings update")
+            except Exception as e:
+                current_app.logger.warning(f"Failed to start backup scheduler: {e}")
+        else:
+            try:
+                backup_service.stop_scheduler()
+                current_app.logger.info("Backup scheduler stopped after settings update")
+            except Exception as e:
+                current_app.logger.warning(f"Failed to stop backup scheduler: {e}")
+        
+        current_app.logger.info(f"Backup settings updated successfully: {changed}")
+        return jsonify({'status': 'ok', 'changed': changed, 'settings': settings})
     except Exception as e:
         current_app.logger.error(f"Error handling backup settings: {e}")
         return jsonify({'error': 'Internal server error'}), 500

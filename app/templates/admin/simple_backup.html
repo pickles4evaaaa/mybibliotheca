@@ -374,6 +374,17 @@ setInterval(() => {
 // Backup settings form submission
 document.getElementById('backupSettingsForm')?.addEventListener('submit', function(e) {
     e.preventDefault();
+    const el = document.getElementById('settingsFeedback');
+    // Safely show saving message
+    const savingSpan = document.createElement('span');
+    savingSpan.className = 'text-info';
+    const savingIcon = document.createElement('i');
+    savingIcon.className = 'bi bi-hourglass-split me-1';
+    savingSpan.appendChild(savingIcon);
+    savingSpan.appendChild(document.createTextNode('Saving...'));
+    el.innerHTML = '';
+    el.appendChild(savingSpan);
+    
     const payload = {
         enabled: document.getElementById('enabledToggle').checked,
         retention_days: parseInt(document.getElementById('retentionDays').value, 10),
@@ -381,23 +392,64 @@ document.getElementById('backupSettingsForm')?.addEventListener('submit', functi
         scheduled_minute: parseInt(document.getElementById('scheduledMinute').value, 10),
         frequency: document.getElementById('frequency').value
     };
+    
     fetch('{{ url_for("simple_backup.api_backup_settings") }}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     })
-    .then(r => r.json())
+    .then(r => {
+        if (!r.ok) {
+            return r.json().then(err => {
+                throw new Error(err.error || 'Save failed');
+            });
+        }
+        return r.json();
+    })
     .then(data => {
-        const el = document.getElementById('settingsFeedback');
         if (data.status === 'ok') {
-            el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Settings saved</span>';
+            // Safely construct the message using textContent to prevent XSS
+            const successSpan = document.createElement('span');
+            successSpan.className = 'text-success';
+            const icon = document.createElement('i');
+            icon.className = 'bi bi-check-circle me-1';
+            successSpan.appendChild(icon);
+            const changedKeys = Object.keys(data.changed).join(', ');
+            successSpan.appendChild(document.createTextNode('Settings saved successfully! Changes: ' + changedKeys));
+            el.innerHTML = '';
+            el.appendChild(successSpan);
+            
+            // Update form with confirmed values from server
+            if (data.settings) {
+                document.getElementById('enabledToggle').checked = data.settings.enabled;
+                document.getElementById('retentionDays').value = data.settings.retention_days;
+                document.getElementById('scheduledHour').value = data.settings.scheduled_hour;
+                document.getElementById('scheduledMinute').value = data.settings.scheduled_minute;
+                document.getElementById('frequency').value = data.settings.frequency;
+            }
         } else {
-            el.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>' + (data.error || 'Save failed') + '</span>';
+            // Safely construct error message
+            const errorSpan = document.createElement('span');
+            errorSpan.className = 'text-danger';
+            const icon = document.createElement('i');
+            icon.className = 'bi bi-exclamation-triangle me-1';
+            errorSpan.appendChild(icon);
+            errorSpan.appendChild(document.createTextNode(data.error || 'Save failed'));
+            el.innerHTML = '';
+            el.appendChild(errorSpan);
         }
     })
     .catch(err => {
-        const el = document.getElementById('settingsFeedback');
-        el.innerHTML = '<span class="text-danger">Error: ' + err + '</span>';
+        // Safely construct error message
+        const errorSpan = document.createElement('span');
+        errorSpan.className = 'text-danger';
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-exclamation-triangle me-1';
+        errorSpan.appendChild(icon);
+        errorSpan.appendChild(document.createTextNode('Error: ' + err.message));
+        el.innerHTML = '';
+        el.appendChild(errorSpan);
+        console.error('Backup settings save error:', err);
     });
 });
 </script>

@@ -137,12 +137,40 @@ class SimpleBackupService:
             logger.error(f"Failed loading backup settings, using defaults: {e}")
             return defaults
 
-    def _save_settings(self):
+    def _save_settings(self) -> bool:
+        """Save settings to disk. Returns True if successful, False otherwise."""
         try:
-            with open(self.backup_settings_file, 'w') as f:
+            # Ensure parent directory exists
+            self.backup_settings_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write to a temporary file first
+            temp_file = self.backup_settings_file.with_suffix('.json.tmp')
+            with open(temp_file, 'w') as f:
                 json.dump(self._settings, f, indent=2)
+            
+            # Verify the file was written correctly by reading it back and comparing
+            with open(temp_file, 'r') as f:
+                verified = json.load(f)
+            
+            # Validate that all critical settings were saved correctly
+            for key in ['enabled', 'frequency', 'retention_days', 'scheduled_hour', 'scheduled_minute']:
+                if key in self._settings and verified.get(key) != self._settings[key]:
+                    raise ValueError(f"Setting '{key}' verification failed: expected {self._settings[key]}, got {verified.get(key)}")
+            
+            # If verification succeeds, rename temp file to actual file
+            temp_file.replace(self.backup_settings_file)
+            logger.info(f"Backup settings saved and verified successfully: {self._settings}")
+            return True
         except Exception as e:
-            logger.warning(f"Failed saving backup settings: {e}")
+            logger.error(f"Failed saving backup settings: {e}", exc_info=True)
+            # Clean up temp file if it exists (using the same path calculation as above)
+            try:
+                cleanup_temp = self.backup_settings_file.with_suffix('.json.tmp')
+                if cleanup_temp.exists():
+                    cleanup_temp.unlink()
+            except Exception:
+                pass
+            return False
 
     def ensure_scheduler(self):
         if self._scheduler_thread and self._scheduler_thread.is_alive():
@@ -177,7 +205,8 @@ class SimpleBackupService:
             logger.info("Running scheduled daily backup")
             self.create_backup(description='Scheduled daily backup', reason='scheduled_daily')
             self._settings['last_run'] = datetime.now().isoformat()
-            self._save_settings()
+            if not self._save_settings():
+                logger.error("Failed to save last_run timestamp after scheduled backup")
 
     def stop_scheduler(self):
         if self._scheduler_thread:

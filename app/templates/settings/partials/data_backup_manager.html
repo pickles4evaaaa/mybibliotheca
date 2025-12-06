@@ -112,6 +112,19 @@ var settingsForm = document.getElementById('backupSettingsForm');
 if(settingsForm){
   settingsForm.addEventListener('submit', function(e){
     e.preventDefault();
+    var fb = document.getElementById('settingsFeedback');
+    if(fb) {
+      // Safely show saving message
+      var savingSpan = document.createElement('span');
+      savingSpan.className = 'text-info';
+      var savingIcon = document.createElement('i');
+      savingIcon.className = 'bi bi-hourglass-split me-1';
+      savingSpan.appendChild(savingIcon);
+      savingSpan.appendChild(document.createTextNode('Saving...'));
+      fb.innerHTML = '';
+      fb.appendChild(savingSpan);
+    }
+    
     var payload = {
       enabled: document.getElementById('enabledToggle').checked,
       retention_days: parseInt(document.getElementById('retentionDays').value,10),
@@ -123,14 +136,55 @@ if(settingsForm){
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(payload)
-    }).then(r=>r.json()).then(d=>{
-      var fb = document.getElementById('settingsFeedback');
+    }).then(r=>{
+      if(!r.ok) {
+        return r.json().then(err=>{ throw new Error(err.error||'Save failed'); });
+      }
+      return r.json();
+    }).then(d=>{
       if(!fb) return;
-      if(d.status==='ok') fb.innerHTML='<span class="text-success"><i class="bi bi-check-circle me-1"></i>Saved</span>';
-      else fb.innerHTML='<span class="text-danger">'+(d.error||'Failed')+'</span>';
+      if(d.status==='ok') {
+        // Safely construct the message to prevent XSS
+        var successSpan = document.createElement('span');
+        successSpan.className = 'text-success';
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-check-circle me-1';
+        successSpan.appendChild(icon);
+        var changedKeys = Object.keys(d.changed).join(', ');
+        successSpan.appendChild(document.createTextNode('Saved: ' + changedKeys));
+        fb.innerHTML = '';
+        fb.appendChild(successSpan);
+        
+        // Update form with confirmed values from server
+        if(d.settings){
+          document.getElementById('enabledToggle').checked = d.settings.enabled;
+          document.getElementById('retentionDays').value = d.settings.retention_days;
+          document.getElementById('scheduledHour').value = d.settings.scheduled_hour;
+          document.getElementById('scheduledMinute').value = d.settings.scheduled_minute;
+          document.getElementById('frequency').value = d.settings.frequency;
+        }
+      }
+      else {
+        // Safely construct error message
+        var errorSpan = document.createElement('span');
+        errorSpan.className = 'text-danger';
+        errorSpan.appendChild(document.createTextNode(d.error||'Failed'));
+        fb.innerHTML = '';
+        fb.appendChild(errorSpan);
+      }
     }).catch(err=>{
-      var fb = document.getElementById('settingsFeedback');
-      if(fb) fb.innerHTML='<span class="text-danger">Err '+err+'</span>';
+      if(fb) {
+        // Safely construct error message
+        var errorSpan = document.createElement('span');
+        errorSpan.className = 'text-danger';
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-exclamation-triangle me-1';
+        errorSpan.appendChild(icon);
+        errorSpan.appendChild(document.createTextNode(err.message));
+        fb.innerHTML = '';
+        fb.appendChild(errorSpan);
+      }
+      console.error('Backup settings error:',err);
     });
   });
 }
