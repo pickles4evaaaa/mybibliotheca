@@ -16,7 +16,7 @@ def render_markdown(text):
     Convert markdown text to HTML.
     
     Args:
-        text: Markdown text to convert
+        text: Markdown text to convert (should be a string)
         
     Returns:
         Safe HTML markup
@@ -24,14 +24,17 @@ def render_markdown(text):
     if not text:
         return ''
     
+    # Ensure text is a string
+    if not isinstance(text, str):
+        text = str(text)
+    
     try:
         # Convert markdown to HTML (with HTML escaping enabled for security)
         html = markdown(text)
         # Return as safe markup so Jinja2 doesn't escape markdown-generated HTML
         return Markup(html)
-    except (ValueError, TypeError):
-        # If markdown rendering fails (e.g., invalid input type), return the escaped text
-        # ValueError: invalid markdown syntax
-        # TypeError: wrong input type (not a string)
-        # We gracefully fallback to plain text display
-        return Markup(f'<p>{escape(text)}</p>')
+    except Exception:
+        # Mistune is very robust and rarely raises exceptions for valid strings
+        # If it does fail (e.g., plugin issues), return escaped plain text as fallback
+        # Note: Invalid markdown syntax doesn't raise exceptions - it renders as-is
+        return Markup(f'<p>{escape(str(text))}</p>')
