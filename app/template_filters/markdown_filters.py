@@ -29,14 +29,7 @@ def render_markdown(text):
         html = markdown(text)
         # Return as safe markup so Jinja2 doesn't escape markdown-generated HTML
         return Markup(html)
-    except Exception as e:
-        # If markdown rendering fails, return the escaped text as-is
+    except Exception:
+        # If markdown rendering fails, return the escaped text as-is in a paragraph
+        # We don't log the exception as it's expected for invalid markdown
         return Markup(f'<p>{escape(text)}</p>')
-
-def register_markdown_filters(app):
-    """Register markdown-related template filters."""
-    
-    @app.template_filter('markdown')
-    def markdown_filter(text):
-        """Convert markdown text to HTML."""
-        return render_markdown(text)
