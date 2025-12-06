@@ -29,8 +29,9 @@ def render_markdown(text):
         html = markdown(text)
         # Return as safe markup so Jinja2 doesn't escape markdown-generated HTML
         return Markup(html)
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError):
         # If markdown rendering fails (e.g., invalid input type), return the escaped text
-        # Common exceptions: ValueError (invalid markdown), TypeError (wrong type), 
-        # AttributeError (missing method). We gracefully fallback to plain text.
+        # ValueError: invalid markdown syntax
+        # TypeError: wrong input type (not a string)
+        # We gracefully fallback to plain text display
         return Markup(f'<p>{escape(text)}</p>')
