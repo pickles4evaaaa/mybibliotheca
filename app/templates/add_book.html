@@ -786,9 +786,18 @@ function fetchBookData() {
                     }
                 } catch (_) { /* noop */ }
                 populateFormWithBookData(mapped);
+                
+                // Display success message with title
                 const matchedTitle = data.title ? escapeHtml(String(data.title)) : null;
-                if (matchedTitle) {
-                    showMessage(`Found book: <strong>${matchedTitle}</strong>`, 'success');
+                let successMessage = matchedTitle ? `Found book: <strong>${matchedTitle}</strong>` : 'Book data fetched successfully!';
+                
+                // Check for ISBN mismatch warnings
+                if (resp.isbn_mismatch && resp.warnings && resp.warnings.length > 0) {
+                    // Show warning about ISBN mismatch
+                    const warningMessages = resp.warnings.map(w => escapeHtml(String(w))).join('<br>');
+                    showMessage(`⚠️ <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`, 'warning', 10000);
+                } else if (matchedTitle) {
+                    showMessage(successMessage, 'success');
                 } else {
                     showMessage('Book data fetched successfully!', 'success');
                 }
@@ -1091,7 +1100,13 @@ function selectBookFromSearch(bookIndex) {
                 // Populate form with the intelligently merged data
                 populateFormWithBookData(mergedData);
                 
-                showMessage(`Selected "${mergedData.title}" - Form populated with enhanced book details!`, 'success');
+                // Check for ISBN mismatch warnings
+                if (apiResp.isbn_mismatch && apiResp.warnings && apiResp.warnings.length > 0) {
+                    const warningMessages = apiResp.warnings.map(w => escapeHtml(String(w))).join('<br>');
+                    showMessage(`⚠️ <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`, 'warning', 10000);
+                } else {
+                    showMessage(`Selected "${mergedData.title}" - Form populated with enhanced book details!`, 'success');
+                }
             })
             .catch(error => {
                 console.warn('⚠️ ISBN lookup failed, using search data only:', error);
@@ -1647,7 +1662,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-function showMessage(message, type) {
+function showMessage(message, type, duration = 5000) {
   // Create alert element
   const alertDiv = document.createElement('div');
     const bsType = type === 'success' ? 'success' : (type === 'warning' ? 'warning' : (type === 'info' ? 'info' : 'danger'));
@@ -1661,12 +1676,12 @@ function showMessage(message, type) {
   const container = document.querySelector('.container');
   container.insertBefore(alertDiv, container.firstChild);
   
-  // Auto-dismiss after 5 seconds
+  // Auto-dismiss after specified duration (default 5 seconds)
   setTimeout(() => {
     if (alertDiv.parentNode) {
       alertDiv.remove();
     }
-  }, 5000);
+  }, duration);
 }
 
 // Contributor management functions

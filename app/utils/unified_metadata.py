@@ -714,6 +714,8 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 	"""Public detailed fetch returning (merged_metadata, provider_errors).
 
 	If both providers empty, merged_metadata is {} and errors indicate causes.
+	Now includes ISBN mismatch detection to warn when metadata sources return
+	information for a different ISBN than requested.
 	"""
 	google, openlib, _errors = _unified_fetch_pair(isbn)
 	if not google and not openlib:
@@ -733,16 +735,53 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 		cats = merged.get('categories') or []
 		merged['raw_category_paths'] = list(cats)
 
+	# Normalize requested ISBN for comparison
+	import re as _re
+	requested_isbn = _re.sub(r"[^0-9Xx]", "", (isbn or ''))
+	
+	# Ensure requested ISBN is preserved in merged result if missing
 	try:
-		import re as _re
-		raw = _re.sub(r"[^0-9Xx]", "", (isbn or ''))
-		if raw:
-			if not merged.get('isbn13') and len(raw) == 13:
-				merged['isbn13'] = raw
-			if not merged.get('isbn10') and len(raw) == 10:
-				merged['isbn10'] = raw
+		if requested_isbn:
+			if not merged.get('isbn13') and len(requested_isbn) == 13:
+				merged['isbn13'] = requested_isbn
+			if not merged.get('isbn10') and len(requested_isbn) == 10:
+				merged['isbn10'] = requested_isbn
 	except Exception:
 		pass
+
+	# ISBN mismatch detection
+	warnings = []
+	isbn_mismatch = False
+	
+	if requested_isbn:
+		returned_isbn13 = _re.sub(r"[^0-9Xx]", "", str(merged.get('isbn13') or ''))
+		returned_isbn10 = _re.sub(r"[^0-9Xx]", "", str(merged.get('isbn10') or ''))
+		
+		# Check if returned ISBNs match the requested ISBN
+		if returned_isbn13 or returned_isbn10:
+			# Normalize both 10 and 13 to uppercase for X
+			requested_normalized = requested_isbn.upper()
+			returned_isbn13_normalized = returned_isbn13.upper()
+			returned_isbn10_normalized = returned_isbn10.upper()
+			
+			# Check for exact match
+			if requested_normalized not in (returned_isbn13_normalized, returned_isbn10_normalized):
+				isbn_mismatch = True
+				warnings.append(f"ISBN mismatch: Requested {isbn}, but metadata returned for ISBN {returned_isbn13 or returned_isbn10}")
+				_META_LOG.warning(f"[UNIFIED_METADATA][ISBN_MISMATCH] requested={isbn} returned_isbn13={returned_isbn13} returned_isbn10={returned_isbn10}")
+				
+				# Extract volume information from title if present
+				title = merged.get('title', '')
+				if title:
+					# Try to extract volume/vol number from title
+					vol_match = _re.search(r'\b(?:vol\.?|volume)\s*(\d+)', title, _re.IGNORECASE)
+					if vol_match:
+						warnings.append(f"Metadata shows volume {vol_match.group(1)} - verify this matches your book")
+
+	# Add metadata quality indicators
+	merged['_metadata_warnings'] = warnings
+	merged['_isbn_mismatch'] = isbn_mismatch
+	merged['_requested_isbn'] = requested_isbn
 
 	return merged, _errors
 
