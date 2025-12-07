@@ -5001,8 +5001,18 @@ def add_book_manual():
                 return redirect(url_for('book.view_book_enhanced', uid=existing_id))
             return redirect(url_for('main.library'))
     if not added:
-        flash('Failed to add book','danger')
-        return redirect(url_for('main.library'))
+        # Check if request wants JSON response
+        wants_json = (
+            request.headers.get('Accept', '').find('application/json') != -1 or
+            request.headers.get('X-Requested-With') == 'XMLHttpRequest' or
+            request.args.get('format') == 'json'
+        )
+        
+        if wants_json:
+            return jsonify({'success': False, 'message': 'Failed to add book'}), 500
+        else:
+            flash('Failed to add book','danger')
+            return redirect(url_for('main.library'))
 
     # Find created book to apply personal metadata & attach series
     created = None
@@ -5049,12 +5059,30 @@ def add_book_manual():
         pass
 
     message = f'Added "{title}"'
-    if submit_action == 'save_and_new':
-        flash(f'{message}. Ready for the next book!', 'success')
-        return redirect(url_for('book.add_book'))
-
-    flash(message, 'success')
-    return redirect(url_for('main.library'))
+    
+    # Check if request wants JSON response (AJAX or explicit header)
+    wants_json = (
+        request.headers.get('Accept', '').find('application/json') != -1 or
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest' or
+        request.args.get('format') == 'json'
+    )
+    
+    if wants_json:
+        # Return JSON for AJAX requests
+        redirect_url = url_for('book.add_book') if submit_action == 'save_and_new' else url_for('main.library')
+        return jsonify({
+            'success': True,
+            'message': message,
+            'redirect_url': redirect_url
+        })
+    else:
+        # Original behavior for non-AJAX requests
+        if submit_action == 'save_and_new':
+            flash(f'{message}. Ready for the next book!', 'success')
+            return redirect(url_for('book.add_book'))
+        
+        flash(message, 'success')
+        return redirect(url_for('main.library'))
 
 @book_bp.route('/api/resolve_duplicate', methods=['POST'])
 @login_required

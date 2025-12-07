@@ -1788,7 +1788,10 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
 
-        form.addEventListener('submit', function(e) {
+        form.addEventListener('submit', async function(e) {
+            // Prevent default submission to handle via AJAX
+            e.preventDefault();
+            
             // Collect contributors and categories before submit
             collectContributorsAndCategories();
 
@@ -1808,6 +1811,63 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 button.disabled = true;
             });
+            
+            // Submit via fetch to detect duplicates
+            try {
+                const formData = new FormData(form);
+                const response = await fetch(form.action || window.location.pathname, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: formData
+                });
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const result = await response.json();
+                    
+                    if (result.duplicate && result.book_id) {
+                        // Duplicate detected - show modal
+                        buttons.forEach(button => {
+                            button.disabled = false;
+                            if (button.dataset.originalHtml) {
+                                button.innerHTML = button.dataset.originalHtml;
+                            }
+                        });
+                        showDuplicateModal(result);
+                    } else if (result.success) {
+                        // Success - redirect
+                        window.location.href = result.redirect_url || '{{ url_for("main.library") }}';
+                    } else {
+                        // Error
+                        alert('Error: ' + (result.message || 'Failed to add book'));
+                        buttons.forEach(button => {
+                            button.disabled = false;
+                            if (button.dataset.originalHtml) {
+                                button.innerHTML = button.dataset.originalHtml;
+                            }
+                        });
+                    }
+                } else {
+                    // HTML response - submit normally (fallback for non-AJAX responses)
+                    const html = await response.text();
+                    document.open();
+                    document.write(html);
+                    document.close();
+                }
+            } catch (error) {
+                console.error('Error submitting form:', error);
+                alert('An error occurred while adding the book. Please try again.');
+                buttons.forEach(button => {
+                    button.disabled = false;
+                    if (button.dataset.originalHtml) {
+                        button.innerHTML = button.dataset.originalHtml;
+                    }
+                });
+            }
         });
     }
 });
@@ -2289,4 +2349,224 @@ if(document.readyState === 'loading'){
         </div>
     </div>
 </div>
+
+<!-- Duplicate Book Resolution Modal -->
+<div class="modal fade" id="duplicateBookModal" tabindex="-1" aria-labelledby="duplicateBookModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title" id="duplicateBookModalLabel">
+                    <i class="bi bi-exclamation-triangle me-2"></i>Duplicate Book Found
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    This book already exists in your library. How would you like to proceed?
+                </div>
+                
+                <div id="duplicateBookInfo" class="mb-4">
+                    <!-- Book info will be populated here -->
+                </div>
+                
+                <div class="d-grid gap-3">
+                    <!-- Option 1: Increment Count -->
+                    <button type="button" class="btn btn-lg btn-outline-primary text-start" id="incrementCountBtn">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-plus-circle fs-2 me-3"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">Increment Count (+1)</div>
+                                <small class="text-muted">Increase the quantity count for the existing entry</small>
+                            </div>
+                        </div>
+                    </button>
+                    
+                    <!-- Option 2: Add as Separate Entry -->
+                    <button type="button" class="btn btn-lg btn-outline-success text-start" id="addSeparateBtn">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-file-earmark-plus fs-2 me-3"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">Add as Separate Entry</div>
+                                <small class="text-muted">Create a new entry to track unique photos or notes</small>
+                            </div>
+                        </div>
+                    </button>
+                    
+                    <!-- Option 3: Navigate to Existing -->
+                    <button type="button" class="btn btn-lg btn-outline-secondary text-start" id="navigateExistingBtn">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-arrow-right-circle fs-2 me-3"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">View Existing Entry</div>
+                                <small class="text-muted">Navigate to the existing book to view or edit</small>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Handle duplicate book resolution
+let currentDuplicateData = null;
+
+function showDuplicateModal(duplicateResponse) {
+    currentDuplicateData = duplicateResponse;
+    
+    // Populate book info
+    const bookInfo = document.getElementById('duplicateBookInfo');
+    bookInfo.innerHTML = `
+        <div class="card">
+            <div class="card-body">
+                <h6 class="card-title">${duplicateResponse.book_data.title}</h6>
+                ${duplicateResponse.book_data.author ? `<p class="card-text mb-1"><small class="text-muted">by ${duplicateResponse.book_data.author}</small></p>` : ''}
+                ${duplicateResponse.book_data.isbn13 ? `<p class="card-text mb-0"><small>ISBN-13: ${duplicateResponse.book_data.isbn13}</small></p>` : ''}
+                ${duplicateResponse.book_data.isbn10 ? `<p class="card-text mb-0"><small>ISBN-10: ${duplicateResponse.book_data.isbn10}</small></p>` : ''}
+            </div>
+        </div>
+    `;
+    
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('duplicateBookModal'));
+    modal.show();
+}
+
+// Handle increment count button
+document.getElementById('incrementCountBtn').addEventListener('click', async function() {
+    if (!currentDuplicateData) return;
+    
+    const btn = this;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Updating...';
+    
+    try {
+        const response = await fetch('/book/api/resolve_duplicate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name="csrf_token"]').value
+            },
+            body: JSON.stringify({
+                action: 'increment_count',
+                book_id: currentDuplicateData.book_id,
+                book_data: currentDuplicateData.book_data
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Close modal and redirect
+            bootstrap.Modal.getInstance(document.getElementById('duplicateBookModal')).hide();
+            window.location.href = result.redirect_url;
+        } else {
+            alert('Error: ' + result.message);
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    } catch (error) {
+        console.error('Error incrementing count:', error);
+        alert('An error occurred. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    }
+});
+
+// Handle add as separate entry button
+document.getElementById('addSeparateBtn').addEventListener('click', async function() {
+    if (!currentDuplicateData) return;
+    
+    const btn = this;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating...';
+    
+    try {
+        const response = await fetch('/book/api/resolve_duplicate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name="csrf_token"]').value
+            },
+            body: JSON.stringify({
+                action: 'add_separate',
+                book_id: currentDuplicateData.book_id,
+                book_data: currentDuplicateData.book_data
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Close modal and redirect
+            bootstrap.Modal.getInstance(document.getElementById('duplicateBookModal')).hide();
+            window.location.href = result.redirect_url;
+        } else {
+            alert('Error: ' + result.message);
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    } catch (error) {
+        console.error('Error adding separate entry:', error);
+        alert('An error occurred. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    }
+});
+
+// Handle navigate to existing button
+document.getElementById('navigateExistingBtn').addEventListener('click', async function() {
+    if (!currentDuplicateData) return;
+    
+    const btn = this;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Navigating...';
+    
+    try {
+        const response = await fetch('/book/api/resolve_duplicate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name="csrf_token"]').value
+            },
+            body: JSON.stringify({
+                action: 'navigate',
+                book_id: currentDuplicateData.book_id,
+                book_data: currentDuplicateData.book_data
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Close modal and redirect
+            bootstrap.Modal.getInstance(document.getElementById('duplicateBookModal')).hide();
+            window.location.href = result.redirect_url;
+        } else {
+            alert('Error: ' + result.message);
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    } catch (error) {
+        console.error('Error navigating:', error);
+        alert('An error occurred. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    }
+});
+</script>
 {% endblock %}
