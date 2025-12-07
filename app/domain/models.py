@@ -471,6 +471,9 @@ class Book:
 
     # Core format field (physical, ebook, audiobook, kindle, etc.) now global
     media_type: Optional[str] = None
+    
+    # Quantity field to track number of copies owned
+    quantity: int = 1
 
     def __init__(self, author: Optional[str] = None, name: Optional[str] = None, **kwargs):
         """Custom initializer to accept legacy-friendly aliases.

@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "generated_at": "2025-03-01T00:00:00Z",
   "nodes": {
     "Series": {
@@ -78,7 +78,8 @@
   "audiobookshelf_id": "STRING",
   "audio_duration_ms": "INT64",
   "media_type": "STRING",
-  "audiobookshelf_updated_at": "STRING"
+  "audiobookshelf_updated_at": "STRING",
+  "quantity": "INT64"
       },
       "primary_key": "id"
     },

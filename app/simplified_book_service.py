@@ -129,6 +129,7 @@ class SimplifiedBook:
     average_rating: Optional[float] = None
     rating_count: Optional[int] = None
     media_type: Optional[str] = None  # physical, ebook, audiobook, kindle
+    quantity: int = 1  # Number of copies owned (default 1)
     
     # Additional person type fields (like additional authors)
     additional_authors: Optional[str] = None  # Comma-separated string for simplicity
@@ -275,6 +276,7 @@ class SimplifiedBookService:
                 'series_volume': book_data.series_volume,
                 'series_order': book_data.series_order,
                 'media_type': getattr(book_data, 'media_type', '') or '',
+                'quantity': getattr(book_data, 'quantity', 1) or 1,
                 'created_at_str': datetime.now(timezone.utc).isoformat(),
                 'updated_at_str': datetime.now(timezone.utc).isoformat()
             }
@@ -324,6 +326,7 @@ class SimplifiedBookService:
                     series_volume: $series_volume,
                     series_order: $series_order,
                     media_type: $media_type,
+                    quantity: $quantity,
                     created_at: CASE WHEN $created_at_str IS NULL OR $created_at_str = '' THEN NULL ELSE timestamp($created_at_str) END,
                     updated_at: CASE WHEN $updated_at_str IS NULL OR $updated_at_str = '' THEN NULL ELSE timestamp($updated_at_str) END
                 })
@@ -1471,6 +1474,39 @@ class SimplifiedBookService:
             location_id=location_id,
             custom_metadata=custom_metadata
         )
+        
+        # Run the coroutine synchronously
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # If we're already in an async context, create a new thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                def run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    try:
+                        return new_loop.run_until_complete(coro)
+                    finally:
+                        new_loop.close()
+                future = executor.submit(run_in_new_loop)
+                return future.result()
+        else:
+            return loop.run_until_complete(coro)
+    
+    def create_standalone_book_sync(self, book_data: SimplifiedBook) -> Optional[str]:
+        """
+        Synchronous wrapper for create_standalone_book.
+        Use this method from Flask routes and other sync contexts.
+        Returns book_id if successful, None if failed.
+        """
+        import asyncio
+        
+        # Create coroutine
+        coro = self.create_standalone_book(book_data)
         
         # Run the coroutine synchronously
         try:
