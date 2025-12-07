@@ -78,6 +78,12 @@
     <!-- ISBN Input -->
     <div class="card mb-4">
         <div class="card-body">
+            <!-- Inline notification area for ISBN lookup results -->
+            <div id="isbnNotification" class="alert" style="display: none;" role="alert">
+                <i class="bi bi-check-circle me-2"></i>
+                <span id="isbnNotificationMessage">Book found!</span>
+            </div>
+            
             <label for="isbnInput" class="form-label fw-bold">
                 <i class="bi bi-upc-scan me-2"></i>Scan or Enter ISBN
             </label>
@@ -343,6 +349,27 @@
 .undo-btn:hover {
     opacity: 1;
 }
+
+/* Inline ISBN notification styling */
+#isbnNotification {
+    margin-bottom: 1rem;
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#isbnNotification .bi {
+    font-size: 1.1em;
+}
 </style>
 
 <script>
@@ -418,6 +445,41 @@ function getSettings() {
     };
 }
 
+function showIsbnNotification(message, type = 'success') {
+    const notification = document.getElementById('isbnNotification');
+    const messageEl = document.getElementById('isbnNotificationMessage');
+    const icon = notification.querySelector('i');
+    
+    // Remove all alert classes
+    notification.classList.remove('alert-success', 'alert-danger', 'alert-warning', 'alert-info');
+    
+    // Set the appropriate class and icon based on type
+    if (type === 'success') {
+        notification.classList.add('alert-success');
+        icon.className = 'bi bi-check-circle me-2';
+    } else if (type === 'error') {
+        notification.classList.add('alert-danger');
+        icon.className = 'bi bi-exclamation-triangle me-2';
+    } else if (type === 'info') {
+        notification.classList.add('alert-info');
+        icon.className = 'bi bi-info-circle me-2';
+    }
+    
+    messageEl.textContent = message;
+    notification.style.display = 'block';
+    
+    // Auto-hide after 5 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            notification.style.display = 'none';
+        }, 5000);
+    }
+}
+
+function hideIsbnNotification() {
+    document.getElementById('isbnNotification').style.display = 'none';
+}
+
 function showError(message) {
     const errorAlert = document.getElementById('errorAlert');
     document.getElementById('errorMessage').textContent = message;
@@ -464,17 +526,18 @@ async function lookupISBN() {
     const isbn = isbnInput.value.trim().replace(/[-\s]/g, '');
     
     if (!isbn) {
-        showError('Please enter an ISBN');
+        showIsbnNotification('Please enter an ISBN', 'error');
         return;
     }
     
     // Basic ISBN validation
     if (isbn.length !== 10 && isbn.length !== 13) {
-        showError('Invalid ISBN. Please enter a 10 or 13 digit ISBN.');
+        showIsbnNotification('Invalid ISBN. Please enter a 10 or 13 digit ISBN.', 'error');
         return;
     }
     
     hideError();
+    hideIsbnNotification();
     clearTimers();
     showLoading(true);
     document.getElementById('bookPreviewCard').style.display = 'none';
@@ -496,18 +559,20 @@ async function lookupISBN() {
         
         if (result.status === 'success' && result.data && result.data.title) {
             displayBookPreview(result.data, isbn);
+            // Show success notification with book title
+            showIsbnNotification(`Found: "${result.data.title}"`, 'success');
             // Clear the ISBN input for the next entry
             isbnInput.value = '';
             isbnInput.focus();
         } else {
-            showError('No book found for this ISBN. Please verify the ISBN and try again.');
+            showIsbnNotification('No book found for this ISBN. Please verify the ISBN and try again.', 'error');
             isbnInput.select();
         }
         
     } catch (error) {
         console.error('Lookup error:', error);
         showLoading(false);
-        showError('Error looking up book. Please try again.');
+        showIsbnNotification('Error looking up book. Please try again.', 'error');
         isbnInput.select();
     }
 }
@@ -652,6 +717,9 @@ async function saveBook() {
             // Add to recently added list
             addToRecentlyAdded(currentBookData, result.book_id);
             
+            // Show success notification
+            showIsbnNotification(`Saved: "${currentBookData.title}"`, 'success');
+            
             // Clear current book data
             currentBookData = null;
             previewCard.style.display = 'none';
@@ -661,7 +729,7 @@ async function saveBook() {
             document.getElementById('isbnInput').focus();
         } else {
             previewCard.classList.remove('saving');
-            showError(result.message || 'Failed to save book');
+            showIsbnNotification(result.message || 'Failed to save book', 'error');
         }
         
     } catch (error) {
@@ -757,6 +825,9 @@ async function saveEditedBook() {
             };
             addToRecentlyAdded(savedData, result.book_id);
             
+            // Show success notification
+            showIsbnNotification(`Saved: "${savedData.title}"`, 'success');
+            
             // Clear current book data
             currentBookData = null;
             document.getElementById('bookPreviewCard').style.display = 'none';
@@ -764,7 +835,7 @@ async function saveEditedBook() {
             // Focus back on ISBN input
             document.getElementById('isbnInput').focus();
         } else {
-            showError(result.message || 'Failed to save book');
+            showIsbnNotification(result.message || 'Failed to save book', 'error');
         }
         
     } catch (error) {
