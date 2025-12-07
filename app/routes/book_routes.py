@@ -5187,13 +5187,38 @@ def resolve_duplicate():
                 book_id = service.create_standalone_book_sync(simplified_book)
                 
                 if book_id:
-                    # Add to user's library
+                    # Add the book to the user's library
                     reading_status = book_data.get('reading_status', '')
                     ownership_status = book_data.get('ownership_status', 'owned')
                     location_id = book_data.get('location_id')
                     
-                    # Note: We're directly calling add_book_to_user_library which will create the ownership relation
-                    # This is a separate physical copy with its own photos/notes
+                    # Add book to user's library (creates OWNS relationship or equivalent)
+                    try:
+                        from app.domain.models import ReadingStatus
+                        # Convert reading status string to enum if needed
+                        reading_status_enum = None
+                        if reading_status:
+                            try:
+                                reading_status_enum = ReadingStatus(reading_status)
+                            except ValueError:
+                                reading_status_enum = ReadingStatus.PLAN_TO_READ
+                        
+                        # Add to user's library via book service
+                        result = book_service.add_book_to_user_library_sync(
+                            user_id=current_user.id,
+                            book_id=book_id,
+                            reading_status=reading_status_enum,
+                            location_id=location_id
+                        )
+                        
+                        if not result:
+                            current_app.logger.error(f"Failed to add book {book_id} to user library")
+                            return jsonify({'success': False, 'message': 'Failed to add book to library'}), 500
+                    except Exception as e:
+                        current_app.logger.error(f"Error adding book to user library: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        return jsonify({'success': False, 'message': f'Failed to add to library: {str(e)}'}), 500
                     
                     # Invalidate cache
                     try:
