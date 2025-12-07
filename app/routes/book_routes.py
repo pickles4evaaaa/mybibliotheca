@@ -111,7 +111,7 @@ def _get_changed_fields(user_book, form):
         'title', 'subtitle', 'description', 'publisher', 'isbn13', 'isbn10', 'published_date',
         'language', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating',
         'rating_count', 'media_type', 'personal_notes', 'review',
-        'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date'
+        'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date', 'quantity'
     ]
     date_fields = {'start_date', 'finish_date'}
     
@@ -148,7 +148,7 @@ def _get_changed_fields(user_book, form):
                     new_val = float(new_val)
                 except Exception:
                     continue
-            elif field == 'rating_count' and new_val:
+            elif field in ('rating_count', 'quantity') and new_val:
                 try:
                     new_val = int(new_val)
                 except Exception:
@@ -4954,19 +4954,65 @@ def add_book_manual():
             location_id=request.form.get('location_id')
         )
     except BookAlreadyExistsError as dup:
-        # Friendly UX: notify and send user to the existing book page
-        flash('That book already exists. Taking you to it.', 'info')
+        # Handle duplicate detection - check if this is an AJAX request
         try:
             existing_id = getattr(dup, 'book_id', None)
         except Exception:
             existing_id = None
-        if existing_id:
-            return redirect(url_for('book.view_book_enhanced', uid=existing_id))
-        # Fallback if we couldn't resolve ID
-        return redirect(url_for('main.library'))
+        
+        # Check if request wants JSON response (AJAX or explicit header)
+        wants_json = (
+            request.headers.get('Accept', '').find('application/json') != -1 or
+            request.headers.get('X-Requested-With') == 'XMLHttpRequest' or
+            request.args.get('format') == 'json'
+        )
+        
+        if wants_json:
+            # Return JSON with duplicate info and book data for modal
+            return jsonify({
+                'success': False,
+                'duplicate': True,
+                'book_id': existing_id,
+                'message': f'Book "{title}" already exists in your library',
+                'book_data': {
+                    'title': title,
+                    'author': author,
+                    'isbn13': isbn13,
+                    'isbn10': isbn10,
+                    'subtitle': subtitle or '',
+                    'description': description or '',
+                    'publisher': publisher_name or '',
+                    'published_date': published_date or '',
+                    'language': language,
+                    'cover_url': cover_url or '',
+                    'series': series or '',
+                    'series_volume': series_volume or '',
+                    'categories': categories,
+                    'media_type': media_type,
+                    'reading_status': request.form.get('reading_status', ''),
+                    'ownership_status': request.form.get('ownership_status', 'owned'),
+                    'location_id': request.form.get('location_id')
+                }
+            }), 409  # 409 Conflict status code
+        else:
+            # Original behavior for non-AJAX requests: flash and redirect
+            flash('That book already exists. Taking you to it.', 'info')
+            if existing_id:
+                return redirect(url_for('book.view_book_enhanced', uid=existing_id))
+            return redirect(url_for('main.library'))
     if not added:
-        flash('Failed to add book','danger')
-        return redirect(url_for('main.library'))
+        # Check if request wants JSON response
+        wants_json = (
+            request.headers.get('Accept', '').find('application/json') != -1 or
+            request.headers.get('X-Requested-With') == 'XMLHttpRequest' or
+            request.args.get('format') == 'json'
+        )
+        
+        if wants_json:
+            return jsonify({'success': False, 'message': 'Failed to add book'}), 500
+        else:
+            flash('Failed to add book','danger')
+            return redirect(url_for('main.library'))
 
     # Find created book to apply personal metadata & attach series
     created = None
@@ -5013,12 +5059,210 @@ def add_book_manual():
         pass
 
     message = f'Added "{title}"'
-    if submit_action == 'save_and_new':
-        flash(f'{message}. Ready for the next book!', 'success')
-        return redirect(url_for('book.add_book'))
+    
+    # Check if request wants JSON response (AJAX or explicit header)
+    wants_json = (
+        request.headers.get('Accept', '').find('application/json') != -1 or
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest' or
+        request.args.get('format') == 'json'
+    )
+    
+    if wants_json:
+        # Return JSON for AJAX requests
+        redirect_url = url_for('book.add_book') if submit_action == 'save_and_new' else url_for('main.library')
+        return jsonify({
+            'success': True,
+            'message': message,
+            'redirect_url': redirect_url
+        })
+    else:
+        # Original behavior for non-AJAX requests
+        if submit_action == 'save_and_new':
+            flash(f'{message}. Ready for the next book!', 'success')
+            return redirect(url_for('book.add_book'))
+        
+        flash(message, 'success')
+        return redirect(url_for('main.library'))
 
-    flash(message, 'success')
-    return redirect(url_for('main.library'))
+@book_bp.route('/api/resolve_duplicate', methods=['POST'])
+@login_required
+def resolve_duplicate():
+    """
+    API endpoint to handle duplicate book resolution when user chooses an action.
+    Supports three options:
+    1. increment_count - Increment quantity on existing book
+    2. add_separate - Force add as new separate entry
+    3. navigate - Just navigate to existing book (no action needed)
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+        
+        action = data.get('action')
+        book_id = data.get('book_id')
+        book_data = data.get('book_data', {})
+        
+        if not action:
+            return jsonify({'success': False, 'message': 'Action is required'}), 400
+        
+        if action == 'increment_count':
+            # Increment quantity on existing book
+            if not book_id:
+                return jsonify({'success': False, 'message': 'Book ID is required for increment'}), 400
+            
+            try:
+                # Get current book to read quantity
+                existing_book = book_service.get_book_by_uid_sync(book_id, str(current_user.id))
+                if not existing_book:
+                    return jsonify({'success': False, 'message': 'Book not found'}), 404
+                
+                # Get current quantity (default to 1 if not set)
+                current_quantity = getattr(existing_book, 'quantity', 1) or 1
+                new_quantity = current_quantity + 1
+                
+                # Update the book's quantity
+                success = book_service.update_book_sync(book_id, str(current_user.id), quantity=new_quantity)
+                if success:
+                    # Invalidate cache
+                    try:
+                        from app.utils.simple_cache import bump_user_library_version
+                        bump_user_library_version(str(current_user.id))
+                    except Exception:
+                        pass
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': f'Quantity updated to {new_quantity}',
+                        'book_id': book_id,
+                        'new_quantity': new_quantity,
+                        'redirect_url': url_for('book.view_book_enhanced', uid=book_id)
+                    })
+                else:
+                    return jsonify({'success': False, 'message': 'Failed to update quantity'}), 500
+                    
+            except Exception as e:
+                current_app.logger.error(f"Error incrementing book quantity: {e}")
+                return jsonify({'success': False, 'message': 'Error updating quantity'}), 500
+        
+        elif action == 'add_separate':
+            # Force add as new separate entry (bypass duplicate check)
+            # Reconstruct book data from JSON
+            try:
+                title = book_data.get('title', '').strip()
+                author = book_data.get('author', '').strip() or 'Unknown Author'
+                
+                if not title:
+                    return jsonify({'success': False, 'message': 'Title is required'}), 400
+                
+                # Build SimplifiedBook object from book_data
+                simplified_book = SimplifiedBook(
+                    title=title,
+                    author=author,
+                    isbn13=book_data.get('isbn13'),
+                    isbn10=book_data.get('isbn10'),
+                    subtitle=book_data.get('subtitle'),
+                    description=book_data.get('description'),
+                    publisher=book_data.get('publisher'),
+                    published_date=book_data.get('published_date'),
+                    page_count=book_data.get('page_count'),
+                    language=book_data.get('language', 'en'),
+                    cover_url=book_data.get('cover_url'),
+                    series=book_data.get('series'),
+                    series_volume=book_data.get('series_volume'),
+                    categories=book_data.get('categories', []),
+                    google_books_id=book_data.get('google_books_id'),
+                    openlibrary_id=book_data.get('openlibrary_id'),
+                    asin=book_data.get('asin'),
+                    media_type=book_data.get('media_type'),
+                    additional_authors=book_data.get('additional_authors'),
+                    narrator=book_data.get('narrator'),
+                    editor=book_data.get('editor'),
+                    translator=book_data.get('translator'),
+                    illustrator=book_data.get('illustrator')
+                )
+                
+                # Create the book directly without duplicate check
+                service = SimplifiedBookService()
+                book_id = service.create_standalone_book_sync(simplified_book)
+                
+                if book_id:
+                    # Add the book to the user's library
+                    reading_status = book_data.get('reading_status', '')
+                    ownership_status = book_data.get('ownership_status', 'owned')
+                    location_id = book_data.get('location_id')
+                    
+                    # Add book to user's library (creates OWNS relationship or equivalent)
+                    try:
+                        from app.domain.models import ReadingStatus
+                        # Convert reading status string to enum if needed
+                        reading_status_enum = None
+                        if reading_status:
+                            try:
+                                reading_status_enum = ReadingStatus(reading_status)
+                            except ValueError:
+                                reading_status_enum = ReadingStatus.PLAN_TO_READ
+                        
+                        # Add to user's library via book service
+                        result = book_service.add_book_to_user_library_sync(
+                            user_id=current_user.id,
+                            book_id=book_id,
+                            reading_status=reading_status_enum,
+                            location_id=location_id
+                        )
+                        
+                        if not result:
+                            current_app.logger.error(f"Failed to add book {book_id} to user library")
+                            return jsonify({'success': False, 'message': 'Failed to add book to library'}), 500
+                    except Exception as e:
+                        current_app.logger.error(f"Error adding book to user library: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        return jsonify({'success': False, 'message': f'Failed to add to library: {str(e)}'}), 500
+                    
+                    # Invalidate cache
+                    try:
+                        from app.utils.simple_cache import bump_user_library_version
+                        bump_user_library_version(str(current_user.id))
+                    except Exception:
+                        pass
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': f'Added "{title}" as separate entry',
+                        'book_id': book_id,
+                        'redirect_url': url_for('book.view_book_enhanced', uid=book_id)
+                    })
+                else:
+                    return jsonify({'success': False, 'message': 'Failed to create book'}), 500
+                    
+            except Exception as e:
+                current_app.logger.error(f"Error adding separate book entry: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({'success': False, 'message': f'Error creating book: {str(e)}'}), 500
+        
+        elif action == 'navigate':
+            # Just navigate to existing book
+            if not book_id:
+                return jsonify({'success': False, 'message': 'Book ID is required'}), 400
+            
+            return jsonify({
+                'success': True,
+                'message': 'Navigating to existing book',
+                'book_id': book_id,
+                'redirect_url': url_for('book.view_book_enhanced', uid=book_id)
+            })
+        
+        else:
+            return jsonify({'success': False, 'message': f'Unknown action: {action}'}), 400
+            
+    except Exception as e:
+        current_app.logger.error(f"Error in resolve_duplicate: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': 'An error occurred'}), 500
+
     # Convert date fields
     published_date = None
     if published_date_str:

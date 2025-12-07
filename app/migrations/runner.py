@@ -78,7 +78,34 @@ def run_pending(*, dry_run: bool = False) -> Dict[str, object]:  # API expected 
             added: list of columns actually added (empty in dry_run)
             missing: (dry_run only) list of columns that would be added
     """
+    # Run standard book columns migration
     details = _ensure_book_columns(dry_run=dry_run)
+    
+    # Also run quantity field migration
+    try:
+        from app.migrations.quantity_field_migration import run_quantity_migration
+        quantity_result = run_quantity_migration(dry_run=dry_run)
+        
+        # Merge results
+        if dry_run:
+            # Add quantity column to missing if needed
+            if quantity_result.get("column_added"):
+                existing_missing = details.get("missing", [])
+                if "quantity" not in existing_missing:
+                    existing_missing.append("quantity")
+                details["missing"] = existing_missing
+        else:
+            # Add quantity to added columns if it was added
+            if quantity_result.get("column_added"):
+                details["added"].append("quantity")
+        
+        # Log quantity migration results
+        if quantity_result.get("rows_updated", 0) > 0:
+            logger.info(f"Quantity migration: updated {quantity_result['rows_updated']} books")
+    except Exception as e:
+        logger.error(f"Quantity migration failed: {e}")
+        # Don't fail the entire migration if quantity migration fails
+    
     if dry_run:
         status = "pending" if details.get("missing") else "no-op"
         return {"status": status, **details}

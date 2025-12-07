@@ -364,6 +364,7 @@ class KuzuGraphDB:
                     audio_duration_ms INT64,
                     media_type STRING,
                     audiobookshelf_updated_at STRING,
+                    quantity INT64,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP,
                     PRIMARY KEY(id)
