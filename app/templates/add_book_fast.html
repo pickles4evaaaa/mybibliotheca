@@ -527,14 +527,12 @@ async function lookupISBN() {
     
     if (!isbn) {
         showIsbnNotification('Please enter an ISBN', 'error');
-        showError('Please enter an ISBN');
         return;
     }
     
     // Basic ISBN validation
     if (isbn.length !== 10 && isbn.length !== 13) {
         showIsbnNotification('Invalid ISBN. Please enter a 10 or 13 digit ISBN.', 'error');
-        showError('Invalid ISBN. Please enter a 10 or 13 digit ISBN.');
         return;
     }
     
@@ -567,16 +565,14 @@ async function lookupISBN() {
             isbnInput.value = '';
             isbnInput.focus();
         } else {
-            showIsbnNotification('No book found for this ISBN', 'error');
-            showError('No book found for this ISBN. Please verify the ISBN and try again.');
+            showIsbnNotification('No book found for this ISBN. Please verify the ISBN and try again.', 'error');
             isbnInput.select();
         }
         
     } catch (error) {
         console.error('Lookup error:', error);
         showLoading(false);
-        showIsbnNotification('Error looking up book', 'error');
-        showError('Error looking up book. Please try again.');
+        showIsbnNotification('Error looking up book. Please try again.', 'error');
         isbnInput.select();
     }
 }
@@ -734,7 +730,6 @@ async function saveBook() {
         } else {
             previewCard.classList.remove('saving');
             showIsbnNotification(result.message || 'Failed to save book', 'error');
-            showError(result.message || 'Failed to save book');
         }
         
     } catch (error) {
@@ -841,7 +836,6 @@ async function saveEditedBook() {
             document.getElementById('isbnInput').focus();
         } else {
             showIsbnNotification(result.message || 'Failed to save book', 'error');
-            showError(result.message || 'Failed to save book');
         }
         
     } catch (error) {
