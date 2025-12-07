@@ -842,7 +842,7 @@ function showIsbnMismatchWarning(warnings) {
     if (!warnings || warnings.length === 0) return;
     const warningMessages = warnings.map(w => escapeHtml(String(w))).join('<br>');
     showMessage(
-        `⚠️ <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`,
+        `<span role="img" aria-label="Warning">⚠️</span> <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`,
         'warning',
         10000
     );

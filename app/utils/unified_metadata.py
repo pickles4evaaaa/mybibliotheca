@@ -765,14 +765,22 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 			# Check for exact match
 			if requested_isbn not in (returned_isbn13, returned_isbn10):
 				isbn_mismatch = True
-				warnings.append(f"ISBN mismatch: Requested {requested_isbn}, but metadata returned for ISBN {returned_isbn13 or returned_isbn10}")
+				# Build clearer message showing which ISBNs were returned
+				returned_isbns = []
+				if returned_isbn13:
+					returned_isbns.append(f"ISBN-13: {returned_isbn13}")
+				if returned_isbn10:
+					returned_isbns.append(f"ISBN-10: {returned_isbn10}")
+				returned_str = ", ".join(returned_isbns) if returned_isbns else "unknown"
+				warnings.append(f"ISBN mismatch: Requested {requested_isbn}, but metadata returned for {returned_str}")
 				_META_LOG.warning(f"[UNIFIED_METADATA][ISBN_MISMATCH] requested={requested_isbn} returned_isbn13={returned_isbn13} returned_isbn10={returned_isbn10}")
 				
 				# Extract volume information from title if present
 				title = merged.get('title', '')
 				if title:
-					# Try to extract volume/vol number from title
-					vol_match = re.search(r'\b(?:vol\.?|volume)\s*(\d+)', title, re.IGNORECASE)
+					# Try to extract volume/vol/book number from title
+					# Handles: Vol. 1, Volume 2, Vol 3, v.4, Book 5, Volume: 6, v7
+					vol_match = re.search(r'\b(?:vol\.?|volume|book|v\.?)\s*:?\s*(\d+)', title, re.IGNORECASE)
 					if vol_match:
 						warnings.append(f"Metadata shows volume {vol_match.group(1)} - verify this matches your book")
 
