@@ -111,7 +111,7 @@ def _get_changed_fields(user_book, form):
         'title', 'subtitle', 'description', 'publisher', 'isbn13', 'isbn10', 'published_date',
         'language', 'asin', 'google_books_id', 'openlibrary_id', 'average_rating',
         'rating_count', 'media_type', 'personal_notes', 'review',
-        'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date'
+        'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date', 'quantity'
     ]
     date_fields = {'start_date', 'finish_date'}
     
@@ -148,7 +148,7 @@ def _get_changed_fields(user_book, form):
                     new_val = float(new_val)
                 except Exception:
                     continue
-            elif field == 'rating_count' and new_val:
+            elif field in ('rating_count', 'quantity') and new_val:
                 try:
                     new_val = int(new_val)
                 except Exception:
