@@ -593,13 +593,30 @@ def unified_metadata_lookup():
             }), 400
 
         if isbn:
-            data = fetch_unified_by_isbn(isbn)
-            return jsonify({
+            from app.utils.unified_metadata import fetch_unified_by_isbn_detailed
+            data, errors = fetch_unified_by_isbn_detailed(isbn)
+            
+            # Extract metadata warnings for the UI
+            warnings = data.pop('_metadata_warnings', [])
+            isbn_mismatch = data.pop('_isbn_mismatch', False)
+            requested_isbn = data.pop('_requested_isbn', isbn)
+            
+            response_data = {
                 'status': 'success',
                 'mode': 'isbn',
                 'isbn': isbn,
                 'data': data
-            }), 200
+            }
+            
+            # Add warnings if present
+            if warnings:
+                response_data['warnings'] = warnings
+            if isbn_mismatch:
+                response_data['isbn_mismatch'] = True
+            if errors:
+                response_data['provider_errors'] = errors
+            
+            return jsonify(response_data), 200
 
         # title search
         results = fetch_unified_by_title(

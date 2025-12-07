@@ -786,9 +786,16 @@ function fetchBookData() {
                     }
                 } catch (_) { /* noop */ }
                 populateFormWithBookData(mapped);
+                
+                // Display success message with title
                 const matchedTitle = data.title ? escapeHtml(String(data.title)) : null;
-                if (matchedTitle) {
-                    showMessage(`Found book: <strong>${matchedTitle}</strong>`, 'success');
+                let successMessage = matchedTitle ? `Found book: <strong>${matchedTitle}</strong>` : 'Book data fetched successfully!';
+                
+                // Check for ISBN mismatch warnings
+                if (resp.isbn_mismatch && resp.warnings && resp.warnings.length > 0) {
+                    showIsbnMismatchWarning(resp.warnings);
+                } else if (matchedTitle) {
+                    showMessage(successMessage, 'success');
                 } else {
                     showMessage('Book data fetched successfully!', 'success');
                 }
@@ -828,6 +835,17 @@ function escapeHtml(text) {
         "'": '&#039;'
     };
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+// Helper function to display ISBN mismatch warnings
+function showIsbnMismatchWarning(warnings) {
+    if (!warnings || warnings.length === 0) return;
+    const warningMessages = warnings.map(w => escapeHtml(String(w))).join('<br>');
+    showMessage(
+        `<span role="img" aria-label="Warning">⚠️</span> <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`,
+        'warning',
+        10000
+    );
 }
 
 // Fallback cover image served via Flask's custom static route
@@ -1091,7 +1109,12 @@ function selectBookFromSearch(bookIndex) {
                 // Populate form with the intelligently merged data
                 populateFormWithBookData(mergedData);
                 
-                showMessage(`Selected "${mergedData.title}" - Form populated with enhanced book details!`, 'success');
+                // Check for ISBN mismatch warnings
+                if (apiResp.isbn_mismatch && apiResp.warnings && apiResp.warnings.length > 0) {
+                    showIsbnMismatchWarning(apiResp.warnings);
+                } else {
+                    showMessage(`Selected "${mergedData.title}" - Form populated with enhanced book details!`, 'success');
+                }
             })
             .catch(error => {
                 console.warn('⚠️ ISBN lookup failed, using search data only:', error);
@@ -1647,7 +1670,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-function showMessage(message, type) {
+function showMessage(message, type, duration = 5000) {
   // Create alert element
   const alertDiv = document.createElement('div');
     const bsType = type === 'success' ? 'success' : (type === 'warning' ? 'warning' : (type === 'info' ? 'info' : 'danger'));
@@ -1661,12 +1684,12 @@ function showMessage(message, type) {
   const container = document.querySelector('.container');
   container.insertBefore(alertDiv, container.firstChild);
   
-  // Auto-dismiss after 5 seconds
+  // Auto-dismiss after specified duration (default 5 seconds)
   setTimeout(() => {
     if (alertDiv.parentNode) {
       alertDiv.remove();
     }
-  }, 5000);
+  }, duration);
 }
 
 // Contributor management functions
