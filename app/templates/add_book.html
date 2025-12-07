@@ -793,9 +793,7 @@ function fetchBookData() {
                 
                 // Check for ISBN mismatch warnings
                 if (resp.isbn_mismatch && resp.warnings && resp.warnings.length > 0) {
-                    // Show warning about ISBN mismatch
-                    const warningMessages = resp.warnings.map(w => escapeHtml(String(w))).join('<br>');
-                    showMessage(`⚠️ <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`, 'warning', 10000);
+                    showIsbnMismatchWarning(resp.warnings);
                 } else if (matchedTitle) {
                     showMessage(successMessage, 'success');
                 } else {
@@ -837,6 +835,17 @@ function escapeHtml(text) {
         "'": '&#039;'
     };
     return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+// Helper function to display ISBN mismatch warnings
+function showIsbnMismatchWarning(warnings) {
+    if (!warnings || warnings.length === 0) return;
+    const warningMessages = warnings.map(w => escapeHtml(String(w))).join('<br>');
+    showMessage(
+        `⚠️ <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`,
+        'warning',
+        10000
+    );
 }
 
 // Fallback cover image served via Flask's custom static route
@@ -1102,8 +1111,7 @@ function selectBookFromSearch(bookIndex) {
                 
                 // Check for ISBN mismatch warnings
                 if (apiResp.isbn_mismatch && apiResp.warnings && apiResp.warnings.length > 0) {
-                    const warningMessages = apiResp.warnings.map(w => escapeHtml(String(w))).join('<br>');
-                    showMessage(`⚠️ <strong>ISBN Mismatch Detected</strong><br>${warningMessages}<br><br>The metadata shown may be for a different volume. Please verify the information before saving.`, 'warning', 10000);
+                    showIsbnMismatchWarning(apiResp.warnings);
                 } else {
                     showMessage(`Selected "${mergedData.title}" - Form populated with enhanced book details!`, 'success');
                 }

@@ -736,8 +736,11 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 		merged['raw_category_paths'] = list(cats)
 
 	# Normalize requested ISBN for comparison
-	import re as _re
-	requested_isbn = _re.sub(r"[^0-9Xx]", "", (isbn or ''))
+	def _normalize_isbn(val: Optional[str]) -> str:
+		"""Normalize ISBN by removing non-alphanumeric except X and converting to uppercase."""
+		return re.sub(r"[^0-9Xx]", "", str(val or '')).upper()
+	
+	requested_isbn = _normalize_isbn(isbn)
 	
 	# Ensure requested ISBN is preserved in merged result if missing
 	try:
@@ -754,27 +757,22 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 	isbn_mismatch = False
 	
 	if requested_isbn:
-		returned_isbn13 = _re.sub(r"[^0-9Xx]", "", str(merged.get('isbn13') or ''))
-		returned_isbn10 = _re.sub(r"[^0-9Xx]", "", str(merged.get('isbn10') or ''))
+		returned_isbn13 = _normalize_isbn(merged.get('isbn13'))
+		returned_isbn10 = _normalize_isbn(merged.get('isbn10'))
 		
 		# Check if returned ISBNs match the requested ISBN
 		if returned_isbn13 or returned_isbn10:
-			# Normalize both 10 and 13 to uppercase for X
-			requested_normalized = requested_isbn.upper()
-			returned_isbn13_normalized = returned_isbn13.upper()
-			returned_isbn10_normalized = returned_isbn10.upper()
-			
 			# Check for exact match
-			if requested_normalized not in (returned_isbn13_normalized, returned_isbn10_normalized):
+			if requested_isbn not in (returned_isbn13, returned_isbn10):
 				isbn_mismatch = True
-				warnings.append(f"ISBN mismatch: Requested {isbn}, but metadata returned for ISBN {returned_isbn13 or returned_isbn10}")
-				_META_LOG.warning(f"[UNIFIED_METADATA][ISBN_MISMATCH] requested={isbn} returned_isbn13={returned_isbn13} returned_isbn10={returned_isbn10}")
+				warnings.append(f"ISBN mismatch: Requested {requested_isbn}, but metadata returned for ISBN {returned_isbn13 or returned_isbn10}")
+				_META_LOG.warning(f"[UNIFIED_METADATA][ISBN_MISMATCH] requested={requested_isbn} returned_isbn13={returned_isbn13} returned_isbn10={returned_isbn10}")
 				
 				# Extract volume information from title if present
 				title = merged.get('title', '')
 				if title:
 					# Try to extract volume/vol number from title
-					vol_match = _re.search(r'\b(?:vol\.?|volume)\s*(\d+)', title, _re.IGNORECASE)
+					vol_match = re.search(r'\b(?:vol\.?|volume)\s*(\d+)', title, re.IGNORECASE)
 					if vol_match:
 						warnings.append(f"Metadata shows volume {vol_match.group(1)} - verify this matches your book")
 
