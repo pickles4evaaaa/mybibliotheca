@@ -85,8 +85,10 @@ class Config:
     SESSION_COOKIE_SECURE = False  # Set to True only in production with HTTPS
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
-    SESSION_PERMANENT = False  # Don't require permanent sessions for CSRF
-    PERMANENT_SESSION_LIFETIME = 86400  # 24 hours
+    # SESSION_PERMANENT default is False - will be set to True in login route when "Remember Me" is checked
+    # This allows users to have both temporary sessions (browser close = logout) and persistent sessions
+    SESSION_PERMANENT = False
+    PERMANENT_SESSION_LIFETIME = 86400  # 24 hours (when session.permanent = True)
 
     # Flask-Session Configuration
     # Use filesystem sessions for development/Docker, Redis for production
@@ -124,10 +126,13 @@ class Config:
     TIMEZONE = os.environ.get('TIMEZONE') or 'UTC'
     
     # Authentication settings
+    # Remember cookie duration when "Remember Me" is checked
     REMEMBER_COOKIE_DURATION = 86400 * 7  # 7 days
     # Use FLASK_DEBUG environment variable (FLASK_ENV is deprecated in Flask 2.3+)
+    # In production (FLASK_DEBUG=false), use secure cookies (requires HTTPS)
     REMEMBER_COOKIE_SECURE = os.environ.get('FLASK_DEBUG', 'false').lower() == 'false'
-    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_HTTPONLY = True  # Prevent JavaScript access to cookie for security
+    REMEMBER_COOKIE_SAMESITE = 'Lax'  # CSRF protection while allowing normal navigation
     
     # File Upload settings
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file upload
