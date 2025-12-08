@@ -11,6 +11,8 @@ and delegates method calls to the appropriate service.
 """
 
 import traceback
+import random
+import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, date
 
@@ -25,6 +27,8 @@ from .kuzu_search_service import KuzuSearchService
 from .kuzu_custom_field_service import KuzuCustomFieldService
 from .kuzu_reading_log_service import KuzuReadingLogService
 from .kuzu_async_helper import run_async
+
+logger = logging.getLogger(__name__)
 
 
 def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
@@ -717,8 +721,6 @@ class KuzuServiceFacade:
         Returns:
             Random book dictionary or None if no books match the filter
         """
-        import random
-        
         try:
             # Query to get books based on filter
             if filter_type == 'read':
@@ -767,8 +769,6 @@ class KuzuServiceFacade:
             return random.choice(book_list) if book_list else None
             
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Error getting random book: {e}")
             traceback.print_exc()
             return None

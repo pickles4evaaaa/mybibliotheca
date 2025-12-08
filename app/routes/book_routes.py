@@ -5871,7 +5871,6 @@ def api_random_book():
         
     except Exception as e:
         current_app.logger.error(f"Error getting random book: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({
             'success': False,
@@ -5907,7 +5906,6 @@ def api_confirm_random_book():
         
     except Exception as e:
         current_app.logger.error(f"Error confirming random book: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({
             'success': False,
