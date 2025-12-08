@@ -138,7 +138,7 @@ document.addEventListener('DOMContentLoaded', function() {
             coverImg.src = book.cover_url;
             coverImg.alt = book.title;
         } else {
-            coverImg.src = "{{ url_for('serve_static', filename='default-cover.png') }}";
+            coverImg.src = "{{ url_for('serve_static', filename='bookshelf.png') }}";
             coverImg.alt = "No cover available";
         }
 
@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', function() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
             body: JSON.stringify({ filter: filter })
         })
@@ -214,7 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
             body: JSON.stringify({ book_id: currentBook.id })
         })

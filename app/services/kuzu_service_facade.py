@@ -732,7 +732,8 @@ class KuzuServiceFacade:
                        b.cover_url as cover_url, pm.reading_status as reading_status
                 """
             elif filter_type == 'unread':
-                # Books that are NOT read (plan_to_read, reading, on_hold, or no status)
+                # Books that are NOT read: includes plan_to_read, reading, on_hold, empty, and null status
+                # Multiple OR conditions needed to handle all non-read states in the schema
                 query = """
                 MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b:Book)
                 WHERE pm.reading_status <> 'read' OR pm.reading_status IS NULL OR pm.reading_status = ''
