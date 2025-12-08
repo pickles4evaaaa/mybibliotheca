@@ -144,6 +144,15 @@ def login():
                     user.reset_failed_login()
                     user_service.update_user_sync(user)
                 
+                # Set session as permanent if remember_me is checked
+                # This allows Flask-Login's remember cookie to work properly
+                if form.remember_me.data:
+                    session.permanent = True
+                    debug_auth("Remember me enabled - session marked as permanent")
+                else:
+                    session.permanent = False
+                    debug_auth("Remember me not enabled - session non-permanent")
+                
                 login_user(user, remember=form.remember_me.data)
                 debug_auth(f"User logged in successfully: {user.username}")
                 
