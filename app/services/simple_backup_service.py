@@ -1136,5 +1136,13 @@ def get_simple_backup_service() -> SimpleBackupService:
     """Get or create the global simple backup service instance."""
     global _simple_backup_service
     if _simple_backup_service is None:
-        _simple_backup_service = SimpleBackupService()
+        # Determine the base directory from Flask app config or fall back to parent of this file
+        try:
+            from flask import current_app
+            base_dir = Path(current_app.config.get('DATA_DIR', Path.cwd())).parent
+        except (RuntimeError, ImportError):
+            # If Flask context is not available, use the parent of this file's directory
+            # This ensures consistent path resolution
+            base_dir = Path(__file__).parent.parent.parent
+        _simple_backup_service = SimpleBackupService(base_dir=str(base_dir))
     return _simple_backup_service
