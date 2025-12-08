@@ -5807,3 +5807,109 @@ def resolve_duplicate():
         flash('An error occurred while adding the book. Please try again.', 'danger')
 
     return redirect(url_for('main.library'))
+
+# ==========================================
+# Random Book Generator Routes
+# ==========================================
+
+@book_bp.route('/random-book', methods=['GET'])
+@login_required
+def random_book():
+    """Display the random book generator interface."""
+    return render_template('random_book.html')
+
+
+@book_bp.route('/api/random-book', methods=['POST'])
+@login_required
+def api_random_book():
+    """API endpoint to get a random book with filtering."""
+    try:
+        filter_type = request.json.get('filter', 'all') if request.json else 'all'
+        
+        # Validate filter type
+        if filter_type not in ['all', 'read', 'unread']:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid filter type'
+            }), 400
+        
+        # Get random book
+        random_book = book_service.get_random_book_sync(str(current_user.id), filter_type)
+        
+        if not random_book:
+            return jsonify({
+                'success': False,
+                'error': 'No books found matching the filter'
+            })
+        
+        # Get additional book details
+        book_details = book_service.get_book_by_id_for_user_sync(random_book['id'], str(current_user.id))
+        
+        if book_details:
+            # Get authors
+            authors = []
+            if hasattr(book_details, 'contributors') and book_details.contributors:
+                authors = [contrib.person.name for contrib in book_details.contributors 
+                          if contrib.contribution_type.value in ['authored', 'co_authored']]
+            
+            book_data = {
+                'id': book_details.id,
+                'title': book_details.title,
+                'subtitle': book_details.subtitle,
+                'authors': authors,
+                'cover_url': book_details.cover_url,
+                'description': book_details.description,
+                'reading_status': random_book.get('reading_status', '')
+            }
+        else:
+            book_data = random_book
+        
+        return jsonify({
+            'success': True,
+            'book': book_data
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting random book: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'An error occurred while getting a random book'
+        }), 500
+
+
+@book_bp.route('/api/confirm-random-book', methods=['POST'])
+@login_required
+def api_confirm_random_book():
+    """API endpoint to confirm random book selection and update status to Currently Reading."""
+    try:
+        data = request.json
+        book_id = data.get('book_id')
+        
+        if not book_id:
+            return jsonify({
+                'success': False,
+                'error': 'Book ID is required'
+            }), 400
+        
+        # Update the book status to "reading" (Currently Reading)
+        book_service.update_book_sync(
+            book_id, 
+            str(current_user.id),
+            reading_status='reading'
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Book status updated to Currently Reading'
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error confirming random book: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'An error occurred while updating the book status'
+        }), 500

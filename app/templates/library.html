@@ -409,8 +409,11 @@
 
 <!-- Add Book Section -->
 <div class="filter-section text-center">
-  <a href="{{ url_for('main.add_book') }}" class="btn btn-success btn-lg">
+  <a href="{{ url_for('main.add_book') }}" class="btn btn-success btn-lg me-2">
     <i class="bi bi-plus-circle"></i> Add Books to Your Library
+  </a>
+  <a href="{{ url_for('book.random_book') }}" class="btn btn-primary btn-lg">
+    <i class="bi bi-shuffle"></i> Random Book Generator
   </a>
 </div>
 

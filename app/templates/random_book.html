@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% block title %}Random Book Generator - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="mb-0">
+                        <i class="bi bi-shuffle"></i> Random Book Generator
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <p class="lead">Can't decide what to read next? Let us help you pick a book from your library!</p>
+                    
+                    <!-- Filter Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Filter by:</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="filter" id="filter-all" value="all" checked>
+                            <label class="btn btn-outline-primary" for="filter-all">
+                                <i class="bi bi-book"></i> All Books
+                            </label>
+
+                            <input type="radio" class="btn-check" name="filter" id="filter-unread" value="unread">
+                            <label class="btn btn-outline-primary" for="filter-unread">
+                                <i class="bi bi-bookmark"></i> Unread
+                            </label>
+
+                            <input type="radio" class="btn-check" name="filter" id="filter-read" value="read">
+                            <label class="btn btn-outline-primary" for="filter-read">
+                                <i class="bi bi-check-circle"></i> Read
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Generate Button -->
+                    <div class="text-center mb-4">
+                        <button id="generate-btn" class="btn btn-primary btn-lg">
+                            <i class="bi bi-shuffle"></i> Generate Random Book
+                        </button>
+                    </div>
+
+                    <!-- Loading Indicator -->
+                    <div id="loading" class="text-center d-none mb-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Finding a book for you...</p>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div id="error-message" class="alert alert-danger d-none" role="alert"></div>
+
+                    <!-- Book Result -->
+                    <div id="book-result" class="d-none">
+                        <hr class="my-4">
+                        <h4 class="mb-3">Your Random Book:</h4>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <img id="book-cover" src="" alt="Book Cover" class="img-fluid rounded shadow-sm">
+                            </div>
+                            <div class="col-md-8">
+                                <h3 id="book-title" class="mb-2"></h3>
+                                <p id="book-subtitle" class="text-muted mb-2"></p>
+                                <p id="book-authors" class="mb-3"><strong>By:</strong> </p>
+                                <p id="book-description" class="text-muted"></p>
+                                
+                                <div class="mt-4">
+                                    <button id="confirm-btn" class="btn btn-success me-2">
+                                        <i class="bi bi-check-circle"></i> Start Reading This
+                                    </button>
+                                    <button id="try-again-btn" class="btn btn-secondary">
+                                        <i class="bi bi-shuffle"></i> Try Again
+                                    </button>
+                                    <a id="view-book-btn" href="#" class="btn btn-outline-primary">
+                                        <i class="bi bi-eye"></i> View Details
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center mt-3">
+                <a href="{{ url_for('book.library') }}" class="btn btn-link">
+                    <i class="bi bi-arrow-left"></i> Back to Library
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const generateBtn = document.getElementById('generate-btn');
+    const confirmBtn = document.getElementById('confirm-btn');
+    const tryAgainBtn = document.getElementById('try-again-btn');
+    const loading = document.getElementById('loading');
+    const errorMessage = document.getElementById('error-message');
+    const bookResult = document.getElementById('book-result');
+    
+    let currentBook = null;
+
+    function getSelectedFilter() {
+        const checkedRadio = document.querySelector('input[name="filter"]:checked');
+        return checkedRadio ? checkedRadio.value : 'all';
+    }
+
+    function showLoading() {
+        loading.classList.remove('d-none');
+        bookResult.classList.add('d-none');
+        errorMessage.classList.add('d-none');
+        generateBtn.disabled = true;
+    }
+
+    function hideLoading() {
+        loading.classList.add('d-none');
+        generateBtn.disabled = false;
+    }
+
+    function showError(message) {
+        errorMessage.textContent = message;
+        errorMessage.classList.remove('d-none');
+        bookResult.classList.add('d-none');
+    }
+
+    function showBook(book) {
+        currentBook = book;
+        
+        // Set book cover
+        const coverImg = document.getElementById('book-cover');
+        if (book.cover_url) {
+            coverImg.src = book.cover_url;
+            coverImg.alt = book.title;
+        } else {
+            coverImg.src = "{{ url_for('serve_static', filename='default-cover.png') }}";
+            coverImg.alt = "No cover available";
+        }
+
+        // Set book details
+        document.getElementById('book-title').textContent = book.title;
+        
+        const subtitle = document.getElementById('book-subtitle');
+        if (book.subtitle) {
+            subtitle.textContent = book.subtitle;
+            subtitle.classList.remove('d-none');
+        } else {
+            subtitle.classList.add('d-none');
+        }
+
+        const authors = document.getElementById('book-authors');
+        if (book.authors && book.authors.length > 0) {
+            authors.innerHTML = '<strong>By:</strong> ' + book.authors.join(', ');
+        } else {
+            authors.innerHTML = '<strong>By:</strong> Unknown';
+        }
+
+        const description = document.getElementById('book-description');
+        if (book.description) {
+            description.textContent = book.description.substring(0, 300) + (book.description.length > 300 ? '...' : '');
+        } else {
+            description.textContent = 'No description available.';
+        }
+
+        // Set view details link
+        document.getElementById('view-book-btn').href = "{{ url_for('book.view_book', book_id='BOOK_ID') }}".replace('BOOK_ID', book.id);
+
+        // Show result
+        bookResult.classList.remove('d-none');
+        errorMessage.classList.add('d-none');
+    }
+
+    function generateRandomBook() {
+        showLoading();
+        
+        const filter = getSelectedFilter();
+        
+        fetch("{{ url_for('book.api_random_book') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+            },
+            body: JSON.stringify({ filter: filter })
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+            
+            if (data.success) {
+                showBook(data.book);
+            } else {
+                showError(data.error || 'Failed to get a random book');
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            showError('An error occurred. Please try again.');
+            console.error('Error:', error);
+        });
+    }
+
+    function confirmBook() {
+        if (!currentBook) return;
+        
+        confirmBtn.disabled = true;
+        
+        fetch("{{ url_for('book.api_confirm_random_book') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+            },
+            body: JSON.stringify({ book_id: currentBook.id })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show success message
+                const successAlert = document.createElement('div');
+                successAlert.className = 'alert alert-success mt-3';
+                successAlert.innerHTML = '<i class="bi bi-check-circle"></i> Book status updated to Currently Reading! Redirecting to library...';
+                bookResult.appendChild(successAlert);
+                
+                // Redirect to library after 2 seconds
+                setTimeout(() => {
+                    window.location.href = "{{ url_for('book.library') }}";
+                }, 2000);
+            } else {
+                showError(data.error || 'Failed to update book status');
+                confirmBtn.disabled = false;
+            }
+        })
+        .catch(error => {
+            showError('An error occurred while updating book status');
+            confirmBtn.disabled = false;
+            console.error('Error:', error);
+        });
+    }
+
+    // Event listeners
+    generateBtn.addEventListener('click', generateRandomBook);
+    tryAgainBtn.addEventListener('click', generateRandomBook);
+    confirmBtn.addEventListener('click', confirmBook);
+});
+</script>
+{% endblock %}
