@@ -5850,7 +5850,8 @@ def api_random_book():
             authors = []
             if hasattr(book_details, 'contributors') and book_details.contributors:
                 authors = [contrib.person.name for contrib in book_details.contributors 
-                          if contrib.contribution_type.value in ['authored', 'co_authored']]
+                          if contrib.person and contrib.contribution_type and 
+                          contrib.contribution_type.value in ['authored', 'co_authored']]
             
             book_data = {
                 'id': book_details.id,

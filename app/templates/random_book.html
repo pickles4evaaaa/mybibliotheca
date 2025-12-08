@@ -180,11 +180,18 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const filter = getSelectedFilter();
         
+        const csrfToken = document.querySelector('meta[name="csrf-token"]');
+        if (!csrfToken) {
+            showError('CSRF token not found. Please refresh the page.');
+            hideLoading();
+            return;
+        }
+        
         fetch("{{ url_for('book.api_random_book') }}", {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                'X-CSRFToken': csrfToken.getAttribute('content')
             },
             body: JSON.stringify({ filter: filter })
         })
@@ -210,11 +217,18 @@ document.addEventListener('DOMContentLoaded', function() {
         
         confirmBtn.disabled = true;
         
+        const csrfToken = document.querySelector('meta[name="csrf-token"]');
+        if (!csrfToken) {
+            showError('CSRF token not found. Please refresh the page.');
+            confirmBtn.disabled = false;
+            return;
+        }
+        
         fetch("{{ url_for('book.api_confirm_random_book') }}", {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                'X-CSRFToken': csrfToken.getAttribute('content')
             },
             body: JSON.stringify({ book_id: currentBook.id })
         })

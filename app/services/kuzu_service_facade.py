@@ -755,6 +755,8 @@ class KuzuServiceFacade:
                 return None
             
             # Convert to list of dicts with proper keys
+            # Column mapping matches the SELECT order in the queries above:
+            # col_0=id, col_1=title, col_2=subtitle, col_3=cover_url, col_4=reading_status
             book_list = []
             for row in books:
                 book_dict = {
