@@ -2445,6 +2445,9 @@ if(document.readyState === 'loading'){
 // Handle duplicate book resolution
 let currentDuplicateData = null;
 
+// Resolve duplicate API endpoint (keeps JS aligned with Flask route)
+const resolveDuplicateUrl = "{{ url_for('book.resolve_duplicate') }}";
+
 function showDuplicateModal(duplicateResponse) {
     currentDuplicateData = duplicateResponse;
     
@@ -2476,7 +2479,7 @@ document.getElementById('incrementCountBtn').addEventListener('click', async fun
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Updating...';
     
     try {
-        const response = await fetch('/book/api/resolve_duplicate', {
+        const response = await fetch(resolveDuplicateUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -2518,7 +2521,7 @@ document.getElementById('addSeparateBtn').addEventListener('click', async functi
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating...';
     
     try {
-        const response = await fetch('/book/api/resolve_duplicate', {
+        const response = await fetch(resolveDuplicateUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -2560,7 +2563,7 @@ document.getElementById('navigateExistingBtn').addEventListener('click', async f
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Navigating...';
     
     try {
-        const response = await fetch('/book/api/resolve_duplicate', {
+        const response = await fetch(resolveDuplicateUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

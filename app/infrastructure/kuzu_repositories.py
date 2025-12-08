@@ -785,6 +785,8 @@ class KuzuBookRepository:
                 'normalized_title': getattr(book, 'normalized_title', None) or getattr(book, 'title', '').lower(),
                 'isbn13': getattr(book, 'isbn13', ''),
                 'isbn10': getattr(book, 'isbn10', ''),
+                # Track ownership quantity (default 1)
+                'quantity': getattr(book, 'quantity', 1) or 1,
                 # Newly ensured fields that were previously not persisted
                 'subtitle': getattr(book, 'subtitle', None),
                 'asin': getattr(book, 'asin', None),

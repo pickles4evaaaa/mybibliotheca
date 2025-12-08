@@ -5112,6 +5112,15 @@ def resolve_duplicate():
                 return jsonify({'success': False, 'message': 'Book ID is required for increment'}), 400
             
             try:
+                # Ensure legacy databases have the quantity column before updating
+                try:
+                    from app.utils.safe_kuzu_manager import safe_execute_query
+                    safe_execute_query("ALTER TABLE Book ADD quantity INT64", {}, user_id=str(current_user.id), operation="ensure_quantity_column")
+                except Exception as _alter_e:
+                    # Ignore if column already exists; log other errors for diagnostics
+                    if 'already exists' not in str(_alter_e):
+                        current_app.logger.debug(f"Quantity column check: {_alter_e}")
+                
                 # Get current book to read quantity
                 existing_book = book_service.get_book_by_uid_sync(book_id, str(current_user.id))
                 if not existing_book:
@@ -5204,11 +5213,15 @@ def resolve_duplicate():
                                 reading_status_enum = ReadingStatus.PLAN_TO_READ
                         
                         # Add to user's library via book service
+                        # Map location_id (single) to locations list expected by facade
+                        locations = [location_id] if location_id else None
+
                         result = book_service.add_book_to_user_library_sync(
                             user_id=current_user.id,
                             book_id=book_id,
-                            reading_status=reading_status_enum,
-                            location_id=location_id
+                            reading_status=reading_status_enum.value if reading_status_enum else reading_status or "library_only",
+                            ownership_status=ownership_status,
+                            locations=locations
                         )
                         
                         if not result:

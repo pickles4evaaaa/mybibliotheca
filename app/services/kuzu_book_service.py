@@ -478,7 +478,8 @@ class KuzuBookService:
                 'title', 'subtitle', 'normalized_title', 'isbn13', 'isbn10', 'asin',
                 'description', 'published_date', 'page_count', 'language', 'cover_url',
                 'google_books_id', 'openlibrary_id', 'average_rating', 'rating_count',
-                'series', 'series_volume', 'series_order', 'created_at', 'updated_at', 'media_type'
+                'series', 'series_volume', 'series_order', 'created_at', 'updated_at', 'media_type',
+                'quantity'
             }
 
             set_clauses = []
@@ -497,13 +498,32 @@ class KuzuBookService:
             RETURN b
             """
             
-            # Use safe query execution
-            raw_result = safe_execute_kuzu_query(
-                query=update_query,
-                params=params,
-                user_id=self.user_id,
-                operation="update_book"
-            )
+            def _exec_update():
+                return safe_execute_kuzu_query(
+                    query=update_query,
+                    params=params,
+                    user_id=self.user_id,
+                    operation="update_book"
+                )
+
+            try:
+                raw_result = _exec_update()
+            except Exception as ex:
+                # Gracefully add missing quantity column if older DB lacks it
+                if 'quantity' in updates and 'Cannot find property quantity' in str(ex):
+                    try:
+                        logger.warning("[BOOK][MIGRATION] Adding missing quantity column to Book node")
+                        safe_execute_kuzu_query(
+                            query="ALTER TABLE Book ADD quantity INT64",
+                            params={},
+                            user_id=self.user_id,
+                            operation="add_quantity_column"
+                        )
+                        raw_result = _exec_update()
+                    except Exception:
+                        raise
+                else:
+                    raise
             
             results = _convert_query_result_to_list(raw_result)
             if not results:
