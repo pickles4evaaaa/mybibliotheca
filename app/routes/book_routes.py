@@ -1871,6 +1871,8 @@ def library():
     location_filter = request.args.get('location', '')
     media_type_filter_raw = request.args.get('media_type', '')
     media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
+    finished_after_raw = request.args.get('finished_after', '')
+    finished_before_raw = request.args.get('finished_before', '')
     raw_search_query = request.args.get('search', '')
     search_query = raw_search_query.strip() if isinstance(raw_search_query, str) else ''
     raw_sort_option = request.args.get('sort')
@@ -1915,6 +1917,8 @@ def library():
         bool(language_filter.strip()) if isinstance(language_filter, str) else False,
         bool(location_filter.strip()) if isinstance(location_filter, str) else False,
         bool(media_type_filter.strip()) if isinstance(media_type_filter, str) else False,
+        bool(finished_after_raw.strip()) if isinstance(finished_after_raw, str) else False,
+        bool(finished_before_raw.strip()) if isinstance(finished_before_raw, str) else False,
         sort_option != 'title_asc',  # Treat non-default sort as requiring full fetch for proper ordering
     ])
     if has_filter:
@@ -1944,6 +1948,7 @@ def library():
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
+    from datetime import datetime
     books_with_locations = 0
     books_without_locations = 0
     location_counts = {}
@@ -2092,6 +2097,28 @@ def library():
             filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
     
     # Apply other filters
+    def _parse_finish_date(val):
+        if not val:
+            return None
+        try:
+            from datetime import date, datetime as _dt
+            if isinstance(val, date) and not isinstance(val, _dt):
+                return val
+            if isinstance(val, _dt):
+                return val.date()
+            if isinstance(val, str):
+                # Accept ISO strings like 2024-01-02 or full datetime
+                try:
+                    return _dt.fromisoformat(val.replace('Z', '')).date()
+                except Exception:
+                    pass
+            return None
+        except Exception:
+            return None
+
+    finished_after = _parse_finish_date(finished_after_raw)
+    finished_before = _parse_finish_date(finished_before_raw)
+
     if search_query:
         search_lower = search_query.casefold()
         filtered_books = [
@@ -2140,6 +2167,19 @@ def library():
         filtered_books = [
             book for book in filtered_books
             if (_resolve_media_type_value(book) or '') == media_type_filter
+        ]
+
+    if finished_after or finished_before:
+        def _book_finish_date(book_obj):
+            val = book_obj.get('finish_date') if isinstance(book_obj, dict) else getattr(book_obj, 'finish_date', None)
+            return _parse_finish_date(val)
+        filtered_books = [
+            book for book in filtered_books
+            if (
+                (fd := _book_finish_date(book)) is not None and
+                (finished_after is None or fd >= finished_after) and
+                (finished_before is None or fd <= finished_before)
+            )
         ]
 
     # Apply sorting
@@ -2243,6 +2283,18 @@ def library():
                 return pub_date.isoformat()
             return str(pub_date)
         filtered_books.sort(key=get_pub_date)
+    elif sort_option == 'finish_date_desc':
+        # Sort by finish date (most recently finished first; unfinished last)
+        def get_finish_sort_desc(book):
+            fd = _parse_finish_date(book.get('finish_date') if isinstance(book, dict) else getattr(book, 'finish_date', None))
+            return (fd is not None, fd or datetime.min.date())
+        filtered_books.sort(key=get_finish_sort_desc, reverse=True)
+    elif sort_option == 'finish_date_asc':
+        # Sort by finish date (oldest finished first; unfinished last)
+        def get_finish_sort_asc(book):
+            fd = _parse_finish_date(book.get('finish_date') if isinstance(book, dict) else getattr(book, 'finish_date', None))
+            return (fd is None, fd or datetime.max.date())
+        filtered_books.sort(key=get_finish_sort_asc)
     else:
         # Default to title A-Z
         filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower())
@@ -2520,7 +2572,7 @@ def library():
         # ETag based on user, page/filter/sort, and version
         from app.utils.simple_cache import get_user_library_version
         version = get_user_library_version(str(current_user.id))
-        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{search_query}:{sort_option}:v{version}\""
+        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:v{version}\""
         if request.headers.get('If-None-Match') == etag:
             return ('', 304)
         resp = make_response(jsonify({
@@ -2537,7 +2589,7 @@ def library():
     # ETag for HTML response too
     from app.utils.simple_cache import get_user_library_version
     _version = get_user_library_version(str(current_user.id))
-    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{search_query}:{sort_option}:v{_version}\""
+    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:v{_version}\""
     if request.headers.get('If-None-Match') == _html_etag:
         return ('', 304)
 
@@ -2564,6 +2616,8 @@ def library():
         current_language=language_filter,
         current_location=location_filter,
         current_media_type=media_type_filter,
+        current_finished_after=finished_after_raw,
+        current_finished_before=finished_before_raw,
         current_search=search_query,
         current_sort=sort_option,
         media_type_labels=media_type_labels,

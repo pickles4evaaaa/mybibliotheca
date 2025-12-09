@@ -581,6 +581,14 @@
                                     </div>
                                 </div>
                                 <div class="col-md-3">
+                                    <label for="finished_after" class="form-label">Finished After</label>
+                                    <input type="date" class="form-control" id="finished_after" name="finished_after" value="{{ current_finished_after }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="finished_before" class="form-label">Finished Before</label>
+                                    <input type="date" class="form-control" id="finished_before" name="finished_before" value="{{ current_finished_before }}">
+                                </div>
+                                <div class="col-md-3">
                                     <label for="sort" class="form-label">Sort By</label>
                                     <select class="form-select" id="sort" name="sort">
                                         <option value="title_asc" {% if current_sort == 'title_asc' or not current_sort %}selected{% endif %}>Title A-Z</option>
@@ -593,6 +601,8 @@
                                         <option value="date_added_asc" {% if current_sort == 'date_added_asc' %}selected{% endif %}>Date Added (Oldest First)</option>
                                         <option value="publication_date_desc" {% if current_sort == 'publication_date_desc' %}selected{% endif %}>Publication Date (Newest First)</option>
                                         <option value="publication_date_asc" {% if current_sort == 'publication_date_asc' %}selected{% endif %}>Publication Date (Oldest First)</option>
+                                        <option value="finish_date_desc" {% if current_sort == 'finish_date_desc' %}selected{% endif %}>Finish Date (Newest First)</option>
+                                        <option value="finish_date_asc" {% if current_sort == 'finish_date_asc' %}selected{% endif %}>Finish Date (Oldest First)</option>
                                     </select>
                                 </div>
                                 <div class="col-12">
