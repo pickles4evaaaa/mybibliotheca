@@ -11,6 +11,8 @@ and delegates method calls to the appropriate service.
 """
 
 import traceback
+import random
+import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, date
 
@@ -25,6 +27,8 @@ from .kuzu_search_service import KuzuSearchService
 from .kuzu_custom_field_service import KuzuCustomFieldService
 from .kuzu_reading_log_service import KuzuReadingLogService
 from .kuzu_async_helper import run_async
+
+logger = logging.getLogger(__name__)
 
 
 def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
@@ -701,3 +705,73 @@ class KuzuServiceFacade:
         except Exception as e:
             traceback.print_exc()
             return False
+    
+    # ==========================================
+    # Random Book Selection
+    # ==========================================
+    
+    def get_random_book_sync(self, user_id: str, filter_type: str = 'all') -> Optional[Dict[str, Any]]:
+        """
+        Get a random book from user's library with filtering options.
+        
+        Args:
+            user_id: User ID to filter books by
+            filter_type: Filter type - 'all', 'read', or 'unread'
+        
+        Returns:
+            Random book dictionary or None if no books match the filter
+        """
+        try:
+            # Query to get books based on filter
+            if filter_type == 'read':
+                # Books that have been read
+                query = """
+                MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b:Book)
+                WHERE pm.reading_status = 'read'
+                RETURN b.id as id, b.title as title, b.subtitle as subtitle, 
+                       b.cover_url as cover_url, pm.reading_status as reading_status
+                """
+            elif filter_type == 'unread':
+                # Books that are NOT read: includes plan_to_read, reading, on_hold, empty, and null status
+                # Multiple OR conditions needed to handle all non-read states in the schema
+                query = """
+                MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b:Book)
+                WHERE pm.reading_status <> 'read' OR pm.reading_status IS NULL OR pm.reading_status = ''
+                RETURN b.id as id, b.title as title, b.subtitle as subtitle, 
+                       b.cover_url as cover_url, pm.reading_status as reading_status
+                """
+            else:  # 'all'
+                # All books in user's library
+                query = """
+                MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b:Book)
+                RETURN b.id as id, b.title as title, b.subtitle as subtitle, 
+                       b.cover_url as cover_url, pm.reading_status as reading_status
+                """
+            
+            result = safe_execute_kuzu_query(query, {"user_id": user_id})
+            books = _convert_query_result_to_list(result)
+            
+            if not books:
+                return None
+            
+            # Convert to list of dicts with proper keys
+            # Column mapping matches the SELECT order in the queries above:
+            # col_0=id, col_1=title, col_2=subtitle, col_3=cover_url, col_4=reading_status
+            book_list = []
+            for row in books:
+                book_dict = {
+                    'id': row.get('col_0'),
+                    'title': row.get('col_1'),
+                    'subtitle': row.get('col_2'),
+                    'cover_url': row.get('col_3'),
+                    'reading_status': row.get('col_4') or ''
+                }
+                book_list.append(book_dict)
+            
+            # Return a random book
+            return random.choice(book_list) if book_list else None
+            
+        except Exception as e:
+            logger.error(f"Error getting random book: {e}")
+            traceback.print_exc()
+            return None
