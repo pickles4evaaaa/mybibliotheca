@@ -182,6 +182,46 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 				isbn10 = ident.get('identifier')
 			elif t == 'ISBN_13':
 				isbn13 = ident.get('identifier')
+		# Guard against Google returning a different ISBN entirely.
+		# If neither ISBN matches the requested value, treat the Google payload as empty
+		# so we don't overwrite correct metadata (e.g., different manga volumes).
+		norm_isbn10 = _re.sub(r"[^0-9Xx]", "", isbn10 or "")
+		norm_isbn13 = _re.sub(r"[^0-9Xx]", "", isbn13 or "")
+		provided_isbns = {v for v in (norm_isbn10, norm_isbn13) if v}
+		if target and provided_isbns:
+			equivalents = {target}
+			def _isbn13_to_10(val: str) -> Optional[str]:
+				if len(val) != 13 or not val.isdigit() or not val.startswith(('978','979')):
+					return None
+				core = val[3:-1]
+				total = 0
+				for idx, ch in enumerate(core):
+					total += (10 - idx) * int(ch)
+				remainder = 11 - (total % 11)
+				check = 'X' if remainder == 10 else ('0' if remainder == 11 else str(remainder))
+				return core + check
+			def _isbn10_to_13(val: str) -> Optional[str]:
+				if len(val) != 10 or not _re.fullmatch(r"[0-9]{9}[0-9Xx]", val):
+					return None
+				core = val[:-1]
+				base = f"978{core}"
+				total = 0
+				for idx, ch in enumerate(base):
+					total += int(ch) * (1 if idx % 2 == 0 else 3)
+				check = (10 - (total % 10)) % 10
+				return base + str(check)
+			if len(target) == 13:
+				eq10 = _isbn13_to_10(target)
+				if eq10:
+					equivalents.add(eq10)
+			elif len(target) == 10:
+				eq13 = _isbn10_to_13(target)
+				if eq13:
+					equivalents.add(eq13)
+			if equivalents.isdisjoint(provided_isbns):
+				if _META_DEBUG:
+					_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][ISBN_MISMATCH_DROP] requested={target} got10={norm_isbn10 or 'None'} got13={norm_isbn13 or 'None'} equivalents={sorted(equivalents)}")
+				return {}
 
 		# Cover
 		cover_url = None
@@ -806,4 +846,3 @@ def fetch_unified_by_title(title: str, max_results: int = 10, author: Optional[s
 	"""Passthrough to enhanced title search across Google Books and OpenLibrary, with optional author filter."""
 	from app.utils.book_search import search_books_by_title
 	return search_books_by_title(title, max_results, author)
-
