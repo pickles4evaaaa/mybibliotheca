@@ -25,6 +25,172 @@ _REQUEST_TIMEOUT = int(os.getenv('METADATA_REQUEST_TIMEOUT', '8'))
 _FETCH_TIMEOUT = int(os.getenv('METADATA_FETCH_TIMEOUT', '20'))
 
 
+def _normalize_isbn_value(val: Optional[str]) -> str:
+	"""Return an uppercase ISBN string stripped of separators (or empty string)."""
+	if not val:
+		return ''
+	return re.sub(r"[^0-9Xx]", "", str(val)).upper()
+
+
+def _isbn10_to_13(isbn10: Optional[str]) -> Optional[str]:
+	"""Convert ISBN-10 to ISBN-13 (prefix 978) including checksum."""
+	digits = _normalize_isbn_value(isbn10)
+	if len(digits) != 10 or not re.fullmatch(r"[0-9]{9}[0-9X]", digits):
+		return None
+	core = digits[:9]
+	prefix_core = f"978{core}"
+	total = 0
+	for idx, ch in enumerate(prefix_core):
+		weight = 1 if idx % 2 == 0 else 3
+		total += int(ch) * weight
+	check = (10 - (total % 10)) % 10
+	return prefix_core + str(check)
+
+
+def _isbn13_to_10(isbn13: Optional[str]) -> Optional[str]:
+	"""Convert ISBN-13 (978/979) to ISBN-10, recalculating checksum."""
+	digits = _normalize_isbn_value(isbn13)
+	if len(digits) != 13 or not digits[:12].isdigit() or not digits.startswith(('978', '979')):
+		return None
+	core = digits[3:12]
+	if len(core) != 9 or not core.isdigit():
+		return None
+	total = 0
+	for idx, ch in enumerate(core):
+		weight = 10 - idx
+		total += weight * int(ch)
+	check_val = (11 - (total % 11)) % 11
+	check_char = 'X' if check_val == 10 else str(check_val)
+	return core + check_char
+
+
+def _collect_isbn_variants(val: Optional[str]) -> set[str]:
+	"""Return normalized ISBN plus convertible variants suitable for comparisons."""
+	norm = _normalize_isbn_value(val)
+	if not norm:
+		return set()
+	variants: set[str] = {norm}
+	if len(norm) == 10:
+		converted = _isbn10_to_13(norm)
+		if converted:
+			variants.add(converted)
+	elif len(norm) == 13:
+		converted = _isbn13_to_10(norm)
+		if converted:
+			variants.add(converted)
+	return variants
+
+
+def _pick_preferred_identifier(values: Any, preferred_norm: Optional[str]) -> Optional[str]:
+	"""Select the identifier matching preferred_norm if available."""
+	if not values:
+		return None
+	if not isinstance(values, list):
+		values = [values]
+	filtered: List[Tuple[str, str]] = []
+	for raw in values:
+		if not raw:
+			continue
+		norm = _normalize_isbn_value(raw)
+		if not norm:
+			continue
+		filtered.append((str(raw), norm))
+	if not filtered:
+		return None
+	if preferred_norm:
+		for raw, norm in filtered:
+			if norm == preferred_norm:
+				return raw
+	return filtered[0][0]
+
+
+def _extract_series_label(val: Any) -> Optional[str]:
+	"""Normalize OpenLibrary series metadata to a clean string."""
+	if not val:
+		return None
+	try:
+		if isinstance(val, list) and val:
+			candidate = str(val[0])
+		elif isinstance(val, str):
+			candidate = val
+		else:
+			return None
+		candidate = candidate.strip()
+		candidate = re.sub(r'^\s*Series\s*:\s*', '', candidate, flags=re.IGNORECASE)
+		candidate = re.sub(r'\s*\([^)]*\)\s*$', '', candidate).strip()
+		return candidate or None
+	except Exception:
+		return None
+
+
+def _load_openlibrary_edition_payload(isbn: str) -> Dict[str, Any]:
+	"""Fetch the edition JSON for an ISBN (best-effort)."""
+	try:
+		resp = requests.get(f"https://openlibrary.org/isbn/{isbn}.json", timeout=_REQUEST_TIMEOUT)
+		resp.raise_for_status()
+		return resp.json() or {}
+	except Exception:
+		return {}
+
+
+def _build_payload_from_edition(
+	edition_payload: Dict[str, Any],
+	target_isbn13: Optional[str],
+	target_isbn10: Optional[str],
+) -> Dict[str, Any]:
+	if not edition_payload:
+		return {}
+	def _extract_desc(val: Any) -> Optional[str]:
+		if isinstance(val, dict):
+			return val.get('value')
+		if isinstance(val, str):
+			return val
+		return None
+	series_value = _extract_series_label(edition_payload.get('series'))
+	description = _extract_desc(edition_payload.get('description'))
+	publish_date = edition_payload.get('publish_date') or edition_payload.get('publishDate')
+	language_code = None
+	languages = edition_payload.get('languages')
+	if isinstance(languages, list) and languages:
+		entry = languages[0]
+		if isinstance(entry, dict):
+			lang_key = entry.get('key', '')
+			if isinstance(lang_key, str) and lang_key:
+				language_code = lang_key.split('/')[-1]
+		elif isinstance(entry, str):
+			language_code = entry.split('/')[-1] if '/' in entry else entry
+	preferred_isbn13 = target_isbn13 if target_isbn13 else None
+	preferred_isbn10 = target_isbn10 if target_isbn10 else None
+	isbn13 = _pick_preferred_identifier(edition_payload.get('isbn_13'), preferred_isbn13)
+	isbn10 = _pick_preferred_identifier(edition_payload.get('isbn_10'), preferred_isbn10)
+	publishers = edition_payload.get('publishers')
+	publisher_value = None
+	if isinstance(publishers, list) and publishers:
+		publisher_value = str(publishers[0])
+	elif isinstance(publishers, str):
+		publisher_value = publishers
+	elif isinstance(edition_payload.get('publisher'), str):
+		publisher_value = edition_payload.get('publisher')
+	return {
+		'title': edition_payload.get('title'),
+		'subtitle': edition_payload.get('subtitle'),
+		'publisher': publisher_value,
+		'published_date': _normalize_date(publish_date),
+		'published_date_raw': publish_date,
+		'published_date_specificity': _date_specificity(publish_date),
+		'page_count': edition_payload.get('number_of_pages'),
+		'language': language_code,
+		'description': description,
+		'categories': [],
+		'authors': [],
+		'cover_url': None,
+		'openlibrary_id': edition_payload.get('key'),
+		'series': series_value,
+		'isbn10': isbn10,
+		'isbn13': isbn13,
+	}
+
+
 def _normalize_date(val: Optional[str]) -> Optional[str]:
 	"""Normalize a date string to ISO (YYYY-MM-DD) suitable for HTML date inputs.
 
@@ -187,41 +353,16 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		# so we don't overwrite correct metadata (e.g., different manga volumes).
 		norm_isbn10 = _re.sub(r"[^0-9Xx]", "", isbn10 or "")
 		norm_isbn13 = _re.sub(r"[^0-9Xx]", "", isbn13 or "")
-		provided_isbns = {v for v in (norm_isbn10, norm_isbn13) if v}
-		if target and provided_isbns:
-			equivalents = {target}
-			def _isbn13_to_10(val: str) -> Optional[str]:
-				if len(val) != 13 or not val.isdigit() or not val.startswith(('978','979')):
-					return None
-				core = val[3:-1]
-				total = 0
-				for idx, ch in enumerate(core):
-					total += (10 - idx) * int(ch)
-				remainder = 11 - (total % 11)
-				check = 'X' if remainder == 10 else ('0' if remainder == 11 else str(remainder))
-				return core + check
-			def _isbn10_to_13(val: str) -> Optional[str]:
-				if len(val) != 10 or not _re.fullmatch(r"[0-9]{9}[0-9Xx]", val):
-					return None
-				core = val[:-1]
-				base = f"978{core}"
-				total = 0
-				for idx, ch in enumerate(base):
-					total += int(ch) * (1 if idx % 2 == 0 else 3)
-				check = (10 - (total % 10)) % 10
-				return base + str(check)
-			if len(target) == 13:
-				eq10 = _isbn13_to_10(target)
-				if eq10:
-					equivalents.add(eq10)
-			elif len(target) == 10:
-				eq13 = _isbn10_to_13(target)
-				if eq13:
-					equivalents.add(eq13)
-			if equivalents.isdisjoint(provided_isbns):
-				if _META_DEBUG:
-					_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][ISBN_MISMATCH_DROP] requested={target} got10={norm_isbn10 or 'None'} got13={norm_isbn13 or 'None'} equivalents={sorted(equivalents)}")
-				return {}
+		provided_variants: set[str] = set()
+		provided_variants |= _collect_isbn_variants(norm_isbn10)
+		provided_variants |= _collect_isbn_variants(norm_isbn13)
+		req_variants = _collect_isbn_variants(target)
+		if req_variants and provided_variants and not (req_variants & provided_variants):
+			if _META_DEBUG:
+				_META_LOG.warning(
+					f"[UNIFIED_METADATA][GOOGLE][ISBN_MISMATCH_DROP] requested={target} got10={norm_isbn10 or 'None'} got13={norm_isbn13 or 'None'} variants={sorted(provided_variants)}"
+				)
+			return {}
 
 		# Cover
 		cover_url = None
@@ -341,6 +482,17 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 	"""Fetch OpenLibrary metadata for an ISBN using the lightweight data API."""
 	bibkey = f"ISBN:{isbn}"
 	url = f"https://openlibrary.org/api/books?bibkeys={bibkey}&format=json&jscmd=data"
+	target_norm = _normalize_isbn_value(isbn)
+	target_isbn13 = None
+	target_isbn10 = None
+	if target_norm:
+		if len(target_norm) == 13:
+			target_isbn13 = target_norm
+			target_isbn10 = _isbn13_to_10(target_norm)
+		elif len(target_norm) == 10:
+			target_isbn10 = target_norm
+			target_isbn13 = _isbn10_to_13(target_norm)
+	edition_payload = _load_openlibrary_edition_payload(isbn)
 	try:
 		resp = requests.get(url, timeout=_REQUEST_TIMEOUT, headers={
 			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
@@ -348,76 +500,7 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 		data = resp.json() or {}
 		ol = data.get(bibkey) or {}
 		if not ol:
-			# Fallback to edition endpoint to extract an OpenLibrary work path if possible
-			try:
-				ed_resp = requests.get(f"https://openlibrary.org/isbn/{isbn}.json", timeout=_REQUEST_TIMEOUT)
-				ed_resp.raise_for_status()
-				ed = ed_resp.json() or {}
-				work_path = None
-				works = ed.get('works') or []
-				if works and isinstance(works, list) and isinstance(works[0], dict):
-					work_path = works[0].get('key')  # like '/works/OL12345W'
-				title = ed.get('title')
-				publishers = ed.get('publishers') or []
-				publish_date = ed.get('publish_date')
-				number_of_pages = ed.get('number_of_pages')
-				# Extract ISBNs if present on edition
-				isbn10 = None
-				isbn13 = None
-				try:
-					if isinstance(ed.get('isbn_10'), list) and ed['isbn_10']:
-						isbn10 = str(ed['isbn_10'][0])
-					if isinstance(ed.get('isbn_13'), list) and ed['isbn_13']:
-						isbn13 = str(ed['isbn_13'][0])
-				except Exception:
-					pass
-				# Description may be a string or object with 'value'
-				desc = ed.get('description')
-				if isinstance(desc, dict):
-					desc = desc.get('value')
-
-				# Series (edition JSON sometimes includes 'series': ["Wheel of Time"]) 
-				def _extract_series(val):
-					if not val:
-						return None
-					try:
-						if isinstance(val, list) and val:
-							candidate = str(val[0])
-						elif isinstance(val, str):
-							candidate = val
-						else:
-							return None
-						candidate = candidate.strip()
-						import re as _re
-						candidate = _re.sub(r'^\s*Series\s*:\s*', '', candidate, flags=_re.IGNORECASE)
-						candidate = _re.sub(r'\s*\([^)]*\)\s*$', '', candidate).strip()
-						return candidate or None
-					except Exception:
-						return None
-
-				series_value = _extract_series(ed.get('series'))
-
-				# Categories not available via this lightweight fallback
-				categories = []
-				return {
-					'title': title,
-					'authors': [],  # would require extra calls for names
-					'publisher': publishers[0] if publishers else None,
-					'published_date': _normalize_date(publish_date),
-					'published_date_raw': publish_date,
-					'published_date_specificity': _date_specificity(publish_date),
-					'page_count': number_of_pages,
-					'language': None,
-					'description': desc,
-					'categories': categories,
-					'cover_url': None,
-					'openlibrary_id': work_path or ed.get('key'),  # prefer works path
-					'series': series_value,
-					'isbn10': isbn10,
-					'isbn13': isbn13,
-				}
-			except Exception:
-				return {}
+			return _build_payload_from_edition(edition_payload, target_isbn13, target_isbn10)
 
 		# jscmd=data shape
 		authors = [a.get('name') for a in (ol.get('authors') or []) if isinstance(a, dict)]
@@ -439,16 +522,9 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 				desc = notes.get('value')
 			elif isinstance(notes, str):
 				desc = notes
-		# Extract ISBNs from identifiers if available
-		isbn10 = None
-		isbn13 = None
-		try:
-			if isinstance(identifiers.get('isbn_10'), list) and identifiers['isbn_10']:
-				isbn10 = str(identifiers['isbn_10'][0])
-			if isinstance(identifiers.get('isbn_13'), list) and identifiers['isbn_13']:
-				isbn13 = str(identifiers['isbn_13'][0])
-		except Exception:
-			pass
+		# Extract ISBNs from identifiers if available (prefer the requested one)
+		isbn10 = _pick_preferred_identifier(identifiers.get('isbn_10'), target_isbn10)
+		isbn13 = _pick_preferred_identifier(identifiers.get('isbn_13'), target_isbn13)
 		# Try to get a usable OpenLibrary link path
 		ol_key = ol.get('key')  # often '/books/OL...M'
 		if not ol_key:
@@ -486,11 +562,11 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 			except Exception:
 				return None
 
-		series_value = _extract_series(ol.get('series'))
+		series_value = _extract_series_label(ol.get('series'))
 
 		base_categories = _norm_subjects(ol.get('subjects'))
 
-		return {
+		payload = {
 			'title': ol.get('title'),
 			'subtitle': ol.get('subtitle'),
 			'authors': authors,
@@ -508,6 +584,14 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 			'isbn10': isbn10,
 			'isbn13': isbn13,
 		}
+		# Overlay edition-specific fields to ensure correct volume metadata
+		if edition_payload:
+			edition_overlay = _build_payload_from_edition(edition_payload, target_isbn13, target_isbn10)
+			for key in ['title', 'subtitle', 'publisher', 'published_date', 'published_date_raw', 'published_date_specificity', 'page_count', 'language', 'description', 'series', 'isbn10', 'isbn13', 'openlibrary_id']:
+				val = edition_overlay.get(key)
+				if val:
+					payload[key] = val
+		return payload
 	except Exception as e:
 		if _META_DEBUG:
 			_META_LOG.warning(f"[UNIFIED_METADATA][OPENLIB][EXC] isbn={isbn} err={e}")
@@ -758,6 +842,29 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 	information for a different ISBN than requested.
 	"""
 	google, openlib, _errors = _unified_fetch_pair(isbn)
+	req_variants = _collect_isbn_variants(isbn)
+	req_isbn = _normalize_isbn_value(isbn)
+	dropped_providers: List[str] = []
+
+	def _filter_provider(name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+		if not payload or not req_variants:
+			return payload
+		provider_variants: set[str] = set()
+		provider_variants |= _collect_isbn_variants(payload.get('isbn13'))
+		provider_variants |= _collect_isbn_variants(payload.get('isbn10'))
+		if provider_variants and not (provider_variants & req_variants):
+			friendly = 'Google Books' if name == 'google' else 'OpenLibrary'
+			dropped_providers.append(name)
+			_errors[name] = 'isbn_mismatch'
+			_META_LOG.warning(
+				f"[UNIFIED_METADATA][{friendly.upper()}][ISBN_MISMATCH_DROP] requested={req_isbn or isbn} provider_isbns={sorted(provider_variants)}"
+			)
+			return {}
+		return payload
+
+	google = _filter_provider('google', google)
+	openlib = _filter_provider('openlib', openlib)
+
 	if not google and not openlib:
 		level = _META_LOG.error if any(v != 'empty' for v in _errors.values()) else _META_LOG.warning
 		level(f"[UNIFIED_METADATA][EMPTY] isbn={isbn} errors={_errors}")
@@ -775,12 +882,7 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 		cats = merged.get('categories') or []
 		merged['raw_category_paths'] = list(cats)
 
-	# Normalize requested ISBN for comparison
-	def _normalize_isbn(val: Optional[str]) -> str:
-		"""Normalize ISBN by removing non-alphanumeric except X and converting to uppercase."""
-		return re.sub(r"[^0-9Xx]", "", str(val or '')).upper()
-	
-	requested_isbn = _normalize_isbn(isbn)
+	requested_isbn = req_isbn
 	
 	# Ensure requested ISBN is preserved in merged result if missing
 	try:
@@ -793,36 +895,35 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
 		pass
 
 	# ISBN mismatch detection
-	warnings = []
+	warnings: List[str] = []
+	if dropped_providers:
+		labels = {'google': 'Google Books', 'openlib': 'OpenLibrary'}
+		friendly = ', '.join(labels.get(name, name) for name in dropped_providers)
+		warnings.append(f"Ignored metadata from {friendly} due to ISBN mismatch")
 	isbn_mismatch = False
 	
 	if requested_isbn:
-		returned_isbn13 = _normalize_isbn(merged.get('isbn13'))
-		returned_isbn10 = _normalize_isbn(merged.get('isbn10'))
+		returned_variants: set[str] = set()
+		returned_variants |= _collect_isbn_variants(merged.get('isbn13'))
+		returned_variants |= _collect_isbn_variants(merged.get('isbn10'))
 		
-		# Check if returned ISBNs match the requested ISBN
-		if returned_isbn13 or returned_isbn10:
-			# Check for exact match
-			if requested_isbn not in (returned_isbn13, returned_isbn10):
-				isbn_mismatch = True
-				# Build clearer message showing which ISBNs were returned
-				returned_isbns = []
-				if returned_isbn13:
-					returned_isbns.append(f"ISBN-13: {returned_isbn13}")
-				if returned_isbn10:
-					returned_isbns.append(f"ISBN-10: {returned_isbn10}")
-				returned_str = ", ".join(returned_isbns) if returned_isbns else "unknown"
-				warnings.append(f"ISBN mismatch: Requested {requested_isbn}, but metadata returned for {returned_str}")
-				_META_LOG.warning(f"[UNIFIED_METADATA][ISBN_MISMATCH] requested={requested_isbn} returned_isbn13={returned_isbn13} returned_isbn10={returned_isbn10}")
-				
-				# Extract volume information from title if present
-				title = merged.get('title', '')
-				if title:
-					# Try to extract volume/vol/book number from title
-					# Handles: Vol. 1, Volume 2, Vol 3, v.4, Book 5, Volume: 6, v7
-					vol_match = re.search(r'\b(?:vol\.?|volume|book|v\.?)\s*:?\s*(\d+)', title, re.IGNORECASE)
-					if vol_match:
-						warnings.append(f"Metadata shows volume {vol_match.group(1)} - verify this matches your book")
+		if returned_variants and req_variants and not (returned_variants & req_variants):
+			isbn_mismatch = True
+			returned_isbns = []
+			if merged.get('isbn13'):
+				returned_isbns.append(f"ISBN-13: {_normalize_isbn_value(merged.get('isbn13'))}")
+			if merged.get('isbn10'):
+				returned_isbns.append(f"ISBN-10: {_normalize_isbn_value(merged.get('isbn10'))}")
+			returned_str = ", ".join(returned_isbns) if returned_isbns else "unknown"
+			warnings.append(f"ISBN mismatch: Requested {requested_isbn}, but metadata returned for {returned_str}")
+			_META_LOG.warning(
+				f"[UNIFIED_METADATA][ISBN_MISMATCH] requested={requested_isbn} returned_variants={sorted(returned_variants)}"
+			)
+			title = merged.get('title', '')
+			if title:
+				vol_match = re.search(r'\b(?:vol\.?|volume|book|v\.?)\s*:?\s*(\d+)', title, re.IGNORECASE)
+				if vol_match:
+					warnings.append(f"Metadata shows volume {vol_match.group(1)} - verify this matches your book")
 
 	# Add metadata quality indicators
 	merged['_metadata_warnings'] = warnings
