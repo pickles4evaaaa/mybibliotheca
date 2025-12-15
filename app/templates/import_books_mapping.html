@@ -144,6 +144,9 @@
             <form id="mappingForm" method="POST" action="{{ url_for('main.import_books_execute') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <input type="hidden" name="csv_file_path" value="{{ csv_file_path }}"/>
+                {% for header in csv_headers %}
+                <input type="hidden" name="csv_headers[]" value="{{ header|e }}"/>
+                {% endfor %}
                 
                 <div class="card mb-4">
                     <div class="card-header">

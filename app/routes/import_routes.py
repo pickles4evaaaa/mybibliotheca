@@ -43,7 +43,7 @@ print = _dprint
 
 from app.services import book_service, import_mapping_service, custom_field_service, reading_log_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-from app.domain.models import CustomFieldDefinition, CustomFieldType, ReadingLog
+from app.domain.models import CustomFieldDefinition, CustomFieldType, ImportMappingTemplate, ReadingLog
 from app.utils import normalize_goodreads_value
 from app.utils.user_settings import get_effective_reading_defaults, get_default_book_format
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
@@ -823,6 +823,7 @@ def import_books_execute():
     csv_file_path = request.form.get('csv_file_path')
     use_template = request.form.get('use_template')
     skip_mapping = request.form.get('skip_mapping', 'false').lower() == 'true'
+    csv_headers = [header for header in request.form.getlist('csv_headers[]') if header]
 
     # Ensure mappings always defined to avoid unbound variable errors
     mappings = {}
@@ -981,16 +982,63 @@ def import_books_execute():
         save_as_template = request.form.get('save_as_template') == 'on'
         template_name = request.form.get('template_name', '').strip()
     
-    if save_as_template and template_name:
-        try:
-            # Since create_template doesn't exist, we'll skip template saving for now
-            # This is a workaround - in a full implementation, we'd store this in Kuzu
-            current_app.logger.info(f'Template "{template_name}" would be saved but create_template is not implemented')
-            flash(f'Import template "{template_name}" functionality not yet implemented', 'info')
-            
-        except Exception as e:
-            flash(f'Error saving template: {str(e)}', 'warning')
-            # Continue with import even if template saving fails
+    if save_as_template:
+        if not template_name:
+            flash('Template name is required to save mappings.', 'warning')
+        elif not mappings:
+            flash('Map at least one field before saving a template.', 'warning')
+        else:
+            template_headers = []
+            seen_headers = set()
+            header_source = csv_headers or list(mappings.keys())
+            for header in header_source:
+                header_value = header if isinstance(header, str) else str(header)
+                if not header_value or header_value in seen_headers:
+                    continue
+                seen_headers.add(header_value)
+                template_headers.append(header_value)
+            template_field_mappings = {}
+            for csv_field, target_field in mappings.items():
+                if not target_field:
+                    continue
+                if isinstance(target_field, dict):
+                    template_field_mappings[csv_field] = target_field
+                else:
+                    template_field_mappings[csv_field] = {
+                        'action': 'map_existing',
+                        'target_field': target_field
+                    }
+            if not template_field_mappings:
+                flash('Map at least one field before saving a template.', 'warning')
+            else:
+                try:
+                    existing_templates_raw = import_mapping_service.get_user_templates_sync(current_user.id) or []
+                    existing_templates = list(existing_templates_raw) if hasattr(existing_templates_raw, '__iter__') else []
+                    conflict_found = False
+                    template_name_lower = template_name.lower()
+                    for existing in existing_templates:
+                        existing_name = existing.get('name') if isinstance(existing, dict) else getattr(existing, 'name', '')
+                        if existing_name and existing_name.lower() == template_name_lower:
+                            conflict_found = True
+                            break
+                    if conflict_found:
+                        flash(f'An import template named "{template_name}" already exists. Choose another name.', 'warning')
+                    else:
+                        new_template = ImportMappingTemplate(
+                            user_id=current_user.id,
+                            name=template_name,
+                            source_type='custom',
+                            sample_headers=template_headers,
+                            field_mappings=template_field_mappings
+                        )
+                        created_template = import_mapping_service.create_template_sync(new_template)
+                        if created_template:
+                            flash(f'Saved import template "{template_name}".', 'success')
+                        else:
+                            flash('Unable to save template. Please try again later.', 'warning')
+                except Exception as e:
+                    current_app.logger.exception('Failed to save import template')
+                    flash(f'Error saving template: {str(e)}', 'warning')
     
     default_reading_status = request.form.get('default_reading_status', '')
     duplicate_handling = request.form.get('duplicate_handling', 'skip')

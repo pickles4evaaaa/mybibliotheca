@@ -38,8 +38,9 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
                 row = result.get_next()
                 # Convert row to dict
                 if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': row[0]})
+                    # Single column result - keep both legacy and new keys
+                    value = row[0]
+                    rows.append({'col_0': value, 'result': value})
                 else:
                     # Multi-column result - use col_0, col_1, etc. format for compatibility
                     row_dict = {}
@@ -51,6 +52,19 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Error converting query result to list: {e}")
         return []
+
+
+def _first_column_payload(row_data: Dict[str, Any]) -> Any:
+    """Return the first-column payload from a converted row."""
+    if not isinstance(row_data, dict):
+        return row_data or {}
+    for key in ('col_0', 'result'):
+        if key in row_data and row_data[key] is not None:
+            return row_data[key]
+    if row_data:
+        # Fall back to the first available value
+        return next(iter(row_data.values()))
+    return {}
 
 
 class KuzuImportMappingService:
@@ -103,7 +117,7 @@ class KuzuImportMappingService:
             results = _convert_query_result_to_list(result)
             
             if results and len(results) > 0:
-                template_data = results[0].get('col_0', {})
+                template_data = _first_column_payload(results[0])
                 return self._dict_to_template(template_data)
             return None
             
@@ -135,7 +149,8 @@ class KuzuImportMappingService:
             if existing_results and len(existing_results) > 0:
                 if logger.isEnabledFor(logging.INFO):
                     logger.info(f"📋 [IMPORT_MAPPING] Template already exists: {template.name}")
-                return self._dict_to_template(existing_results[0].get('col_0', {}))
+                row_payload = _first_column_payload(existing_results[0])
+                return self._dict_to_template(row_payload)
             
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("📋 [IMPORT_MAPPING] Step 4: Setting IDs and timestamps")
@@ -222,7 +237,7 @@ class KuzuImportMappingService:
             print(f"📋 [IMPORT_MAPPING] Query result: {result}")
             
             if result and len(result) > 0:
-                created_template_data = result[0].get('col_0', {})
+                created_template_data = _first_column_payload(result[0])
                 print(f"📋 [IMPORT_MAPPING] Created template data: {created_template_data}")
                 
                 created_template = self._dict_to_template(created_template_data)
@@ -277,7 +292,7 @@ class KuzuImportMappingService:
             result = _convert_query_result_to_list(query_result)
             
             if result and len(result) > 0:
-                updated_template_data = result[0].get('col_0', {})
+                updated_template_data = _first_column_payload(result[0])
                 updated_template = self._dict_to_template(updated_template_data)
                 return updated_template
             else:
@@ -305,11 +320,10 @@ class KuzuImportMappingService:
             
             templates = []
             for result in results:
-                if 'col_0' in result:
-                    template_data = result['col_0']
-                    template = self._dict_to_template(template_data)
-                    if template:
-                        templates.append(template)
+                template_data = _first_column_payload(result)
+                template = self._dict_to_template(template_data)
+                if template:
+                    templates.append(template)
             
             print(f"📋 [IMPORT_MAPPING] Found {len(templates)} templates for user {user_id}")
             return templates
@@ -403,8 +417,18 @@ class KuzuImportMappingService:
         """Convert dictionary data to ImportMappingTemplate object."""
         try:
             # Safety check for null or corrupted data
-            if not data or not isinstance(data, dict):
+            if not data:
                 return None
+            if not isinstance(data, dict):
+                try:
+                    if hasattr(data, 'keys') and callable(getattr(data, 'keys')):
+                        data = {key: data[key] for key in data.keys()}  # type: ignore[index]
+                    elif hasattr(data, '__dict__'):
+                        data = dict(data.__dict__)
+                except Exception:
+                    data = None
+                if not isinstance(data, dict):
+                    return None
                 
             print(f"📋 [IMPORT_MAPPING] Converting dict to template: {data}")
             
