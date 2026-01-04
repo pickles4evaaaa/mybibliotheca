@@ -1170,18 +1170,24 @@ def confirmation_step():
                 logger.info(f"🔍 ONBOARDING DEBUG: Data option selected: {data_option}")
                 
                 if data_option == 'import':
-                    # For imports, execute like migrations - stay on same page with progress
-                    logger.info(f"Import option selected - executing synchronous import like migration")
-                    success = execute_onboarding(onboarding_data)
-                    
+                    # Imports should follow the same order-of-operations as the main app:
+                    # 1) Admin + site config
+                    # 2) (Optional) custom field setup
+                    # 3) Book import via the canonical import pipeline
+                    # 4) Personal user metadata (written per-book after creation)
+                    logger.info("Import option selected - running setup then starting background import job")
+
+                    success = execute_onboarding_setup_only(onboarding_data)
                     if success:
+                        task_id = session.get('onboarding_import_task_id')
+                        if task_id:
+                            return redirect(url_for('onboarding.import_progress', task_id=task_id))
+                        # Fallback: if no task id was created, treat setup as complete.
                         return handle_onboarding_completion(onboarding_data)
-                    else:
-                        logger.error(f"🔍 ONBOARDING DEBUG: Import failed")
-                        flash('Import failed. Please check the error message and try again.', 'error')
-                        # Ensure session data is preserved
-                        update_onboarding_data(onboarding_data)
-                        set_onboarding_step(5)
+                    logger.error("🔍 ONBOARDING DEBUG: Import setup failed")
+                    flash('Setup failed while starting import. Please check logs and try again.', 'error')
+                    update_onboarding_data(onboarding_data)
+                    set_onboarding_step(5)
                 elif data_option == 'migrate':
                     # For migrations, execute full migration
                     logger.info(f"Migration option selected - executing full migration")
@@ -1256,13 +1262,10 @@ def complete():
 def import_progress(task_id: str):
     """Show simple import splash screen during onboarding."""
     logger.info(f"🔍 ONBOARDING DEBUG: Showing import splash for task {task_id}")
-    
-    # Check if user is already authenticated (onboarding completed)
-    from flask_login import current_user
-    if current_user.is_authenticated:
-        logger.info(f"🔍 ONBOARDING DEBUG: User is authenticated, redirecting to library")
-        flash('Setup completed successfully! Welcome to your library.', 'success')
-        return redirect(url_for('main.library'))
+
+    # NOTE: During onboarding import we may already be authenticated (we log in early so
+    # the eventual redirect to /library works). Do NOT treat authentication as completion;
+    # instead, always render the splash and let it poll for job completion.
     
     try:
         # For simple onboarding, always show the splash screen regardless of task status
@@ -1337,38 +1340,19 @@ def import_progress_json(task_id: str):
     logger.info(f"🔍 ONBOARDING DEBUG: Getting progress JSON for task {task_id}")
     
     try:
-        # Check if user is already authenticated (onboarding completed)
         from flask_login import current_user
+
+        # Prefer authenticated user context (onboarding typically logs in early).
+        job = None
         if current_user.is_authenticated:
-            # If user is logged in, onboarding likely completed - return success status
-            logger.info(f"✅ User is authenticated - assuming import completed successfully")
-            return jsonify({
-                'status': 'completed',
-                'processed': 1,
-                'success': 1,
-                'errors': 0,
-                'total': 1,
-                'current_book': 'Setup completed',
-                'error_messages': [],
-                'recent_activity': ['Setup completed successfully - please continue to your library']
-            })
-        
-        # First, try to get job from safe manager for real import tasks
-        # Note: We need user context, but during onboarding the user might not be logged in yet
-        # Try to get the user ID from the onboarding session data
-        onboarding_data = get_onboarding_data()
-        admin_data = onboarding_data.get('admin', {})
-        
-        # If we have admin user ID from session, try to get the job safely
-        if admin_data and 'user_id' in admin_data:
-            job = safe_get_import_job(admin_data['user_id'], task_id)
+            job = safe_get_import_job(str(current_user.id), task_id)
         else:
-            # Fallback: Try to get from current user if authenticated
-            from flask_login import current_user
-            if current_user.is_authenticated:
-                job = safe_get_import_job(current_user.id, task_id)
-            else:
-                job = None
+            # Fallback: use onboarding session data if available
+            onboarding_data = get_onboarding_data()
+            admin_data = onboarding_data.get('admin', {})
+            admin_user_id = admin_data.get('user_id')
+            if admin_user_id:
+                job = safe_get_import_job(str(admin_user_id), task_id)
         
         if job:
             logger.info(f"📊 Found real job data: {job}")
@@ -1886,6 +1870,13 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             return False
         
         logger.info(f"✅ Admin user created: {admin_user.username} (ID: {admin_user.id})")
+
+        # Persist admin user id into onboarding session data for progress polling
+        try:
+            admin_data['user_id'] = str(getattr(admin_user, 'id', ''))
+            update_onboarding_data({'admin': admin_data})
+        except Exception:
+            pass
         
         # Log in the user immediately after creation
         try:
@@ -2241,6 +2232,7 @@ def handle_onboarding_completion(onboarding_data: Dict):
 def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[str]:
     """Start a background import job for onboarding using the proven import system."""
     try:
+        user_id = str(user_id)
         print(f"🚀 [IMPORT_JOB] ============ STARTING IMPORT JOB ============")
         print(f"🚀 [IMPORT_JOB] User ID: {user_id}")
         print(f"🚀 [IMPORT_JOB] Import config: {import_config}")
@@ -2325,21 +2317,24 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                 }
                 safe_update_import_job(user_id, task_id, running_update)
                 print(f"🚀 [IMPORT_JOB] Updated job status to running")
-                
-                start_import_job(
-                    task_id=task_id,
-                    csv_file_path=import_config.get('csv_file_path'),
-                    field_mappings=import_config.get('field_mappings', {}),
-                    user_id=user_id,
-                    format_type=import_config.get('detected_type', 'unknown')
-                )
-                
-                # Update job status to completed safely
-                completion_update = {
-                    'status': 'completed',
-                    'current_book': 'Import completed successfully'
+
+                # Use the exact same import pipeline used post-onboarding.
+                # Avoid starting nested threads via start_import_job().
+                from app.routes.import_routes import process_simple_import
+                import asyncio
+
+                pipeline_config = {
+                    'task_id': task_id,
+                    'csv_file_path': import_config.get('csv_file_path'),
+                    'field_mappings': import_config.get('field_mappings', {}),
+                    'user_id': user_id,
+                    'default_reading_status': '',
+                    'duplicate_handling': 'skip',
+                    'custom_fields_enabled': True,
+                    'format_type': import_config.get('detected_type', 'unknown'),
+                    'enable_api_enrichment': True,
                 }
-                safe_update_import_job(user_id, task_id, completion_update)
+                asyncio.run(process_simple_import(pipeline_config))
                     
             except Exception as e:
                 import traceback
@@ -2393,295 +2388,36 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
 # management now uses SafeImportJobManager with proper user isolation.
 
 def execute_csv_import_with_progress(task_id: str, csv_file_path: str, field_mappings: Dict[str, str], user_id: str, default_locations: List[str]) -> bool:
-    """Execute CSV import with progress tracking."""
+    """Execute CSV import with progress tracking.
+
+    Deprecated: onboarding must use the same import pipeline as post-onboarding.
+    This now delegates to app.routes.import_routes.process_simple_import.
+    """
     try:
-        import csv
-        from .utils import normalize_goodreads_value
-        
-        # Get the job safely (for onboarding, jobs are stored in safe manager)
         job = safe_get_import_job(user_id, task_id)
         if not job:
             logger.error(f"❌ Job {task_id} not found")
             return False
-        
-        # Setup default locations for the onboarding process
-        # During onboarding, we need to ensure the user has a default location
-        if not default_locations:
-            from .location_service import LocationService
-            from app.utils.safe_kuzu_manager import safe_get_connection
-            
-            # Initialize location service
-            location_service = LocationService()
-            
-            # Get or create default location (universal)
-            default_location = location_service.get_default_location()
-            if not default_location:
-                logger.info(f"🏠 Creating default location for onboarding import")
-                created_locations = location_service.setup_default_locations()
-                if created_locations:
-                    default_location = location_service.get_default_location()
-                    if default_location and default_location.id:
-                        default_locations = [default_location.id]
-                        logger.info(f"✅ Created and using default location: {default_location.name} (ID: {default_location.id})")
-                    else:
-                        logger.error(f"❌ Failed to get default location after creation")
-                        default_locations = []
-                else:
-                    logger.error(f"❌ Failed to create default locations")
-                    default_locations = []
-            else:
-                if default_location.id:
-                    default_locations = [default_location.id]
-                    logger.info(f"✅ Using existing default location: {default_location.name} (ID: {default_location.id})")
-                else:
-                    logger.error(f"❌ Default location has no ID")
-                    default_locations = []
-        
-        logger.info(f"�📊 Starting CSV import with mappings: {field_mappings}")
-        logger.info(f"📍 Using default locations: {default_locations}")
-        
-        # Read and process the CSV file
-        with open(csv_file_path, 'r', encoding='utf-8', errors='ignore') as csvfile:
-            # Try to detect if CSV has headers
-            first_line = csvfile.readline().strip()
-            csvfile.seek(0)  # Reset to beginning
-            
-            # Check if first line looks like an ISBN or a header
-            has_headers = not (first_line.isdigit() or len(first_line) in [10, 13])
-            
-            logger.info(f"📄 First line: '{first_line}', Has headers: {has_headers}")
-            
-            if has_headers:
-                reader = csv.DictReader(csvfile)
-            else:
-                # For headerless CSV (like ISBN-only files), create a simple reader
-                reader = csv.reader(csvfile)
-                # Convert to dict format for consistency
-                dict_reader = []
-                for row_data in reader:
-                    if row_data and row_data[0].strip():  # Skip empty rows
-                        dict_reader.append({'isbn': row_data[0].strip()})
-                reader = dict_reader
-            
-            for row_num, row in enumerate(reader, 1):
-                try:
-                    # Update current book in job
-                    job['current_book'] = f"Row {row_num}"
-                    job['processed'] = row_num - 1  # Zero-based for processed count
-                    
-                    # Update progress every 5 rows to avoid too many updates
-                    if row_num % 5 == 0:
-                        update_job_in_kuzu(task_id, {
-                            'processed': job['processed'],
-                            'current_book': job['current_book']
-                        })
-                    
-                    logger.info(f"📖 Processing row {row_num}: {row}")
-                    
-                    # Extract book data based on mappings
-                    book_data = {}
-                    personal_custom_metadata = {}
-                    
-                    if has_headers:
-                        # Use field mappings for CSV with headers
-                        for csv_field, book_field in field_mappings.items():
-                            raw_value = row.get(csv_field, '')
-                            
-                            # Apply Goodreads normalization to all values
-                            if book_field == 'isbn':
-                                value = normalize_goodreads_value(raw_value, 'isbn')
-                            else:
-                                value = normalize_goodreads_value(raw_value, 'text')
-                            
-                            if value:  # Only process non-empty values
-                                # Check if this is a custom field
-                                if book_field.startswith('custom_'):
-                                    # Extract custom field name and add to personal metadata
-                                    custom_field_name = book_field.replace('custom_', '')
-                                    personal_custom_metadata[custom_field_name] = value
-                                    logger.info(f"📝 Added custom metadata: {custom_field_name} = {value}")
-                                else:
-                                    book_data[book_field] = value
-                    else:
-                        # For headerless CSV, assume it's ISBN-only
-                        isbn_value = row.get('isbn', '').strip()
-                        if isbn_value:
-                            book_data['isbn'] = isbn_value
-                    
-                    # Skip if no title or ISBN
-                    if not book_data.get('title') and not book_data.get('isbn'):
-                        logger.info(f"⏭️ Row {row_num}: Skipped - no title or ISBN")
-                        job['recent_activity'].append(f"Row {row_num}: Skipped - no title or ISBN")
-                        continue
-                    
-                    # Update current book name
-                    title = book_data.get('title', book_data.get('isbn', 'Unknown Title'))
-                    job['current_book'] = title
-                    
-                    # Process the book with custom metadata
-                    success = process_single_book_import(book_data, user_id, default_locations, personal_custom_metadata)
-                    
-                    if success:
-                        job['success'] += 1
-                        job['recent_activity'].append(f"Row {row_num}: Successfully imported '{title}'")
-                        logger.info(f"✅ Row {row_num}: Successfully imported '{title}'")
-                    else:
-                        job['errors'] += 1
-                        job['recent_activity'].append(f"Row {row_num}: Failed to import")
-                        logger.error(f"❌ Row {row_num}: Failed to import")
-                    
-                    # Keep only the last 10 activities to avoid memory bloat
-                    if len(job['recent_activity']) > 10:
-                        job['recent_activity'] = job['recent_activity'][-10:]
-                
-                except Exception as e:
-                    logger.error(f"❌ Exception in row {row_num}: {e}")
-                    job['errors'] += 1
-                    job['recent_activity'].append(f"Row {row_num}: Error - {str(e)}")
-                
-                # Update final processed count
-                job['processed'] = row_num
-        
-        # Final progress update
-        update_job_in_kuzu(task_id, {
-            'processed': job['processed'],
-            'success': job['success'],
-            'errors': job['errors'],
-            'current_book': None
-        })
-        
-        logger.info(f"📊 CSV processing completed. Success: {job['success']}, Errors: {job['errors']}")
-        
-        # Clean up temp file
-        try:
-            import os
-            os.unlink(csv_file_path)
-            logger.info(f"🗑️ Cleaned up temporary file: {csv_file_path}")
-        except:
-            pass
-        
-        # Return success if at least one book was imported
-        return job['success'] > 0
-        
+
+        from app.routes.import_routes import process_simple_import
+        import asyncio
+
+        pipeline_config = {
+            'task_id': task_id,
+            'csv_file_path': csv_file_path,
+            'field_mappings': field_mappings,
+            'user_id': user_id,
+            'default_reading_status': '',
+            'duplicate_handling': 'skip',
+            'custom_fields_enabled': True,
+            'format_type': job.get('format_type', 'unknown'),
+            'enable_api_enrichment': True,
+        }
+        asyncio.run(process_simple_import(pipeline_config))
+
+        snap = safe_get_import_job(user_id, task_id) or {}
+        return int(snap.get('success') or 0) > 0
+
     except Exception as e:
         logger.error(f"❌ Error executing CSV import with progress: {e}")
-        return False
-
-def process_single_book_import(book_data: Dict, user_id: str, default_locations: List, personal_custom_metadata: Dict) -> bool:
-    """Process a single book import using the unified SimplifiedBookService pipeline."""
-    try:
-        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-        from app.utils.metadata_aggregator import fetch_unified_by_isbn
-
-        title = (book_data.get('title') or '').strip()
-        csv_author = (book_data.get('author') or '').strip()
-        isbn = (book_data.get('isbn') or '').strip()
-        logger.info(f"📚 Processing book: {title or isbn} by {csv_author}")
-
-        # Normalize ISBN
-        cleaned_isbn = ''.join(filter(str.isdigit, isbn)) if isbn else ''
-
-        # Try unified enrichment
-        unified = {}
-        if cleaned_isbn:
-            try:
-                unified = fetch_unified_by_isbn(cleaned_isbn) or {}
-            except Exception as e:
-                logger.warning(f"⚠️ Unified lookup failed for {cleaned_isbn}: {e}")
-
-        # Merge fields with preference: CSV -> Unified
-        title = title or unified.get('title') or (cleaned_isbn or 'Untitled')
-        subtitle = (book_data.get('subtitle') or '') or unified.get('subtitle')
-        description = (book_data.get('description') or book_data.get('summary') or '') or unified.get('description')
-        publisher = (book_data.get('publisher') or '') or unified.get('publisher')
-        published_date = (book_data.get('published_date') or '') or unified.get('published_date')
-        language = (book_data.get('language') or '') or unified.get('language') or 'en'
-        cover_url = (book_data.get('cover_url') or '') or unified.get('cover_url')
-        # Page count
-        page_count = None
-        csv_pc = book_data.get('page_count') or book_data.get('pages')
-        try:
-            if isinstance(csv_pc, int):
-                page_count = csv_pc
-            elif isinstance(csv_pc, str) and csv_pc.isdigit():
-                page_count = int(csv_pc)
-        except Exception:
-            page_count = None
-        if page_count is None and unified.get('page_count') is not None:
-            upc = unified.get('page_count')
-            if isinstance(upc, int):
-                page_count = upc
-            elif isinstance(upc, str) and upc.isdigit():
-                page_count = int(upc)
-
-        # Authors
-        author = csv_author
-        additional_authors = None
-        if not author:
-            auth_list = unified.get('authors') or []
-            if auth_list:
-                author = auth_list[0]
-                if len(auth_list) > 1:
-                    additional_authors = ', '.join(a for a in auth_list[1:] if isinstance(a, str) and a.strip()) or None
-
-        # Categories merge
-        categories = []
-        if book_data.get('categories'):
-            if isinstance(book_data['categories'], list):
-                categories.extend([c for c in book_data['categories'] if isinstance(c, str) and c.strip()])
-            elif isinstance(book_data['categories'], str):
-                categories.extend([c.strip() for c in book_data['categories'].split(',') if c.strip()])
-        uni_cats = [c for c in (unified.get('categories') or []) if isinstance(c, str) and c.strip()]
-        for c in uni_cats:
-            if c not in categories:
-                categories.append(c)
-
-        # ISBNs
-        isbn13 = cleaned_isbn if len(cleaned_isbn) == 13 else None
-        isbn10 = cleaned_isbn if len(cleaned_isbn) == 10 else None
-        if unified.get('isbn13'):
-            isbn13 = unified['isbn13']
-        if unified.get('isbn10'):
-            isbn10 = unified['isbn10']
-
-        # Provider IDs
-        google_books_id = unified.get('google_books_id')
-        openlibrary_id = unified.get('openlibrary_id')
-
-        # Build SimplifiedBook and persist via service
-        new_book = SimplifiedBook(
-            title=title,
-            author=author or '',
-            isbn13=isbn13,
-            isbn10=isbn10,
-            subtitle=subtitle,
-            description=description,
-            publisher=publisher,
-            published_date=published_date,
-            page_count=page_count,
-            language=language,
-            cover_url=cover_url,
-            categories=categories,
-            google_books_id=google_books_id,
-            openlibrary_id=openlibrary_id,
-            additional_authors=additional_authors,
-            personal_custom_metadata=personal_custom_metadata or {}
-        )
-
-        service = SimplifiedBookService()
-        success = service.add_book_to_user_library_sync(
-            book_data=new_book,
-            user_id=str(user_id)
-        )
-
-        if success:
-            logger.info(f"✅ Successfully imported {title}")
-            return True
-        logger.error(f"❌ Failed to import {title}")
-        return False
-
-    except Exception as e:
-        logger.error(f"❌ Error processing single book: {e}")
-        import traceback
-        traceback.print_exc()
         return False
