@@ -1283,6 +1283,77 @@ class SimplifiedBookService:
                     book_data['translator'] = value
                 elif book_field == 'illustrator':
                     book_data['illustrator'] = value
+                elif book_field == 'reading_status':
+                    # Normalize reading status values (Goodreads/StoryGraph exports vary)
+                    raw = value if isinstance(value, str) else str(value)
+                    s = normalize_goodreads_value(raw, 'text')
+                    s = (s or '').strip().lower()
+                    if not s:
+                        book_data['reading_status'] = None
+                    else:
+                        # Canonical internal values:
+                        # plan_to_read, reading, read, on_hold, did_not_finish, library_only
+                        norm = s
+                        norm = norm.replace('-', '_').replace(' ', '_')
+                        # Collapse repeated underscores
+                        while '__' in norm:
+                            norm = norm.replace('__', '_')
+
+                        status_map = {
+                            # Goodreads exclusive shelf
+                            'to_read': 'plan_to_read',
+                            'to-read': 'plan_to_read',
+                            'to read': 'plan_to_read',
+                            'want_to_read': 'plan_to_read',
+                            'want_to-read': 'plan_to_read',
+                            'want to read': 'plan_to_read',
+                            'tbr': 'plan_to_read',
+                            'currently_reading': 'reading',
+                            'currently-reading': 'reading',
+                            'currently reading': 'reading',
+                            'reading': 'reading',
+                            'read': 'read',
+                            'finished': 'read',
+                            'completed': 'read',
+                            'complete': 'read',
+                            # Holds
+                            'on_hold': 'on_hold',
+                            'onhold': 'on_hold',
+                            'on-hold': 'on_hold',
+                            'paused': 'on_hold',
+                            'hold': 'on_hold',
+                            # DNF
+                            'did_not_finish': 'did_not_finish',
+                            'did-not-finish': 'did_not_finish',
+                            'did not finish': 'did_not_finish',
+                            'dnf': 'did_not_finish',
+                            'abandoned': 'did_not_finish',
+                            'unfinished': 'did_not_finish',
+                            # Special
+                            'library_only': 'library_only',
+                            'library': 'library_only',
+                        }
+
+                        # Prefer exact matches, then underscore-normalized
+                        resolved = status_map.get(s) or status_map.get(norm)
+                        if not resolved and norm in (
+                            'plan_to_read', 'reading', 'read', 'on_hold', 'did_not_finish', 'library_only'
+                        ):
+                            resolved = norm
+
+                        book_data['reading_status'] = resolved
+                elif book_field in ('date_read', 'finish_date'):
+                    # Treat as finished reading date
+                    iso = _normalize_date_value(value)
+                    book_data['date_read'] = iso or None
+                elif book_field in ('date_started', 'start_date'):
+                    # Treat as started reading date
+                    iso = _normalize_date_value(value)
+                    book_data['date_started'] = iso or None
+                elif book_field == 'date_added':
+                    # Store for potential later use (not currently persisted into personal metadata)
+                    iso = _normalize_date_value(value)
+                    book_data['date_added'] = iso or None
                 elif book_field.startswith('custom_'):
                     # Handle custom fields by parsing prefix and storing in metadata
                     if book_field.startswith('custom_global_'):
@@ -1425,6 +1496,7 @@ class SimplifiedBookService:
             try:
                 from app.services.personal_metadata_service import personal_metadata_service
                 from datetime import datetime as dt
+                import re
                 
                 # Build custom_updates dict with all personal fields
                 custom_updates = {}
@@ -1485,25 +1557,9 @@ class SimplifiedBookService:
                     custom_metadata = dict(custom_metadata)
                     # Extract start_date and finish_date for separate parameters
                     if 'start_date' in custom_metadata:
-                        sd_raw = custom_metadata.pop('start_date')
-                        if sd_raw:
-                            try:
-                                if isinstance(sd_raw, dt):
-                                    start_date_value = sd_raw
-                                elif isinstance(sd_raw, str):
-                                    start_date_value = dt.fromisoformat(sd_raw.replace('Z', '+00:00'))
-                            except Exception:
-                                pass
+                        start_date_value = _parse_date_like(custom_metadata.pop('start_date'))
                     if 'finish_date' in custom_metadata:
-                        fd_raw = custom_metadata.pop('finish_date')
-                        if fd_raw:
-                            try:
-                                if isinstance(fd_raw, dt):
-                                    finish_date_value = fd_raw
-                                elif isinstance(fd_raw, str):
-                                    finish_date_value = dt.fromisoformat(fd_raw.replace('Z', '+00:00'))
-                            except Exception:
-                                pass
+                        finish_date_value = _parse_date_like(custom_metadata.pop('finish_date'))
                     # Merge remaining custom fields
                     custom_updates.update(custom_metadata)
 
