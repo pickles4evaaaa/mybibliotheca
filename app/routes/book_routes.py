@@ -4941,6 +4941,7 @@ def search_books_in_library():
 def add_book_manual():
     """Manual add with series autocomplete integration (simplified)."""
     import json
+    from app.utils.category_path_utils import filter_raw_category_paths_by_visible_segments
     submit_action = request.form.get('submit_action', 'save')
     title = (request.form.get('title') or '').strip()
     if not title:
@@ -4969,13 +4970,23 @@ def add_book_manual():
             categories = [c.get('name') for c in json.loads(request.form['categories']) if c.get('name')]
         except Exception:
             pass
-    raw_categories = None
+    raw_categories_provided = 'raw_categories' in request.form
+    raw_categories: list[str] = []
     raw_cat_val = request.form.get('raw_categories')
     if raw_cat_val:
         try:
-            raw_categories = json.loads(raw_cat_val)
+            parsed = json.loads(raw_cat_val)
+            if isinstance(parsed, list):
+                raw_categories = [str(s).strip() for s in parsed if str(s).strip()]
+            elif isinstance(parsed, str) and parsed.strip():
+                raw_categories = [s.strip() for s in parsed.split(',') if s.strip()]
         except Exception:
             raw_categories = [s.strip() for s in raw_cat_val.split(',') if s.strip()]
+
+    # Defensive guard: never allow raw_categories to re-introduce categories the user removed.
+    # The UI submits category *segments* as chips; filter raw hierarchical paths to match.
+    if raw_categories and categories:
+        raw_categories = filter_raw_category_paths_by_visible_segments(raw_categories, categories)
 
     # Scalars
     # Accept multiple ISBN field names and normalize
@@ -5187,7 +5198,8 @@ def add_book_manual():
         if sd: updates['start_date']=sd
         fd = (request.form.get('finish_date') or '').strip()
         if fd: updates['finish_date']=fd
-        if raw_categories: updates['raw_categories']=raw_categories
+        if raw_categories_provided:
+            updates['raw_categories'] = raw_categories
         if updates:
             try: book_service.update_book_sync(created.uid, str(current_user.id), **updates)
             except Exception: pass
