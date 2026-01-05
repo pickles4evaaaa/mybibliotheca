@@ -2053,8 +2053,11 @@ async def process_simple_import(import_config):
                     if not simplified_book.reading_status:
                         simplified_book.reading_status = import_config.get('default_reading_status', '')
 
-                    # Extract personal metadata fields from SimplifiedBook
-                    personal_metadata_for_import = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+                    # Extract personal metadata fields from SimplifiedBook.
+                    # IMPORTANT: copy the dict so we don't mutate the SimplifiedBook's
+                    # personal_custom_metadata by reference (reserved keys like
+                    # start_date/finish_date should not leak into custom fields).
+                    personal_metadata_for_import = dict(getattr(simplified_book, 'personal_custom_metadata', None) or {})
 
                     # Add standard personal fields if present in SimplifiedBook
                     if simplified_book.date_started:

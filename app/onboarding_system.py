@@ -1653,161 +1653,54 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 return False
 
             try:
-                import csv
-                from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
-                from app.utils.metadata_aggregator import fetch_unified_by_isbn
+                # Use the same import pipeline as post-onboarding so we share
+                # the exact same date normalization + personal metadata persistence.
+                from app.routes.import_routes import process_simple_import
+                from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
+                import asyncio
+                import uuid
 
-                logger.info("🚀 Starting CSV import via SimplifiedBookService (unified pipeline)")
+                logger.info("🚀 Starting CSV import via process_simple_import (shared pipeline)")
 
                 csv_file_path = import_config.get('csv_file_path')
                 field_mappings = import_config.get('field_mappings', {})
+                format_type = import_config.get('detected_type') or import_config.get('format_type') or 'unknown'
 
                 if not csv_file_path or not Path(csv_file_path).exists():
                     logger.error(f"❌ CSV file not found: {csv_file_path}")
                     return False
 
-                service = SimplifiedBookService()
-                books_imported = 0
-                errors = 0
+                task_id = f"onboarding_sync_{uuid.uuid4().hex}"  # progress-safe task id
+                safe_create_import_job(admin_user.id, task_id, {
+                    'task_id': task_id,
+                    'user_id': admin_user.id,
+                    'status': 'running',
+                    'format_type': format_type,
+                    'processed': 0,
+                    'success': 0,
+                    'errors': 0,
+                    'skipped': 0,
+                    'merged': 0,
+                    'current_book': 'Starting import...'
+                })
 
-                with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
-                    reader = csv.DictReader(csvfile)
+                pipeline_config = {
+                    'task_id': task_id,
+                    'csv_file_path': csv_file_path,
+                    'field_mappings': field_mappings,
+                    'user_id': admin_user.id,
+                    'default_reading_status': '',
+                    'duplicate_handling': 'skip',
+                    'custom_fields_enabled': True,
+                    'format_type': format_type,
+                    'enable_api_enrichment': True,
+                }
+                asyncio.run(process_simple_import(pipeline_config))
 
-                    for row in reader:
-                        try:
-                            # Build a dict of mapped fields from CSV
-                            mapped: dict[str, str] = {}
-                            for csv_field, target_field in field_mappings.items():
-                                raw_val = row.get(csv_field)
-                                if raw_val is None:
-                                    continue
-                                val = raw_val.strip()
-                                if not val:
-                                    continue
-                                mapped[target_field] = val
-
-                            # Skip empty rows
-                            if not mapped.get('title') and not mapped.get('isbn'):
-                                continue
-
-                            # Prepare initial SimplifiedBook fields
-                            title = mapped.get('title') or mapped.get('isbn') or 'Untitled'
-                            author = mapped.get('author', '').strip()
-                            subtitle = mapped.get('subtitle')
-                            description = mapped.get('description')
-                            publisher = mapped.get('publisher')
-                            published_date = mapped.get('published_date')
-                            language = mapped.get('language') or 'en'
-                            cover_url = mapped.get('cover_url')
-                            page_count = None
-                            try:
-                                if mapped.get('page_count') and str(mapped['page_count']).isdigit():
-                                    page_count = int(mapped['page_count'])
-                            except Exception:
-                                page_count = None
-
-                            # ISBN handling (digits only)
-                            isbn_raw = mapped.get('isbn', '')
-                            cleaned_isbn = ''.join(filter(str.isdigit, isbn_raw)) if isbn_raw else ''
-                            isbn13 = cleaned_isbn if len(cleaned_isbn) == 13 else None
-                            isbn10 = cleaned_isbn if len(cleaned_isbn) == 10 else None
-
-                            # Categories from CSV (split on commas)
-                            categories = []
-                            if 'categories' in mapped and mapped['categories']:
-                                categories = [c.strip() for c in mapped['categories'].split(',') if c.strip()]
-
-                            # Enrich with unified metadata when ISBN is available
-                            google_books_id = None
-                            openlibrary_id = None
-                            additional_authors = None
-                            if cleaned_isbn:
-                                try:
-                                    unified = fetch_unified_by_isbn(cleaned_isbn) or {}
-                                    if unified:
-                                        # Prefer richer unified fields when present
-                                        title = title or unified.get('title') or title
-                                        subtitle = subtitle or unified.get('subtitle')
-                                        description = description or unified.get('description')
-                                        publisher = publisher or unified.get('publisher')
-                                        published_date = published_date or unified.get('published_date')
-                                        language = language or unified.get('language') or 'en'
-                                        cover_url = cover_url or unified.get('cover_url')
-                                        if not page_count and unified.get('page_count') is not None:
-                                            try:
-                                                upc = unified.get('page_count')
-                                                if isinstance(upc, int):
-                                                    page_count = upc
-                                                elif isinstance(upc, str) and upc.isdigit():
-                                                    page_count = int(upc)
-                                            except Exception:
-                                                pass
-                                        # Provider IDs
-                                        google_books_id = unified.get('google_books_id') or google_books_id
-                                        openlibrary_id = unified.get('openlibrary_id') or openlibrary_id
-                                        # ISBNs from unified (override if present)
-                                        if unified.get('isbn13'):
-                                            isbn13 = unified.get('isbn13')
-                                        if unified.get('isbn10'):
-                                            isbn10 = unified.get('isbn10')
-                                        # Authors
-                                        auth_list = unified.get('authors') or []
-                                        if auth_list and not author:
-                                            author = auth_list[0]
-                                            if len(auth_list) > 1:
-                                                additional_authors = ', '.join(a for a in auth_list[1:] if isinstance(a, str) and a.strip()) or None
-                                        # Merge categories (preserve CSV first)
-                                        uni_cats = [c for c in (unified.get('categories') or []) if isinstance(c, str) and c.strip()]
-                                        for c in uni_cats:
-                                            if c not in categories:
-                                                categories.append(c)
-                                except Exception as uerr:
-                                    logger.warning(f"⚠️ Unified metadata fetch failed for ISBN {cleaned_isbn}: {uerr}")
-
-                            # Fallback author if still missing
-                            author = author or ''
-
-                            # Create SimplifiedBook
-                            new_book = SimplifiedBook(
-                                title=title,
-                                author=author,
-                                isbn13=isbn13,
-                                isbn10=isbn10,
-                                subtitle=subtitle,
-                                description=description,
-                                publisher=publisher,
-                                published_date=published_date,
-                                page_count=page_count,
-                                language=language or 'en',
-                                cover_url=cover_url,
-                                categories=categories,
-                                google_books_id=google_books_id,
-                                openlibrary_id=openlibrary_id,
-                                additional_authors=additional_authors
-                            )
-
-                            # Persist via unified pipeline; let service assign default location
-                            success = service.add_book_to_user_library_sync(
-                                book_data=new_book,
-                                user_id=admin_user.id
-                            )
-
-                            if success:
-                                books_imported += 1
-                                logger.info(f"✅ Imported book: {title}")
-                            else:
-                                errors += 1
-                                logger.warning(f"❌ Failed to import book: {title}")
-
-                        except Exception as book_error:
-                            errors += 1
-                            logger.error(f"❌ Error importing book from row: {book_error}")
-                            continue
-
-                logger.info(f"✅ CSV import completed via SimplifiedBookService: {books_imported} books imported, {errors} errors")
+                safe_update_import_job(admin_user.id, task_id, {'status': 'completed', 'current_book': None})
 
             except Exception as e:
-                logger.error(f"❌ Failed to execute CSV import (SimplifiedBookService): {e}")
+                logger.error(f"❌ Failed to execute CSV import (process_simple_import): {e}")
                 return False
         
         return True

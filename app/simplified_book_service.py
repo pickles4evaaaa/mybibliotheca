@@ -17,6 +17,7 @@ print = _dprint
 
 import uuid
 import json
+import re
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
@@ -1070,6 +1071,58 @@ class SimplifiedBookService:
             'global_custom_metadata': {},
             'personal_custom_metadata': {}
         }
+
+        def _normalize_date_value(raw_val: object) -> str:
+            """Normalize common CSV date formats to ISO 'YYYY-MM-DD'.
+
+            We normalize here because downstream persistence uses datetime.fromisoformat,
+            which does not accept Goodreads-style 'YYYY/MM/DD'.
+            """
+            if raw_val is None:
+                return ''
+            s0 = raw_val.strip() if isinstance(raw_val, str) else str(raw_val).strip()
+            if not s0:
+                return ''
+            # Remove Excel wrapper ="..." and friends
+            s = normalize_goodreads_value(s0, 'text').strip()
+            if not s:
+                return ''
+
+            # Prefer ISO-like values
+            # Common cases:
+            # - Goodreads: YYYY/MM/DD
+            # - ISO: YYYY-MM-DD
+            # - Some exports: MM/DD/YYYY
+            import re
+
+            m = re.match(r'^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$', s)
+            if m:
+                y, mo, d = m.groups()
+                return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+
+            m = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$', s)
+            if m:
+                mo, d, y = m.groups()
+                return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+
+            # Two-digit year (Goodreads often exports M/D/YY)
+            # Use datetime's %y pivot (1969-2068) to infer century.
+            m = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$', s)
+            if m:
+                try:
+                    from datetime import datetime as _dt
+                    parsed = _dt.strptime(s.replace('/', '-'), '%m-%d-%y').date()
+                    return parsed.isoformat()
+                except Exception:
+                    # Fall back to raw string; may still be parseable elsewhere
+                    return s
+
+            # If already ISO datetime/date, keep it
+            if re.match(r'^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$', s):
+                return s
+
+            # Unknown format; return as-is (may still be parseable elsewhere)
+            return s
         
         # Map CSV fields to book fields
         for csv_field, book_field in mappings.items():
@@ -1384,17 +1437,52 @@ class SimplifiedBookService:
                 if user_rating is not None:
                     custom_updates['user_rating'] = user_rating
                 
-                # Add any custom metadata from book_data
+                # Add any custom metadata from book_data (exclude reserved keys)
                 if getattr(book_data, 'personal_custom_metadata', None):
                     pcm = book_data.personal_custom_metadata
                     if pcm:
-                        print(f"📝 [UNIVERSAL_LIBRARY] Including {len(pcm)} personal custom fields")
-                        custom_updates.update(pcm)
+                        filtered_pcm = {k: v for k, v in pcm.items() if k not in ('start_date', 'finish_date')}
+                        if filtered_pcm:
+                            print(f"📝 [UNIVERSAL_LIBRARY] Including {len(filtered_pcm)} personal custom fields")
+                            custom_updates.update(filtered_pcm)
                 
                 # Add custom_metadata parameter if provided (but extract dates separately)
                 start_date_value = None
                 finish_date_value = None
+
+                def _parse_date_like(val: object) -> Optional[dt]:
+                    if not val:
+                        return None
+                    if isinstance(val, dt):
+                        return val
+                    if isinstance(val, str):
+                        s = val.strip()
+                        if not s:
+                            return None
+                        # Accept Goodreads-style YYYY/MM/DD by normalizing to YYYY-MM-DD
+                        s = s.replace('/', '-')
+                        s2 = s.replace('Z', '+00:00')
+                        # Accept date-only strings like '2023-08-08'
+                        if re.match(r'^\d{4}-\d{2}-\d{2}$', s2):
+                            try:
+                                return dt.fromisoformat(f"{s2}T00:00:00+00:00")
+                            except Exception:
+                                return None
+                        # Accept common non-ISO exports (e.g., 12-29-25)
+                        for fmt in ('%Y-%m-%d', '%m-%d-%Y', '%m-%d-%y'):
+                            try:
+                                parsed_date = dt.strptime(s2.split('T')[0], fmt).date()
+                                return dt.fromisoformat(f"{parsed_date.isoformat()}T00:00:00+00:00")
+                            except Exception:
+                                pass
+                        try:
+                            return dt.fromisoformat(s2)
+                        except Exception:
+                            return None
+                    return None
                 if custom_metadata:
+                    # Don't mutate the caller's dict
+                    custom_metadata = dict(custom_metadata)
                     # Extract start_date and finish_date for separate parameters
                     if 'start_date' in custom_metadata:
                         sd_raw = custom_metadata.pop('start_date')
@@ -1418,6 +1506,14 @@ class SimplifiedBookService:
                                 pass
                     # Merge remaining custom fields
                     custom_updates.update(custom_metadata)
+
+                # If callers didn't pass custom_metadata (or didn't include dates),
+                # still persist common per-user dates derived from import.
+                # This covers legacy/simple import routes that only pass `book_data`.
+                if start_date_value is None:
+                    start_date_value = _parse_date_like(getattr(book_data, 'date_started', None))
+                if finish_date_value is None:
+                    finish_date_value = _parse_date_like(getattr(book_data, 'date_read', None))
                 
                 # Save all personal metadata (media_type is already on Book node)
                 if custom_updates or personal_notes or start_date_value or finish_date_value:
