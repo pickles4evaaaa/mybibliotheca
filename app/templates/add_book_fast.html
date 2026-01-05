@@ -395,6 +395,23 @@ let countdownInterval = null;
 let currentBookData = null;
 let recentlyAddedBooks = [];
 const FALLBACK_COVER = "{{ url_for('serve_static', filename='bookshelf.png') }}";
+let editModalInstance = null;
+
+function cleanupStaleModalBackdrops() {
+    try {
+        // Remove any leftover backdrops that can block pointer events
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        // If no modals are currently shown, ensure body isn't stuck in modal-open state
+        const anyShown = document.querySelector('.modal.show');
+        if (!anyShown) {
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+            document.body.style.removeProperty('overflow');
+        }
+    } catch (e) {
+        console.warn('Modal cleanup failed:', e);
+    }
+}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -413,6 +430,23 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('autoSaveTimeout').addEventListener('change', saveSettings);
     document.getElementById('defaultReadingStatus').addEventListener('change', saveSettings);
     document.getElementById('defaultOwnershipStatus').addEventListener('change', saveSettings);
+
+    // Initialize and harden the edit modal against stacking-context/z-index issues
+    // (If the modal lives inside a positioned/z-indexed container, the backdrop can end up above it.)
+    const editModalEl = document.getElementById('editModal');
+    if (editModalEl) {
+        try {
+            if (editModalEl.parentElement !== document.body) {
+                document.body.appendChild(editModalEl);
+            }
+        } catch (e) {
+            console.warn('Failed to move edit modal to body:', e);
+        }
+    }
+    if (editModalEl && window.bootstrap && bootstrap.Modal) {
+        editModalInstance = bootstrap.Modal.getOrCreateInstance(editModalEl);
+        editModalEl.addEventListener('hidden.bs.modal', cleanupStaleModalBackdrops);
+    }
 });
 
 function loadSettings() {
@@ -521,6 +555,34 @@ function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
+function cleanDescriptionText(raw) {
+    if (!raw) return '';
+    const html = String(raw);
+    try {
+        // Convert basic structure tags into newlines before parsing
+        const normalizedHtml = html
+            .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+            .replace(/<\s*\/p\s*>/gi, '\n\n')
+            .replace(/<\s*p\b[^>]*>/gi, '')
+            .replace(/<\s*li\b[^>]*>/gi, '\n- ')
+            .replace(/<\s*\/li\s*>/gi, '')
+            .replace(/<\s*\/ul\s*>/gi, '\n')
+            .replace(/<\s*\/ol\s*>/gi, '\n');
+
+        const tmp = document.createElement('div');
+        tmp.innerHTML = normalizedHtml;
+        const text = (tmp.textContent || tmp.innerText || '').trim();
+        return text
+            .replace(/\r\n/g, '\n')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    } catch (_) {
+        // Fallback: rough strip of tags
+        return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    }
+}
+
 async function lookupISBN() {
     const isbnInput = document.getElementById('isbnInput');
     const isbn = isbnInput.value.trim().replace(/[-\s]/g, '');
@@ -578,6 +640,7 @@ async function lookupISBN() {
 }
 
 function displayBookPreview(bookData, isbn) {
+    const cleanedDescription = cleanDescriptionText(bookData.description || '');
     currentBookData = {
         title: bookData.title || '',
         author: bookData.authors ? (Array.isArray(bookData.authors) ? bookData.authors.join(', ') : bookData.authors) : '',
@@ -587,7 +650,7 @@ function displayBookPreview(bookData, isbn) {
         published_date: bookData.published_date || '',
         page_count: bookData.page_count || '',
         language: bookData.language || 'en',
-        description: bookData.description || '',
+        description: cleanedDescription,
         cover_url: bookData.cover_url || FALLBACK_COVER,
         google_books_id: bookData.google_books_id || '',
         openlibrary_id: bookData.openlibrary_id || '',
@@ -761,8 +824,17 @@ function editBook() {
     document.getElementById('editOwnershipStatus').value = settings.defaultOwnershipStatus || 'owned';
     
     // Show modal
-    const modal = new bootstrap.Modal(document.getElementById('editModal'));
-    modal.show();
+    cleanupStaleModalBackdrops();
+    const modalEl = document.getElementById('editModal');
+    if (!modalEl || !(window.bootstrap && bootstrap.Modal)) {
+        console.error('Bootstrap modal not available');
+        return;
+    }
+    if (!editModalInstance) {
+        editModalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modalEl.addEventListener('hidden.bs.modal', cleanupStaleModalBackdrops);
+    }
+    editModalInstance.show();
 }
 
 function formatDateForInput(dateStr) {
@@ -812,8 +884,10 @@ async function saveEditedBook() {
         
         if (result.success) {
             // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
-            modal.hide();
+            const modalEl = document.getElementById('editModal');
+            const modal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(modalEl) : null;
+            if (modal) modal.hide();
+            cleanupStaleModalBackdrops();
             
             // Add to recently added list
             const savedData = {
