@@ -2423,22 +2423,32 @@ def library():
     languages = set()
     locations = set()
     media_types = set()
+    filter_record_set: set[tuple] = set()
 
     for book in all_books:
         # Handle categories
         book_categories = book.get('categories', []) if isinstance(book, dict) else getattr(book, 'categories', [])
+        category_values: List[str] = []
         if book_categories:
             # book.categories is a list of Category objects, not a string
             for cat in book_categories:
                 if isinstance(cat, dict):
-                    categories.add(cat.get('name', ''))
+                    name_val = cat.get('name', '')
+                    categories.add(name_val)
+                    category_values.append(name_val)
                 elif hasattr(cat, 'name'):
                     categories.add(cat.name)
+                    category_values.append(cat.name)
                 else:
-                    categories.add(str(cat))
+                    string_val = str(cat)
+                    categories.add(string_val)
+                    category_values.append(string_val)
+        if not category_values:
+            category_values.append('')
         
         # Handle publisher
         book_publisher = book.get('publisher') if isinstance(book, dict) else getattr(book, 'publisher', None)
+        publisher_name = ''
         if book_publisher:
             # Handle Publisher domain object or string
             if isinstance(book_publisher, dict):
@@ -2451,26 +2461,49 @@ def library():
         
         # Handle language
         book_language = book.get('language') if isinstance(book, dict) else getattr(book, 'language', None)
+        language_value = book_language or ''
         if book_language:
             languages.add(book_language)
         
         # Handle locations - they are now returned as strings (location names) from KuzuIntegrationService
         book_locations = book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', [])
+        location_values: List[str] = []
         if book_locations:
             for loc in book_locations:
                 if isinstance(loc, str) and loc:
                     # Location is already a string (location name) and not empty
                     locations.add(loc)
+                    location_values.append(loc)
                 elif isinstance(loc, dict) and loc.get('name'):
                     locations.add(loc.get('name'))
+                    location_values.append(loc.get('name'))
                 elif hasattr(loc, 'name') and getattr(loc, 'name', None):
-                    locations.add(getattr(loc, 'name'))
+                    extracted = getattr(loc, 'name')
+                    locations.add(extracted)
+                    location_values.append(extracted)
                 else:
-                    locations.add(str(loc))
+                    string_val = str(loc)
+                    locations.add(string_val)
+                    location_values.append(string_val)
+        if not location_values:
+            location_values.append('')
 
         mt_value = _resolve_media_type_value(book)
         if mt_value:
             media_types.add(mt_value)
+        else:
+            mt_value = ''
+
+        # Build a lightweight co-occurrence index so dropdown options can cascade on the client.
+        for category_value in category_values:
+            for location_value in location_values:
+                filter_record_set.add((
+                    category_value or '',
+                    publisher_name or '',
+                    language_value or '',
+                    location_value or '',
+                    mt_value or ''
+                ))
 
     declared_media_types = {mt.value.lower() for mt in MediaType}
     all_media_type_values = sorted(
@@ -2500,6 +2533,17 @@ def library():
         for val in all_media_type_values
     ]
     media_type_labels = {opt['value']: opt['label'] for opt in media_type_options}
+
+    filter_records = [
+        {
+            'category': entry[0],
+            'publisher': entry[1],
+            'language': entry[2],
+            'location': entry[3],
+            'media_type': entry[4]
+        }
+        for entry in sorted(filter_record_set)
+    ]
 
     # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync() or []
@@ -2668,7 +2712,8 @@ def library():
         users=users,
         reading_status_options=reading_status_options,
         location_options=location_options,
-        category_options=category_options
+        category_options=category_options,
+        filter_records=filter_records
     ))
     resp.headers['ETag'] = _html_etag
     resp.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
