@@ -21,9 +21,11 @@ def _book(author_name: str, normalized: str | None = None, title: str = ""):
 
 def test_author_first_sort_uses_person_normalized_name_for_last_first():
     books = [
-        _book("King, Stephen", normalized="stephen king", title="B"),
-        _book("Austen, Jane", normalized="jane austen", title="A"),
-        _book("Tolkien, J. R. R.", normalized="j. r. r. tolkien", title="C"),
+        # normalized_name here is intentionally set to a potentially-wrong legacy
+        # ordering ("last first") to ensure we sort from Person.name.
+        _book("King, Stephen", normalized="king stephen", title="B"),
+        _book("Austen, Jane", normalized="austen jane", title="A"),
+        _book("Tolkien, J. R. R.", normalized="tolkien j. r. r.", title="C"),
     ]
 
     books.sort(key=author_first_sort_key_for_book)
@@ -37,9 +39,9 @@ def test_author_first_sort_uses_person_normalized_name_for_last_first():
 
 def test_author_last_sort_uses_last_name_primary():
     books = [
-        _book("King, Stephen", normalized="stephen king", title="B"),
-        _book("Austen, Jane", normalized="jane austen", title="A"),
-        _book("Tolkien, J. R. R.", normalized="j. r. r. tolkien", title="C"),
+        _book("King, Stephen", normalized="king stephen", title="B"),
+        _book("Austen, Jane", normalized="austen jane", title="A"),
+        _book("Tolkien, J. R. R.", normalized="tolkien j. r. r.", title="C"),
     ]
 
     books.sort(key=author_last_sort_key_for_book)

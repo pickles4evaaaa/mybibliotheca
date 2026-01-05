@@ -135,12 +135,16 @@ def author_first_sort_key_for_book(book: Any) -> Tuple[str, str]:
     """
     person = _primary_author_person(book)
     if person:
-        normalized = _person_normalized_name(person)
-        if normalized.strip():
-            return (normalized.casefold(), _safe_title_key(book))
+        # Prefer the Person table's canonical name and normalize it consistently.
+        # Do not trust stored normalized_name for ordering; legacy rows may have
+        # been normalized as "last first".
         name = _person_name(person)
         if name.strip():
             return (_normalize_first_last(name).casefold(), _safe_title_key(book))
+
+        normalized = _person_normalized_name(person)
+        if normalized.strip():
+            return (_normalize_first_last(normalized).casefold(), _safe_title_key(book))
 
     # Fallback to legacy fields
     if isinstance(book, dict):
@@ -164,11 +168,13 @@ def author_last_sort_key_for_book(book: Any) -> Tuple[str, str, str]:
     """
     person = _primary_author_person(book)
     if person:
-        normalized = _person_normalized_name(person)
-        if normalized.strip():
-            first_last = normalized
+        # Prefer Person.name; derive consistent first/last ordering from it.
+        name = _person_name(person)
+        if name.strip():
+            first_last = _normalize_first_last(name)
         else:
-            first_last = _normalize_first_last(_person_name(person))
+            normalized = _person_normalized_name(person)
+            first_last = _normalize_first_last(normalized)
     else:
         if isinstance(book, dict):
             raw = book.get("author") or ""
