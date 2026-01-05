@@ -464,7 +464,7 @@ def search_user_books():
                 'count': 0
             })
         
-        # Search user's books using the book service
+        # Search user's books using the service layer (flat search: title/author/series/categories/description)
         results = book_service.search_user_books_sync(current_user.id, query, limit=limit)
         
         if not results:
