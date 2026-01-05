@@ -77,10 +77,53 @@
     box-shadow: 0 8px 25px rgba(0,0,0,0.4) !important;
   }
 
-  [data-theme="dark"] .card-body {
-    background-color: var(--card-bg) !important;
-    color: var(--card-text) !important;
-  }
+    [data-theme="dark"] .book-card .card-body {
+        background-color: var(--card-bg) !important;
+        color: var(--card-text) !important;
+    }
+
+    /* Advanced Filters: force rounded corners (collapsed + expanded) and clip inner edges. */
+    .advanced-filters-card {
+        border-radius: 18px;
+        overflow: hidden; /* prevents inner squared edges from showing */
+        border: var(--bs-card-border-width) solid var(--bs-card-border-color, rgba(0,0,0,0.125));
+        background-color: var(--bs-card-bg);
+    }
+
+    /* Collapsed state: header is the visible surface, so keep its bottom corners round. */
+    .advanced-filters-card > .card-header {
+        border-radius: 18px !important;
+        border-bottom-left-radius: 18px !important;
+        border-bottom-right-radius: 18px !important;
+        border-bottom: 0 !important;
+        background-clip: padding-box;
+        background-color: var(--bs-card-bg);
+    }
+
+    /* Expanded state: round the body edges and keep an internal divider line. */
+    .advanced-filters-card #advancedFilters > .card-body {
+        border-top: var(--bs-card-border-width) solid var(--bs-card-border-color);
+        border-bottom-left-radius: 18px;
+        border-bottom-right-radius: 18px;
+        background-clip: padding-box;
+        background-color: var(--bs-card-bg);
+    }
+
+    /* Dark mode: keep the filter card seamless with the surrounding shell. */
+    [data-theme="dark"] .advanced-filters-card {
+        background-color: rgba(40, 40, 40, 0.9);
+        border-color: var(--border-color);
+    }
+
+    [data-theme="dark"] .advanced-filters-card > .card-header {
+        background-color: rgba(40, 40, 40, 0.9);
+        border-color: var(--border-color);
+    }
+
+    [data-theme="dark"] .advanced-filters-card #advancedFilters > .card-body {
+        background-color: rgba(40, 40, 40, 0.9);
+        border-top-color: var(--border-color);
+    }
 
   [data-theme="dark"] .book-title {
     color: var(--card-text) !important;
@@ -270,7 +313,6 @@
   .dropdown-search-input {
     border: none;
     border-bottom: 1px solid #dee2e6;
-    border-radius: 0;
     margin: 0;
     position: sticky;
     top: 0;
@@ -459,7 +501,7 @@
     <!-- Advanced Filters (Collapsible) -->
     <div class="row mb-4">
         <div class="col-12">
-            <div class="card shadow-sm">
+            <div class="card shadow-sm advanced-filters-card">
                 <div class="card-header">
                     <button class="btn btn-link text-decoration-none p-0 w-100 text-start" type="button" 
                             data-bs-toggle="collapse" data-bs-target="#advancedFilters" 
@@ -901,6 +943,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Apply initial filter
     applyStatusFilter(currentFilter);
+
+    // Advanced Filters bar is styled as always-rounded (no state toggling).
 
     // Filter button handlers -> submit form to server so filtering spans all pages
     document.querySelectorAll('.filter-btn').forEach(button => {
