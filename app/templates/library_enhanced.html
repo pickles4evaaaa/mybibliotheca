@@ -470,7 +470,7 @@
                 </div>
                 <div id="advancedFilters" class="collapse">
                     <div class="card-body">
-                        <form method="GET" id="filter-form">
+                        <form method="GET" id="filter-form" action="{{ url_for('main.library') }}">
                             <input type="hidden" name="status_filter" id="status_filter" value="{{ current_status_filter or 'all' }}">
                             {% if current_search %}<input type="hidden" name="search" value="{{ current_search }}">{% endif %}
                             <div class="row g-3">
@@ -1056,6 +1056,37 @@ document.addEventListener('DOMContentLoaded', function() {
     // Searchable dropdown functionality
     initializeSearchableDropdowns();
 
+    // Deterministic filter submission: build URL from #filter-form values.
+    // This avoids edge cases where stale query params persist when switching
+    // between non-empty dropdown selections.
+    const filterForm = document.getElementById('filter-form');
+    if (filterForm) {
+        filterForm.addEventListener('submit', function(e) {
+            // Let native submit happen only if we can't build the URL.
+            try {
+                e.preventDefault();
+                const url = new URL(filterForm.action, window.location.origin);
+                const metaEl = document.getElementById('lib-meta');
+                const rows = parseInt((metaEl && metaEl.dataset.rows) ? metaEl.dataset.rows : '4', 10);
+                const cols = measureColumns() || 1;
+                // Reset to first page when applying filters/sort/status.
+                url.searchParams.set('page', '1');
+                url.searchParams.set('rows', String(rows));
+                url.searchParams.set('cols', String(cols));
+
+                const formData = new FormData(filterForm);
+                for (const [key, value] of formData.entries()) {
+                    // Preserve empty values as explicit params (matches existing behavior)
+                    url.searchParams.set(key, (value == null) ? '' : String(value));
+                }
+
+                window.location.href = url.toString();
+            } catch (err) {
+                // Fallback to normal submit on any unexpected error.
+            }
+        });
+    }
+
     // ---- Row-based pagination helpers ----
     function measureColumns(){
         const container = document.getElementById('books-container');
@@ -1401,8 +1432,19 @@ function initializeSearchableDropdowns() {
     // Initialize all searchable dropdowns
     document.querySelectorAll('.dropdown-search-menu').forEach(menu => {
         const field = menu.dataset.field;
-        const button = document.querySelector(`[data-field="${field}"].dropdown-search-btn`);
-        const hiddenInput = document.querySelector(`input[name="${field}"]`);
+        // IMPORTANT: there may be multiple inputs with the same name on the page
+        // (e.g., top search form + advanced filter form). Scope to this dropdown.
+        const wrapper = menu.closest('.dropdown-search-wrapper') || menu.closest('.dropdown') || menu.parentElement;
+        const button = wrapper ? wrapper.querySelector(`[data-field="${field}"].dropdown-search-btn`) : document.querySelector(`[data-field="${field}"].dropdown-search-btn`);
+        const hiddenInput = wrapper ? wrapper.querySelector(`input[name="${field}"]`) : document.querySelector(`input[name="${field}"]`);
+        // Also resolve the input via the owning form. This is the most reliable source
+        // when multiple forms contain the same input names.
+        const owningForm = (wrapper && wrapper.closest('form')) ? wrapper.closest('form') : null;
+        const formScopedHiddenInput = owningForm ? owningForm.querySelector(`input[name="${field}"]`) : null;
+        // And if the main filter form exists, keep it in sync too (this is the form
+        // that submits when clicking "Apply Filters").
+        const filterForm = document.getElementById('filter-form');
+        const filterFormHiddenInput = filterForm ? filterForm.querySelector(`input[name="${field}"]`) : null;
         const searchInput = menu.querySelector('.dropdown-search-input');
         const allItems = menu.querySelectorAll('.dropdown-item');
         
@@ -1428,6 +1470,16 @@ function initializeSearchableDropdowns() {
         searchInput.addEventListener('click', function(e) {
             e.stopPropagation();
         });
+
+        // Prevent form submission when pressing Enter in the dropdown search box.
+        // Without this, it's easy to submit the filter form while the hidden input
+        // still has the previous value (e.g., category stays on the old selection).
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
         
         // Handle item selection
         allItems.forEach(item => {
@@ -1439,7 +1491,19 @@ function initializeSearchableDropdowns() {
                 const text = this.textContent;
                 
                 // Update hidden input
-                hiddenInput.value = value;
+                // Prefer form-scoped input (the one that will actually be submitted).
+                if (formScopedHiddenInput) {
+                    formScopedHiddenInput.value = value;
+                    formScopedHiddenInput.setAttribute('value', value);
+                }
+                if (filterFormHiddenInput && filterFormHiddenInput !== formScopedHiddenInput) {
+                    filterFormHiddenInput.value = value;
+                    filterFormHiddenInput.setAttribute('value', value);
+                }
+                if (hiddenInput) {
+                    hiddenInput.value = value;
+                    hiddenInput.setAttribute('value', value);
+                }
                 
                 // Update button text
                 const selectedText = button.querySelector('.selected-text');
@@ -1462,7 +1526,7 @@ function initializeSearchableDropdowns() {
         });
         
         // Set initial active item
-        const currentValue = hiddenInput.value;
+        const currentValue = (formScopedHiddenInput && typeof formScopedHiddenInput.value === 'string') ? formScopedHiddenInput.value : (hiddenInput ? hiddenInput.value : '');
         allItems.forEach(item => {
             if (item.dataset.value === currentValue) {
                 item.classList.add('active');

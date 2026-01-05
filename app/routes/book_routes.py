@@ -1926,10 +1926,10 @@ def library():
             # Use short-lived cache for expensive all-books call
             from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
             version = get_user_library_version(str(current_user.id))
-            cache_key = f"all_books_overlay:{current_user.id}:v{version}"
+            cache_key = f"all_books_overlay_flat:{current_user.id}:v{version}"
             user_books = cache_get(cache_key)
             if user_books is None:
-                user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+                user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
                 cache_set(cache_key, user_books, ttl_seconds=120)
         except Exception:
             user_books = []
@@ -2120,14 +2120,21 @@ def library():
     finished_before = _parse_finish_date(finished_before_raw)
 
     if search_query:
-        search_lower = search_query.casefold()
+        from app.utils.library_search import library_book_matches_query
+
+        def _book_as_dict(book_obj):
+            if isinstance(book_obj, dict):
+                return book_obj
+            if hasattr(book_obj, '__dict__'):
+                try:
+                    return book_obj.__dict__
+                except Exception:
+                    return {}
+            return {}
+
         filtered_books = [
-            book for book in filtered_books 
-            if (search_lower in (((book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')) or '').casefold())) or
-               (search_lower in (((book.get('normalized_title', '') if isinstance(book, dict) else getattr(book, 'normalized_title', '')) or '').casefold())) or
-               (search_lower in (((book.get('subtitle', '') if isinstance(book, dict) else getattr(book, 'subtitle', '')) or '').casefold())) or
-               (search_lower in (((book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')) or '').casefold())) or
-               (search_lower in (((book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')) or '').casefold()))
+            book for book in filtered_books
+            if library_book_matches_query(_book_as_dict(book), search_query)
         ]
     
     if publisher_filter:
@@ -4636,8 +4643,8 @@ def search_books_in_library():
     media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
     search_query = request.args.get('search', '')
 
-    # Use service layer with global book visibility
-    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+    # Use service layer with global book visibility (flat overlay avoids N+1)
+    user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
     
     # Apply filters in Python (Kuzu doesn't have complex querying like SQL)
     filtered_books = user_books
@@ -4687,12 +4694,10 @@ def search_books_in_library():
         return raw
 
     if search_query:
-        search_lower = search_query.lower()
+        from app.utils.library_search import library_book_matches_query
         filtered_books = [
-            book for book in filtered_books 
-            if (search_lower in (book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')).lower()) or
-               (search_lower in (book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')).lower()) or
-               (search_lower in (book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')).lower())
+            book for book in filtered_books
+            if isinstance(book, dict) and library_book_matches_query(book, search_query)
         ]
     if publisher_filter:
         filtered_books = [
@@ -4819,11 +4824,11 @@ def search_books_in_library():
     # Calculate statistics for filter buttons
     stats = {
         'total_books': len(user_books),
-        'books_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'read']),
-        'currently_reading': len([b for b in user_books if getattr(b, 'reading_status', None) == 'reading']),
-        'want_to_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']),
-        'on_hold': len([b for b in user_books if getattr(b, 'reading_status', None) == 'on_hold']),
-        'wishlist': len([b for b in user_books if getattr(b, 'ownership_status', None) == 'wishlist']),
+        'books_read': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') == 'read')]),
+        'currently_reading': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') in ('reading', 'currently_reading'))]),
+        'want_to_read': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') == 'plan_to_read')]),
+        'on_hold': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') == 'on_hold')]),
+        'wishlist': len([b for b in user_books if isinstance(b, dict) and (b.get('ownership_status') == 'wishlist')]),
     }
 
     return render_template(
