@@ -1022,7 +1022,29 @@ def fast_add_save():
                 'success': True,
                 'message': f'Book "{title}" already exists in your library',
                 'book_id': existing_id,
-                'already_exists': True
+                'already_exists': True,
+                # Include book_data so Fast Add can offer duplicate-resolution actions
+                # via /api/resolve_duplicate (increment count / add separate / navigate).
+                'book_data': {
+                    'title': title,
+                    'author': author,
+                    'isbn13': isbn13,
+                    'isbn10': isbn10,
+                    'subtitle': subtitle,
+                    'description': description,
+                    'publisher': publisher_name,
+                    'published_date': published_date,
+                    'page_count': page_count,
+                    'language': language,
+                    'cover_url': cover_url,
+                    'categories': raw_categories if raw_categories else [],
+                    'google_books_id': (request.form.get('google_books_id') or '').strip() or None,
+                    'openlibrary_id': (request.form.get('openlibrary_id') or '').strip() or None,
+                    'reading_status': request.form.get('reading_status', ''),
+                    'ownership_status': request.form.get('ownership_status', 'owned'),
+                    'location_id': request.form.get('location_id'),
+                    'media_type': media_type
+                }
             })
         
         if not added:
