@@ -211,10 +211,19 @@ def _handle_book_only(uid, form):
             val = form.get(name, '').strip()
             return val or None
         return None
-    for name in ['publisher','isbn13','isbn10','language','asin','google_books_id','openlibrary_id']:
+    for name in ['publisher', 'isbn13', 'isbn10', 'language', 'asin', 'google_books_id', 'openlibrary_id']:
         val = _opt(name)
         if name in form:
             update_data[name] = val
+
+    # Back-compat: older forms used language_custom; prefer language when present.
+    try:
+        if not update_data.get('language'):
+            lang_custom = (form.get('language_custom') or '').strip()
+            if lang_custom:
+                update_data['language'] = lang_custom
+    except Exception:
+        pass
     if 'published_date' in form:
         pd = form.get('published_date','').strip()
         if pd:
@@ -956,7 +965,11 @@ def fast_add_save():
                 page_count = int(pcs)
             except ValueError:
                 pass
-        language = (request.form.get('language') or 'en').strip() or 'en'
+        language = (
+            (request.form.get('language') or 'en').strip()
+            or (request.form.get('language_custom') or '').strip()
+            or 'en'
+        )
         cover_url = (request.form.get('cover_url') or '').strip() or None
         published_date = (request.form.get('published_date') or '').strip() or None
         
@@ -4906,7 +4919,11 @@ def add_book_manual():
             page_count = int(pcs)
         except ValueError:
             pass
-    language = (request.form.get('language') or 'en').strip() or 'en'
+    language = (
+        (request.form.get('language') or 'en').strip()
+        or (request.form.get('language_custom') or '').strip()
+        or 'en'
+    )
     cover_url = (request.form.get('cover_url') or '').strip()
     published_date = (request.form.get('published_date') or '').strip()
     series = (request.form.get('series') or '').strip()

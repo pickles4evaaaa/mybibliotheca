@@ -521,14 +521,14 @@
                                         <div class="dropdown">
                                             <button class="btn btn-outline-secondary dropdown-toggle w-100 text-start dropdown-search-btn" 
                                                     type="button" data-bs-toggle="dropdown" data-field="language">
-                                                <span class="selected-text">{{ current_language if current_language else 'All Languages' }}</span>
+                                                <span class="selected-text">{{ language_label(current_language) if current_language else 'All Languages' }}</span>
                                             </button>
                                             <ul class="dropdown-menu w-100 dropdown-search-menu" data-field="language">
                                                 <li><input type="text" class="form-control dropdown-search-input" placeholder="Search languages..."></li>
                                                 <li><hr class="dropdown-divider"></li>
                                                 <li><a class="dropdown-item" href="#" data-value="">All Languages</a></li>
-                                                {% for language in languages %}
-                                                    <li><a class="dropdown-item" href="#" data-value="{{ language }}">{{ language }}</a></li>
+                                                {% for token, label in language_choices %}
+                                                    <li><a class="dropdown-item" href="#" data-value="{{ token }}">{{ label }}</a></li>
                                                 {% endfor %}
                                             </ul>
                                         </div>

@@ -457,7 +457,13 @@
                                                     <label for="language" class="form-label fw-medium">Language</label>
                                                     <input type="text" class="form-control" id="language" name="language" 
                                                            value="{{ book_data.language if book_data else request.form.language or '' }}"
-                                                           placeholder="English, Spanish, etc.">
+                                                           list="languageOptions"
+                                                           placeholder="Type to search or enter a language">
+                                                    <datalist id="languageOptions">
+                                                        {% for token, label in language_choices %}
+                                                        <option value="{{ token }}">{{ label }}</option>
+                                                        {% endfor %}
+                                                    </datalist>
                                                 </div>
                                                 
                                                 <!-- Source/API IDs -->

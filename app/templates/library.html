@@ -390,9 +390,9 @@
       <label for="language" class="form-label fw-semibold">Language</label>
       <select class="form-select" id="language" name="language">
         <option value="">Languages</option>
-        {% for language in languages %}
-          <option value="{{ language }}" {% if language == current_language %}selected{% endif %}>
-            {{ language }}
+        {% for token, label in language_choices %}
+          <option value="{{ token }}" {% if token == current_language %}selected{% endif %}>
+            {{ label }}
           </option>
         {% endfor %}
       </select>
