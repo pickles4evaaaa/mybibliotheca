@@ -263,17 +263,7 @@
                                         <div class="kv">
                                             <small class="text-muted d-block">Language</small>
                                             <span class="kv-value">
-                                            {% if book.language == 'en' %}English
-                                            {% elif book.language == 'es' %}Spanish
-                                            {% elif book.language == 'fr' %}French
-                                            {% elif book.language == 'de' %}German
-                                            {% elif book.language == 'it' %}Italian
-                                            {% elif book.language == 'pt' %}Portuguese
-                                            {% elif book.language == 'ru' %}Russian
-                                            {% elif book.language == 'ja' %}Japanese
-                                            {% elif book.language == 'ko' %}Korean
-                                            {% elif book.language == 'zh' %}Chinese
-                                            {% else %}{{ book.language }}{% endif %}
+                                            {{ language_label(book.language) }}
                                             </span>
                                         </div>
                                     </div>
@@ -319,15 +309,17 @@
                                 {% endif %}
                                 
                                 <!-- Quantity Display -->
-                                {% if book.quantity and book.quantity > 1 %}
+                                {% if book.quantity %}
                                 <div class="mb-3">
                                     <small class="text-muted d-block mb-2">Quantity</small>
                                     <div class="d-flex align-items-center">
                                         <span class="badge bg-primary fs-6 px-3 py-2">
                                             <i class="bi bi-stack me-1"></i>
-                                            {{ book.quantity }} copies
+                                            {{ book.quantity }} {% if book.quantity == 1 %}copy{% else %}copies{% endif %}
                                         </span>
+                                        {% if book.quantity > 1 %}
                                         <small class="text-muted ms-3">You have multiple copies of this book</small>
+                                        {% endif %}
                                     </div>
                                 </div>
                                 {% endif %}
@@ -876,6 +868,13 @@
                                             <span class="ms-1 fw-medium">{{ book.published_date }}</span>
                                         </div>
                                         {% endif %}
+
+                                        {% if book.page_count %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Page Count:</small>
+                                            <span class="ms-1 fw-medium">{{ book.page_count }}</span>
+                                        </div>
+                                        {% endif %}
                                         
                                         {% if book.average_rating %}
                                         <div class="mb-2">
@@ -894,17 +893,16 @@
                                         <div class="mb-2">
                                             <small class="text-muted">Language:</small>
                                             <span class="ms-1 fw-medium">
-                                                {% if book.language == 'en' %}English
-                                                {% elif book.language == 'es' %}Spanish
-                                                {% elif book.language == 'fr' %}French
-                                                {% elif book.language == 'de' %}German
-                                                {% elif book.language == 'it' %}Italian
-                                                {% elif book.language == 'pt' %}Portuguese
-                                                {% elif book.language == 'ru' %}Russian
-                                                {% elif book.language == 'ja' %}Japanese
-                                                {% elif book.language == 'ko' %}Korean
-                                                {% elif book.language == 'zh' %}Chinese
-                                                {% else %}{{ book.language }}{% endif %}
+                                                {{ language_label(book.language) }}
+                                            </span>
+                                        </div>
+                                        {% endif %}
+
+                                        {% if book.quantity %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Quantity:</small>
+                                            <span class="ms-1 fw-medium">
+                                                {{ book.quantity }} {% if book.quantity|int == 1 %}copy{% else %}copies{% endif %}
                                             </span>
                                         </div>
                                         {% endif %}
@@ -986,7 +984,7 @@
                                 </div>
                                 
                                 <!-- Show "No additional details" message only if ALL fields are empty -->
-                                {% set has_additional_details = book.publisher or book.published_date or book.average_rating or book.isbn13 or book.isbn10 or book.asin or book.google_books_id or book.openlibrary_id or book.created_at or book.updated_at %}
+                                {% set has_additional_details = book.publisher or book.published_date or book.page_count or book.language or book.quantity or book.average_rating or book.isbn13 or book.isbn10 or book.asin or book.google_books_id or book.openlibrary_id or book.created_at or book.updated_at %}
                                 {% if not has_additional_details %}
                                 <div class="text-center text-muted py-4">
                                     <i class="bi bi-info-circle mb-2" style="font-size: 2rem;"></i>
@@ -1035,25 +1033,25 @@
                                                value="{{ book.published_date or '' }}" placeholder="YYYY or YYYY-MM-DD">
                                         <div class="form-text">Year only (2023) or full date (2023-05-15)</div>
                                     </div>
+
+                                    <!-- Page Count -->
+                                    <div class="mb-3">
+                                        <label for="page_count" class="form-label fw-medium">Page Count</label>
+                                        <input type="number" class="form-control" id="page_count" name="page_count" 
+                                               value="{{ book.page_count or '' }}" min="1" step="1">
+                                    </div>
                                     
                                     <!-- Language -->
                                     <div class="mb-3">
                                         <label for="language" class="form-label fw-medium">Language</label>
-                                        <select class="form-select" id="language" name="language">
-                                            <option value="en" {% if book.language == 'en' or not book.language %}selected{% endif %}>English</option>
-                                            <option value="es" {% if book.language == 'es' %}selected{% endif %}>Spanish</option>
-                                            <option value="fr" {% if book.language == 'fr' %}selected{% endif %}>French</option>
-                                            <option value="de" {% if book.language == 'de' %}selected{% endif %}>German</option>
-                                            <option value="it" {% if book.language == 'it' %}selected{% endif %}>Italian</option>
-                                            <option value="pt" {% if book.language == 'pt' %}selected{% endif %}>Portuguese</option>
-                                            <option value="ru" {% if book.language == 'ru' %}selected{% endif %}>Russian</option>
-                                            <option value="ja" {% if book.language == 'ja' %}selected{% endif %}>Japanese</option>
-                                            <option value="ko" {% if book.language == 'ko' %}selected{% endif %}>Korean</option>
-                                            <option value="zh" {% if book.language == 'zh' %}selected{% endif %}>Chinese</option>
-                                            <option value="ar" {% if book.language == 'ar' %}selected{% endif %}>Arabic</option>
-                                            <option value="hi" {% if book.language == 'hi' %}selected{% endif %}>Hindi</option>
-                                            <option value="other" {% if book.language not in ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh', 'ar', 'hi'] and book.language %}selected{% endif %}>Other</option>
-                                        </select>
+                                        <div class="position-relative" id="language-autocomplete-wrapper">
+                                            <input type="text" class="form-control" id="language" name="language" autocomplete="off"
+                                                   value="{{ language_label(book.language) or '' }}"
+                                                   placeholder="Type to search or enter a language">
+                                            <div id="language-autocomplete-dropdown" class="list-group shadow-sm"
+                                                 style="position:absolute; top:100%; left:0; right:0; z-index:1030; max-height:260px; overflow-y:auto; display:none;"></div>
+                                        </div>
+                                        <div class="form-text">Start typing to search. Press Enter to create if no match.</div>
                                     </div>
                                     
                                     <!-- Quantity -->
@@ -1279,7 +1277,8 @@
                                 </div>
                                 
                                 <!-- Show "No personal content" message only if nothing is present -->
-                                {% if not book.personal_notes and not book.review and not start_date_display and not finish_date_display and not book.user_rating and book.ownership_status not in ['borrowed', 'loaned'] %}
+                                {% set has_personal_content = book.personal_notes or book.review or start_date_display or finish_date_display or book.user_rating or book.reading_status or book.date_added or (book.ownership_status in ['borrowed', 'loaned']) %}
+                                {% if not has_personal_content %}
                                 <div class="text-center text-muted py-4">
                                     <i class="bi bi-journal-text mb-2" style="font-size: 2rem;"></i>
                                     <p class="mb-0">No personal notes or reading experience recorded yet.</p>
@@ -1746,6 +1745,143 @@ document.addEventListener('DOMContentLoaded', function() {
     const editCustomFieldsToggle = document.getElementById('editCustomFieldsToggle');
     // Initialize inline series autocomplete
     initializeInlineSeriesAutocomplete();
+
+    // ----- Language Autocomplete (simple, local) -----
+    const LANGUAGE_CHOICES = {{ language_choices | tojson | safe }};
+    const languagePairs = Array.isArray(LANGUAGE_CHOICES) ? LANGUAGE_CHOICES : [];
+    const languageChoices = languagePairs
+        .filter(x => Array.isArray(x) && x.length >= 2)
+        .map(([token, label]) => ({ token: String(token || '').trim(), label: String(label || '').trim() }))
+        .filter(x => x.token || x.label);
+
+    function normalizeText(s) {
+        return String(s || '').trim().toLowerCase();
+    }
+
+    function hideLanguageDropdown(dropdown) {
+        if (!dropdown) return;
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+    }
+
+    function setActiveLanguageItem(dropdown, nextIndex) {
+        const items = dropdown ? Array.from(dropdown.querySelectorAll('.list-group-item')) : [];
+        items.forEach(i => i.classList.remove('active'));
+        if (nextIndex >= 0 && nextIndex < items.length) {
+            items[nextIndex].classList.add('active');
+        }
+    }
+
+    function renderLanguageDropdown(input, dropdown) {
+        const rawQuery = (input?.value || '').trim();
+        const q = normalizeText(rawQuery);
+        if (!dropdown || !input || !q) {
+            hideLanguageDropdown(dropdown);
+            return;
+        }
+
+        const matches = languageChoices
+            .map(c => {
+                const tokenN = normalizeText(c.token);
+                const labelN = normalizeText(c.label);
+                const starts = labelN.startsWith(q) || tokenN.startsWith(q);
+                const includes = labelN.includes(q) || tokenN.includes(q);
+                return { ...c, _starts: starts, _includes: includes };
+            })
+            .filter(c => c._includes)
+            .sort((a, b) => {
+                if (a._starts !== b._starts) return a._starts ? -1 : 1;
+                return a.label.localeCompare(b.label);
+            })
+            .slice(0, 8);
+
+        dropdown.innerHTML = '';
+
+        matches.forEach(choice => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'list-group-item list-group-item-action';
+            btn.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>${choice.label || choice.token}</span>
+                    ${choice.label && choice.token && normalizeText(choice.label) !== normalizeText(choice.token)
+                        ? `<small class="text-muted">${choice.token}</small>`
+                        : ''}
+                </div>
+            `;
+            btn.dataset.token = choice.token;
+            btn.dataset.label = choice.label || choice.token;
+            btn.addEventListener('mousedown', () => {
+                input.value = btn.dataset.label || '';
+                hideLanguageDropdown(dropdown);
+            });
+            dropdown.appendChild(btn);
+        });
+
+        const exact = languageChoices.some(c => {
+            const tokenN = normalizeText(c.token);
+            const labelN = normalizeText(c.label);
+            return tokenN === q || labelN === q;
+        });
+
+        if (!exact && rawQuery.length >= 2) {
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'list-group-item list-group-item-action';
+            addBtn.innerHTML = `<i class="bi bi-plus-circle me-1"></i> Add "${rawQuery}" as new language`;
+            addBtn.dataset.new = 'true';
+            addBtn.dataset.value = rawQuery;
+            addBtn.addEventListener('mousedown', () => {
+                input.value = addBtn.dataset.value || '';
+                hideLanguageDropdown(dropdown);
+            });
+            dropdown.appendChild(addBtn);
+        }
+
+        dropdown.style.display = dropdown.children.length ? 'block' : 'none';
+    }
+
+    function initializeLanguageAutocomplete() {
+        const input = document.getElementById('language');
+        const dropdown = document.getElementById('language-autocomplete-dropdown');
+        const form = document.getElementById('basic-info-form');
+        if (!input || !dropdown) return;
+
+        input.addEventListener('input', () => renderLanguageDropdown(input, dropdown));
+        input.addEventListener('focus', () => renderLanguageDropdown(input, dropdown));
+        input.addEventListener('blur', () => setTimeout(() => hideLanguageDropdown(dropdown), 200));
+        input.addEventListener('keydown', (e) => {
+            const items = Array.from(dropdown.querySelectorAll('.list-group-item'));
+            const currentIndex = items.findIndex(i => i.classList.contains('active'));
+
+            if (e.key === 'ArrowDown' && items.length) {
+                e.preventDefault();
+                setActiveLanguageItem(dropdown, Math.min(currentIndex + 1, items.length - 1));
+            } else if (e.key === 'ArrowUp' && items.length) {
+                e.preventDefault();
+                setActiveLanguageItem(dropdown, Math.max(currentIndex - 1, 0));
+            } else if (e.key === 'Enter' && items.length && currentIndex >= 0) {
+                e.preventDefault();
+                items[currentIndex].dispatchEvent(new MouseEvent('mousedown'));
+            } else if (e.key === 'Escape') {
+                hideLanguageDropdown(dropdown);
+            }
+        });
+
+        if (form) {
+            form.addEventListener('submit', () => {
+                const typed = (input.value || '').trim();
+                if (!typed) return;
+                const typedN = normalizeText(typed);
+                const match = languageChoices.find(c => normalizeText(c.label) === typedN || normalizeText(c.token) === typedN);
+                if (match && match.token) {
+                    input.value = match.token;
+                }
+            });
+        }
+    }
+
+    initializeLanguageAutocomplete();
     
     // Helper: POST a form with fetch
     async function postForm(form) {
