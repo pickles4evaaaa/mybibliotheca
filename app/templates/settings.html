@@ -1629,6 +1629,194 @@ document.addEventListener('DOMContentLoaded', () => {
         if(panel === 'import_reading'){
             initQuickAddModalControls();
         }
+        if(panel === 'backup'){
+            initBackupManagerControls();
+        }
+    }
+
+    function initBackupManagerControls(){
+        // This panel is loaded via fetch()+innerHTML; scripts inside the partial won't execute.
+        // Bind handlers here so backup settings persist and actions work.
+        if(!dataContainer) return;
+
+        // Avoid duplicate bindings when the panel is refreshed.
+        if(dataContainer.dataset.backupBound === '1'){
+            // Still ensure onclick handlers are available after panel refresh.
+        }
+        dataContainer.dataset.backupBound = '1';
+
+        function getCsrfToken(){
+            const t = dataContainer.querySelector('#deleteForm input[name="csrf_token"]');
+            return t ? t.value : '';
+        }
+
+        function setFeedback(kind, message){
+            const fb = dataContainer.querySelector('#settingsFeedback');
+            if(!fb) return;
+            const span = document.createElement('span');
+            span.className = kind;
+            span.appendChild(document.createTextNode(message));
+            fb.innerHTML = '';
+            fb.appendChild(span);
+        }
+
+        function refreshBackupPanel(){
+            if(!dataContainer) return;
+            fetch(`{{ url_for('auth.settings_data_partial', panel='backup') }}`, { credentials: 'same-origin' })
+                .then(r => r.text())
+                .then(html => {
+                    dataContainer.innerHTML = html;
+                    initializeDataPanel('backup');
+                })
+                .catch(() => {
+                    const m = dataContainer.querySelector('#backupInlineMessages');
+                    if(m) m.innerHTML = '<div class="alert alert-danger py-1 mb-2 small">Failed to refresh backups.</div>';
+                });
+        }
+
+        // Expose these for inline onclick="confirmRestore(...)" in the partial.
+        window.confirmRestore = function(id, name){
+            if(!confirm('Restore backup "' + name + '"? This replaces all current data.')) return;
+            const csrf = getCsrfToken();
+            if(!csrf){
+                alert('Missing CSRF token. Please refresh the page.');
+                return;
+            }
+            const form = new FormData();
+            form.append('csrf_token', csrf);
+            form.append('confirm', 'yes');
+            fetch(`{{ url_for('simple_backup.restore_backup', backup_id='__ID__') }}`.replace('__ID__', id), {
+                method: 'POST',
+                body: form,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            })
+                .then(r => r.text())
+                .then(() => {
+                    const m = dataContainer.querySelector('#backupInlineMessages');
+                    if(m) m.innerHTML = '<div class="alert alert-warning py-1 mb-2 small">Restore initiated. Page may reload after completion.</div>';
+                    refreshBackupPanel();
+                })
+                .catch(() => {
+                    const m = dataContainer.querySelector('#backupInlineMessages');
+                    if(m) m.innerHTML = '<div class="alert alert-danger py-1 mb-2 small">Restore failed.</div>';
+                });
+        };
+
+        window.confirmDelete = function(id, name){
+            if(!confirm('Delete backup "' + name + '"?')) return;
+            const csrf = getCsrfToken();
+            if(!csrf){
+                alert('Missing CSRF token. Please refresh the page.');
+                return;
+            }
+            const form = new FormData();
+            form.append('csrf_token', csrf);
+            fetch(`{{ url_for('simple_backup.delete_backup', backup_id='__ID__') }}`.replace('__ID__', id), {
+                method: 'POST',
+                body: form,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            })
+                .then(r => r.text())
+                .then(() => {
+                    const m = dataContainer.querySelector('#backupInlineMessages');
+                    if(m) m.innerHTML = '<div class="alert alert-success py-1 mb-2 small">Backup deleted.</div>';
+                    refreshBackupPanel();
+                })
+                .catch(() => {
+                    const m = dataContainer.querySelector('#backupInlineMessages');
+                    if(m) m.innerHTML = '<div class="alert alert-danger py-1 mb-2 small">Delete failed.</div>';
+                });
+        };
+
+        const settingsForm = dataContainer.querySelector('#backupSettingsForm');
+        if(settingsForm && settingsForm.dataset.bound !== '1'){
+            settingsForm.dataset.bound = '1';
+            settingsForm.addEventListener('submit', function(e){
+                e.preventDefault();
+                setFeedback('text-info', 'Saving...');
+
+                const payload = {
+                    enabled: !!dataContainer.querySelector('#enabledToggle')?.checked,
+                    retention_days: parseInt(dataContainer.querySelector('#retentionDays')?.value || '14', 10),
+                    scheduled_hour: parseInt(dataContainer.querySelector('#scheduledHour')?.value || '2', 10),
+                    scheduled_minute: parseInt(dataContainer.querySelector('#scheduledMinute')?.value || '30', 10),
+                    frequency: dataContainer.querySelector('#frequency')?.value || 'daily'
+                };
+
+                fetch(`{{ url_for('simple_backup.api_backup_settings') }}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    body: JSON.stringify(payload),
+                    credentials: 'same-origin'
+                })
+                    .then(r => {
+                        if(!r.ok){
+                            return r.json().then(err => { throw new Error(err.error || 'Save failed'); });
+                        }
+                        return r.json();
+                    })
+                    .then(d => {
+                        if(d.status === 'ok'){
+                            const changedKeys = d.changed ? Object.keys(d.changed).join(', ') : '';
+                            setFeedback('text-success', 'Saved' + (changedKeys ? (': ' + changedKeys) : ''));
+                            if(d.settings){
+                                const enabledEl = dataContainer.querySelector('#enabledToggle');
+                                if(enabledEl) enabledEl.checked = !!d.settings.enabled;
+                                const retentionEl = dataContainer.querySelector('#retentionDays');
+                                if(retentionEl) retentionEl.value = d.settings.retention_days;
+                                const hourEl = dataContainer.querySelector('#scheduledHour');
+                                if(hourEl) hourEl.value = d.settings.scheduled_hour;
+                                const minEl = dataContainer.querySelector('#scheduledMinute');
+                                if(minEl) minEl.value = d.settings.scheduled_minute;
+                                const freqEl = dataContainer.querySelector('#frequency');
+                                if(freqEl) freqEl.value = d.settings.frequency;
+                            }
+                            // Refresh so the persisted values are reflected on re-open.
+                            refreshBackupPanel();
+                            return;
+                        }
+                        setFeedback('text-danger', d.error || 'Save failed');
+                    })
+                    .catch(err => {
+                        setFeedback('text-danger', err.message || 'Save failed');
+                        console.error('Backup settings error:', err);
+                    });
+            });
+        }
+
+        const createForm = dataContainer.querySelector('#createBackupInlineForm');
+        if(createForm && createForm.dataset.bound !== '1'){
+            createForm.dataset.bound = '1';
+            createForm.addEventListener('submit', function(e){
+                e.preventDefault();
+                const fd = new FormData(createForm);
+                fetch(createForm.action, {
+                    method: 'POST',
+                    body: fd,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    credentials: 'same-origin'
+                })
+                    .then(r => r.text())
+                    .then(() => {
+                        const m = dataContainer.querySelector('#backupInlineMessages');
+                        if(m) m.innerHTML = '<div class="alert alert-success py-1 mb-2 small">Backup created.</div>';
+                        refreshBackupPanel();
+                    })
+                    .catch(() => {
+                        const m = dataContainer.querySelector('#backupInlineMessages');
+                        if(m) m.innerHTML = '<div class="alert alert-danger py-1 mb-2 small">Create failed.</div>';
+                    });
+                const modalEl = dataContainer.querySelector('#createBackupModal');
+                if(modalEl){
+                    try {
+                        const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+                        modal.hide();
+                    } catch(err) {}
+                }
+            });
+        }
     }
     function initQuickAddModalControls(){
         const form = document.getElementById('quickAddForm');
