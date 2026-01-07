@@ -42,37 +42,61 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
     """
-    rows = []
+    rows: List[Dict[str, Any]] = []
     try:
         # Check if result has the iterator interface
+        # If it's already a list/dict, treat it as legacy-style rows.
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+
+        # Check if result has the iterator interface (Kuzu QueryResult)
         if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            col_names: Optional[List[str]] = None
+            if hasattr(result, 'get_column_names'):
+                try:
+                    col_names = list(result.get_column_names())  # type: ignore[attr-defined]
+                except Exception:
+                    col_names = None
+
             while result.has_next():
                 row = result.get_next()
-                # Convert row to dict
-                if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': _safe_get_row_value(row, 0)})
+
+                # Kuzu row objects are iterable but may not implement __len__.
+                if isinstance(row, (list, tuple)):
+                    values = list(row)
+                elif isinstance(row, dict):
+                    # Preserve insertion order (Py3.7+) for deterministic col_0/col_1 mapping
+                    values = list(row.values())
                 else:
-                    # Multiple columns - create dict with column names
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[f'col_{i}'] = value
-                    rows.append(row_dict)
-        else:
-            # Fallback: if it's already a list or other format
-            if isinstance(result, list):
-                return result
-            elif isinstance(result, dict):
-                return [result]
-            else:
-                # Try to convert to string representation
-                rows.append({'result': str(result)})
+                    try:
+                        values = list(row)  # type: ignore[arg-type]
+                    except Exception:
+                        values = [row]
+
+                if len(values) == 1:
+                    val = values[0]
+                    record: Dict[str, Any] = {'result': val, 'col_0': val}
+                    if col_names and len(col_names) >= 1:
+                        record[col_names[0]] = val
+                    rows.append(record)
+                else:
+                    record = {}
+                    for i, value in enumerate(values):
+                        record[f'col_{i}'] = value
+                        if col_names and i < len(col_names):
+                            record[col_names[i]] = value
+                    rows.append(record)
+            return rows
+
+        # Unknown result shape: best-effort stringify
+        return [{'result': str(result)}]
+
     except Exception as e:
         logger.warning(f"Error converting query result: {e}")
         # Return empty list if conversion fails
         return []
-    
-    return rows
 
 
 class KuzuRelationshipService:
