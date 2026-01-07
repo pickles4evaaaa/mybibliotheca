@@ -500,7 +500,7 @@
                                     {% for btn in stat_buttons %}
                                         <div class="col-lg-2 col-md-4 mb-3 mb-lg-0">
                                             <button class="btn btn-outline-{{ btn.outline }} w-100 filter-btn" data-filter="{{ btn.filter }}">
-                                                <div class="h4 mb-0 text-{{ btn.text }}">{{ btn.value }}</div>
+                                                <h4 class="mb-0 text-{{ btn.text }}">{{ btn.value }}</h4>
                                                 <small class="text-muted">{{ btn.label }}</small>
                                             </button>
                                         </div>
@@ -518,7 +518,7 @@
                                         {% for btn in stat_buttons %}
                                             <div class="col-6">
                                                 <button class="btn btn-outline-{{ btn.outline }} w-100 filter-btn" data-filter="{{ btn.filter }}">
-                                                    <div class="h5 mb-0 text-{{ btn.text }}">{{ btn.value }}</div>
+                                                    <h5 class="mb-0 text-{{ btn.text }}">{{ btn.value }}</h5>
                                                     <small class="text-muted d-block">{{ btn.label }}</small>
                                                 </button>
                                             </div>
@@ -1003,7 +1003,11 @@ document.addEventListener('DOMContentLoaded', function() {
             <!-- Prefetch JS deferred to a separate static file in future to avoid template lint issues -->
 
             const form = document.getElementById('filter-form');
-            if (form) form.submit();
+            if (form) {
+                // Trigger submit event so deterministic URL building runs
+                const submitEvent = new Event('submit', { cancelable: true, bubbles: true });
+                form.dispatchEvent(submitEvent);
+            }
         });
     });
 
@@ -1137,7 +1141,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const sortDropdown = document.getElementById('sort');
     if (sortDropdown) {
         sortDropdown.addEventListener('change', function() {
-            document.getElementById('filter-form').submit();
+            const form = document.getElementById('filter-form');
+            if (form) {
+                // Trigger submit event so deterministic URL building runs
+                const submitEvent = new Event('submit', { cancelable: true, bubbles: true });
+                form.dispatchEvent(submitEvent);
+            }
         });
     }
 
@@ -1147,6 +1156,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Deterministic filter submission: build URL from #filter-form values.
     // This avoids edge cases where stale query params persist when switching
+    const filterForm = document.getElementById('filter-form');
+    if (filterForm) {
+        filterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(filterForm);
+            const url = new URL(window.location.href);
+            
+            // Clear existing filter params
+            const filterParams = ['status_filter', 'category', 'publisher', 'language', 'location', 'media_type', 'search', 'sort'];
+            filterParams.forEach(param => url.searchParams.delete(param));
+            
+            // Set new params from form
+            for (const [key, value] of formData.entries()) {
+                if (value && value.trim()) {
+                    url.searchParams.set(key, value);
+                }
+            }
+            
+            // Reset to page 1 when applying filters
+            url.searchParams.set('page', '1');
+            
+            window.location.href = url.toString();
+        });
+    }
 
     // ---- Row-based pagination helpers ----
     function measureColumns(){
@@ -1550,7 +1584,29 @@ function applyCascadingFilter() {
     filterFields.forEach(field => {
         const entry = dropdownRegistry[field];
         if (!entry) return;
-        const allowed = availability[field] || new Set();
+        
+        // For each field, compute what's available based on OTHER fields
+        // Exclude the current field from filtering so it shows all valid options
+        const otherFilters = {};
+        filterFields.forEach(f => {
+            if (f !== field) {
+                otherFilters[f] = activeFilters[f];
+            }
+        });
+        
+        const fieldAvailability = new Set();
+        filterRecords.forEach(record => {
+            // Check if record matches all OTHER active filters
+            const matches = filterFields.every(f => {
+                if (f === field) return true; // Skip current field
+                const selected = otherFilters[f];
+                return !selected || record[f] === selected;
+            });
+            if (matches) {
+                fieldAvailability.add(record[field] || '');
+            }
+        });
+        
         const currentValue = activeFilters[field] || '';
         entry.items.forEach(item => {
             const value = item.dataset.value || '';
@@ -1558,10 +1614,10 @@ function applyCascadingFilter() {
                 item.parentElement.style.display = '';
                 return;
             }
-            item.parentElement.style.display = allowed.has(value) ? '' : 'none';
+            item.parentElement.style.display = fieldAvailability.has(value) ? '' : 'none';
         });
 
-        if (currentValue && !allowed.has(currentValue)) {
+        if (currentValue && !fieldAvailability.has(currentValue)) {
             if (entry.hiddenInput) {
                 entry.hiddenInput.value = '';
                 entry.hiddenInput.setAttribute('value', '');
