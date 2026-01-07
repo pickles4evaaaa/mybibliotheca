@@ -21,6 +21,7 @@ from app.services import book_service, reading_log_service, custom_field_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.utils.book_utils import get_best_cover_for_book
+from app.utils.author_sorting import author_first_sort_key_for_book, author_last_sort_key_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
@@ -2186,6 +2187,27 @@ def library():
     def get_author_name(book):
         """Helper function to get author name safely"""
         if isinstance(book, dict):
+            # Prefer Person table data via contributors
+            contributors = book.get('contributors')
+            if isinstance(contributors, list) and contributors:
+                for contrib in contributors:
+                    try:
+                        ctype = contrib.get('contribution_type') if isinstance(contrib, dict) else getattr(contrib, 'contribution_type', None)
+                        if hasattr(ctype, 'value'):
+                            ctype = ctype.value
+                        ctype = (str(ctype or '').strip().lower())
+                        if ctype in ('authored', 'co_authored'):
+                            person = contrib.get('person') if isinstance(contrib, dict) else getattr(contrib, 'person', None)
+                            if isinstance(person, dict):
+                                name = person.get('name')
+                                if name:
+                                    return str(name)
+                            elif person is not None:
+                                name = getattr(person, 'name', None)
+                                if name:
+                                    return str(name)
+                    except Exception:
+                        continue
             authors = book.get('authors', [])
             author = book.get('author', '')
             if authors and isinstance(authors, list) and len(authors) > 0:
@@ -2213,6 +2235,21 @@ def library():
                         return str(author)
                 else:
                     return str(book.authors)
+            elif hasattr(book, 'contributors') and getattr(book, 'contributors', None):
+                try:
+                    for contrib in getattr(book, 'contributors') or []:
+                        ctype = getattr(contrib, 'contribution_type', None)
+                        if hasattr(ctype, 'value'):
+                            ctype = ctype.value
+                        ctype = (str(ctype or '').strip().lower())
+                        if ctype in ('authored', 'co_authored'):
+                            person = getattr(contrib, 'person', None)
+                            if person is not None:
+                                name = getattr(person, 'name', None)
+                                if name:
+                                    return str(name)
+                except Exception:
+                    pass
             elif hasattr(book, 'author') and book.author:
                 return book.author
             return "Unknown Author"
@@ -2247,13 +2284,13 @@ def library():
     elif sort_option == 'title_desc':
         filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower(), reverse=True)
     elif sort_option == 'author_first_asc':
-        filtered_books.sort(key=lambda x: get_author_name(x).lower())
+        filtered_books.sort(key=author_first_sort_key_for_book)
     elif sort_option == 'author_first_desc':
-        filtered_books.sort(key=lambda x: get_author_name(x).lower(), reverse=True)
+        filtered_books.sort(key=author_first_sort_key_for_book, reverse=True)
     elif sort_option == 'author_last_asc':
-        filtered_books.sort(key=lambda x: get_author_last_first(x).lower())
+        filtered_books.sort(key=author_last_sort_key_for_book)
     elif sort_option == 'author_last_desc':
-        filtered_books.sort(key=lambda x: get_author_last_first(x).lower(), reverse=True)
+        filtered_books.sort(key=author_last_sort_key_for_book, reverse=True)
     elif sort_option == 'date_added_desc':
         # Sort by date added (newest first) - use added_at or created_at
         # Use title as secondary key for stable sorting when timestamps are identical (bulk imports)
