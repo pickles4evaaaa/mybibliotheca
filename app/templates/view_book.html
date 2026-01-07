@@ -217,6 +217,13 @@
     flex-direction: column;
   }
 
+  .reading-log-date-picker label {
+    color: var(--primary-brown);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+
   .reading-log-date-input {
     padding: 0.75rem 1rem;
     border: 2px solid var(--light-brown);
@@ -532,8 +539,8 @@
   <form method="post" action="{{ url_for('main.log_reading', uid=book.uid) }}" class="reading-log-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="reading-log-date-picker">
-      <label for="log_date" style="color: var(--primary-brown); font-weight: 600; margin-bottom: 0.5rem; display: block;">
-        📅 Select Date
+      <label for="log_date">
+        <i class="bi bi-calendar-event"></i> Select Date
       </label>
       <input type="date" 
              class="form-control reading-log-date-input" 

@@ -39,7 +39,7 @@ def create_reading_log_entry():
         if log_date_str:
             try:
                 log_entry_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
-            except (ValueError, TypeError):
+            except ValueError:
                 log_entry_date = date.today()
         else:
             log_entry_date = date.today()
