@@ -580,7 +580,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Restore filter values from URL parameters or server-provided filters
     const urlParams = new URLSearchParams(window.location.search);
     const dateTypeFromUrl = urlParams.get('date_type');
-    const dateTypeFromServer = '{{ filters.date_type if filters and filters.date_type else "date_added" }}';
+    const dateTypeFromServer = '{{ filters.date_type if filters and filters.date_type else "publication_date" }}';
     document.getElementById('dateTypeFilter').value = dateTypeFromUrl || dateTypeFromServer;
     if (urlParams.get('status')) {
         document.getElementById('statusFilter').value = urlParams.get('status');
