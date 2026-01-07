@@ -170,6 +170,31 @@ class KuzuRelationshipService:
         combined.update(relationship_data or {})
         # Personal metadata (HAS_PERSONAL_METADATA) stores json blob in personal_custom_fields; flatten known fields
         if personal_meta:
+            # Kuzu may materialize relationship values as a dict with nested "properties"
+            # (or similar key). Normalize so downstream parsing can consistently find
+            # personal_custom_fields and other keys.
+            if not isinstance(personal_meta, dict):
+                try:
+                    # Best-effort: some objects expose mapping-like behavior
+                    if hasattr(personal_meta, 'items'):
+                        personal_meta = dict(personal_meta.items())  # type: ignore[arg-type]
+                    elif hasattr(personal_meta, '__dict__'):
+                        personal_meta = dict(getattr(personal_meta, '__dict__') or {})
+                except Exception:
+                    personal_meta = None
+
+            if isinstance(personal_meta, dict):
+                for props_key in ('properties', '_properties'):
+                    props = personal_meta.get(props_key)
+                    if isinstance(props, dict) and props:
+                        # Prefer explicit top-level keys; fill missing from nested properties.
+                        merged = dict(personal_meta)
+                        for k, v in props.items():
+                            if k not in merged:
+                                merged[k] = v
+                        personal_meta = merged
+                        break
+
             # Accept direct fields if present
             for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
                 if key in personal_meta and personal_meta[key] not in (None, ''):

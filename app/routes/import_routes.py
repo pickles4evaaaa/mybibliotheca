@@ -2053,8 +2053,11 @@ async def process_simple_import(import_config):
                     if not simplified_book.reading_status:
                         simplified_book.reading_status = import_config.get('default_reading_status', '')
 
-                    # Extract personal metadata fields from SimplifiedBook
-                    personal_metadata_for_import = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+                    # Extract personal metadata fields from SimplifiedBook.
+                    # IMPORTANT: copy the dict so we don't mutate the SimplifiedBook's
+                    # personal_custom_metadata by reference (reserved keys like
+                    # start_date/finish_date should not leak into custom fields).
+                    personal_metadata_for_import = dict(getattr(simplified_book, 'personal_custom_metadata', None) or {})
 
                     # Add standard personal fields if present in SimplifiedBook
                     if simplified_book.date_started:
@@ -2084,6 +2087,7 @@ async def process_simple_import(import_config):
                                 # Merge logic: fill empty fields and append metadata
                                 from app.services.kuzu_book_service import KuzuBookService
                                 from app.services.kuzu_custom_field_service import KuzuCustomFieldService
+                                from app.services.personal_metadata_service import personal_metadata_service
                                 kbs = KuzuBookService(user_id=user_id)
                                 existing = await kbs.get_book_by_id(duplicate_existing_id) if duplicate_existing_id else None
                                 updates = {}
@@ -2115,6 +2119,31 @@ async def process_simple_import(import_config):
                                             merged_applied = True
                                 except Exception as meta_ex:
                                     print(f"⚠️ [MERGE] Custom metadata merge failed: {meta_ex}")
+
+                                # Always apply per-user overlay metadata even when the Book already exists.
+                                # Duplicates are expected in universal library mode; we still want imported
+                                # reading status/dates/rating/notes to persist.
+                                try:
+                                    if duplicate_existing_id:
+                                        pm_updates = {}
+                                        if isinstance(personal_metadata_for_import, dict):
+                                            pm_updates.update(personal_metadata_for_import)
+                                        if getattr(simplified_book, 'reading_status', None):
+                                            pm_updates['reading_status'] = simplified_book.reading_status
+                                        pm_updates['ownership_status'] = 'owned'
+                                        if getattr(simplified_book, 'user_rating', None) is not None:
+                                            pm_updates['user_rating'] = simplified_book.user_rating
+
+                                        personal_metadata_service.update_personal_metadata(
+                                            user_id=user_id,
+                                            book_id=duplicate_existing_id,
+                                            personal_notes=getattr(simplified_book, 'personal_notes', None),
+                                            custom_updates=pm_updates,
+                                            merge=True,
+                                        )
+                                        merged_applied = True
+                                except Exception as pm_ex:
+                                    print(f"⚠️ [MERGE] Personal metadata merge failed: {pm_ex}")
                                 result = True  # Treat duplicate+merge as success
                             except Exception as merge_ex:
                                 print(f"⚠️ [MERGE] Failed merging duplicate: {merge_ex}")
