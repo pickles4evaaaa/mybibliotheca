@@ -132,7 +132,7 @@
   .advanced-filters-card .dropdown-menu {
     max-height: calc(100vh - 180px); /* keep menus under the top nav */
     overflow-y: auto;
-    z-index: 1080;
+    z-index: 1050; /* Above Bootstrap navbar (1030) but below modals (1055) */
   }
 
   [data-theme="dark"] .advanced-filters-card #advancedFilters > .card-body {
@@ -1169,10 +1169,13 @@ document.addEventListener('DOMContentLoaded', function() {
             filterParams.forEach(param => url.searchParams.delete(param));
             
             // Set new params from form
+            // Important: We don't set params with empty values - this properly clears filters
             for (const [key, value] of formData.entries()) {
-                if (value && value.trim()) {
-                    url.searchParams.set(key, value);
+                const trimmedValue = value ? value.trim() : '';
+                if (trimmedValue) {
+                    url.searchParams.set(key, trimmedValue);
                 }
+                // If value is empty/whitespace, the param stays deleted (cleared above)
             }
             
             // Reset to page 1 when applying filters
