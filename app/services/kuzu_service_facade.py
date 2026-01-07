@@ -148,6 +148,12 @@ class KuzuServiceFacade:
         # Update book metadata (global fields)
         updated_book = None
         if book_updates:
+            try:
+                from app.utils.language_catalog import remember_language
+
+                remember_language(book_updates.get('language'))
+            except Exception:
+                pass
             updated_book = self.book_service.update_book_sync(book_id, book_updates)
         
         # Update personal metadata (replacing OWNS usage)
