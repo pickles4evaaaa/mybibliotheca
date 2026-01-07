@@ -418,7 +418,7 @@
                                     {% for btn in stat_buttons %}
                                         <div class="col-lg-2 col-md-4 mb-3 mb-lg-0">
                                             <button class="btn btn-outline-{{ btn.outline }} w-100 filter-btn" data-filter="{{ btn.filter }}">
-                                                <div class="h4 mb-0 text-{{ btn.text }}">{{ btn.value }}</div>
+                                                <h4 class="mb-0 text-{{ btn.text }}">{{ btn.value }}</h4>
                                                 <small class="text-muted">{{ btn.label }}</small>
                                             </button>
                                         </div>
@@ -436,7 +436,7 @@
                                         {% for btn in stat_buttons %}
                                             <div class="col-6">
                                                 <button class="btn btn-outline-{{ btn.outline }} w-100 filter-btn" data-filter="{{ btn.filter }}">
-                                                    <div class="h5 mb-0 text-{{ btn.text }}">{{ btn.value }}</div>
+                                                    <h5 class="mb-0 text-{{ btn.text }}">{{ btn.value }}</h5>
                                                     <small class="text-muted d-block">{{ btn.label }}</small>
                                                 </button>
                                             </div>
