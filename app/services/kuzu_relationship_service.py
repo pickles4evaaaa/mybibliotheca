@@ -735,6 +735,10 @@ class KuzuRelationshipService:
         """Sync wrapper for get_all_books_with_user_overlay."""
         return run_async(self.get_all_books_with_user_overlay(user_id))
     
+    def get_all_books_with_user_overlay_flat_sync(self, user_id: str) -> List[Dict[str, Any]]:
+        """Alias for get_all_books_with_user_overlay_sync (returns flat dict structure)."""
+        return self.get_all_books_with_user_overlay_sync(user_id)
+    
     def get_recently_added_want_to_read_books_sync(self, user_id: str, limit: int = 5) -> List[Book]:
         """Sync wrapper for get_recently_added_want_to_read_books."""
         return run_async(self.get_recently_added_want_to_read_books(user_id, limit))
