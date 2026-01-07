@@ -890,6 +890,13 @@
                                         </div>
                                         {% endif %}
                                         
+                                        {% if book.page_count %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Page Count:</small>
+                                            <span class="ms-1 fw-medium">{{ book.page_count }} pages</span>
+                                        </div>
+                                        {% endif %}
+                                        
                                         {% if book.language %}
                                         <div class="mb-2">
                                             <small class="text-muted">Language:</small>
@@ -906,6 +913,13 @@
                                                 {% elif book.language == 'zh' %}Chinese
                                                 {% else %}{{ book.language }}{% endif %}
                                             </span>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        {% if book.quantity and book.quantity > 1 %}
+                                        <div class="mb-2">
+                                            <small class="text-muted">Quantity:</small>
+                                            <span class="ms-1 fw-medium">{{ book.quantity }} copies</span>
                                         </div>
                                         {% endif %}
                                     </div>
@@ -1054,6 +1068,16 @@
                                             <option value="hi" {% if book.language == 'hi' %}selected{% endif %}>Hindi</option>
                                             <option value="other" {% if book.language not in ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh', 'ar', 'hi'] and book.language %}selected{% endif %}>Other</option>
                                         </select>
+                                    </div>
+                                    
+                                    <!-- Page Count -->
+                                    <div class="mb-3">
+                                        <label for="page_count" class="form-label fw-medium">
+                                            <i class="bi bi-file-text me-1"></i>Page Count
+                                        </label>
+                                        <input type="number" class="form-control" id="page_count" name="page_count" 
+                                               value="{{ book.page_count or '' }}" min="1" max="99999" step="1" placeholder="Number of pages">
+                                        <div class="form-text">Total number of pages in the book</div>
                                     </div>
                                     
                                     <!-- Quantity -->
