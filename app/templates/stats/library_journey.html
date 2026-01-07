@@ -86,15 +86,15 @@
                     <!-- Date Filter Controls -->
                     <div class="row g-2">
                         <div class="col-md-4">
-                            <label for="dateTypeFilter" class="form-label small mb-1 fw-bold text-primary">
-                                <i class="bi bi-calendar-date"></i> Date Type
-                            </label>
-                            <select class="form-select form-select-sm date-type-select" id="dateTypeFilter">
-                                <option value="date_added" {% if filters and filters.date_type == 'date_added' %}selected{% endif %}>📅 Date Added</option>
-                                <option value="finish_date" {% if filters and filters.date_type == 'finish_date' %}selected{% endif %}>✅ Date Finished</option>
-                                <option value="publication_date" {% if filters and filters.date_type == 'publication_date' %}selected{% endif %}>📖 Publication Date</option>
-                                <option value="start_date" {% if filters and filters.date_type == 'start_date' %}selected{% endif %}>▶️ Start Date</option>
-                            </select>
+                            <div class="position-relative">
+                                <select class="form-select form-select-sm date-type-select" id="dateTypeFilter">
+                                    <option value="date_added" {% if filters and filters.date_type == 'date_added' %}selected{% endif %}>📅 Date Added</option>
+                                    <option value="finish_date" {% if filters and filters.date_type == 'finish_date' %}selected{% endif %}>✅ Date Finished</option>
+                                    <option value="publication_date" {% if filters and filters.date_type == 'publication_date' %}selected{% endif %}>📖 Publication Date</option>
+                                    <option value="start_date" {% if filters and filters.date_type == 'start_date' %}selected{% endif %}>▶️ Start Date</option>
+                                </select>
+                                <i class="bi bi-chevron-down position-absolute date-type-icon"></i>
+                            </div>
                         </div>
                         <div class="col-md-3">
                             <select class="form-select form-select-sm" id="statusFilter">
@@ -550,14 +550,13 @@
 /* Enhanced Date Type Dropdown Styling */
 .date-type-select {
     border: 2px solid #0d6efd;
-    background-color: #f0f8ff;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.3s ease;
+    padding-right: 2.5rem; /* Make room for the icon */
 }
 
 .date-type-select:hover {
-    background-color: #e3f2fd;
     border-color: #0056b3;
     box-shadow: 0 2px 8px rgba(13, 110, 253, 0.15);
 }
@@ -565,7 +564,28 @@
 .date-type-select:focus {
     border-color: #0d6efd;
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
-    background-color: #ffffff;
+}
+
+.date-type-icon {
+    top: 50%;
+    right: 0.75rem;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: #0d6efd;
+    font-size: 0.875rem;
+}
+
+/* Dark mode support for date type dropdown */
+[data-theme="dark"] .date-type-select {
+    border-color: #6ea8fe;
+}
+
+[data-theme="dark"] .date-type-select:hover {
+    border-color: #9ec5fe;
+}
+
+[data-theme="dark"] .date-type-icon {
+    color: #6ea8fe;
 }
 </style>
 
