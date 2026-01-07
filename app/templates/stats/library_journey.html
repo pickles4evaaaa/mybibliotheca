@@ -88,9 +88,9 @@
                         <div class="col-md-4">
                             <div class="position-relative">
                                 <select class="form-select form-select-sm date-type-select" id="dateTypeFilter">
+                                    <option value="publication_date" {% if filters and filters.date_type == 'publication_date' %}selected{% endif %}>📖 Publication Date</option>
                                     <option value="date_added" {% if filters and filters.date_type == 'date_added' %}selected{% endif %}>📅 Date Added</option>
                                     <option value="finish_date" {% if filters and filters.date_type == 'finish_date' %}selected{% endif %}>✅ Date Finished</option>
-                                    <option value="publication_date" {% if filters and filters.date_type == 'publication_date' %}selected{% endif %}>📖 Publication Date</option>
                                     <option value="start_date" {% if filters and filters.date_type == 'start_date' %}selected{% endif %}>▶️ Start Date</option>
                                 </select>
                                 <i class="bi bi-chevron-down position-absolute date-type-icon"></i>
@@ -567,6 +567,7 @@
 }
 
 .date-type-icon {
+    position: absolute;
     top: 50%;
     right: 0.75rem;
     transform: translateY(-50%);
