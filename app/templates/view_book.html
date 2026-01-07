@@ -539,8 +539,8 @@
              class="form-control reading-log-date-input" 
              id="log_date" 
              name="log_date" 
-             value="{{ datetime.now().strftime('%Y-%m-%d') if datetime else '' }}" 
-             max="{{ datetime.now().strftime('%Y-%m-%d') if datetime else '' }}"
+             value="{{ datetime.now().strftime('%Y-%m-%d') }}" 
+             max="{{ datetime.now().strftime('%Y-%m-%d') }}"
              required>
     </div>
     <button type="submit" class="btn-success-custom">

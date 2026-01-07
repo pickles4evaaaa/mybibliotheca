@@ -1910,8 +1910,8 @@
                      class="form-control" 
                      id="reading_log_date" 
                      name="date" 
-                     value="{{ datetime.now().strftime('%Y-%m-%d') if datetime else '' }}" 
-                     max="{{ datetime.now().strftime('%Y-%m-%d') if datetime else '' }}"
+                     value="{{ datetime.now().strftime('%Y-%m-%d') }}" 
+                     max="{{ datetime.now().strftime('%Y-%m-%d') }}"
                      required>
               <small class="form-text text-muted">Select the date of your reading session (defaults to today)</small>
             </div>
