@@ -39,6 +39,9 @@ def create_reading_log_entry():
         if log_date_str:
             try:
                 log_entry_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
+                # Ensure date is not in the future
+                if log_entry_date > date.today():
+                    log_entry_date = date.today()
             except ValueError:
                 log_entry_date = date.today()
         else:
