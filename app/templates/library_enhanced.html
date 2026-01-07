@@ -130,6 +130,30 @@
     border-top-color: var(--border-color);
   }
 
+  /* Library Stats Card: enforce rounded corners */
+  .library-stats-card {
+    border-radius: 18px;
+    overflow: hidden;
+    border: var(--bs-card-border-width) solid var(--bs-card-border-color, rgba(0,0,0,0.125));
+    background-color: var(--bs-card-bg);
+  }
+
+  .library-stats-card > .card-body {
+    border-radius: 18px;
+    background-clip: padding-box;
+    background-color: var(--bs-card-bg);
+  }
+
+  /* Dark mode: keep stats card seamless */
+  [data-theme="dark"] .library-stats-card {
+    background-color: rgba(40, 40, 40, 0.9);
+    border-color: var(--border-color);
+  }
+
+  [data-theme="dark"] .library-stats-card > .card-body {
+    background-color: rgba(40, 40, 40, 0.9);
+  }
+
   [data-theme="dark"] .book-title {
     color: var(--card-text) !important;
   }
@@ -449,7 +473,7 @@
     <!-- Library Stats with Filters -->
     <div class="row mb-4">
         <div class="col-12">
-            <div class="card shadow-sm">
+            <div class="card shadow-sm library-stats-card">
                 <div class="card-body">
                     {% set stat_buttons = [
                         {'filter': 'reading', 'outline': 'warning', 'text': 'warning', 'label': 'Currently Reading', 'value': stats.currently_reading},
