@@ -77,10 +77,63 @@
     box-shadow: 0 8px 25px rgba(0,0,0,0.4) !important;
   }
 
-  [data-theme="dark"] .card-body {
-    background-color: var(--card-bg) !important;
-    color: var(--card-text) !important;
-  }
+    [data-theme="dark"] .book-card .card-body {
+        background-color: var(--card-bg) !important;
+        color: var(--card-text) !important;
+    }
+
+    /* Advanced Filters: force rounded corners (collapsed + expanded) and clip inner edges. */
+    .advanced-filters-card {
+        border-radius: 18px;
+        /* Allow dropdown menus to escape the card while keeping rounded edges. */
+        overflow: visible;
+        border: var(--bs-card-border-width) solid var(--bs-card-border-color, rgba(0,0,0,0.125));
+        background-color: var(--bs-card-bg);
+    }
+
+    /* Collapsed state: header is the visible surface, so keep its bottom corners round. */
+    .advanced-filters-card > .card-header {
+        border-radius: 18px !important;
+        border-bottom-left-radius: 18px !important;
+        border-bottom-right-radius: 18px !important;
+        border-bottom: 0 !important;
+        background-clip: padding-box;
+        background-color: var(--bs-card-bg);
+    }
+
+    /* Expanded state: round the body edges and keep an internal divider line. */
+    .advanced-filters-card #advancedFilters > .card-body {
+        border-top: var(--bs-card-border-width) solid var(--bs-card-border-color);
+        border-bottom-left-radius: 18px;
+        border-bottom-right-radius: 18px;
+        background-clip: padding-box;
+        background-color: var(--bs-card-bg);
+        overflow: visible;
+        position: relative;
+    }
+
+    /* Dark mode: keep the filter card seamless with the surrounding shell. */
+    [data-theme="dark"] .advanced-filters-card {
+        background-color: rgba(40, 40, 40, 0.9);
+        border-color: var(--border-color);
+    }
+
+    [data-theme="dark"] .advanced-filters-card > .card-header {
+        background-color: rgba(40, 40, 40, 0.9);
+        border-color: var(--border-color);
+    }
+
+    /* Ensure dropdowns inside the filter card are not clipped and stay scrollable if long. */
+    .advanced-filters-card .dropdown-menu {
+        max-height: calc(100vh - 180px); /* keep menus under the top nav */
+        overflow-y: auto;
+        z-index: 1080;
+    }
+
+    [data-theme="dark"] .advanced-filters-card #advancedFilters > .card-body {
+        background-color: rgba(40, 40, 40, 0.9);
+        border-top-color: var(--border-color);
+    }
 
   [data-theme="dark"] .book-title {
     color: var(--card-text) !important;
@@ -270,7 +323,6 @@
   .dropdown-search-input {
     border: none;
     border-bottom: 1px solid #dee2e6;
-    border-radius: 0;
     margin: 0;
     position: sticky;
     top: 0;
@@ -459,7 +511,7 @@
     <!-- Advanced Filters (Collapsible) -->
     <div class="row mb-4">
         <div class="col-12">
-            <div class="card shadow-sm">
+            <div class="card shadow-sm advanced-filters-card">
                 <div class="card-header">
                     <button class="btn btn-link text-decoration-none p-0 w-100 text-start" type="button" 
                             data-bs-toggle="collapse" data-bs-target="#advancedFilters" 
@@ -470,7 +522,7 @@
                 </div>
                 <div id="advancedFilters" class="collapse">
                     <div class="card-body">
-                        <form method="GET" id="filter-form">
+                        <form method="GET" id="filter-form" action="{{ url_for('main.library') }}">
                             <input type="hidden" name="status_filter" id="status_filter" value="{{ current_status_filter or 'all' }}">
                             {% if current_search %}<input type="hidden" name="search" value="{{ current_search }}">{% endif %}
                             <div class="row g-3">
@@ -889,6 +941,10 @@
 </div>
 
 <script>
+const filterRecords = {{ filter_records|tojson }};
+const filterFields = ['category', 'publisher', 'language', 'media_type', 'location'];
+let dropdownRegistry = {};
+
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize with the current filter from the URL, falling back to the hidden input default
     const urlParams = new URLSearchParams(window.location.search);
@@ -901,6 +957,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Apply initial filter
     applyStatusFilter(currentFilter);
+
+    // Advanced Filters bar is styled as always-rounded (no state toggling).
 
     // Filter button handlers -> submit form to server so filtering spans all pages
     document.querySelectorAll('.filter-btn').forEach(button => {
@@ -1055,6 +1113,38 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Searchable dropdown functionality
     initializeSearchableDropdowns();
+    setupCascadingFilters();
+
+    // Deterministic filter submission: build URL from #filter-form values.
+    // This avoids edge cases where stale query params persist when switching
+    // between non-empty dropdown selections.
+    const filterForm = document.getElementById('filter-form');
+    if (filterForm) {
+        filterForm.addEventListener('submit', function(e) {
+            // Let native submit happen only if we can't build the URL.
+            try {
+                e.preventDefault();
+                const url = new URL(filterForm.action, window.location.origin);
+                const metaEl = document.getElementById('lib-meta');
+                const rows = parseInt((metaEl && metaEl.dataset.rows) ? metaEl.dataset.rows : '4', 10);
+                const cols = measureColumns() || 1;
+                // Reset to first page when applying filters/sort/status.
+                url.searchParams.set('page', '1');
+                url.searchParams.set('rows', String(rows));
+                url.searchParams.set('cols', String(cols));
+
+                const formData = new FormData(filterForm);
+                for (const [key, value] of formData.entries()) {
+                    // Preserve empty values as explicit params (matches existing behavior)
+                    url.searchParams.set(key, (value == null) ? '' : String(value));
+                }
+
+                window.location.href = url.toString();
+            } catch (err) {
+                // Fallback to normal submit on any unexpected error.
+            }
+        });
+    }
 
     // ---- Row-based pagination helpers ----
     function measureColumns(){
@@ -1397,12 +1487,120 @@ function updateActiveFilter(filter) {
     });
 }
 
+function getFilterDropdownRegistry() {
+    const registry = {};
+    document.querySelectorAll('.dropdown-search-menu').forEach(menu => {
+        const field = menu.dataset.field;
+        if (!field || !filterFields.includes(field)) return;
+        const wrapper = menu.closest('.dropdown-search-wrapper') || menu.closest('.dropdown') || menu.parentElement;
+        const button = wrapper ? wrapper.querySelector(`[data-field="${field}"].dropdown-search-btn`) : null;
+        const hiddenInput = wrapper ? wrapper.querySelector(`input[name="${field}"]`) : null;
+        const items = Array.from(menu.querySelectorAll('.dropdown-item'));
+        const allLabelSource = items.find(item => (item.dataset.value || '') === '');
+        registry[field] = {
+            button,
+            hiddenInput,
+            items,
+            allLabel: allLabelSource ? allLabelSource.textContent.trim() : ''
+        };
+    });
+    return registry;
+}
+
+function getActiveFilterValues(registry) {
+    const values = {};
+    filterFields.forEach(field => {
+        const scopedInput = registry[field] ? registry[field].hiddenInput : null;
+        const fallbackInput = document.querySelector(`#filter-form input[name="${field}"]`);
+        values[field] = scopedInput && typeof scopedInput.value === 'string'
+            ? scopedInput.value
+            : (fallbackInput && typeof fallbackInput.value === 'string' ? fallbackInput.value : '');
+    });
+    return values;
+}
+
+function computeAvailableFilterValues(activeFilters) {
+    if (!Array.isArray(filterRecords) || !filterRecords.length) {
+        return null;
+    }
+    const availability = {};
+    filterFields.forEach(field => availability[field] = new Set());
+    const matches = filterRecords.filter(record => {
+        return filterFields.every(field => {
+            const selected = activeFilters[field];
+            return !selected || record[field] === selected;
+        });
+    });
+    matches.forEach(record => {
+        filterFields.forEach(field => availability[field].add(record[field] || ''));
+    });
+    return availability;
+}
+
+function applyCascadingFilter() {
+    if (!Array.isArray(filterRecords) || !filterRecords.length) return;
+    if (!dropdownRegistry || Object.keys(dropdownRegistry).length === 0) {
+        dropdownRegistry = getFilterDropdownRegistry();
+    }
+    const activeFilters = getActiveFilterValues(dropdownRegistry);
+    const availability = computeAvailableFilterValues(activeFilters);
+    if (!availability) return;
+
+    let needsRecompute = false;
+    filterFields.forEach(field => {
+        const entry = dropdownRegistry[field];
+        if (!entry) return;
+        const allowed = availability[field] || new Set();
+        const currentValue = activeFilters[field] || '';
+        entry.items.forEach(item => {
+            const value = item.dataset.value || '';
+            if (value === '') {
+                item.parentElement.style.display = '';
+                return;
+            }
+            item.parentElement.style.display = allowed.has(value) ? '' : 'none';
+        });
+
+        if (currentValue && !allowed.has(currentValue)) {
+            if (entry.hiddenInput) {
+                entry.hiddenInput.value = '';
+                entry.hiddenInput.setAttribute('value', '');
+            }
+            if (entry.button && entry.allLabel) {
+                const labelEl = entry.button.querySelector('.selected-text');
+                if (labelEl) labelEl.textContent = entry.allLabel;
+            }
+            needsRecompute = true;
+        }
+    });
+
+    if (needsRecompute) {
+        requestAnimationFrame(applyCascadingFilter);
+    }
+}
+
+function setupCascadingFilters() {
+    dropdownRegistry = getFilterDropdownRegistry();
+    applyCascadingFilter();
+}
+
 function initializeSearchableDropdowns() {
     // Initialize all searchable dropdowns
     document.querySelectorAll('.dropdown-search-menu').forEach(menu => {
         const field = menu.dataset.field;
-        const button = document.querySelector(`[data-field="${field}"].dropdown-search-btn`);
-        const hiddenInput = document.querySelector(`input[name="${field}"]`);
+        // IMPORTANT: there may be multiple inputs with the same name on the page
+        // (e.g., top search form + advanced filter form). Scope to this dropdown.
+        const wrapper = menu.closest('.dropdown-search-wrapper') || menu.closest('.dropdown') || menu.parentElement;
+        const button = wrapper ? wrapper.querySelector(`[data-field="${field}"].dropdown-search-btn`) : document.querySelector(`[data-field="${field}"].dropdown-search-btn`);
+        const hiddenInput = wrapper ? wrapper.querySelector(`input[name="${field}"]`) : document.querySelector(`input[name="${field}"]`);
+        // Also resolve the input via the owning form. This is the most reliable source
+        // when multiple forms contain the same input names.
+        const owningForm = (wrapper && wrapper.closest('form')) ? wrapper.closest('form') : null;
+        const formScopedHiddenInput = owningForm ? owningForm.querySelector(`input[name="${field}"]`) : null;
+        // And if the main filter form exists, keep it in sync too (this is the form
+        // that submits when clicking "Apply Filters").
+        const filterForm = document.getElementById('filter-form');
+        const filterFormHiddenInput = filterForm ? filterForm.querySelector(`input[name="${field}"]`) : null;
         const searchInput = menu.querySelector('.dropdown-search-input');
         const allItems = menu.querySelectorAll('.dropdown-item');
         
@@ -1428,6 +1626,16 @@ function initializeSearchableDropdowns() {
         searchInput.addEventListener('click', function(e) {
             e.stopPropagation();
         });
+
+        // Prevent form submission when pressing Enter in the dropdown search box.
+        // Without this, it's easy to submit the filter form while the hidden input
+        // still has the previous value (e.g., category stays on the old selection).
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
         
         // Handle item selection
         allItems.forEach(item => {
@@ -1439,7 +1647,19 @@ function initializeSearchableDropdowns() {
                 const text = this.textContent;
                 
                 // Update hidden input
-                hiddenInput.value = value;
+                // Prefer form-scoped input (the one that will actually be submitted).
+                if (formScopedHiddenInput) {
+                    formScopedHiddenInput.value = value;
+                    formScopedHiddenInput.setAttribute('value', value);
+                }
+                if (filterFormHiddenInput && filterFormHiddenInput !== formScopedHiddenInput) {
+                    filterFormHiddenInput.value = value;
+                    filterFormHiddenInput.setAttribute('value', value);
+                }
+                if (hiddenInput) {
+                    hiddenInput.value = value;
+                    hiddenInput.setAttribute('value', value);
+                }
                 
                 // Update button text
                 const selectedText = button.querySelector('.selected-text');
@@ -1458,11 +1678,15 @@ function initializeSearchableDropdowns() {
                 // Mark as active
                 allItems.forEach(item => item.classList.remove('active'));
                 this.classList.add('active');
+
+                if (typeof applyCascadingFilter === 'function') {
+                    applyCascadingFilter();
+                }
             });
         });
         
         // Set initial active item
-        const currentValue = hiddenInput.value;
+        const currentValue = (formScopedHiddenInput && typeof formScopedHiddenInput.value === 'string') ? formScopedHiddenInput.value : (hiddenInput ? hiddenInput.value : '');
         allItems.forEach(item => {
             if (item.dataset.value === currentValue) {
                 item.classList.add('active');
