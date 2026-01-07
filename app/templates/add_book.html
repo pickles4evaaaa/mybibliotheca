@@ -2448,6 +2448,37 @@ let currentDuplicateData = null;
 // Resolve duplicate API endpoint (keeps JS aligned with Flask route)
 const resolveDuplicateUrl = "{{ url_for('book.resolve_duplicate') }}";
 
+function cleanupStaleModalBackdrops() {
+    try {
+        // Remove any leftover backdrops that can block pointer events
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        // If no modals are currently shown, ensure body isn't stuck in modal-open state
+        const anyShown = document.querySelector('.modal.show');
+        if (!anyShown) {
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+            document.body.style.removeProperty('overflow');
+        }
+    } catch (e) {
+        console.warn('Modal cleanup failed:', e);
+    }
+}
+
+// Move duplicate modal to body on page load to avoid z-index issues
+document.addEventListener('DOMContentLoaded', function() {
+    const duplicateModalEl = document.getElementById('duplicateBookModal');
+    if (duplicateModalEl) {
+        try {
+            if (duplicateModalEl.parentElement !== document.body) {
+                document.body.appendChild(duplicateModalEl);
+            }
+        } catch (e) {
+            console.warn('Failed to move duplicate modal to body:', e);
+        }
+        duplicateModalEl.addEventListener('hidden.bs.modal', cleanupStaleModalBackdrops);
+    }
+});
+
 function showDuplicateModal(duplicateResponse) {
     currentDuplicateData = duplicateResponse;
     
@@ -2465,7 +2496,12 @@ function showDuplicateModal(duplicateResponse) {
     `;
     
     // Show the modal
-    const modal = new bootstrap.Modal(document.getElementById('duplicateBookModal'));
+    cleanupStaleModalBackdrops();
+    if (!(window.bootstrap && bootstrap.Modal)) {
+        console.error('Bootstrap modal not available');
+        return;
+    }
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('duplicateBookModal'));
     modal.show();
 }
 
@@ -2496,7 +2532,10 @@ document.getElementById('incrementCountBtn').addEventListener('click', async fun
         
         if (result.success) {
             // Close modal and redirect
-            bootstrap.Modal.getInstance(document.getElementById('duplicateBookModal')).hide();
+            const modalEl = document.getElementById('duplicateBookModal');
+            const modal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(modalEl) : null;
+            if (modal) modal.hide();
+            cleanupStaleModalBackdrops();
             window.location.href = result.redirect_url;
         } else {
             alert('Error: ' + result.message);
@@ -2538,7 +2577,10 @@ document.getElementById('addSeparateBtn').addEventListener('click', async functi
         
         if (result.success) {
             // Close modal and redirect
-            bootstrap.Modal.getInstance(document.getElementById('duplicateBookModal')).hide();
+            const modalEl = document.getElementById('duplicateBookModal');
+            const modal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(modalEl) : null;
+            if (modal) modal.hide();
+            cleanupStaleModalBackdrops();
             window.location.href = result.redirect_url;
         } else {
             alert('Error: ' + result.message);
@@ -2580,7 +2622,10 @@ document.getElementById('navigateExistingBtn').addEventListener('click', async f
         
         if (result.success) {
             // Close modal and redirect
-            bootstrap.Modal.getInstance(document.getElementById('duplicateBookModal')).hide();
+            const modalEl = document.getElementById('duplicateBookModal');
+            const modal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(modalEl) : null;
+            if (modal) modal.hide();
+            cleanupStaleModalBackdrops();
             window.location.href = result.redirect_url;
         } else {
             alert('Error: ' + result.message);
