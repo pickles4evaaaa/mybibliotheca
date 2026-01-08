@@ -622,6 +622,34 @@
     display: none;
 }
 
+/* Dark mode improvements for chips + dropdowns */
+[data-theme="dark"] .contributor-tag,
+[data-theme="dark"] .category-tag {
+    background-color: #495057;
+    border-color: #6c757d;
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .contributor-tag .remove,
+[data-theme="dark"] .category-tag .remove {
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .autocomplete-dropdown {
+    background: #2d2d2d;
+    border-color: #6c757d;
+}
+
+[data-theme="dark"] .autocomplete-item {
+    color: #e0e0e0;
+    border-bottom-color: #404040;
+}
+
+[data-theme="dark"] .autocomplete-item:hover,
+[data-theme="dark"] .autocomplete-item.selected {
+    background-color: #404040;
+}
+
 .autocomplete-item {
     padding: 8px 12px;
     cursor: pointer;

@@ -744,10 +744,48 @@ class KuzuRelationshipService:
 
                 # Personal metadata overlay (only set if present)
                 personal_meta = row.get('col_2') or {}
+
+                # Kuzu can materialize relationship values with nested "properties" (or as
+                # a mapping-like object). Normalize so we reliably extract reading_status,
+                # ownership_status, etc. even in universal-library mode.
+                if personal_meta and not isinstance(personal_meta, dict):
+                    try:
+                        if hasattr(personal_meta, 'items'):
+                            personal_meta = dict(personal_meta.items())  # type: ignore[arg-type]
+                        elif hasattr(personal_meta, '__dict__'):
+                            personal_meta = dict(getattr(personal_meta, '__dict__') or {})
+                    except Exception:
+                        personal_meta = {}
+
                 if isinstance(personal_meta, dict):
+                    for props_key in ('properties', '_properties'):
+                        props = personal_meta.get(props_key)
+                        if isinstance(props, dict) and props:
+                            merged = dict(personal_meta)
+                            for k, v in props.items():
+                                if k not in merged:
+                                    merged[k] = v
+                            personal_meta = merged
+                            break
+
+                    # Accept direct fields if present
                     for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
                         if key in personal_meta and personal_meta[key] not in (None, ''):
                             book_dict[key] = personal_meta[key]
+
+                    # Extract known keys from personal_custom_fields JSON blob if present
+                    custom_blob = personal_meta.get('personal_custom_fields')
+                    if custom_blob and isinstance(custom_blob, (str, dict)):
+                        try:
+                            import json
+                            if isinstance(custom_blob, str):
+                                custom_blob = json.loads(custom_blob)
+                            if isinstance(custom_blob, dict):
+                                for k, v in custom_blob.items():
+                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
+                                        book_dict[k] = v
+                        except Exception:
+                            pass
 
                 # Authors
                 authors = row.get('col_3') or []
@@ -851,10 +889,42 @@ class KuzuRelationshipService:
                     book_dict['uid'] = book_dict['id']
 
                 personal_meta = row.get('col_1') or {}
+                if personal_meta and not isinstance(personal_meta, dict):
+                    try:
+                        if hasattr(personal_meta, 'items'):
+                            personal_meta = dict(personal_meta.items())  # type: ignore[arg-type]
+                        elif hasattr(personal_meta, '__dict__'):
+                            personal_meta = dict(getattr(personal_meta, '__dict__') or {})
+                    except Exception:
+                        personal_meta = {}
+
                 if isinstance(personal_meta, dict):
+                    for props_key in ('properties', '_properties'):
+                        props = personal_meta.get(props_key)
+                        if isinstance(props, dict) and props:
+                            merged = dict(personal_meta)
+                            for k, v in props.items():
+                                if k not in merged:
+                                    merged[k] = v
+                            personal_meta = merged
+                            break
+
                     for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
                         if key in personal_meta and personal_meta[key] not in (None, ''):
                             book_dict[key] = personal_meta[key]
+
+                    custom_blob = personal_meta.get('personal_custom_fields')
+                    if custom_blob and isinstance(custom_blob, (str, dict)):
+                        try:
+                            import json
+                            if isinstance(custom_blob, str):
+                                custom_blob = json.loads(custom_blob)
+                            if isinstance(custom_blob, dict):
+                                for k, v in custom_blob.items():
+                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
+                                        book_dict[k] = v
+                        except Exception:
+                            pass
 
                 authors = row.get('col_2') or []
                 if not isinstance(authors, list):
@@ -1145,12 +1215,26 @@ class KuzuRelationshipService:
             'wishlist': 0,
         }
         try:
-            # Use flat overlay to avoid per-book relationship loading.
-            books = self.get_all_books_with_user_overlay_flat_sync(user_id)
+            # IMPORTANT: use the unified overlay (supports legacy OWNS + HAS_PERSONAL_METADATA)
+            # so counts match what the library page shows in badges.
+            books = self.get_all_books_with_user_overlay_sync(user_id)
+
             for book in books or []:
-                # Support both dicts and objects
-                rs = (book.get('reading_status') if isinstance(book, dict) else getattr(book, 'reading_status', None))
-                owner = (book.get('ownership_status') if isinstance(book, dict) else getattr(book, 'ownership_status', None))
+                if isinstance(book, dict):
+                    ownership = book.get('ownership') if isinstance(book, dict) else None
+                    rs = (
+                        book.get('reading_status') or
+                        (ownership.get('reading_status') if isinstance(ownership, dict) else None) or
+                        book.get('status')
+                    )
+                    owner = (
+                        book.get('ownership_status') or
+                        (ownership.get('ownership_status') if isinstance(ownership, dict) else None)
+                    )
+                else:
+                    rs = getattr(book, 'reading_status', None)
+                    owner = getattr(book, 'ownership_status', None)
+
                 rs = rs.strip().lower() if isinstance(rs, str) else rs
                 owner = owner.strip().lower() if isinstance(owner, str) else owner
 
@@ -1177,6 +1261,7 @@ class KuzuRelationshipService:
 
                 if owner == 'wishlist':
                     counts['wishlist'] += 1
+
             # No fallback: empty/default statuses are not counted under plan_to_read
         except Exception as e:
             logger.error(f"[RELATIONSHIP_SERVICE] get_library_status_counts_sync error: {e}")
