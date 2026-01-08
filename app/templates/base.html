@@ -1911,6 +1911,20 @@
             
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <input type="hidden" id="selected_book_id" name="book_id" value="">
+
+            <div class="mb-3">
+              <label for="reading_log_date" class="form-label">
+                <i class="bi bi-calendar-event"></i> Date
+              </label>
+              <input type="date" 
+                     class="form-control" 
+                     id="reading_log_date" 
+                     name="date" 
+                     value="{{ datetime.now().strftime('%Y-%m-%d') }}" 
+                     max="{{ datetime.now().strftime('%Y-%m-%d') }}"
+                     required>
+              <small class="form-text text-muted">Select the date of your reading session (defaults to today)</small>
+            </div>
             
             <div class="mb-3">
               <label for="book_search" class="form-label">Book *</label>

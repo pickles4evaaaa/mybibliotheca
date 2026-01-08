@@ -206,6 +206,50 @@
     border-bottom: none;
   }
 
+  .reading-log-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .reading-log-date-picker {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .reading-log-date-picker label {
+    color: var(--primary-brown);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+
+  .reading-log-date-input {
+    padding: 0.75rem 1rem;
+    border: 2px solid var(--light-brown);
+    border-radius: 10px;
+    font-size: 1rem;
+    color: var(--primary-brown);
+    background: var(--warm-white);
+    transition: all 0.3s ease;
+    font-family: inherit;
+  }
+
+  .reading-log-date-input:focus {
+    outline: none;
+    border-color: var(--primary-brown);
+    box-shadow: 0 0 0 3px rgba(139, 69, 19, 0.1);
+  }
+
+  .reading-log-date-input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: opacity(0.7);
+  }
+
+  .reading-log-date-input:hover::-webkit-calendar-picker-indicator {
+    filter: opacity(1);
+  }
+
   .btn-primary-custom {
     background: linear-gradient(135deg, var(--primary-brown), var(--light-brown));
     border: none;
@@ -492,10 +536,22 @@
     <p style="color: #666; font-style: italic; margin-bottom: 1.5rem;">No reading sessions logged yet.</p>
   {% endif %}
   
-  <form method="post" action="{{ url_for('main.log_reading', uid=book.uid) }}">
+  <form method="post" action="{{ url_for('main.log_reading', uid=book.uid) }}" class="reading-log-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <div class="reading-log-date-picker">
+      <label for="log_date">
+        <i class="bi bi-calendar-event"></i> Select Date
+      </label>
+      <input type="date" 
+             class="form-control reading-log-date-input" 
+             id="log_date" 
+             name="log_date" 
+             value="{{ datetime.now().strftime('%Y-%m-%d') }}" 
+             max="{{ datetime.now().strftime('%Y-%m-%d') }}"
+             required>
+    </div>
     <button type="submit" class="btn-success-custom">
-      ➕ Log Today's Reading
+      ➕ Log Reading Session
     </button>
   </form>
 </div>
