@@ -439,19 +439,14 @@
                                                     <label for="language" class="form-label fw-medium">
                                                         <i class="bi bi-translate me-1"></i>Language
                                                     </label>
-                                                    <select class="form-select" id="language" name="language">
-                                                        <option value="en" {% if book.language == 'en' or not book.language %}selected{% endif %}>English</option>
-                                                        <option value="es" {% if book.language == 'es' %}selected{% endif %}>Spanish</option>
-                                                        <option value="fr" {% if book.language == 'fr' %}selected{% endif %}>French</option>
-                                                        <option value="de" {% if book.language == 'de' %}selected{% endif %}>German</option>
-                                                        <option value="it" {% if book.language == 'it' %}selected{% endif %}>Italian</option>
-                                                        <option value="pt" {% if book.language == 'pt' %}selected{% endif %}>Portuguese</option>
-                                                        <option value="ru" {% if book.language == 'ru' %}selected{% endif %}>Russian</option>
-                                                        <option value="ja" {% if book.language == 'ja' %}selected{% endif %}>Japanese</option>
-                                                        <option value="ko" {% if book.language == 'ko' %}selected{% endif %}>Korean</option>
-                                                        <option value="zh" {% if book.language == 'zh' %}selected{% endif %}>Chinese</option>
-                                                        <option value="other" {% if book.language == 'other' %}selected{% endif %}>Other</option>
-                                                    </select>
+                                                    <div class="position-relative" id="language-autocomplete-wrapper">
+                                                        <input type="text" class="form-control" id="language" name="language" autocomplete="off"
+                                                               value="{{ language_label(book.language) or '' }}"
+                                                               placeholder="Type to search or enter a language">
+                                                        <div id="language-autocomplete-dropdown" class="list-group shadow-sm"
+                                                             style="position:absolute; top:100%; left:0; right:0; z-index:1030; max-height:260px; overflow-y:auto; display:none;"></div>
+                                                    </div>
+                                                    <div class="form-text">Start typing to search. Press Enter to create if no match.</div>
                                                 </div>
                                             </div>
                                         </div>
@@ -977,6 +972,7 @@ function initEditPageEnhancements(){
     // Initialize accordion behavior
     initializeAccordion();
     initializeSeriesAutocompleteEdit();
+    initializeLanguageAutocomplete();
     console.debug('[EditPageInit] Enhancements initialized');
 }
 if(document.readyState === 'loading'){
@@ -1006,6 +1002,125 @@ function initializeAccordion() {
             });
         });
     });
+}
+
+// ----- Language Autocomplete (simple, local) -----
+function initializeLanguageAutocomplete() {
+    const LANGUAGE_CHOICES = {{ language_choices | tojson | safe }};
+    const languagePairs = Array.isArray(LANGUAGE_CHOICES) ? LANGUAGE_CHOICES : [];
+    const languageChoices = languagePairs
+        .filter(x => Array.isArray(x) && x.length >= 2)
+        .map(([token, label]) => ({ token: String(token || '').trim(), label: String(label || '').trim() }))
+        .filter(x => x.token || x.label);
+
+    const input = document.getElementById('language');
+    const dropdown = document.getElementById('language-autocomplete-dropdown');
+    const form = document.getElementById('editBookForm');
+    if (!input || !dropdown) return;
+
+    const normalizeText = (s) => String(s || '').trim().toLowerCase();
+
+    function hide() {
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+    }
+
+    function setActive(nextIndex) {
+        const items = Array.from(dropdown.querySelectorAll('.list-group-item'));
+        items.forEach(i => i.classList.remove('active'));
+        if (nextIndex >= 0 && nextIndex < items.length) items[nextIndex].classList.add('active');
+    }
+
+    function render() {
+        const rawQuery = (input.value || '').trim();
+        const q = normalizeText(rawQuery);
+        if (!q) {
+            hide();
+            return;
+        }
+
+        const matches = languageChoices
+            .map(c => {
+                const tokenN = normalizeText(c.token);
+                const labelN = normalizeText(c.label);
+                const starts = labelN.startsWith(q) || tokenN.startsWith(q);
+                const includes = labelN.includes(q) || tokenN.includes(q);
+                return { ...c, _starts: starts, _includes: includes };
+            })
+            .filter(c => c._includes)
+            .sort((a, b) => {
+                if (a._starts !== b._starts) return a._starts ? -1 : 1;
+                return a.label.localeCompare(b.label);
+            })
+            .slice(0, 8);
+
+        dropdown.innerHTML = '';
+        matches.forEach(choice => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'list-group-item list-group-item-action';
+            btn.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>${choice.label || choice.token}</span>
+                    ${choice.label && choice.token && normalizeText(choice.label) !== normalizeText(choice.token)
+                        ? `<small class="text-muted">${choice.token}</small>`
+                        : ''}
+                </div>
+            `;
+            btn.dataset.label = choice.label || choice.token;
+            btn.addEventListener('mousedown', () => {
+                input.value = btn.dataset.label || '';
+                hide();
+            });
+            dropdown.appendChild(btn);
+        });
+
+        const exact = languageChoices.some(c => normalizeText(c.label) === q || normalizeText(c.token) === q);
+        if (!exact && rawQuery.length >= 2) {
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'list-group-item list-group-item-action';
+            addBtn.innerHTML = `<i class="bi bi-plus-circle me-1"></i> Add "${rawQuery}" as new language`;
+            addBtn.dataset.value = rawQuery;
+            addBtn.addEventListener('mousedown', () => {
+                input.value = addBtn.dataset.value || '';
+                hide();
+            });
+            dropdown.appendChild(addBtn);
+        }
+
+        dropdown.style.display = dropdown.children.length ? 'block' : 'none';
+    }
+
+    input.addEventListener('input', render);
+    input.addEventListener('focus', render);
+    input.addEventListener('blur', () => setTimeout(hide, 200));
+    input.addEventListener('keydown', (e) => {
+        const items = Array.from(dropdown.querySelectorAll('.list-group-item'));
+        const idx = items.findIndex(i => i.classList.contains('active'));
+        if (e.key === 'ArrowDown' && items.length) {
+            e.preventDefault();
+            setActive(Math.min(idx + 1, items.length - 1));
+        } else if (e.key === 'ArrowUp' && items.length) {
+            e.preventDefault();
+            setActive(Math.max(idx - 1, 0));
+        } else if (e.key === 'Enter' && items.length && idx >= 0) {
+            e.preventDefault();
+            items[idx].dispatchEvent(new MouseEvent('mousedown'));
+        } else if (e.key === 'Escape') {
+            hide();
+        }
+    });
+
+    if (form) {
+        form.addEventListener('submit', () => {
+            const typed = (input.value || '').trim();
+            if (!typed) return;
+            const typedN = normalizeText(typed);
+            const match = languageChoices.find(c => normalizeText(c.label) === typedN || normalizeText(c.token) === typedN);
+            if (match && match.token) input.value = match.token;
+        });
+    }
 }
 
 // ----- Series Autocomplete (Edit Form) -----
