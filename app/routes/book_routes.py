@@ -1929,8 +1929,9 @@ def library():
 
     # Total count first so we can clamp page to a valid range (cache for short TTL)
     try:
-        from app.utils.simple_cache import cache_get, cache_set
-        _tc_key = f"total_count:{current_user.id}"
+        from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+        _ver = get_user_library_version(str(current_user.id))
+        _tc_key = f"total_count:{current_user.id}:v{_ver}"
         total_books = cache_get(_tc_key)
         if total_books is None:
             total_books = book_service.get_total_book_count_sync()
@@ -1962,7 +1963,7 @@ def library():
             # Use short-lived cache for expensive all-books call
             from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
             version = get_user_library_version(str(current_user.id))
-            cache_key = f"all_books_overlay_flat:{current_user.id}:v{version}"
+            cache_key = f"all_books_overlay_flat:{current_user.id}:v{version}:v2"
             user_books = cache_get(cache_key)
             if user_books is None:
                 user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
@@ -2051,32 +2052,10 @@ def library():
             return status
         return getattr(book, 'ownership_status', None)
     
-    # Global status counts (not page-limited)
-    try:
-        from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
-        _ver = get_user_library_version(str(current_user.id))
-        _sc_key = f"status_counts:{current_user.id}:v{_ver}"
-        global_counts = cache_get(_sc_key)
-        if global_counts is None:
-            global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
-            cache_set(_sc_key, global_counts, ttl_seconds=180)
-    except Exception:
-        global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
+    # We'll compute stats after applying non-status filters.
+    stats: Dict[str, Any] = {}
 
-    stats = {
-        'total_books': total_books,
-        'books_read': int(global_counts.get('read', 0)),
-        'currently_reading': int(global_counts.get('currently_reading', 0)),
-        'want_to_read': int(global_counts.get('plan_to_read', 0)),
-        'on_hold': int(global_counts.get('on_hold', 0)),
-        'wishlist': int(global_counts.get('wishlist', 0)),
-        # Add location stats (page sample)
-        'books_with_locations': books_with_locations,
-        'books_without_locations': books_without_locations,
-        'location_counts': location_counts
-    }
-    
-    # Apply status filter first
+    # Start from the working set
     filtered_books = user_books
 
     def _resolve_media_type_value(book_obj):
@@ -2123,16 +2102,7 @@ def library():
 
         return raw
 
-    if status_filter and status_filter != 'all':
-        if status_filter == 'wishlist':
-            filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
-        elif status_filter == 'reading':
-            # Handle both 'reading' and 'currently_reading' for backwards compatibility
-            filtered_books = [book for book in filtered_books if get_reading_status(book) in ['reading', 'currently_reading']]
-        else:
-            filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
-    
-    # Apply other filters
+    # Apply other filters (excluding status_filter so stat tiles remain meaningful)
     def _parse_finish_date(val):
         if not val:
             return None
@@ -2224,6 +2194,82 @@ def library():
                 (finished_before is None or fd <= finished_before)
             )
         ]
+
+    # Compute statistics for filter buttons.
+    # If we're already in "full fetch" mode (has_filter), these reflect the current
+    # filter context (excluding status_filter). Otherwise, fall back to cached global counts.
+    if has_filter:
+        computed_counts: Dict[str, int] = {
+            'read': 0,
+            'currently_reading': 0,
+            'on_hold': 0,
+            'plan_to_read': 0,
+            'wishlist': 0,
+        }
+        for book in filtered_books or []:
+            rs = get_reading_status(book)
+            owner = get_ownership_status(book)
+
+            if rs == 'read':
+                computed_counts['read'] += 1
+            elif rs in ('reading', 'currently_reading'):
+                computed_counts['currently_reading'] += 1
+            elif rs == 'on_hold':
+                computed_counts['on_hold'] += 1
+            elif rs == 'plan_to_read':
+                computed_counts['plan_to_read'] += 1
+
+            if isinstance(owner, str) and owner.strip().lower() == 'wishlist':
+                computed_counts['wishlist'] += 1
+
+        stats = {
+            'total_books': int(len(filtered_books) if filtered_books is not None else 0),
+            'books_read': int(computed_counts.get('read', 0)),
+            'currently_reading': int(computed_counts.get('currently_reading', 0)),
+            'want_to_read': int(computed_counts.get('plan_to_read', 0)),
+            'on_hold': int(computed_counts.get('on_hold', 0)),
+            'wishlist': int(computed_counts.get('wishlist', 0)),
+            # Add location stats (page sample)
+            'books_with_locations': books_with_locations,
+            'books_without_locations': books_without_locations,
+            'location_counts': location_counts
+        }
+    else:
+        try:
+            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+            _ver = get_user_library_version(str(current_user.id))
+            # Include a small schema/version suffix to invalidate older cached shapes
+            # (prevents lingering broken counts after upgrades).
+            _sc_key = f"status_counts:{current_user.id}:v{_ver}:v2"
+            global_counts = cache_get(_sc_key)
+            if global_counts is None:
+                global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
+                cache_set(_sc_key, global_counts, ttl_seconds=180)
+        except Exception:
+            global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
+
+        stats = {
+            'total_books': total_books,
+            'books_read': int(global_counts.get('read', 0)),
+            'currently_reading': int(global_counts.get('currently_reading', 0)),
+            'want_to_read': int(global_counts.get('plan_to_read', 0)),
+            'on_hold': int(global_counts.get('on_hold', 0)),
+            'wishlist': int(global_counts.get('wishlist', 0)),
+            # Add location stats (page sample)
+            'books_with_locations': books_with_locations,
+            'books_without_locations': books_without_locations,
+            'location_counts': location_counts
+        }
+
+    # Apply status filter after other filters.
+    if status_filter and status_filter != 'all':
+        if status_filter == 'wishlist':
+            filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
+        elif status_filter == 'reading':
+            # Handle both 'reading' and 'currently_reading' for backwards compatibility
+            filtered_books = [book for book in filtered_books if get_reading_status(book) in ['reading', 'currently_reading']]
+        else:
+            filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
 
     # Apply sorting
     def get_author_name(book):

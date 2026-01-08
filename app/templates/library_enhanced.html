@@ -378,36 +378,90 @@
     color: white;
   }
 
+    /* Ensure filter dropdowns sit above navbar/header */
+    .dropdown-search-menu {
+        z-index: 2000;
+    }
+
   /* Standalone search box styles */
   .library-search-box {
     max-width: 400px;
     flex: 1;
   }
 
+    .library-search-box .input-group {
+        flex-wrap: nowrap;
+                border-radius: 9999px;
+                overflow: hidden;
+                border: 1px solid #dee2e6;
+                background-color: var(--bs-body-bg);
+    }
+
   .library-search-box input {
-    border-radius: 20px;
+                border-radius: 0;
     padding: 0.5rem 1rem;
-    border: 1px solid #dee2e6;
+        border: 0;
     background-color: var(--bs-body-bg);
     color: var(--bs-body-color);
     transition: all 0.2s ease;
   }
 
-  .library-search-box input:focus {
-    border-color: #86b7fe;
-    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-  }
+    .library-search-box .btn {
+        border-radius: 0;
+                border: 0;
+    }
+
+    .library-search-box .input-group .btn {
+        border-left: 1px solid #dee2e6;
+        min-width: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--bs-secondary-color);
+        background-color: transparent;
+        opacity: 1;
+        padding: 0;
+    }
+
+    .library-search-box .input-group .library-search-clear-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 9999px;
+        border: 1px solid currentColor;
+        font-size: 1rem;
+        line-height: 1;
+    }
+
+    .library-search-box .input-group .btn:disabled {
+        opacity: 0.35;
+    }
+
+    .library-search-box .input-group:focus-within {
+        border-color: #86b7fe;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+    }
 
   [data-theme="dark"] .library-search-box input {
     background-color: #2d2d2d;
-    border-color: #404040;
     color: #e0e0e0;
   }
 
-  [data-theme="dark"] .library-search-box input:focus {
-    border-color: #6b5b73;
-    box-shadow: 0 0 0 0.2rem rgba(107, 91, 115, 0.25);
-  }
+    [data-theme="dark"] .library-search-box .input-group {
+        background-color: #2d2d2d;
+        border-color: #404040;
+    }
+
+    [data-theme="dark"] .library-search-box .input-group .btn {
+        border-left-color: #404040;
+    }
+
+    [data-theme="dark"] .library-search-box .input-group:focus-within {
+        border-color: #6b5b73;
+        box-shadow: 0 0 0 0.2rem rgba(107, 91, 115, 0.25);
+    }
 
   @media (max-width: 768px) {
     .library-search-box {
@@ -432,10 +486,15 @@
                 {% if current_location %}<input type="hidden" name="location" value="{{ current_location }}">{% endif %}
                 {% if current_media_type %}<input type="hidden" name="media_type" value="{{ current_media_type }}">{% endif %}
                 {% if current_sort %}<input type="hidden" name="sort" value="{{ current_sort }}">{% endif %}
-                <input type="text" class="form-control" name="search" 
-                       value="{{ current_search }}" 
-                       placeholder="Search books by title, author, or description..."
-                       aria-label="Search library">
+                <div class="input-group">
+                    <input type="text" class="form-control" name="search" id="librarySearchInput"
+                           value="{{ current_search }}" 
+                           placeholder="Search books by title, author, or description..."
+                           aria-label="Search library">
+                    <button type="button" class="btn btn-outline-secondary" id="librarySearchClearBtn" aria-label="Clear search" disabled>
+                        <span class="library-search-clear-icon" aria-hidden="true">&times;</span>
+                    </button>
+                </div>
             </form>
             <div class="btn-group">
                 <a href="{{ url_for('stats.library_journey') }}" class="btn btn-outline-primary">
@@ -945,7 +1004,50 @@ const filterRecords = {{ filter_records|tojson }};
 const filterFields = ['category', 'publisher', 'language', 'media_type', 'location'];
 let dropdownRegistry = {};
 
+function setupLibrarySearchClearButton() {
+    const librarySearchInput = document.getElementById('librarySearchInput');
+    const librarySearchClearBtn = document.getElementById('librarySearchClearBtn');
+    if (!librarySearchInput || !librarySearchClearBtn) {
+        return;
+    }
+
+    const updateClearVisibility = () => {
+        const hasValue = (librarySearchInput.value || '').trim().length > 0;
+        librarySearchClearBtn.disabled = !hasValue;
+        librarySearchClearBtn.setAttribute('aria-disabled', hasValue ? 'false' : 'true');
+    };
+
+    // Idempotent binding: this function may run multiple times (e.g., pageshow/bfcache restores).
+    if (!librarySearchClearBtn.dataset.bound) {
+        librarySearchInput.addEventListener('input', updateClearVisibility);
+        librarySearchInput.addEventListener('change', updateClearVisibility);
+        librarySearchClearBtn.addEventListener('click', function() {
+            const hasValue = (librarySearchInput.value || '').trim().length > 0;
+            if (!hasValue) {
+                return;
+            }
+            librarySearchInput.value = '';
+            updateClearVisibility();
+            const form = librarySearchInput.closest('form');
+            if (form) form.submit();
+        });
+        librarySearchClearBtn.dataset.bound = '1';
+    }
+
+    // Always reconcile initial visibility with the current input value.
+    updateClearVisibility();
+}
+
+// Handle BFCache restores (back/forward navigation) where DOMContentLoaded may not re-fire.
+window.addEventListener('pageshow', function() {
+    // Defer one frame so any browser-restored form values are present.
+    window.requestAnimationFrame(setupLibrarySearchClearButton);
+});
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize early so errors later in setup don't break the search clear UI.
+    setupLibrarySearchClearButton();
+
     // Initialize with the current filter from the URL, falling back to the hidden input default
     const urlParams = new URLSearchParams(window.location.search);
     const fallbackInput = document.getElementById('status_filter');
@@ -1110,6 +1212,9 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('filter-form').submit();
         });
     }
+
+    // Standalone search clear button
+    setupLibrarySearchClearButton();
 
     // Searchable dropdown functionality
     initializeSearchableDropdowns();
@@ -1525,14 +1630,17 @@ function computeAvailableFilterValues(activeFilters) {
     }
     const availability = {};
     filterFields.forEach(field => availability[field] = new Set());
-    const matches = filterRecords.filter(record => {
-        return filterFields.every(field => {
-            const selected = activeFilters[field];
-            return !selected || record[field] === selected;
+
+    // Faceted availability: for each field, compute allowed values based on all OTHER selected filters.
+    filterFields.forEach(targetField => {
+        const matches = filterRecords.filter(record => {
+            return filterFields.every(field => {
+                if (field === targetField) return true;
+                const selected = activeFilters[field];
+                return !selected || record[field] === selected;
+            });
         });
-    });
-    matches.forEach(record => {
-        filterFields.forEach(field => availability[field].add(record[field] || ''));
+        matches.forEach(record => availability[targetField].add(record[targetField] || ''));
     });
     return availability;
 }
