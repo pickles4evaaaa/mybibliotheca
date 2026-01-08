@@ -113,7 +113,7 @@ def network_explorer():
 def library_journey():
     """Display the Library Journey Timeline visualization using HTML/CSS with filtering."""
     # Get filter parameters from query string
-    date_type = request.args.get('date_type', 'date_added')
+    date_type = request.args.get('date_type', 'publication_date')
     status_filter = request.args.get('status', '')
     year_from = request.args.get('year_from', '')
     year_to = request.args.get('year_to', '')
