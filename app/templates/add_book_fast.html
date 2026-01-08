@@ -315,6 +315,74 @@
     </div>
 </div>
 
+<!-- Duplicate Book Resolution Modal -->
+<div class="modal fade" id="duplicateBookModal" tabindex="-1" aria-labelledby="duplicateBookModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title" id="duplicateBookModalLabel">
+                    <i class="bi bi-exclamation-triangle me-2"></i>Duplicate Book Found
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    This book already exists in your library. How would you like to proceed?
+                </div>
+                
+                <div id="duplicateBookInfo" class="mb-4">
+                    <!-- Book info will be populated here -->
+                </div>
+                
+                <div class="d-grid gap-3">
+                    <!-- Option 1: Increment Count -->
+                    <button type="button" class="btn btn-lg btn-outline-primary text-start" id="incrementCountBtn">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-plus-circle fs-2 me-3"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">Increment Count (+1)</div>
+                                <small class="text-muted">Increase the quantity count for the existing entry</small>
+                            </div>
+                        </div>
+                    </button>
+                    
+                    <!-- Option 2: Add as Separate Entry -->
+                    <button type="button" class="btn btn-lg btn-outline-success text-start" id="addSeparateBtn">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-file-earmark-plus fs-2 me-3"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">Add as Separate Entry</div>
+                                <small class="text-muted">Create a new entry to track unique photos or notes</small>
+                            </div>
+                        </div>
+                    </button>
+                    
+                    <!-- Option 3: Navigate to Existing -->
+                    <button type="button" class="btn btn-lg btn-outline-secondary text-start" id="navigateExistingBtn">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-arrow-right-circle fs-2 me-3"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">View Existing Entry</div>
+                                <small class="text-muted">Navigate to the existing book to view or edit</small>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 .recently-added-item {
     transition: all 0.3s ease;
@@ -395,6 +463,23 @@ let countdownInterval = null;
 let currentBookData = null;
 let recentlyAddedBooks = [];
 const FALLBACK_COVER = "{{ url_for('serve_static', filename='bookshelf.png') }}";
+let editModalInstance = null;
+
+function cleanupStaleModalBackdrops() {
+    try {
+        // Remove any leftover backdrops that can block pointer events
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        // If no modals are currently shown, ensure body isn't stuck in modal-open state
+        const anyShown = document.querySelector('.modal.show');
+        if (!anyShown) {
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+            document.body.style.removeProperty('overflow');
+        }
+    } catch (e) {
+        console.warn('Modal cleanup failed:', e);
+    }
+}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -413,7 +498,185 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('autoSaveTimeout').addEventListener('change', saveSettings);
     document.getElementById('defaultReadingStatus').addEventListener('change', saveSettings);
     document.getElementById('defaultOwnershipStatus').addEventListener('change', saveSettings);
+
+    // Initialize and harden the edit modal against stacking-context/z-index issues
+    // (If the modal lives inside a positioned/z-indexed container, the backdrop can end up above it.)
+    const editModalEl = document.getElementById('editModal');
+    if (editModalEl) {
+        try {
+            if (editModalEl.parentElement !== document.body) {
+                document.body.appendChild(editModalEl);
+            }
+        } catch (e) {
+            console.warn('Failed to move edit modal to body:', e);
+        }
+    }
+    if (editModalEl && window.bootstrap && bootstrap.Modal) {
+        editModalInstance = bootstrap.Modal.getOrCreateInstance(editModalEl);
+        editModalEl.addEventListener('hidden.bs.modal', cleanupStaleModalBackdrops);
+    }
+
+    // Keep duplicate modal out of stacking contexts too
+    const duplicateModalEl = document.getElementById('duplicateBookModal');
+    if (duplicateModalEl) {
+        try {
+            if (duplicateModalEl.parentElement !== document.body) {
+                document.body.appendChild(duplicateModalEl);
+            }
+        } catch (e) {
+            console.warn('Failed to move duplicate modal to body:', e);
+        }
+        duplicateModalEl.addEventListener('hidden.bs.modal', cleanupStaleModalBackdrops);
+    }
 });
+
+// Duplicate handling (Fast Add)
+let currentDuplicateData = null;
+const resolveDuplicateUrl = "{{ url_for('book.resolve_duplicate') }}";
+
+function resetDuplicateButtons() {
+    const buttons = ['incrementCountBtn', 'addSeparateBtn', 'navigateExistingBtn'];
+    buttons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.disabled = false;
+        if (btn.dataset.originalHtml) {
+            btn.innerHTML = btn.dataset.originalHtml;
+        }
+    });
+}
+
+function showDuplicateModal(duplicateResponse) {
+    currentDuplicateData = duplicateResponse;
+    resetDuplicateButtons();
+
+    const hasExistingId = !!(duplicateResponse && duplicateResponse.book_id);
+    const incBtn = document.getElementById('incrementCountBtn');
+    const navBtn = document.getElementById('navigateExistingBtn');
+    if (!hasExistingId) {
+        if (incBtn) incBtn.disabled = true;
+        if (navBtn) navBtn.disabled = true;
+    }
+
+    const bookData = (duplicateResponse && duplicateResponse.book_data) ? duplicateResponse.book_data : {};
+    const bookInfo = document.getElementById('duplicateBookInfo');
+    if (bookInfo) {
+        bookInfo.innerHTML = `
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title">${escapeHtml(bookData.title || 'Untitled')}</h6>
+                    ${bookData.author ? `<p class="card-text mb-1"><small class="text-muted">by ${escapeHtml(bookData.author)}</small></p>` : ''}
+                    ${bookData.isbn13 ? `<p class="card-text mb-0"><small>ISBN-13: ${escapeHtml(String(bookData.isbn13))}</small></p>` : ''}
+                    ${bookData.isbn10 ? `<p class="card-text mb-0"><small>ISBN-10: ${escapeHtml(String(bookData.isbn10))}</small></p>` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    cleanupStaleModalBackdrops();
+    if (!(window.bootstrap && bootstrap.Modal)) {
+        console.error('Bootstrap modal not available');
+        return;
+    }
+    const modalEl = document.getElementById('duplicateBookModal');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+}
+
+async function resolveDuplicate(action, btn, busyText) {
+    if (!currentDuplicateData) return;
+    if (!btn) return;
+
+    if (!btn.dataset.originalHtml) {
+        btn.dataset.originalHtml = btn.innerHTML;
+    }
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${busyText}`;
+
+    try {
+        const response = await fetch(resolveDuplicateUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                action,
+                book_id: currentDuplicateData.book_id,
+                book_data: currentDuplicateData.book_data
+            }),
+            credentials: 'same-origin'
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            showIsbnNotification(result.message || 'Failed to resolve duplicate', 'error');
+            btn.disabled = false;
+            btn.innerHTML = btn.dataset.originalHtml;
+            return;
+        }
+
+        // Close duplicate modal
+        const modalEl = document.getElementById('duplicateBookModal');
+        const modal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(modalEl) : null;
+        if (modal) modal.hide();
+        cleanupStaleModalBackdrops();
+
+        // Fast Add preference: keep user on page except explicit navigation
+        if (action === 'navigate' && result.redirect_url) {
+            window.location.href = result.redirect_url;
+            return;
+        }
+
+        if (action === 'add_separate' && result.book_id) {
+            // Add to recently added list
+            const bookForList = {
+                ...(currentDuplicateData.book_data || {}),
+                cover_url: (currentDuplicateData.book_data && currentDuplicateData.book_data.cover_url) ? currentDuplicateData.book_data.cover_url : FALLBACK_COVER
+            };
+            addToRecentlyAdded(bookForList, result.book_id);
+        }
+
+        showIsbnNotification(result.message || 'Updated', 'success');
+
+        // Clear current book data and return to ISBN entry
+        currentBookData = null;
+        const previewCard = document.getElementById('bookPreviewCard');
+        if (previewCard) {
+            previewCard.style.display = 'none';
+            previewCard.classList.remove('saving');
+        }
+        document.getElementById('isbnInput').focus();
+    } catch (error) {
+        console.error('Error resolving duplicate:', error);
+        showIsbnNotification('An error occurred. Please try again.', 'error');
+        btn.disabled = false;
+        btn.innerHTML = btn.dataset.originalHtml;
+    }
+}
+
+// Button handlers (duplicate modal)
+const incrementCountBtn = document.getElementById('incrementCountBtn');
+if (incrementCountBtn) {
+    incrementCountBtn.addEventListener('click', function() {
+        resolveDuplicate('increment_count', this, 'Updating...');
+    });
+}
+
+const addSeparateBtn = document.getElementById('addSeparateBtn');
+if (addSeparateBtn) {
+    addSeparateBtn.addEventListener('click', function() {
+        resolveDuplicate('add_separate', this, 'Creating...');
+    });
+}
+
+const navigateExistingBtn = document.getElementById('navigateExistingBtn');
+if (navigateExistingBtn) {
+    navigateExistingBtn.addEventListener('click', function() {
+        resolveDuplicate('navigate', this, 'Navigating...');
+    });
+}
 
 function loadSettings() {
     const settings = JSON.parse(localStorage.getItem('fastAddSettings') || '{}');
@@ -521,6 +784,34 @@ function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
+function cleanDescriptionText(raw) {
+    if (!raw) return '';
+    const html = String(raw);
+    try {
+        // Convert basic structure tags into newlines before parsing
+        const normalizedHtml = html
+            .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+            .replace(/<\s*\/p\s*>/gi, '\n\n')
+            .replace(/<\s*p\b[^>]*>/gi, '')
+            .replace(/<\s*li\b[^>]*>/gi, '\n- ')
+            .replace(/<\s*\/li\s*>/gi, '')
+            .replace(/<\s*\/ul\s*>/gi, '\n')
+            .replace(/<\s*\/ol\s*>/gi, '\n');
+
+        const tmp = document.createElement('div');
+        tmp.innerHTML = normalizedHtml;
+        const text = (tmp.textContent || tmp.innerText || '').trim();
+        return text
+            .replace(/\r\n/g, '\n')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    } catch (_) {
+        // Fallback: rough strip of tags
+        return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    }
+}
+
 async function lookupISBN() {
     const isbnInput = document.getElementById('isbnInput');
     const isbn = isbnInput.value.trim().replace(/[-\s]/g, '');
@@ -578,6 +869,7 @@ async function lookupISBN() {
 }
 
 function displayBookPreview(bookData, isbn) {
+    const cleanedDescription = cleanDescriptionText(bookData.description || '');
     currentBookData = {
         title: bookData.title || '',
         author: bookData.authors ? (Array.isArray(bookData.authors) ? bookData.authors.join(', ') : bookData.authors) : '',
@@ -587,7 +879,7 @@ function displayBookPreview(bookData, isbn) {
         published_date: bookData.published_date || '',
         page_count: bookData.page_count || '',
         language: bookData.language || 'en',
-        description: bookData.description || '',
+        description: cleanedDescription,
         cover_url: bookData.cover_url || FALLBACK_COVER,
         google_books_id: bookData.google_books_id || '',
         openlibrary_id: bookData.openlibrary_id || '',
@@ -713,6 +1005,17 @@ async function saveBook() {
         
         const result = await response.json();
         
+        if (result.success && result.already_exists) {
+            previewCard.classList.remove('saving');
+
+            // Prefer server-provided book_data; fall back to our in-memory payload
+            showDuplicateModal({
+                book_id: result.book_id,
+                book_data: result.book_data || saveData
+            });
+            return;
+        }
+
         if (result.success) {
             // Add to recently added list
             addToRecentlyAdded(currentBookData, result.book_id);
@@ -761,8 +1064,17 @@ function editBook() {
     document.getElementById('editOwnershipStatus').value = settings.defaultOwnershipStatus || 'owned';
     
     // Show modal
-    const modal = new bootstrap.Modal(document.getElementById('editModal'));
-    modal.show();
+    cleanupStaleModalBackdrops();
+    const modalEl = document.getElementById('editModal');
+    if (!modalEl || !(window.bootstrap && bootstrap.Modal)) {
+        console.error('Bootstrap modal not available');
+        return;
+    }
+    if (!editModalInstance) {
+        editModalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modalEl.addEventListener('hidden.bs.modal', cleanupStaleModalBackdrops);
+    }
+    editModalInstance.show();
 }
 
 function formatDateForInput(dateStr) {
@@ -809,11 +1121,47 @@ async function saveEditedBook() {
         });
         
         const result = await response.json();
+
+        if (result.success && result.already_exists) {
+            // Close edit modal before opening duplicate modal (avoids stacking/backdrop conflicts)
+            const editModalEl = document.getElementById('editModal');
+            const editModal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(editModalEl) : null;
+            if (editModal) editModal.hide();
+            cleanupStaleModalBackdrops();
+
+            const bookDataForDuplicate = result.book_data || {
+                title: formData.get('title') || '',
+                author: formData.get('author') || '',
+                isbn13: formData.get('isbn13') || '',
+                isbn10: formData.get('isbn10') || '',
+                subtitle: formData.get('subtitle') || '',
+                description: formData.get('description') || '',
+                publisher: formData.get('publisher') || '',
+                published_date: formData.get('published_date') || '',
+                page_count: formData.get('page_count') || '',
+                language: formData.get('language') || 'en',
+                cover_url: formData.get('cover_url') || '',
+                categories: (currentBookData && currentBookData.categories) ? currentBookData.categories : [],
+                google_books_id: formData.get('google_books_id') || '',
+                openlibrary_id: formData.get('openlibrary_id') || '',
+                reading_status: formData.get('reading_status') || '',
+                ownership_status: formData.get('ownership_status') || 'owned',
+                location_id: formData.get('location_id') || null
+            };
+
+            showDuplicateModal({
+                book_id: result.book_id,
+                book_data: bookDataForDuplicate
+            });
+            return;
+        }
         
         if (result.success) {
             // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
-            modal.hide();
+            const modalEl = document.getElementById('editModal');
+            const modal = (window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(modalEl) : null;
+            if (modal) modal.hide();
+            cleanupStaleModalBackdrops();
             
             // Add to recently added list
             const savedData = {

@@ -854,6 +854,39 @@ const FALLBACK_COVER_URL = "{{ url_for('serve_static', filename='bookshelf.png')
 // Maintain the original hierarchical category paths we derived from APIs/user input
 window.rawCategoryPaths = new Set();
 
+function normalizeCategoryName(name) {
+    return String(name || '').trim().toLowerCase();
+}
+
+function getVisibleCategoryTagNames() {
+    const names = new Set();
+    document.querySelectorAll('.category-tag').forEach(tag => {
+        const n = tag.getAttribute('data-name');
+        if (n) names.add(normalizeCategoryName(n));
+    });
+    return names;
+}
+
+// Filter raw hierarchical paths based on which segment chips are still visible.
+// If a user removes a segment chip, any raw path requiring that segment is dropped.
+function syncRawCategoryPathsWithVisibleTags() {
+    try {
+        if (!window.rawCategoryPaths || window.rawCategoryPaths.size === 0) return;
+        const visible = getVisibleCategoryTagNames();
+        const next = new Set();
+        for (const raw of window.rawCategoryPaths) {
+            const rawStr = String(raw || '').trim();
+            if (!rawStr) continue;
+            const parts = isHierarchicalCategory(rawStr) ? splitCategoryPath(rawStr) : [rawStr];
+            const keep = parts.every(p => visible.has(normalizeCategoryName(p)));
+            if (keep) next.add(rawStr);
+        }
+        window.rawCategoryPaths = next;
+    } catch (_) {
+        // best-effort sync; don't block UI
+    }
+}
+
 function isHierarchicalCategory(name) {
     return typeof name === 'string' && /[>/]/.test(name);
 }
@@ -1698,7 +1731,10 @@ function removeContributor(element) {
 }
 
 function removeCategory(element) {
+    // element is the "×" span; remove the surrounding tag
     element.parentElement.remove();
+    // Keep raw category paths consistent with visible chips
+    syncRawCategoryPathsWithVisibleTags();
 }
 
 function addContributor(type, name, id) {
@@ -2222,6 +2258,13 @@ function loadLocations() {
 }
 
 function collectContributorsAndCategories() {
+    // Remove any previously appended hidden inputs so we don't submit stale/duplicate values
+    document.querySelectorAll(
+        '#addBookForm input[type="hidden"][name^="contributors_"], ' +
+        '#addBookForm input[type="hidden"][name="categories"], ' +
+        '#addBookForm input[type="hidden"][name="raw_categories"]'
+    ).forEach(el => el.remove());
+
     // Collect all contributors
     const contributorTypes = ['authored', 'narrated', 'edited', 'translated', 'illustrated'];
     contributorTypes.forEach(type => {
@@ -2260,6 +2303,7 @@ function collectContributorsAndCategories() {
     }
 
     // Also submit raw hierarchical paths so backend can create parent/child relationships
+    syncRawCategoryPathsWithVisibleTags();
     if (window.rawCategoryPaths && window.rawCategoryPaths.size > 0) {
         const rawInput = document.createElement('input');
         rawInput.type = 'hidden';
