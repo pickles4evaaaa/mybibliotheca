@@ -351,7 +351,23 @@ class SafeKuzuManager:
             # Create database instance with corruption/IO recovery guard
             startup_marker_info = self._consume_shutdown_marker()
             try:
-                self._database = kuzu.Database(self.database_path)
+                # Defensive: some test/workdir setups can accidentally shadow the real
+                # `kuzu` package (e.g., a local folder named `kuzu/`). If that happens,
+                # the imported module won't expose `Database`.
+                kuzu_mod = kuzu
+                if not hasattr(kuzu_mod, 'Database'):
+                    try:
+                        import importlib
+                        import sys
+                        sys.modules.pop('kuzu', None)
+                        kuzu_mod = importlib.import_module('kuzu')
+                        # Keep subsequent calls consistent for this module.
+                        globals()['kuzu'] = kuzu_mod
+                    except Exception:
+                        kuzu_mod = kuzu
+                if not hasattr(kuzu_mod, 'Database'):
+                    raise AttributeError("module 'kuzu' has no attribute 'Database'")
+                self._database = kuzu_mod.Database(self.database_path)
             except Exception as open_err:
                 err_str = str(open_err)
                 # Detect classic corruption / truncated WAL style errors

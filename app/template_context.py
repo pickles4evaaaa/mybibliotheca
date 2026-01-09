@@ -246,6 +246,23 @@ def inject_password_policy():
     }
 
 
+def inject_language_catalog():
+    """Expose the dynamic language catalog to templates."""
+    try:
+        from app.utils.language_catalog import get_language_choices, language_label
+
+        return {
+            'language_choices': get_language_choices(),
+            'language_label': language_label,
+        }
+    except Exception:
+        # Safe fallback: templates can still render, even if catalog load fails.
+        return {
+            'language_choices': [("en", "English")],
+            'language_label': lambda token: token or "",
+        }
+
+
 def register_context_processors(app):
     """Register all context processors with the Flask app."""
     app.context_processor(inject_debug_manager)
@@ -253,6 +270,7 @@ def register_context_processors(app):
     app.context_processor(inject_reading_streak)
     app.context_processor(inject_datetime)
     app.context_processor(inject_password_policy)
+    app.context_processor(inject_language_catalog)
     # Helper for templates to resolve effective reading defaults quickly
     def _get_defaults(user_id=None):
         try:

@@ -13,6 +13,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
 from flask_login import LoginManager
+
+# Compatibility shim: Flask 2.3+ no longer re-exports Markup from flask.
+# Some versions of Flask-WTF still import it as `from flask import Markup`.
+try:
+    import flask as _flask
+    from markupsafe import Markup as _Markup
+    if not hasattr(_flask, 'Markup'):
+        _flask.Markup = _Markup  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+# Compatibility shim: Werkzeug 3.x removed `werkzeug.urls.url_encode`.
+# Some versions of Flask-WTF still import it.
+try:
+    import werkzeug.urls as _wz_urls
+    from urllib.parse import urlencode as _stdlib_urlencode
+
+    if not hasattr(_wz_urls, 'url_encode'):
+        def url_encode(obj, charset: str = 'utf-8', sort: bool = False, key=None, separator: str = '&') -> str:  # type: ignore[override]
+            # Minimal drop-in replacement for Flask-WTF usage.
+            return _stdlib_urlencode(obj, doseq=True)
+
+        _wz_urls.url_encode = url_encode  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 from flask_wtf.csrf import CSRFProtect
 from flask_session import Session
 try:

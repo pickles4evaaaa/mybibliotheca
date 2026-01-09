@@ -148,6 +148,12 @@ class KuzuServiceFacade:
         # Update book metadata (global fields)
         updated_book = None
         if book_updates:
+            try:
+                from app.utils.language_catalog import remember_language
+
+                remember_language(book_updates.get('language'))
+            except Exception:
+                pass
             updated_book = self.book_service.update_book_sync(book_id, book_updates)
         
         # Update personal metadata (replacing OWNS usage)
@@ -397,6 +403,10 @@ class KuzuServiceFacade:
         """Sync version of get_all_books_with_user_overlay."""
         return self.relationship_service.get_all_books_with_user_overlay_sync(user_id)
 
+    def get_all_books_with_user_overlay_flat_sync(self, user_id: str) -> List[Dict[str, Any]]:
+        """Lightweight all-books overlay optimized for filtering/search."""
+        return self.relationship_service.get_all_books_with_user_overlay_flat_sync(user_id)
+
     def get_books_with_user_overlay_paginated_sync(self, user_id: str, limit: int, offset: int, sort: str = 'title_asc') -> List[Dict[str, Any]]:
         """Paginated list of books with user overlay."""
         return self.relationship_service.get_books_with_user_overlay_paginated_sync(user_id, limit, offset, sort)
@@ -408,6 +418,13 @@ class KuzuServiceFacade:
     def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
         """Global reading/ownership status counts for a user across all books."""
         return self.relationship_service.get_library_status_counts_sync(user_id)
+
+    def search_user_books_sync(self, user_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search within the user's library returning lightweight dicts.
+
+        Used by autocomplete/API endpoints; optimized to avoid per-book enrichment.
+        """
+        return self.relationship_service.search_user_books_flat_sync(str(user_id), query, limit=limit)
     
     # ==========================================
     # Search Service Methods

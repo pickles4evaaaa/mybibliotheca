@@ -21,6 +21,7 @@ from app.services import book_service, reading_log_service, custom_field_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.utils.book_utils import get_best_cover_for_book
+from app.utils.author_sorting import author_first_sort_key_for_book, author_last_sort_key_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
@@ -211,10 +212,19 @@ def _handle_book_only(uid, form):
             val = form.get(name, '').strip()
             return val or None
         return None
-    for name in ['publisher','isbn13','isbn10','language','asin','google_books_id','openlibrary_id']:
+    for name in ['publisher', 'isbn13', 'isbn10', 'language', 'asin', 'google_books_id', 'openlibrary_id']:
         val = _opt(name)
         if name in form:
             update_data[name] = val
+
+    # Back-compat: older forms used language_custom; prefer language when present.
+    try:
+        if not update_data.get('language'):
+            lang_custom = (form.get('language_custom') or '').strip()
+            if lang_custom:
+                update_data['language'] = lang_custom
+    except Exception:
+        pass
     if 'published_date' in form:
         pd = form.get('published_date','').strip()
         if pd:
@@ -956,7 +966,11 @@ def fast_add_save():
                 page_count = int(pcs)
             except ValueError:
                 pass
-        language = (request.form.get('language') or 'en').strip() or 'en'
+        language = (
+            (request.form.get('language') or 'en').strip()
+            or (request.form.get('language_custom') or '').strip()
+            or 'en'
+        )
         cover_url = (request.form.get('cover_url') or '').strip() or None
         published_date = (request.form.get('published_date') or '').strip() or None
         
@@ -1021,7 +1035,29 @@ def fast_add_save():
                 'success': True,
                 'message': f'Book "{title}" already exists in your library',
                 'book_id': existing_id,
-                'already_exists': True
+                'already_exists': True,
+                # Include book_data so Fast Add can offer duplicate-resolution actions
+                # via /api/resolve_duplicate (increment count / add separate / navigate).
+                'book_data': {
+                    'title': title,
+                    'author': author,
+                    'isbn13': isbn13,
+                    'isbn10': isbn10,
+                    'subtitle': subtitle,
+                    'description': description,
+                    'publisher': publisher_name,
+                    'published_date': published_date,
+                    'page_count': page_count,
+                    'language': language,
+                    'cover_url': cover_url,
+                    'categories': raw_categories if raw_categories else [],
+                    'google_books_id': (request.form.get('google_books_id') or '').strip() or None,
+                    'openlibrary_id': (request.form.get('openlibrary_id') or '').strip() or None,
+                    'reading_status': request.form.get('reading_status', ''),
+                    'ownership_status': request.form.get('ownership_status', 'owned'),
+                    'location_id': request.form.get('location_id'),
+                    'media_type': media_type
+                }
             })
         
         if not added:
@@ -1893,8 +1929,9 @@ def library():
 
     # Total count first so we can clamp page to a valid range (cache for short TTL)
     try:
-        from app.utils.simple_cache import cache_get, cache_set
-        _tc_key = f"total_count:{current_user.id}"
+        from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+        _ver = get_user_library_version(str(current_user.id))
+        _tc_key = f"total_count:{current_user.id}:v{_ver}"
         total_books = cache_get(_tc_key)
         if total_books is None:
             total_books = book_service.get_total_book_count_sync()
@@ -1926,10 +1963,10 @@ def library():
             # Use short-lived cache for expensive all-books call
             from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
             version = get_user_library_version(str(current_user.id))
-            cache_key = f"all_books_overlay:{current_user.id}:v{version}"
+            cache_key = f"all_books_overlay_flat:{current_user.id}:v{version}:v2"
             user_books = cache_get(cache_key)
             if user_books is None:
-                user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+                user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
                 cache_set(cache_key, user_books, ttl_seconds=120)
         except Exception:
             user_books = []
@@ -2015,32 +2052,10 @@ def library():
             return status
         return getattr(book, 'ownership_status', None)
     
-    # Global status counts (not page-limited)
-    try:
-        from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
-        _ver = get_user_library_version(str(current_user.id))
-        _sc_key = f"status_counts:{current_user.id}:v{_ver}"
-        global_counts = cache_get(_sc_key)
-        if global_counts is None:
-            global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
-            cache_set(_sc_key, global_counts, ttl_seconds=180)
-    except Exception:
-        global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
+    # We'll compute stats after applying non-status filters.
+    stats: Dict[str, Any] = {}
 
-    stats = {
-        'total_books': total_books,
-        'books_read': int(global_counts.get('read', 0)),
-        'currently_reading': int(global_counts.get('currently_reading', 0)),
-        'want_to_read': int(global_counts.get('plan_to_read', 0)),
-        'on_hold': int(global_counts.get('on_hold', 0)),
-        'wishlist': int(global_counts.get('wishlist', 0)),
-        # Add location stats (page sample)
-        'books_with_locations': books_with_locations,
-        'books_without_locations': books_without_locations,
-        'location_counts': location_counts
-    }
-    
-    # Apply status filter first
+    # Start from the working set
     filtered_books = user_books
 
     def _resolve_media_type_value(book_obj):
@@ -2087,16 +2102,7 @@ def library():
 
         return raw
 
-    if status_filter and status_filter != 'all':
-        if status_filter == 'wishlist':
-            filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
-        elif status_filter == 'reading':
-            # Handle both 'reading' and 'currently_reading' for backwards compatibility
-            filtered_books = [book for book in filtered_books if get_reading_status(book) in ['reading', 'currently_reading']]
-        else:
-            filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
-    
-    # Apply other filters
+    # Apply other filters (excluding status_filter so stat tiles remain meaningful)
     def _parse_finish_date(val):
         if not val:
             return None
@@ -2120,14 +2126,21 @@ def library():
     finished_before = _parse_finish_date(finished_before_raw)
 
     if search_query:
-        search_lower = search_query.casefold()
+        from app.utils.library_search import library_book_matches_query
+
+        def _book_as_dict(book_obj):
+            if isinstance(book_obj, dict):
+                return book_obj
+            if hasattr(book_obj, '__dict__'):
+                try:
+                    return book_obj.__dict__
+                except Exception:
+                    return {}
+            return {}
+
         filtered_books = [
-            book for book in filtered_books 
-            if (search_lower in (((book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')) or '').casefold())) or
-               (search_lower in (((book.get('normalized_title', '') if isinstance(book, dict) else getattr(book, 'normalized_title', '')) or '').casefold())) or
-               (search_lower in (((book.get('subtitle', '') if isinstance(book, dict) else getattr(book, 'subtitle', '')) or '').casefold())) or
-               (search_lower in (((book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')) or '').casefold())) or
-               (search_lower in (((book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')) or '').casefold()))
+            book for book in filtered_books
+            if library_book_matches_query(_book_as_dict(book), search_query)
         ]
     
     if publisher_filter:
@@ -2182,10 +2195,107 @@ def library():
             )
         ]
 
+    # Compute statistics for filter buttons.
+    # If we're already in "full fetch" mode (has_filter), these reflect the current
+    # filter context (excluding status_filter). Otherwise, fall back to cached global counts.
+    if has_filter:
+        computed_counts: Dict[str, int] = {
+            'read': 0,
+            'currently_reading': 0,
+            'on_hold': 0,
+            'plan_to_read': 0,
+            'wishlist': 0,
+        }
+        for book in filtered_books or []:
+            rs = get_reading_status(book)
+            owner = get_ownership_status(book)
+
+            if rs == 'read':
+                computed_counts['read'] += 1
+            elif rs in ('reading', 'currently_reading'):
+                computed_counts['currently_reading'] += 1
+            elif rs == 'on_hold':
+                computed_counts['on_hold'] += 1
+            elif rs == 'plan_to_read':
+                computed_counts['plan_to_read'] += 1
+
+            if isinstance(owner, str) and owner.strip().lower() == 'wishlist':
+                computed_counts['wishlist'] += 1
+
+        stats = {
+            'total_books': int(len(filtered_books) if filtered_books is not None else 0),
+            'books_read': int(computed_counts.get('read', 0)),
+            'currently_reading': int(computed_counts.get('currently_reading', 0)),
+            'want_to_read': int(computed_counts.get('plan_to_read', 0)),
+            'on_hold': int(computed_counts.get('on_hold', 0)),
+            'wishlist': int(computed_counts.get('wishlist', 0)),
+            # Add location stats (page sample)
+            'books_with_locations': books_with_locations,
+            'books_without_locations': books_without_locations,
+            'location_counts': location_counts
+        }
+    else:
+        try:
+            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
+            _ver = get_user_library_version(str(current_user.id))
+            # Include a small schema/version suffix to invalidate older cached shapes
+            # (prevents lingering broken counts after upgrades).
+            _sc_key = f"status_counts:{current_user.id}:v{_ver}:v2"
+            global_counts = cache_get(_sc_key)
+            if global_counts is None:
+                global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
+                cache_set(_sc_key, global_counts, ttl_seconds=180)
+        except Exception:
+            global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
+
+        stats = {
+            'total_books': total_books,
+            'books_read': int(global_counts.get('read', 0)),
+            'currently_reading': int(global_counts.get('currently_reading', 0)),
+            'want_to_read': int(global_counts.get('plan_to_read', 0)),
+            'on_hold': int(global_counts.get('on_hold', 0)),
+            'wishlist': int(global_counts.get('wishlist', 0)),
+            # Add location stats (page sample)
+            'books_with_locations': books_with_locations,
+            'books_without_locations': books_without_locations,
+            'location_counts': location_counts
+        }
+
+    # Apply status filter after other filters.
+    if status_filter and status_filter != 'all':
+        if status_filter == 'wishlist':
+            filtered_books = [book for book in filtered_books if get_ownership_status(book) == 'wishlist']
+        elif status_filter == 'reading':
+            # Handle both 'reading' and 'currently_reading' for backwards compatibility
+            filtered_books = [book for book in filtered_books if get_reading_status(book) in ['reading', 'currently_reading']]
+        else:
+            filtered_books = [book for book in filtered_books if get_reading_status(book) == status_filter]
+
     # Apply sorting
     def get_author_name(book):
         """Helper function to get author name safely"""
         if isinstance(book, dict):
+            # Prefer Person table data via contributors
+            contributors = book.get('contributors')
+            if isinstance(contributors, list) and contributors:
+                for contrib in contributors:
+                    try:
+                        ctype = contrib.get('contribution_type') if isinstance(contrib, dict) else getattr(contrib, 'contribution_type', None)
+                        if hasattr(ctype, 'value'):
+                            ctype = ctype.value
+                        ctype = (str(ctype or '').strip().lower())
+                        if ctype in ('authored', 'co_authored'):
+                            person = contrib.get('person') if isinstance(contrib, dict) else getattr(contrib, 'person', None)
+                            if isinstance(person, dict):
+                                name = person.get('name')
+                                if name:
+                                    return str(name)
+                            elif person is not None:
+                                name = getattr(person, 'name', None)
+                                if name:
+                                    return str(name)
+                    except Exception:
+                        continue
             authors = book.get('authors', [])
             author = book.get('author', '')
             if authors and isinstance(authors, list) and len(authors) > 0:
@@ -2213,6 +2323,21 @@ def library():
                         return str(author)
                 else:
                     return str(book.authors)
+            elif hasattr(book, 'contributors') and getattr(book, 'contributors', None):
+                try:
+                    for contrib in getattr(book, 'contributors') or []:
+                        ctype = getattr(contrib, 'contribution_type', None)
+                        if hasattr(ctype, 'value'):
+                            ctype = ctype.value
+                        ctype = (str(ctype or '').strip().lower())
+                        if ctype in ('authored', 'co_authored'):
+                            person = getattr(contrib, 'person', None)
+                            if person is not None:
+                                name = getattr(person, 'name', None)
+                                if name:
+                                    return str(name)
+                except Exception:
+                    pass
             elif hasattr(book, 'author') and book.author:
                 return book.author
             return "Unknown Author"
@@ -2247,13 +2372,13 @@ def library():
     elif sort_option == 'title_desc':
         filtered_books.sort(key=lambda x: (x.get('title', '') if isinstance(x, dict) else getattr(x, 'title', '')).lower(), reverse=True)
     elif sort_option == 'author_first_asc':
-        filtered_books.sort(key=lambda x: get_author_name(x).lower())
+        filtered_books.sort(key=author_first_sort_key_for_book)
     elif sort_option == 'author_first_desc':
-        filtered_books.sort(key=lambda x: get_author_name(x).lower(), reverse=True)
+        filtered_books.sort(key=author_first_sort_key_for_book, reverse=True)
     elif sort_option == 'author_last_asc':
-        filtered_books.sort(key=lambda x: get_author_last_first(x).lower())
+        filtered_books.sort(key=author_last_sort_key_for_book)
     elif sort_option == 'author_last_desc':
-        filtered_books.sort(key=lambda x: get_author_last_first(x).lower(), reverse=True)
+        filtered_books.sort(key=author_last_sort_key_for_book, reverse=True)
     elif sort_option == 'date_added_desc':
         # Sort by date added (newest first) - use added_at or created_at
         # Use title as secondary key for stable sorting when timestamps are identical (bulk imports)
@@ -2379,22 +2504,32 @@ def library():
     languages = set()
     locations = set()
     media_types = set()
+    filter_record_set: set[tuple] = set()
 
     for book in all_books:
         # Handle categories
         book_categories = book.get('categories', []) if isinstance(book, dict) else getattr(book, 'categories', [])
+        category_values: List[str] = []
         if book_categories:
             # book.categories is a list of Category objects, not a string
             for cat in book_categories:
                 if isinstance(cat, dict):
-                    categories.add(cat.get('name', ''))
+                    name_val = cat.get('name', '')
+                    categories.add(name_val)
+                    category_values.append(name_val)
                 elif hasattr(cat, 'name'):
                     categories.add(cat.name)
+                    category_values.append(cat.name)
                 else:
-                    categories.add(str(cat))
+                    string_val = str(cat)
+                    categories.add(string_val)
+                    category_values.append(string_val)
+        if not category_values:
+            category_values.append('')
         
         # Handle publisher
         book_publisher = book.get('publisher') if isinstance(book, dict) else getattr(book, 'publisher', None)
+        publisher_name = ''
         if book_publisher:
             # Handle Publisher domain object or string
             if isinstance(book_publisher, dict):
@@ -2407,26 +2542,49 @@ def library():
         
         # Handle language
         book_language = book.get('language') if isinstance(book, dict) else getattr(book, 'language', None)
+        language_value = book_language or ''
         if book_language:
             languages.add(book_language)
         
         # Handle locations - they are now returned as strings (location names) from KuzuIntegrationService
         book_locations = book.get('locations', []) if isinstance(book, dict) else getattr(book, 'locations', [])
+        location_values: List[str] = []
         if book_locations:
             for loc in book_locations:
                 if isinstance(loc, str) and loc:
                     # Location is already a string (location name) and not empty
                     locations.add(loc)
+                    location_values.append(loc)
                 elif isinstance(loc, dict) and loc.get('name'):
                     locations.add(loc.get('name'))
+                    location_values.append(loc.get('name'))
                 elif hasattr(loc, 'name') and getattr(loc, 'name', None):
-                    locations.add(getattr(loc, 'name'))
+                    extracted = getattr(loc, 'name')
+                    locations.add(extracted)
+                    location_values.append(extracted)
                 else:
-                    locations.add(str(loc))
+                    string_val = str(loc)
+                    locations.add(string_val)
+                    location_values.append(string_val)
+        if not location_values:
+            location_values.append('')
 
         mt_value = _resolve_media_type_value(book)
         if mt_value:
             media_types.add(mt_value)
+        else:
+            mt_value = ''
+
+        # Build a lightweight co-occurrence index so dropdown options can cascade on the client.
+        for category_value in category_values:
+            for location_value in location_values:
+                filter_record_set.add((
+                    category_value or '',
+                    publisher_name or '',
+                    language_value or '',
+                    location_value or '',
+                    mt_value or ''
+                ))
 
     declared_media_types = {mt.value.lower() for mt in MediaType}
     all_media_type_values = sorted(
@@ -2456,6 +2614,17 @@ def library():
         for val in all_media_type_values
     ]
     media_type_labels = {opt['value']: opt['label'] for opt in media_type_options}
+
+    filter_records = [
+        {
+            'category': entry[0],
+            'publisher': entry[1],
+            'language': entry[2],
+            'location': entry[3],
+            'media_type': entry[4]
+        }
+        for entry in sorted(filter_record_set)
+    ]
 
     # Get users through Kuzu service layer
     domain_users = user_service.get_all_users_sync() or []
@@ -2624,7 +2793,8 @@ def library():
         users=users,
         reading_status_options=reading_status_options,
         location_options=location_options,
-        category_options=category_options
+        category_options=category_options,
+        filter_records=filter_records
     ))
     resp.headers['ETag'] = _html_etag
     resp.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
@@ -4636,8 +4806,8 @@ def search_books_in_library():
     media_type_filter = media_type_filter_raw.lower() if media_type_filter_raw else ''
     search_query = request.args.get('search', '')
 
-    # Use service layer with global book visibility
-    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+    # Use service layer with global book visibility (flat overlay avoids N+1)
+    user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
     
     # Apply filters in Python (Kuzu doesn't have complex querying like SQL)
     filtered_books = user_books
@@ -4687,12 +4857,10 @@ def search_books_in_library():
         return raw
 
     if search_query:
-        search_lower = search_query.lower()
+        from app.utils.library_search import library_book_matches_query
         filtered_books = [
-            book for book in filtered_books 
-            if (search_lower in (book.get('title', '') if isinstance(book, dict) else getattr(book, 'title', '')).lower()) or
-               (search_lower in (book.get('author', '') if isinstance(book, dict) else getattr(book, 'author', '')).lower()) or
-               (search_lower in (book.get('description', '') if isinstance(book, dict) else getattr(book, 'description', '')).lower())
+            book for book in filtered_books
+            if isinstance(book, dict) and library_book_matches_query(book, search_query)
         ]
     if publisher_filter:
         filtered_books = [
@@ -4819,11 +4987,11 @@ def search_books_in_library():
     # Calculate statistics for filter buttons
     stats = {
         'total_books': len(user_books),
-        'books_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'read']),
-        'currently_reading': len([b for b in user_books if getattr(b, 'reading_status', None) == 'reading']),
-        'want_to_read': len([b for b in user_books if getattr(b, 'reading_status', None) == 'plan_to_read']),
-        'on_hold': len([b for b in user_books if getattr(b, 'reading_status', None) == 'on_hold']),
-        'wishlist': len([b for b in user_books if getattr(b, 'ownership_status', None) == 'wishlist']),
+        'books_read': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') == 'read')]),
+        'currently_reading': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') in ('reading', 'currently_reading'))]),
+        'want_to_read': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') == 'plan_to_read')]),
+        'on_hold': len([b for b in user_books if isinstance(b, dict) and (b.get('reading_status') == 'on_hold')]),
+        'wishlist': len([b for b in user_books if isinstance(b, dict) and (b.get('ownership_status') == 'wishlist')]),
     }
 
     return render_template(
@@ -4854,6 +5022,7 @@ def search_books_in_library():
 def add_book_manual():
     """Manual add with series autocomplete integration (simplified)."""
     import json
+    from app.utils.category_path_utils import filter_raw_category_paths_by_visible_segments
     submit_action = request.form.get('submit_action', 'save')
     title = (request.form.get('title') or '').strip()
     if not title:
@@ -4882,13 +5051,23 @@ def add_book_manual():
             categories = [c.get('name') for c in json.loads(request.form['categories']) if c.get('name')]
         except Exception:
             pass
-    raw_categories = None
+    raw_categories_provided = 'raw_categories' in request.form
+    raw_categories: list[str] = []
     raw_cat_val = request.form.get('raw_categories')
     if raw_cat_val:
         try:
-            raw_categories = json.loads(raw_cat_val)
+            parsed = json.loads(raw_cat_val)
+            if isinstance(parsed, list):
+                raw_categories = [str(s).strip() for s in parsed if str(s).strip()]
+            elif isinstance(parsed, str) and parsed.strip():
+                raw_categories = [s.strip() for s in parsed.split(',') if s.strip()]
         except Exception:
             raw_categories = [s.strip() for s in raw_cat_val.split(',') if s.strip()]
+
+    # Defensive guard: never allow raw_categories to re-introduce categories the user removed.
+    # The UI submits category *segments* as chips; filter raw hierarchical paths to match.
+    if raw_categories and categories:
+        raw_categories = filter_raw_category_paths_by_visible_segments(raw_categories, categories)
 
     # Scalars
     # Accept multiple ISBN field names and normalize
@@ -4906,7 +5085,11 @@ def add_book_manual():
             page_count = int(pcs)
         except ValueError:
             pass
-    language = (request.form.get('language') or 'en').strip() or 'en'
+    language = (
+        (request.form.get('language') or 'en').strip()
+        or (request.form.get('language_custom') or '').strip()
+        or 'en'
+    )
     cover_url = (request.form.get('cover_url') or '').strip()
     published_date = (request.form.get('published_date') or '').strip()
     series = (request.form.get('series') or '').strip()
@@ -5100,7 +5283,8 @@ def add_book_manual():
         if sd: updates['start_date']=sd
         fd = (request.form.get('finish_date') or '').strip()
         if fd: updates['finish_date']=fd
-        if raw_categories: updates['raw_categories']=raw_categories
+        if raw_categories_provided:
+            updates['raw_categories'] = raw_categories
         if updates:
             try: book_service.update_book_sync(created.uid, str(current_user.id), **updates)
             except Exception: pass

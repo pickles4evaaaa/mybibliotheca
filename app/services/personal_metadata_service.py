@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from __future__ import annotations
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from pathlib import Path
@@ -367,6 +368,9 @@ CREATE REL TABLE {self.REL_NAME}(
             logger.error(f"Failed to create OWNS migration backup (continuing anyway): {e}")
 
     def _fetch_relationship(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
+        # Kuzu schema uses STRING ids; callers may pass ints.
+        user_id = str(user_id)
+        book_id = str(book_id)
         query_new = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
         RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields, r.created_at, r.updated_at
@@ -449,6 +453,9 @@ CREATE REL TABLE {self.REL_NAME}(
             return None
 
     def get_personal_metadata(self, user_id: str, book_id: str) -> Dict[str, Any]:
+        # Kuzu schema uses STRING ids; callers may pass ints.
+        user_id = str(user_id)
+        book_id = str(book_id)
         # Ensure migration attempted before reads
         self._ensure_relationship_schema()
         self._maybe_run_owns_migration()
@@ -490,6 +497,9 @@ CREATE REL TABLE {self.REL_NAME}(
             merge: if True, load existing JSON and merge; else overwrite JSON.
         Returns updated metadata dictionary.
         """
+        # Kuzu schema uses STRING ids; callers may pass ints.
+        user_id = str(user_id)
+        book_id = str(book_id)
         # Ensure migration attempted before writes
         self._ensure_relationship_schema()
         self._maybe_run_owns_migration()
@@ -528,6 +538,12 @@ CREATE REL TABLE {self.REL_NAME}(
                     return None
                 # Normalize Z suffix
                 s2 = s.replace('Z', '+00:00')
+                # Accept date-only values (e.g., '2023-08-08') and coerce to midnight UTC
+                if re.match(r'^\d{4}-\d{2}-\d{2}$', s2):
+                    try:
+                        return datetime.fromisoformat(f"{s2}T00:00:00+00:00").isoformat()
+                    except Exception:
+                        return None
                 try:
                     return datetime.fromisoformat(s2).isoformat()
                 except Exception:
