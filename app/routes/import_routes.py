@@ -2265,6 +2265,16 @@ async def process_simple_import(import_config):
             pending_processed_entries.clear()
 
         final_activity = f"Import completed! {success_count} new, {merged_count} merged, {error_count} errors, {skipped_count} skipped"
+
+        # Invalidate Library page ETag cache for this user so a normal refresh
+        # shows newly imported books immediately.
+        if success_count > 0 or merged_count > 0:
+            try:
+                from app.utils.simple_cache import bump_user_library_version
+                bump_user_library_version(str(user_id))
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"Failed to bump library version after import: {exc}")
+
         completion_updates = {
             'status': 'completed',
             'processed': processed_count,
