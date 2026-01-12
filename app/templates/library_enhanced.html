@@ -700,6 +700,13 @@
                                     <input type="date" class="form-control" id="finished_before" name="finished_before" value="{{ current_finished_before }}">
                                 </div>
                                 <div class="col-md-3">
+                                    <label class="form-label d-block">Review</label>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="needs_review" name="needs_review" value="1" {% if current_needs_review %}checked{% endif %}>
+                                        <label class="form-check-label" for="needs_review">Needs Review only</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
                                     <label for="sort" class="form-label">Sort By</label>
                                     <select class="form-select" id="sort" name="sort">
                                         <option value="title_asc" {% if current_sort == 'title_asc' or not current_sort %}selected{% endif %}>Title A-Z</option>
@@ -861,6 +868,10 @@
                                             <span class="badge bg-warning">📚 Borrowed</span>
                                         {% elif display_ownership == 'loaned' %}
                                             <span class="badge bg-info">📤 Loaned</span>
+                                        {% endif %}
+
+                                        {% if book.needs_review %}
+                                            <span class="badge bg-warning text-dark">⚠️ Needs Review</span>
                                         {% endif %}
                                     </div>
 

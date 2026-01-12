@@ -14,6 +14,10 @@ import re
 import requests
 import os
 import logging
+import threading
+import time
+
+from app.utils.adaptive_http import adaptive_get
 
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
@@ -23,6 +27,26 @@ _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on'
 _REQUEST_TIMEOUT = int(os.getenv('METADATA_REQUEST_TIMEOUT', '8'))
 # Overall fetch timeout for parallel provider requests (default 20 seconds total)
 _FETCH_TIMEOUT = int(os.getenv('METADATA_FETCH_TIMEOUT', '20'))
+
+
+def _in_executor_worker_thread() -> bool:
+	"""Heuristic: True when running inside a ThreadPoolExecutor worker.
+
+	Bulk imports already parallelize at a higher level (batch executor). Avoiding
+	nested ThreadPoolExecutors prevents shutdown/join stalls when timeouts occur.
+	"""
+	try:
+		name = threading.current_thread().name or ''
+		return name.startswith('ThreadPoolExecutor')
+	except Exception:
+		return False
+
+
+def _bulk_fetch_mode() -> bool:
+	"""Return True for bulk/worker contexts where metadata must be best-effort."""
+	if os.getenv('UNIFIED_METADATA_DISABLE_INTERNAL_PARALLEL', '').lower() in ('1', 'true', 'yes', 'on'):
+		return True
+	return _in_executor_worker_thread()
 
 
 def _normalize_isbn_value(val: Optional[str]) -> str:
@@ -123,10 +147,20 @@ def _extract_series_label(val: Any) -> Optional[str]:
 		return None
 
 
-def _load_openlibrary_edition_payload(isbn: str) -> Dict[str, Any]:
+def _load_openlibrary_edition_payload(isbn: str, *, include_edition: bool = True) -> Dict[str, Any]:
 	"""Fetch the edition JSON for an ISBN (best-effort)."""
+	if not include_edition:
+		return {}
 	try:
-		resp = requests.get(f"https://openlibrary.org/isbn/{isbn}.json", timeout=_REQUEST_TIMEOUT)
+		bulk = _bulk_fetch_mode()
+		timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
+		max_retries = 1 if bulk else None
+		resp = adaptive_get(
+			'openlibrary',
+			f"https://openlibrary.org/isbn/{isbn}.json",
+			timeout=timeout,
+			max_retries=max_retries,
+		)
 		resp.raise_for_status()
 		return resp.json() or {}
 	except Exception:
@@ -301,7 +335,10 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	"""
 	url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
 	try:
-		resp = requests.get(url, timeout=_REQUEST_TIMEOUT, headers={
+		bulk = _bulk_fetch_mode()
+		timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
+		max_retries = 1 if bulk else None
+		resp = adaptive_get('google_books', url, timeout=timeout, max_retries=max_retries, headers={
 			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
 		resp.raise_for_status()
 		data = resp.json()
@@ -380,33 +417,40 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		description = vi.get('description')
 		printed_page = vi.get('printedPageCount')
 		page_count_val = vi.get('pageCount')
-		# Secondary fetch: prefer longer description, printed page count, and real ISBNs
-		try:
-			vol_id = item.get('id')
-			if vol_id:
-				full_resp = requests.get(f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full", timeout=_REQUEST_TIMEOUT)
-				full_resp.raise_for_status()
-				full_data = full_resp.json() or {}
-				fvi = (full_data.get('volumeInfo') or {})
-				# Prefer longer description if available
-				full_desc = fvi.get('description')
-				if full_desc and (not description or len(str(full_desc)) > len(str(description))):
-					description = full_desc
-				# Pull printed/page counts from full
-				if fvi.get('printedPageCount'):
-					printed_page = fvi.get('printedPageCount')
-				if fvi.get('pageCount'):
-					page_count_val = fvi.get('pageCount')
-				# Pull ISBNs if missing
-				if not (isbn10 and isbn13):
-					fids = fvi.get('industryIdentifiers', []) or []
-					for ident in fids:
-						if ident.get('type') == 'ISBN_10' and not isbn10:
-							isbn10 = ident.get('identifier')
-						elif ident.get('type') == 'ISBN_13' and not isbn13:
-							isbn13 = ident.get('identifier')
-		except Exception:
-			pass
+		# Secondary fetch: prefer longer description, printed page count, and real ISBNs.
+		# Skip in bulk mode to keep per-ISBN work bounded and avoid nested waits.
+		if not bulk:
+			try:
+				vol_id = item.get('id')
+				if vol_id:
+					full_resp = adaptive_get(
+						'google_books',
+						f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full",
+						timeout=timeout,
+						max_retries=max_retries,
+					)
+					full_resp.raise_for_status()
+					full_data = full_resp.json() or {}
+					fvi = (full_data.get('volumeInfo') or {})
+					# Prefer longer description if available
+					full_desc = fvi.get('description')
+					if full_desc and (not description or len(str(full_desc)) > len(str(description))):
+						description = full_desc
+					# Pull printed/page counts from full
+					if fvi.get('printedPageCount'):
+						printed_page = fvi.get('printedPageCount')
+					if fvi.get('pageCount'):
+						page_count_val = fvi.get('pageCount')
+					# Pull ISBNs if missing
+					if not (isbn10 and isbn13):
+						fids = fvi.get('industryIdentifiers', []) or []
+						for ident in fids:
+							if ident.get('type') == 'ISBN_10' and not isbn10:
+								isbn10 = ident.get('identifier')
+							elif ident.get('type') == 'ISBN_13' and not isbn13:
+								isbn13 = ident.get('identifier')
+			except Exception:
+				pass
 		# Fallback to text snippet if still none
 		if not description:
 			description = (item.get('searchInfo') or {}).get('textSnippet')
@@ -492,9 +536,13 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 		elif len(target_norm) == 10:
 			target_isbn10 = target_norm
 			target_isbn13 = _isbn10_to_13(target_norm)
-	edition_payload = _load_openlibrary_edition_payload(isbn)
+	bulk = _bulk_fetch_mode()
+	timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
+	max_retries = 1 if bulk else None
+	# Edition payload is an extra call; skip for bulk imports.
+	edition_payload = _load_openlibrary_edition_payload(isbn, include_edition=(not bulk))
 	try:
-		resp = requests.get(url, timeout=_REQUEST_TIMEOUT, headers={
+		resp = adaptive_get('openlibrary', url, timeout=timeout, max_retries=max_retries, headers={
 			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
 		resp.raise_for_status()
 		data = resp.json() or {}
@@ -796,35 +844,57 @@ def _unified_fetch_pair(isbn: str):
 	google: Dict[str, Any] = {}
 	openlib: Dict[str, Any] = {}
 	_errors: Dict[str, str] = {}
-	with ThreadPoolExecutor(max_workers=2) as ex:
-		future_map = {
-			ex.submit(_fetch_google_by_isbn, isbn_clean): 'google',
-			ex.submit(_fetch_openlibrary_by_isbn, isbn_clean): 'openlib'
-		}
-		# Add timeout to as_completed to prevent indefinite blocking
-		# This ensures the entire fetch operation doesn't exceed _FETCH_TIMEOUT
+	bulk = _bulk_fetch_mode()
+	if bulk:
+		# Bulk mode (imports): fetch sequentially with a strict overall deadline.
+		# This avoids nested executor shutdown/join stalls when timeouts occur.
+		deadline = time.monotonic() + float(_FETCH_TIMEOUT)
 		try:
-			for fut in as_completed(future_map, timeout=_FETCH_TIMEOUT):
-				kind = future_map[fut]
-				try:
-					# Add timeout to result() as well for additional safety
-					data = fut.result(timeout=_FETCH_TIMEOUT) or {}
-				except Exception as ex_var:  # defensive; provider funcs should swallow
-					data = {}
-					_errors[kind] = f"exception:{ex_var}"
-				if kind == 'google':
-					google = data
-				else:
-					openlib = data
-		except TimeoutError:
-			# If as_completed times out, mark all pending futures as timed out
-			for fut, kind in future_map.items():
-				if not fut.done():
-					_errors[kind] = 'timeout'
-					# Cancel any still-running futures
-					fut.cancel()
-			if _META_DEBUG:
-				_META_LOG.warning(f"[UNIFIED_METADATA][TIMEOUT] isbn={isbn} timeout={_FETCH_TIMEOUT}s")
+			google = _fetch_google_by_isbn(isbn_clean) or {}
+		except Exception as ex_var:
+			google = {}
+			_errors['google'] = f"exception:{ex_var}"
+		if time.monotonic() >= deadline and not google:
+			_errors.setdefault('google', 'timeout')
+			# Skip OpenLibrary if we've already burned the budget.
+			openlib = {}
+			_errors.setdefault('openlib', 'timeout')
+		else:
+			try:
+				openlib = _fetch_openlibrary_by_isbn(isbn_clean) or {}
+			except Exception as ex_var:
+				openlib = {}
+				_errors['openlib'] = f"exception:{ex_var}"
+	else:
+		with ThreadPoolExecutor(max_workers=2) as ex:
+			future_map = {
+				ex.submit(_fetch_google_by_isbn, isbn_clean): 'google',
+				ex.submit(_fetch_openlibrary_by_isbn, isbn_clean): 'openlib'
+			}
+			# Add timeout to as_completed to prevent indefinite blocking
+			# This ensures the entire fetch operation doesn't exceed _FETCH_TIMEOUT
+			try:
+				for fut in as_completed(future_map, timeout=_FETCH_TIMEOUT):
+					kind = future_map[fut]
+					try:
+						# Add timeout to result() as well for additional safety
+						data = fut.result(timeout=_FETCH_TIMEOUT) or {}
+					except Exception as ex_var:  # defensive; provider funcs should swallow
+						data = {}
+						_errors[kind] = f"exception:{ex_var}"
+					if kind == 'google':
+						google = data
+					else:
+						openlib = data
+			except TimeoutError:
+				# If as_completed times out, mark all pending futures as timed out
+				for fut, kind in future_map.items():
+					if not fut.done():
+						_errors[kind] = 'timeout'
+						# Cancel any still-running futures (best-effort; does not preempt running call)
+						fut.cancel()
+				if _META_DEBUG:
+					_META_LOG.warning(f"[UNIFIED_METADATA][TIMEOUT] isbn={isbn} timeout={_FETCH_TIMEOUT}s")
 
 	# Record empty provider results explicitly for diagnostics
 	if not google and 'google' not in _errors:

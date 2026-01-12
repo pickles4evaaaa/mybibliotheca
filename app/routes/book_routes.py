@@ -1914,6 +1914,14 @@ def library():
     raw_sort_option = request.args.get('sort')
     sort_option = (raw_sort_option.strip().lower() if isinstance(raw_sort_option, str) else '') or default_sort
 
+    # Custom QC filter: show only books flagged as Needs Review (typically missing ISBN at import time)
+    needs_review_raw = request.args.get('needs_review', '')
+    needs_review_only = False
+    if isinstance(needs_review_raw, str):
+        needs_review_only = needs_review_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+    elif needs_review_raw is not None:
+        needs_review_only = bool(needs_review_raw)
+
     # Pagination parameters: rows*cols determines per_page; default rows via settings
     try:
         from app.utils.user_settings import get_effective_rows_per_page
@@ -1956,6 +1964,7 @@ def library():
         bool(media_type_filter.strip()) if isinstance(media_type_filter, str) else False,
         bool(finished_after_raw.strip()) if isinstance(finished_after_raw, str) else False,
         bool(finished_before_raw.strip()) if isinstance(finished_before_raw, str) else False,
+        bool(needs_review_only),
         sort_option != 'title_asc',  # Treat non-default sort as requiring full fetch for proper ordering
     ])
     if has_filter:
@@ -2194,6 +2203,17 @@ def library():
                 (finished_before is None or fd <= finished_before)
             )
         ]
+
+    if needs_review_only:
+        def _book_needs_review(book_obj) -> bool:
+            val = book_obj.get('needs_review') if isinstance(book_obj, dict) else getattr(book_obj, 'needs_review', None)
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                return val.strip().lower() in ('needs review', 'true', '1', 'yes', 'on')
+            return bool(val)
+
+        filtered_books = [book for book in filtered_books if _book_needs_review(book)]
 
     # Compute statistics for filter buttons.
     # If we're already in "full fetch" mode (has_filter), these reflect the current
@@ -2736,12 +2756,13 @@ def library():
                 'rating_count': getattr(b, 'rating_count', None) if not isinstance(b, dict) else b.get('rating_count'),
                 'normalized_reading_status': getattr(b, 'normalized_reading_status', '') if not isinstance(b, dict) else (b.get('normalized_reading_status') or ''),
                 'locations': getattr(b, 'locations', []) if not isinstance(b, dict) else b.get('locations', []),
+                'needs_review': getattr(b, 'needs_review', None) if not isinstance(b, dict) else b.get('needs_review'),
             }
             payload.append(bd)
         # ETag based on user, page/filter/sort, and version
         from app.utils.simple_cache import get_user_library_version
         version = get_user_library_version(str(current_user.id))
-        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:v{version}\""
+        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:{int(needs_review_only)}:v{version}\""
         if request.headers.get('If-None-Match') == etag:
             return ('', 304)
         resp = make_response(jsonify({
@@ -2758,7 +2779,7 @@ def library():
     # ETag for HTML response too
     from app.utils.simple_cache import get_user_library_version
     _version = get_user_library_version(str(current_user.id))
-    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:v{_version}\""
+    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:{int(needs_review_only)}:v{_version}\""
     if request.headers.get('If-None-Match') == _html_etag:
         return ('', 304)
 
@@ -2789,6 +2810,7 @@ def library():
         current_finished_before=finished_before_raw,
         current_search=search_query,
         current_sort=sort_option,
+        current_needs_review=needs_review_only,
         media_type_labels=media_type_labels,
         users=users,
         reading_status_options=reading_status_options,

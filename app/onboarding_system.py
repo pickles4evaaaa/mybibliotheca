@@ -1359,12 +1359,26 @@ def import_progress_json(task_id: str):
             return jsonify({
                 'status': job.get('status', 'pending'),
                 'processed': job.get('processed', 0),
+                'scan_processed': job.get('scan_processed', 0),
+                'prefetch_processed': job.get('prefetch_processed', 0),
+                'prefetch_total': job.get('prefetch_total', 0),
+                'prefetch_batches_done': job.get('prefetch_batches_done', 0),
+                'prefetch_batches_total': job.get('prefetch_batches_total', 0),
+                'prefetch_fetched': job.get('prefetch_fetched', 0),
+                'precheck': job.get('precheck', {}),
                 'success': job.get('success', 0),
+                'merged': job.get('merged', 0),
                 'errors': job.get('errors', 0),
+                'skipped': job.get('skipped', 0),
+                'unmatched': job.get('unmatched', 0),
                 'total': job.get('total', 0),
                 'current_book': job.get('current_book'),
                 'error_messages': job.get('error_messages', []),
-                'recent_activity': job.get('recent_activity', [])
+                'recent_activity': job.get('recent_activity', []),
+                # Timestamps for UI freshness / perceived-stall handling
+                'created_at': job.get('created_at'),
+                'updated_at': job.get('updated_at') or job.get('created_at'),
+                'server_time': datetime.now(timezone.utc).isoformat(),
             })
         
         # For simple onboarding fallback (when no real import was started)
@@ -2200,21 +2214,73 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         # Start the import using the proven working import system
         def run_import():
             try:
+                # Heartbeat updater: keeps updated_at fresh during long backoffs/sleeps
+                # so the UI doesn't look stalled.
+                heartbeat_stop = threading.Event()
+
+                def _heartbeat_loop():
+                    while not heartbeat_stop.wait(5.0):
+                        try:
+                            # Empty update is sufficient: SafeImportJobManager stamps updated_at.
+                            safe_update_import_job(user_id, task_id, {})
+                        except Exception:
+                            pass
+
+                heartbeat_thread = threading.Thread(target=_heartbeat_loop, name=f"import-heartbeat-{task_id}")
+                heartbeat_thread.daemon = True
+                heartbeat_thread.start()
+
                 print(f"🚀 [IMPORT_JOB] Starting background import thread for task {task_id}")
                 print(f"🚀 [IMPORT_JOB] Import config: {import_config}")
                 
                 # Update job status to running safely
                 running_update = {
                     'status': 'running',
-                    'current_book': 'Starting import...'
+                    'current_book': 'Starting import...',
+                    'recent_activity': ['Starting import...']
                 }
                 safe_update_import_job(user_id, task_id, running_update)
                 print(f"🚀 [IMPORT_JOB] Updated job status to running")
+
+                # If importing the pipeline module is slow/hangs, surface that in the UI.
+                try:
+                    safe_update_import_job(user_id, task_id, {
+                        'current_book': 'Loading import pipeline…',
+                        'recent_activity': ['Loading import pipeline…'],
+                    })
+                except Exception:
+                    pass
 
                 # Use the exact same import pipeline used post-onboarding.
                 # Avoid starting nested threads via start_import_job().
                 from app.routes.import_routes import process_simple_import
                 import asyncio
+
+                try:
+                    safe_update_import_job(user_id, task_id, {
+                        'current_book': 'Starting import pipeline…',
+                        'recent_activity': ['Starting import pipeline…'],
+                    })
+                except Exception:
+                    pass
+
+                # If we hang inside asyncio.run() (or deeper in service init), dump tracebacks to logs.
+                # This makes "stuck at Starting import pipeline" actionable.
+                try:
+                    import faulthandler
+                    faulthandler.enable()
+                    faulthandler.dump_traceback_later(120, repeat=True)
+                except Exception:
+                    faulthandler = None  # type: ignore[assignment]
+
+                # Surface that we're entering the async pipeline runner.
+                try:
+                    safe_update_import_job(user_id, task_id, {
+                        'current_book': 'Initializing import service…',
+                        'recent_activity': ['Initializing import service…'],
+                    })
+                except Exception:
+                    pass
 
                 pipeline_config = {
                     'task_id': task_id,
@@ -2226,12 +2292,35 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     'custom_fields_enabled': True,
                     'format_type': import_config.get('detected_type', 'unknown'),
                     'enable_api_enrichment': True,
+                    # Onboarding UX: don't let metadata prefetch block actual importing.
+                    'metadata_prefetch_max_seconds': 10.0,
+                    'metadata_prefetch_batch_timeout': 6.0,
+                    'metadata_prefetch_future_timeout': 5.0,
+                    'metadata_prefetch_retry_timeouts': False,
+                    'metadata_prefetch_batch_size': 25,
                 }
-                asyncio.run(process_simple_import(pipeline_config))
+                try:
+                    asyncio.run(process_simple_import(pipeline_config))
+                finally:
+                    try:
+                        heartbeat_stop.set()
+                    except Exception:
+                        pass
+                    try:
+                        if 'faulthandler' in locals() and faulthandler is not None:
+                            faulthandler.cancel_dump_traceback_later()
+                    except Exception:
+                        pass
                     
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+
+                try:
+                    if 'heartbeat_stop' in locals():
+                        heartbeat_stop.set()
+                except Exception:
+                    pass
                 
                 # Update job status to failed safely
                 error_update = {

@@ -21,6 +21,7 @@ import json
 import os as _os_for_import_verbosity
 import requests  # Add requests import
 import time
+from pathlib import Path
 
 # Metadata debug flag (shared with unified metadata module)
 _META_DEBUG_FLAG = (os.getenv('METADATA_DEBUG','0').lower() in ('1','true','yes','on'))
@@ -74,6 +75,53 @@ MAX_PROGRESS_ERROR_MESSAGES = int(os.getenv('IMPORT_PROGRESS_MAX_ERRORS', '200')
 PROGRESS_EMIT_INTERVAL = float(os.getenv('IMPORT_PROGRESS_INTERVAL', '0.35'))
 
 
+def _resolve_data_dir() -> Path:
+    """Resolve the application's data directory without requiring a Flask app context."""
+    try:
+        from flask import current_app
+        data_dir = current_app.config.get('DATA_DIR')
+        if data_dir:
+            return Path(str(data_dir))
+    except Exception:
+        pass
+    env_dir = os.environ.get('DATA_DIR')
+    if env_dir:
+        return Path(env_dir)
+    # Repo-local fallback (dev)
+    return Path(os.getcwd()) / 'data'
+
+
+def _import_error_log_path(user_id: str, task_id: str) -> Path:
+    safe_user = str(user_id).replace(os.sep, '_')
+    safe_task = str(task_id).replace(os.sep, '_')
+    base = _resolve_data_dir() / 'import_failures' / safe_user
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{safe_task}.jsonl"
+
+
+def _append_import_error_to_log(user_id: str, task_id: str, error_message: dict) -> None:
+    """Append a structured error payload to a per-job JSONL log for later download.
+
+    This keeps the UI progress payload bounded while still allowing full error export.
+    """
+    try:
+        path = _import_error_log_path(user_id, task_id)
+        record = error_message if isinstance(error_message, dict) else {'message': str(error_message)}
+        with path.open('a', encoding='utf-8') as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        # Ensure the job record knows where the error log is (relative to DATA_DIR).
+        try:
+            job = safe_get_import_job(user_id, task_id) or {}
+            if not job.get('errors_log_path'):
+                rel = str(path.relative_to(_resolve_data_dir()))
+                safe_update_import_job(user_id, task_id, {'errors_log_path': rel})
+        except Exception:
+            pass
+    except Exception:
+        # Never let logging errors interrupt import.
+        return
+
+
 def _bounded_list(existing: Optional[List[Any]], addition: Any, max_len: int) -> List[Any]:
     items = list(existing or [])
     if addition is None:
@@ -92,9 +140,15 @@ def _update_import_progress(user_id: str, task_id: str, *, updates: Optional[dic
                              error_message: Optional[dict] = None) -> bool:
     snapshot = safe_get_import_job(user_id, task_id) or {}
     payload = dict(updates or {})
+
+    # Treat recent_activity updates as additions (append + bound) rather than overwrites.
+    # Most callers pass a single-item list like ['Scanning...'].
+    if 'recent_activity' in payload:
+        payload['recent_activity'] = _bounded_list(snapshot.get('recent_activity'), payload.get('recent_activity'), MAX_PROGRESS_RECENT_ACTIVITY)
     if processed_book is not None:
         payload['processed_books'] = _bounded_list(snapshot.get('processed_books'), processed_book, MAX_PROGRESS_RECENT_BOOKS)
     if error_message is not None:
+        _append_import_error_to_log(user_id, task_id, error_message)
         payload['error_messages'] = _bounded_list(snapshot.get('error_messages'), error_message, MAX_PROGRESS_ERROR_MESSAGES)
     return safe_update_import_job(user_id, task_id, payload)
 
@@ -1391,7 +1445,26 @@ def api_import_errors(task_id):
     job = safe_get_import_job(current_user.id, task_id)
     if not job:
         return jsonify({'error': 'Job not found'}), 404
-    errors = job.get('error_messages') or []
+    # Prefer full error log when available (in-memory error_messages is capped).
+    errors = []
+    try:
+        log_rel = job.get('errors_log_path')
+        if log_rel:
+            log_path = _resolve_data_dir() / str(log_rel)
+            if log_path.exists():
+                with log_path.open('r', encoding='utf-8') as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            errors.append(json.loads(line))
+                        except Exception:
+                            errors.append({'message': line})
+    except Exception:
+        errors = []
+    if not errors:
+        errors = job.get('error_messages') or []
 
     header = ['row_number','error_type','message','raw_isbn','isbn','title','author','file_name','raw_row']
     def _escape(v: str):
@@ -1432,7 +1505,26 @@ def api_import_failed_isbns(task_id):
     if not job:
         return Response(json.dumps({'error': 'Job not found'}), status=404, mimetype='application/json')
 
-    errors = job.get('error_messages') or []
+    # Prefer full error log when available (in-memory error_messages is capped).
+    errors = []
+    try:
+        log_rel = job.get('errors_log_path')
+        if log_rel:
+            log_path = _resolve_data_dir() / str(log_rel)
+            if log_path.exists():
+                with log_path.open('r', encoding='utf-8') as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            errors.append(json.loads(line))
+                        except Exception:
+                            continue
+    except Exception:
+        errors = []
+    if not errors:
+        errors = job.get('error_messages') or []
     header = ['isbn', 'title', 'row_number', 'message']
 
     def _escape(value: str) -> str:
@@ -1905,14 +1997,28 @@ def simple_import():  # legacy placeholder
 
 async def process_simple_import(import_config):
     """Process a simple import job with API enrichment and detailed error capture."""
-    from app.simplified_book_service import SimplifiedBookService
-
     task_id = import_config['task_id']
     csv_file_path = import_config['csv_file_path']
     mappings = import_config['field_mappings']
     user_id = import_config['user_id']
     enable_api_enrichment = import_config.get('enable_api_enrichment', True)
     format_type = import_config.get('format_type', 'unknown')
+
+    # Emit a progress update before importing/initializing heavier services.
+    # This prevents the UI from looking stuck if module imports or service init is slow.
+    try:
+        _update_import_progress(user_id, task_id, updates={
+            'status': 'running',
+            'current_book': 'Initializing import service…',
+            'recent_activity': ['Initializing import service…']
+        })
+    except Exception:
+        pass
+
+    if _META_DEBUG_FLAG:
+        logger.debug(f"[IMPORT][PROCESS_ENTRY] task={task_id} user={user_id} format={format_type}")
+
+    from app.simplified_book_service import SimplifiedBookService
 
     if format_type in ['goodreads', 'storygraph']:
         enable_api_enrichment = True
@@ -1931,8 +2037,22 @@ async def process_simple_import(import_config):
     last_progress_emit = time.perf_counter()
     pending_processed_entries: List[dict] = []
     try:
+        # Early heartbeat so the UI shows immediate activity.
+        try:
+            _update_import_progress(user_id, task_id, updates={
+                'status': 'running',
+                'current_book': 'Preparing import…',
+                'recent_activity': ['Preparing import…']
+            })
+        except Exception:
+            pass
+
         # Pre-analyze custom fields
         try:
+            _update_import_progress(user_id, task_id, updates={
+                'current_book': 'Analyzing custom fields…',
+                'recent_activity': ['Analyzing custom fields…']
+            })
             cf_ok, created_cf = await pre_analyze_and_create_custom_fields(csv_file_path, mappings, user_id)
             if cf_ok:
                 print(f"🔧 [PROCESS_SIMPLE] Created {len(created_cf)} custom fields")
@@ -1941,24 +2061,229 @@ async def process_simple_import(import_config):
 
         row_count = 0
         isbn_candidates: List[str] = []
-        with open(csv_file_path, 'r', encoding='utf-8') as fh:
-            reader = csv.DictReader(fh)
-            for idx, scan_row in enumerate(reader, 1):
-                row_count = idx
-                if not enable_api_enrichment:
-                    continue
-                raw_isbn = scan_row.get('ISBN13') or scan_row.get('isbn13') or scan_row.get('ISBN') or scan_row.get('ISBN/UID') or scan_row.get('isbn')
-                if not raw_isbn:
-                    continue
-                cleaned = normalize_goodreads_value(raw_isbn, 'isbn')
-                if cleaned and isinstance(cleaned, str) and len(cleaned) >= 10:
-                    isbn_candidates.append(cleaned)
-                if _META_DEBUG_FLAG:
-                    logger.debug(f"[IMPORT][ISBN_COLLECT] row={idx} raw={raw_isbn!r} cleaned={cleaned!r}")
+        missing_title_count = 0
+        missing_author_count = 0
+        missing_isbn_count = 0
+        unusable_row_count = 0
+        last_scan_emit = time.perf_counter()
+        scan_total_hint = 0
+        try:
+            snap_total = safe_get_import_job(user_id, task_id) or {}
+            scan_total_hint = int(snap_total.get('total') or 0)
+        except Exception:
+            scan_total_hint = 0
+
+        # Fast ISBN scan: avoid DictReader (dict per row). Use csv.reader and indexed lookup.
+        if enable_api_enrichment:
+            import re as _re
+
+            def _norm_header(h: str) -> str:
+                return _re.sub(r'[^a-z0-9]', '', (h or '').strip().lower())
+
+            # Common ISBN columns across Goodreads/StoryGraph/custom exports
+            isbn_header_aliases = {
+                'isbn13', 'isbn', 'isbnuid', 'isbn10'
+            }
+
+            title_header_aliases = {
+                'title', 'booktitle', 'bookname', 'name'
+            }
+            author_header_aliases = {
+                'author', 'authorname', 'authors', 'writer', 'mainauthor', 'primaryauthor'
+            }
+
+            # Invert mappings (CSV header -> book field) to help find canonical fields.
+            mappings_inv: Dict[str, List[str]] = {}
+            try:
+                for csv_field, book_field in (mappings or {}).items():
+                    if not csv_field or not book_field:
+                        continue
+                    mappings_inv.setdefault(str(book_field), []).append(str(csv_field))
+            except Exception:
+                mappings_inv = {}
+
+            with open(csv_file_path, 'r', encoding='utf-8', newline='') as fh:
+                reader = csv.reader(fh)
+                headers = next(reader, [])
+                if not headers:
+                    raise ValueError('CSV appears to have no header row')
+
+                norm_headers = [_norm_header(h) for h in headers]
+                isbn_indexes = [i for i, nh in enumerate(norm_headers) if nh in isbn_header_aliases]
+
+                # Prefer explicit user mappings for title/author if available
+                mapped_title_headers = set(mappings_inv.get('title', []) or [])
+                mapped_author_headers = set(mappings_inv.get('author', []) or [])
+
+                title_indexes = [i for i, h in enumerate(headers) if h in mapped_title_headers]
+                author_indexes = [i for i, h in enumerate(headers) if h in mapped_author_headers]
+
+                if not title_indexes:
+                    title_indexes = [i for i, nh in enumerate(norm_headers) if nh in title_header_aliases]
+                if not author_indexes:
+                    author_indexes = [i for i, nh in enumerate(norm_headers) if nh in author_header_aliases]
+
+                # If no obvious ISBN column exists, fall back to slower DictReader scan for robustness
+                if not isbn_indexes:
+                    fh.seek(0)
+                    dict_reader = csv.DictReader(fh)
+                    headers2 = dict_reader.fieldnames or []
+                    headers2_norm = [_norm_header(h) for h in headers2]
+                    # For fallback mode, compute title/author presence from headers.
+                    mapped_title_headers2 = set(mappings_inv.get('title', []) or [])
+                    mapped_author_headers2 = set(mappings_inv.get('author', []) or [])
+                    has_title_col = any(h in mapped_title_headers2 for h in headers2) or any(nh in title_header_aliases for nh in headers2_norm)
+                    has_author_col = any(h in mapped_author_headers2 for h in headers2) or any(nh in author_header_aliases for nh in headers2_norm)
+                    has_isbn_col = any(nh in isbn_header_aliases for nh in headers2_norm)
+
+                    # If no usable identifiers exist and enrichment is on, we'll still process later,
+                    # but if enrichment is on and there is neither title nor isbn we will end up skipping everything.
+                    if not has_title_col and not has_isbn_col:
+                        msg = 'CSV is missing both Title and ISBN columns; unable to import books.'
+                        _update_import_progress(user_id, task_id, updates={
+                            'status': 'failed',
+                            'current_book': msg,
+                            'recent_activity': [msg],
+                        }, error_message={
+                            'row_number': 0,
+                            'title': '',
+                            'author': '',
+                            'isbn': '',
+                            'file_name': os.path.basename(csv_file_path),
+                            'error_type': 'precheck_failed',
+                            'message': msg,
+                        })
+                        return
+
+                    for idx, scan_row in enumerate(dict_reader, 1):
+                        row_count = idx
+                        raw_isbn = scan_row.get('ISBN13') or scan_row.get('isbn13') or scan_row.get('ISBN') or scan_row.get('ISBN/UID') or scan_row.get('isbn')
+                        raw_title = scan_row.get('Title') or scan_row.get('title') or scan_row.get('Book Title') or scan_row.get('Name') or scan_row.get('Book Name')
+                        raw_author = scan_row.get('Author') or scan_row.get('author') or scan_row.get('Authors') or scan_row.get('author name')
+                        if not raw_title:
+                            missing_title_count += 1
+                        if not raw_author:
+                            missing_author_count += 1
+                        if not raw_isbn:
+                            missing_isbn_count += 1
+                        if not raw_title and not raw_isbn:
+                            unusable_row_count += 1
+                        if not raw_isbn:
+                            # Keep scanning for totals/warnings; ISBN candidates only matter for enrichment.
+                            pass
+                        else:
+                            cleaned = normalize_goodreads_value(raw_isbn, 'isbn')
+                            if cleaned and isinstance(cleaned, str) and len(cleaned) >= 10:
+                                isbn_candidates.append(cleaned)
+                            if _META_DEBUG_FLAG:
+                                logger.debug(f"[IMPORT][ISBN_COLLECT] row={idx} raw={raw_isbn!r} cleaned={cleaned!r}")
+
+                        try:
+                            elapsed = time.perf_counter() - last_scan_emit
+                            if elapsed >= 1.0 and idx % 50 == 0:
+                                msg = f"Scanning import file… ({idx}/{scan_total_hint})" if scan_total_hint > 0 else f"Scanning import file… ({idx})"
+                                _update_import_progress(user_id, task_id, updates={
+                                    'scan_processed': idx,
+                                    'current_book': msg,
+                                    'recent_activity': [msg],
+                                })
+                                last_scan_emit = time.perf_counter()
+                        except Exception:
+                            pass
+                else:
+                    for idx, row in enumerate(reader, 1):
+                        row_count = idx
+                        raw_title = None
+                        for col_idx in title_indexes:
+                            if col_idx < len(row) and row[col_idx]:
+                                raw_title = row[col_idx]
+                                break
+                        raw_author = None
+                        for col_idx in author_indexes:
+                            if col_idx < len(row) and row[col_idx]:
+                                raw_author = row[col_idx]
+                                break
+                        raw_isbn = None
+                        for col_idx in isbn_indexes:
+                            if col_idx < len(row) and row[col_idx]:
+                                raw_isbn = row[col_idx]
+                                break
+                        if not raw_title:
+                            missing_title_count += 1
+                        if not raw_author:
+                            missing_author_count += 1
+                        if not raw_isbn:
+                            missing_isbn_count += 1
+                        if not raw_title and not raw_isbn:
+                            unusable_row_count += 1
+
+                        if raw_isbn:
+                            cleaned = normalize_goodreads_value(raw_isbn, 'isbn')
+                            if cleaned and isinstance(cleaned, str) and len(cleaned) >= 10:
+                                isbn_candidates.append(cleaned)
+                            if _META_DEBUG_FLAG:
+                                logger.debug(f"[IMPORT][ISBN_COLLECT] row={idx} raw={raw_isbn!r} cleaned={cleaned!r}")
+
+                        try:
+                            elapsed = time.perf_counter() - last_scan_emit
+                            if elapsed >= 1.0 and idx % 200 == 0:
+                                msg = f"Scanning import file… ({idx}/{scan_total_hint})" if scan_total_hint > 0 else f"Scanning import file… ({idx})"
+                                _update_import_progress(user_id, task_id, updates={
+                                    'scan_processed': idx,
+                                    'current_book': msg,
+                                    'recent_activity': [msg],
+                                })
+                                last_scan_emit = time.perf_counter()
+                        except Exception:
+                            pass
+        else:
+            # If enrichment is disabled, only count rows (fast).
+            with open(csv_file_path, 'r', encoding='utf-8', newline='') as fh:
+                reader = csv.reader(fh)
+                _ = next(reader, None)  # header
+                for idx, _row in enumerate(reader, 1):
+                    row_count = idx
         print(f"📋 [PROCESS_SIMPLE] Rows to process: {row_count}")
+
+        # Emit precheck summary so onboarding starts with something concrete.
+        try:
+            precheck = {
+                'rows': row_count,
+                'missing_title_rows': missing_title_count,
+                'missing_author_rows': missing_author_count,
+                'missing_isbn_rows': missing_isbn_count,
+                'unusable_rows': unusable_row_count,
+            }
+            summary = f"Found {row_count} rows to import."
+            warnings: List[str] = []
+            if unusable_row_count:
+                warnings.append(f"{unusable_row_count} rows are missing both Title and ISBN and will be skipped.")
+            if missing_isbn_count:
+                warnings.append(f"{missing_isbn_count} rows have no ISBN and will be marked Needs Review.")
+            if missing_title_count and enable_api_enrichment:
+                # Only warn when it's likely to matter: ISBN-only rows can be enriched.
+                warnings.append(f"{missing_title_count} rows have no Title (ISBN enrichment may fill these).")
+            _update_import_progress(user_id, task_id, updates={
+                'scan_processed': row_count,
+                'precheck': precheck,
+                'current_book': summary,
+                'recent_activity': [summary] + warnings,
+            })
+        except Exception:
+            pass
+
+        # Ensure total is set for progress UIs (some job creators pre-count; others do not).
+        try:
+            snap0 = safe_get_import_job(user_id, task_id) or {}
+            if not snap0.get('total') and row_count:
+                _update_import_progress(user_id, task_id, updates={'total': row_count})
+                update_job_in_kuzu(task_id, {'total': row_count})
+        except Exception:
+            pass
 
         # Batch enrichment
         book_metadata = {}
+        metadata_failures: dict[str, dict] = {}
         if enable_api_enrichment and isbn_candidates:
             if _META_DEBUG_FLAG:
                 logger.debug(f"[IMPORT][ISBN_COLLECT] collected={len(isbn_candidates)} values={isbn_candidates}")
@@ -1971,20 +2296,189 @@ async def process_simple_import(import_config):
             if _META_DEBUG_FLAG:
                 logger.debug(f"[IMPORT][ISBN_COLLECT] dedup_size={len(uniq)} values={uniq}")
             if uniq:
-                max_batch_size = 50
+                # Safety valve: cap the number of ISBNs we attempt to enrich so we don't
+                # accidentally spam provider APIs on large imports.
+                try:
+                    def _read_int_env(name: str, default: int) -> int:
+                        raw = os.getenv(name)
+                        if raw in (None, ''):
+                            return default
+                        return int(raw)
+                    metadata_isbn_cap = _read_int_env('IMPORT_METADATA_MAX_ISBNS', 250)
+                    if metadata_isbn_cap and metadata_isbn_cap > 0 and len(uniq) > metadata_isbn_cap:
+                        capped_total = len(uniq)
+                        skipped = uniq[metadata_isbn_cap:]
+                        uniq = uniq[:metadata_isbn_cap]
+                        # Record capped ISBNs as failures so ISBN-only rows will be imported as Needs Review.
+                        metadata_failures.update({isbn: {'reason': 'capped', 'attempt': 0} for isbn in skipped})
+                        msg = f"Metadata enrichment capped at {metadata_isbn_cap}/{capped_total} ISBNs; remaining will be marked Needs Review"
+                        _update_import_progress(user_id, task_id, updates={
+                            'current_book': msg,
+                            'recent_activity': [msg],
+                        })
+                except Exception:
+                    pass
+
+                # Prefetch should never block actual importing for long.
+                # Time-budget the prefetch stage so we start creating books quickly.
+                try:
+                    prefetch_max_seconds = float(import_config.get('metadata_prefetch_max_seconds') or os.getenv('IMPORT_METADATA_PREFETCH_MAX_SECONDS') or 25.0)
+                except Exception:
+                    prefetch_max_seconds = 25.0
+                prefetch_max_seconds = max(5.0, prefetch_max_seconds)
+                prefetch_deadline = time.monotonic() + prefetch_max_seconds
+
+                # Allow onboarding (and other interactive imports) to clamp per-batch timeouts.
+                def _read_float_cfg(key: str, env_key: str, default: float) -> float:
+                    try:
+                        v = import_config.get(key)
+                        if v not in (None, ''):
+                            return float(v)
+                    except Exception:
+                        pass
+                    try:
+                        ev = os.getenv(env_key)
+                        if ev not in (None, ''):
+                            return float(ev)
+                    except Exception:
+                        pass
+                    return float(default)
+
+                base_batch_timeout = max(5.0, _read_float_cfg('metadata_prefetch_batch_timeout', 'IMPORT_METADATA_BATCH_TIMEOUT', 60.0))
+                base_future_timeout = max(2.0, _read_float_cfg('metadata_prefetch_future_timeout', 'IMPORT_METADATA_FUTURE_TIMEOUT', 30.0))
+                try:
+                    retry_timeouts = bool(import_config.get('metadata_prefetch_retry_timeouts', True))
+                except Exception:
+                    retry_timeouts = True
+
+                max_batch_size = int(import_config.get('metadata_prefetch_batch_size') or 50)
+                if max_batch_size < 10:
+                    max_batch_size = 10
+                if max_batch_size > 50:
+                    max_batch_size = 50
                 aggregated_metadata = {}
+                aggregated_failures: dict[str, dict] = {}
+                total_batches = (len(uniq) + max_batch_size - 1) // max_batch_size
                 for start in range(0, len(uniq), max_batch_size):
+                    # Stop prefetch once we hit the time budget and proceed with the import.
+                    remaining_budget = prefetch_deadline - time.monotonic()
+                    if remaining_budget <= 0:
+                        msg = f"Continuing import without waiting for all metadata (prefetch budget {prefetch_max_seconds:.0f}s reached)"
+                        try:
+                            _update_import_progress(user_id, task_id, updates={
+                                'current_book': msg,
+                                'recent_activity': [msg],
+                            })
+                        except Exception:
+                            pass
+                        break
                     batch = uniq[start:start + max_batch_size]
                     if not batch:
                         continue
+                    try:
+                        batch_idx = (start // max_batch_size) + 1
+                        msg = f"Fetching metadata… (batch {batch_idx}/{total_batches})"
+                        _update_import_progress(user_id, task_id, updates={
+                            'prefetch_processed': min(start + len(batch), len(uniq)),
+                            'prefetch_total': len(uniq),
+                            'prefetch_batches_done': batch_idx,
+                            'prefetch_batches_total': total_batches,
+                            'current_book': msg,
+                            'recent_activity': [msg],
+                        })
+                    except Exception:
+                        pass
                     if _META_DEBUG_FLAG:
                         logger.debug(f"[IMPORT][METADATA][BATCH_EXEC] offset={start} size={len(batch)} sample={batch[:3]}")
-                    chunk_metadata = batch_fetch_book_metadata(batch)
+                    # Clamp timeouts so a single batch can't consume the entire prefetch stage.
+                    remaining_budget = max(0.0, prefetch_deadline - time.monotonic())
+                    eff_batch_timeout = min(base_batch_timeout, max(5.0, remaining_budget))
+                    eff_future_timeout = min(base_future_timeout, max(2.0, remaining_budget))
+                    chunk_metadata, chunk_failures = batch_fetch_book_metadata(
+                        batch,
+                        attempt=1,
+                        batch_timeout_seconds=eff_batch_timeout,
+                        per_future_timeout_seconds=eff_future_timeout,
+                    )
                     if chunk_metadata:
                         aggregated_metadata.update(chunk_metadata)
+                    if chunk_failures:
+                        aggregated_failures.update(chunk_failures)
+                    try:
+                        # Update fetched count after each batch (helps UI show movement).
+                        _update_import_progress(user_id, task_id, updates={
+                            'prefetch_fetched': len(aggregated_metadata),
+                        })
+                    except Exception:
+                        pass
+
+                # Retry pass: optional, and only if we still have time budget.
+                try:
+                    if not retry_timeouts:
+                        raise RuntimeError('skip_retry')
+
+                    if time.monotonic() >= prefetch_deadline:
+                        raise RuntimeError('prefetch_budget_exhausted')
+
+                    timed_out_isbns = [k for k, v in (aggregated_failures or {}).items() if (v or {}).get('reason') == 'timeout']
+                    if timed_out_isbns:
+                        # Be more conservative on retry (lower concurrency, tighter batches).
+                        retry_batch_size = 25
+                        total_retry_batches = (len(timed_out_isbns) + retry_batch_size - 1) // retry_batch_size
+                        for rs in range(0, len(timed_out_isbns), retry_batch_size):
+                            if time.monotonic() >= prefetch_deadline:
+                                break
+                            retry_batch = timed_out_isbns[rs:rs + retry_batch_size]
+                            if not retry_batch:
+                                continue
+                            rb_idx = (rs // retry_batch_size) + 1
+                            msg = f"Retrying slow metadata… (batch {rb_idx}/{total_retry_batches})"
+                            _update_import_progress(user_id, task_id, updates={
+                                'current_book': msg,
+                                'recent_activity': [msg],
+                            })
+                            # Temporarily reduce concurrency for retry to ease rate limits.
+                            remaining_budget = max(0.0, prefetch_deadline - time.monotonic())
+                            eff_batch_timeout = min(base_batch_timeout, max(5.0, remaining_budget))
+                            eff_future_timeout = min(base_future_timeout, max(2.0, remaining_budget))
+                            retry_meta, retry_failures = batch_fetch_book_metadata(
+                                retry_batch,
+                                attempt=2,
+                                batch_timeout_seconds=eff_batch_timeout,
+                                per_future_timeout_seconds=eff_future_timeout,
+                                max_workers_override=2,
+                            )
+                            if retry_meta:
+                                aggregated_metadata.update(retry_meta)
+                                # Clear failures for any ISBN now fetched.
+                                for k in list(retry_meta.keys()):
+                                    aggregated_failures.pop(k, None)
+                            if retry_failures:
+                                # Upgrade/overwrite failure reasons with attempt=2 state.
+                                aggregated_failures.update(retry_failures)
+                except Exception:
+                    pass
+
                 book_metadata = aggregated_metadata
+                # Merge in any failures we accumulated before the batch loop (e.g., cap).
+                if metadata_failures:
+                    try:
+                        aggregated_failures.update(metadata_failures)
+                    except Exception:
+                        pass
+                metadata_failures = aggregated_failures
                 if _META_DEBUG_FLAG:
                     logger.debug(f"[IMPORT][POST_BATCH] requested={len(uniq)} fetched={len(book_metadata)} keys={list(book_metadata.keys())}")
+
+        # Move on to row processing regardless of metadata completeness.
+        try:
+            _update_import_progress(user_id, task_id, updates={
+                'status': 'running',
+                'current_book': 'Importing books…',
+                'recent_activity': ['Importing books…'],
+            })
+        except Exception:
+            pass
 
         source_filename = os.path.basename(csv_file_path)
         with open(csv_file_path, 'r', encoding='utf-8') as fh:
@@ -2015,40 +2509,43 @@ async def process_simple_import(import_config):
                         lookup_failed = (not in_meta) or placeholder_title
                         # If original CSV provided no title (row mapping produced empty title) and lookup failed, treat as error
                         if lookup_failed and (not row.get(mappings.get('title', ''))):
+                            # Graceful behavior: import as a placeholder book flagged for review,
+                            # rather than failing the row. If metadata timed out twice, mark Needs Review.
                             try:
-                                logger.error(f"[IMPORT][LOOKUP_FAIL] row={row_num} isbn={isbn_key} in_metadata={isbn_key in book_metadata} title_after={simplified_book.title!r}")
+                                fail = (metadata_failures or {}).get(isbn_key) or {}
+                                if not fail and simplified_book.isbn13:
+                                    fail = (metadata_failures or {}).get(simplified_book.isbn13) or {}
+                                if not fail and simplified_book.isbn10:
+                                    fail = (metadata_failures or {}).get(simplified_book.isbn10) or {}
+                                reason = (fail or {}).get('reason')
+                                attempts = int((fail or {}).get('attempt') or 1)
+                            except Exception:
+                                reason, attempts = None, 1
+
+                            # Ensure a non-empty title to satisfy downstream creation constraints.
+                            if not simplified_book.title or simplified_book.title.strip() == '':
+                                simplified_book.title = isbn_key
+
+                            # Flag for review if we had timeouts (especially after retry).
+                            try:
+                                personal_md = getattr(simplified_book, 'personal_custom_metadata', None) or {}
+                                if isinstance(personal_md, dict):
+                                    if reason == 'timeout' and attempts >= 2:
+                                        personal_md.setdefault('needs_review', 'Needs Review')
+                                        personal_md.setdefault('metadata_lookup', 'timeout')
+                                    elif reason:
+                                        # Still highlight that enrichment was missing.
+                                        personal_md.setdefault('needs_review', 'Needs Review')
+                                        personal_md.setdefault('metadata_lookup', reason)
+                                    setattr(simplified_book, 'personal_custom_metadata', personal_md)
                             except Exception:
                                 pass
-                            processed_count += 1
-                            error_count += 1
-                            error_payload = {
-                                'row_number': row_num,
-                                'title': isbn_key,
-                                'author': '',
-                                'isbn': isbn_key,
-                                'raw_isbn': row.get('ISBN') or row.get('ISBN13') or row.get('ISBN/UID') or '',
-                                'file_name': source_filename,
-                                'error_type': 'lookup_failed',
-                                'message': f'Failed to fetch metadata for ISBN {isbn_key}',
-                                'raw_row': {k: v for k, v in row.items() if v}
-                            }
-                            progress_update = {
-                                'processed': processed_count,
-                                'success': success_count,
-                                'merged': merged_count,
-                                'errors': error_count,
-                                'skipped': skipped_count,
-                                'current_book': isbn_key,
-                            }
-                            _update_import_progress(
-                                user_id,
-                                task_id,
-                                updates=progress_update,
-                                processed_book={'title': isbn_key, 'status': 'error'},
-                                error_message=error_payload,
-                            )
-                            last_progress_emit = time.perf_counter()
-                            continue  # Skip creation attempt
+
+                            try:
+                                logger.warning(f"[IMPORT][LOOKUP_FAIL_CONTINUE] row={row_num} isbn={isbn_key} reason={reason} attempts={attempts} proceeding_as_review")
+                            except Exception:
+                                pass
+                            # Do not count as an error; proceed to create a placeholder entry.
 
                     if not simplified_book.reading_status:
                         simplified_book.reading_status = import_config.get('default_reading_status', '')
@@ -2058,6 +2555,15 @@ async def process_simple_import(import_config):
                     # personal_custom_metadata by reference (reserved keys like
                     # start_date/finish_date should not leak into custom fields).
                     personal_metadata_for_import = dict(getattr(simplified_book, 'personal_custom_metadata', None) or {})
+
+                    # Flag rows missing ISBN so they're easy to review later.
+                    # This keeps the import permissive (titles still import) while making gaps visible.
+                    try:
+                        has_isbn = bool(getattr(simplified_book, 'isbn13', None) or getattr(simplified_book, 'isbn10', None))
+                        if not has_isbn:
+                            personal_metadata_for_import.setdefault('needs_review', 'Needs Review')
+                    except Exception:
+                        pass
 
                     # Add standard personal fields if present in SimplifiedBook
                     if simplified_book.date_started:
@@ -2648,7 +3154,14 @@ def start_import_job(task_id, csv_file_path, field_mappings, user_id, **kwargs):
     
     return task_id
 
-def batch_fetch_book_metadata(isbns):
+def batch_fetch_book_metadata(
+    isbns,
+    *,
+    attempt: int = 1,
+    batch_timeout_seconds: float | None = None,
+    per_future_timeout_seconds: float | None = None,
+    max_workers_override: int | None = None,
+):
     """Batch fetch metadata using the unified aggregator for a list of ISBNs.
 
     Noise reduction: only warnings for empty results, errors for exceptions/batch failures.
@@ -2658,13 +3171,14 @@ def batch_fetch_book_metadata(isbns):
         logger.debug(f"[IMPORT][METADATA][BATCH_START] size={len(isbns)} isbns={isbns}")
 
     from app.utils.unified_metadata import fetch_unified_by_isbn_detailed
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     import os
     import time
     import random
 
-    metadata = {}
-    failed_isbns = []
+    metadata: dict = {}
+    failures: dict = {}
+    failed_isbns: list[str] = []
 
     # Local validator mirrors unified_metadata logic (keep lightweight, no dependency loop)
     import re as _re
@@ -2748,12 +3262,27 @@ def batch_fetch_book_metadata(isbns):
     env_override_workers = _read_int_env('IMPORT_METADATA_CONCURRENCY', env_default_workers)
     admin_override_workers = _read_admin_concurrency()
     configured_workers = admin_override_workers if admin_override_workers is not None else env_override_workers
-    max_workers = max(1, min(configured_workers, len(valid_entries)))
+    if max_workers_override is not None:
+        try:
+            configured_workers = int(max_workers_override)
+        except Exception:
+            pass
+    max_workers = max(1, min(int(configured_workers), len(valid_entries)))
 
-    jitter_min = max(0.0, _read_float_env('IMPORT_METADATA_JITTER_MIN', 0.05))
-    jitter_max = max(0.0, _read_float_env('IMPORT_METADATA_JITTER_MAX', 0.2))
+    # Default jitter is intentionally a bit higher to reduce API stampedes.
+    jitter_min = max(0.0, _read_float_env('IMPORT_METADATA_JITTER_MIN', 0.15))
+    jitter_max = max(0.0, _read_float_env('IMPORT_METADATA_JITTER_MAX', 0.75))
     if jitter_max < jitter_min:
         jitter_max = jitter_min
+
+    # Hard deadline so onboarding/import progress can't hang indefinitely.
+    # This is best-effort metadata enrichment: the import should keep moving.
+    if batch_timeout_seconds is None:
+        batch_timeout_seconds = _read_float_env('IMPORT_METADATA_BATCH_TIMEOUT', 60.0)
+    if per_future_timeout_seconds is None:
+        per_future_timeout_seconds = _read_float_env('IMPORT_METADATA_FUTURE_TIMEOUT', 30.0)
+    batch_timeout_seconds = max(5.0, float(batch_timeout_seconds))
+    per_future_timeout_seconds = max(2.0, float(per_future_timeout_seconds))
 
     def _fetch_single(idx, isbn):
         if _META_DEBUG_FLAG:
@@ -2769,46 +3298,92 @@ def batch_fetch_book_metadata(isbns):
         except Exception as exc:  # pragma: no cover - defensive logging path
             return idx, isbn, None, None, exc
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_fetch_single, idx, isbn) for idx, isbn in valid_entries]
-        for future in as_completed(futures):
-            idx, isbn, data, provider_errors, exc = future.result()
-            if exc is not None:
-                logger.error(
-                    f"[IMPORT][METADATA] Exception fetching ISBN {isbn}: {exc}",
-                    exc_info=(type(exc), exc, exc.__traceback__)
-                )
-                failed_isbns.append(isbn)
+    deadline = time.monotonic() + float(batch_timeout_seconds)
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    future_map = {executor.submit(_fetch_single, idx, isbn): (idx, isbn) for idx, isbn in valid_entries}
+    try:
+        while future_map:
+            now = time.monotonic()
+            if now >= deadline:
+                break
+
+            # Poll for completions so we can enforce the deadline.
+            done, _not_done = wait(
+                future_map,
+                timeout=min(0.5, max(0.05, deadline - now)),
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
                 continue
 
-            if _META_DEBUG_FLAG:
-                logger.debug(f"[IMPORT][METADATA][PROVIDERS] isbn={isbn} providers={provider_errors}")
-
-            if data:
-                metadata[isbn] = {
-                    'data': data,
-                    'source': 'unified',
-                    'provider_errors': provider_errors
-                }
+            for future in done:
+                idx, isbn = future_map.pop(future)
                 try:
-                    alt13 = data.get('isbn13')
-                    alt10 = data.get('isbn10')
-                    if alt13 and alt13 != isbn and alt13 not in metadata:
-                        metadata[alt13] = metadata[isbn]
-                        if _META_DEBUG_FLAG:
-                            logger.debug(f"[IMPORT][METADATA][CANON] promoted_isbn13={alt13} original_query={isbn}")
-                    for alt in [alt10]:
-                        if alt and alt not in metadata:
-                            metadata[alt] = metadata[isbn]
-                    if alt13 and alt10 and alt13 != alt10 and _META_DEBUG_FLAG:
-                        logger.debug(f"[IMPORT][METADATA][ALT_INDEX] isbn_query={isbn} alt13={alt13} alt10={alt10}")
+                    idx, isbn, data, provider_errors, exc = future.result(timeout=per_future_timeout_seconds)
+                except Exception as exc2:  # pragma: no cover - defensive
+                    logger.error(f"[IMPORT][METADATA] Future failed isbn={isbn}: {exc2}")
+                    failed_isbns.append(isbn)
+                    continue
+
+                if exc is not None:
+                    logger.error(
+                        f"[IMPORT][METADATA] Exception fetching ISBN {isbn}: {exc}",
+                        exc_info=(type(exc), exc, exc.__traceback__)
+                    )
+                    failed_isbns.append(isbn)
+                    failures[isbn] = {'reason': 'exception', 'attempt': attempt}
+                    continue
+
+                if _META_DEBUG_FLAG:
+                    logger.debug(f"[IMPORT][METADATA][PROVIDERS] isbn={isbn} providers={provider_errors}")
+
+                if data:
+                    metadata[isbn] = {
+                        'data': data,
+                        'source': 'unified',
+                        'provider_errors': provider_errors
+                    }
+                    try:
+                        alt13 = data.get('isbn13')
+                        alt10 = data.get('isbn10')
+                        if alt13 and alt13 != isbn and alt13 not in metadata:
+                            metadata[alt13] = metadata[isbn]
+                            if _META_DEBUG_FLAG:
+                                logger.debug(f"[IMPORT][METADATA][CANON] promoted_isbn13={alt13} original_query={isbn}")
+                        for alt in [alt10]:
+                            if alt and alt not in metadata:
+                                metadata[alt] = metadata[isbn]
+                        if alt13 and alt10 and alt13 != alt10 and _META_DEBUG_FLAG:
+                            logger.debug(f"[IMPORT][METADATA][ALT_INDEX] isbn_query={isbn} alt13={alt13} alt10={alt10}")
+                    except Exception:
+                        pass
+                    if _META_DEBUG_FLAG:
+                        logger.debug(f"[IMPORT][METADATA][FETCH_OK] isbn={isbn} title={data.get('title')}")
+                else:
+                    logger.warning(f"[IMPORT][METADATA] No metadata for ISBN {isbn}")
+                    failed_isbns.append(isbn)
+                    failures[isbn] = {'reason': 'no_metadata', 'attempt': attempt}
+
+        # If we timed out, cancel any remaining futures and continue import.
+        if future_map:
+            remaining = [isbn for (_idx, isbn) in future_map.values()]
+            for future, (_idx, isbn) in list(future_map.items()):
+                try:
+                    future.cancel()
                 except Exception:
                     pass
-                if _META_DEBUG_FLAG:
-                    logger.debug(f"[IMPORT][METADATA][FETCH_OK] isbn={isbn} title={data.get('title')}")
-            else:
-                logger.warning(f"[IMPORT][METADATA] No metadata for ISBN {isbn}")
                 failed_isbns.append(isbn)
+                failures[isbn] = {'reason': 'timeout', 'attempt': attempt}
+            logger.warning(
+                f"[IMPORT][METADATA] Batch timeout after {batch_timeout_seconds:.1f}s; proceeding without metadata for {len(remaining)} ISBNs"
+            )
+    finally:
+        # Do not block the import thread on executor shutdown.
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # cancel_futures added in newer Python; fallback.
+            executor.shutdown(wait=False)
 
     if _META_DEBUG_FLAG:
         success_rate = (len(metadata) / len(isbns)) * 100 if isbns else 0
@@ -2819,7 +3394,7 @@ def batch_fetch_book_metadata(isbns):
     else:
         # Downgrade zero-failure message to debug (avoid misleading error spam)
         logger.debug("[IMPORT][METADATA] Batch fetch completed with zero failures")
-    return metadata
+    return metadata, failures
 
 def store_job_in_kuzu(task_id, job_data):
     """Store import job status in KuzuDB."""
