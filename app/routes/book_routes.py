@@ -163,6 +163,74 @@ def _get_changed_fields(user_book, form):
     
     return changes
 
+
+def _set_publisher_relationship(book_id: str, publisher_name: Optional[str], user_id: str) -> None:
+    """Set (or clear) the PUBLISHED_BY relationship for a book.
+
+    Publisher is modeled as a relationship, not a Book node property.
+    """
+    from app.utils.safe_kuzu_manager import safe_get_connection
+
+    if not book_id:
+        return
+
+    name = (publisher_name or '').strip()
+    normalized = name.lower().strip() if name else ''
+
+    with safe_get_connection(user_id=str(user_id), operation="set_book_publisher") as conn:
+        # Always clear existing publisher relationship if publisher field was posted.
+        try:
+            conn.execute(
+                "MATCH (b:Book {id: $book_id})-[r:PUBLISHED_BY]->() DELETE r",
+                {"book_id": book_id},
+            )
+        except Exception:
+            # Clearing is best-effort; continue.
+            pass
+
+        if not name:
+            return
+
+        # Find existing publisher (case-insensitive)
+        try:
+            res = conn.execute(
+                "MATCH (p:Publisher) WHERE toLower(p.name) = toLower($name) RETURN p.id LIMIT 1",
+                {"name": name},
+            )
+            rows = _convert_query_result_to_list(res)
+        except Exception:
+            rows = []
+
+        publisher_id = None
+        if rows:
+            row0 = rows[0]
+            try:
+                publisher_id = row0[0]
+            except Exception:
+                publisher_id = None
+
+        if not publisher_id:
+            publisher_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc)
+            conn.execute(
+                """
+                CREATE (p:Publisher {
+                    id: $id,
+                    name: $name,
+                    normalized_name: $normalized_name,
+                    created_at: $now,
+                    updated_at: $now
+                })
+                """,
+                {"id": publisher_id, "name": name, "normalized_name": normalized, "now": now},
+            )
+
+        # Create relationship
+        conn.execute(
+            "MATCH (b:Book {id: $book_id}), (p:Publisher {id: $pub_id}) CREATE (b)-[:PUBLISHED_BY]->(p)",
+            {"book_id": book_id, "pub_id": publisher_id},
+        )
+
 def _handle_personal_only(uid, form):
     update_data = {}
     def _opt(name, cast=None):
@@ -316,28 +384,69 @@ def _handle_edit_book_post(uid, user_book, form):
     
     # Simple field updates - get only what changed
     changes = _get_changed_fields(user_book, form)
+
+    # Publisher is a relationship; handle it separately so we actually persist it.
+    publisher_posted = 'publisher' in form
+    publisher_name = form.get('publisher', '').strip() if publisher_posted else None
+    if publisher_posted:
+        changes.pop('publisher', None)
+
+    # If metadata was applied from the search modal and the user saved,
+    # automatically clear the Needs Review flag.
+    clear_flag_raw = form.get('clear_needs_review', '')
+    clear_needs_review = isinstance(clear_flag_raw, str) and clear_flag_raw.strip().lower() in ('1', 'true', 'yes', 'on')
     
-    if changes:
-        try:
+    try:
+        ok = True
+        if changes:
             ok = book_service.update_book_sync(uid, str(current_user.id), **changes)
-            if ok:
-                # Invalidate cache so UI updates immediately
+
+        if ok:
+            # Persist publisher relationship if it was posted.
+            if publisher_posted:
                 try:
-                    from app.utils.simple_cache import bump_user_library_version
-                    bump_user_library_version(str(current_user.id))
-                except Exception:
-                    pass  # Don't fail the request if cache bump fails
-                field_names = ', '.join(sorted(changes.keys()))
-                flash(f"Updated: {field_names}", 'success')
+                    book_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+                    _set_publisher_relationship(book_id or uid, publisher_name, str(current_user.id))
+                except Exception as e:
+                    current_app.logger.debug(f"[PUBLISHER][SET_FAIL] uid={uid} err={e}")
+
+            if clear_needs_review:
+                try:
+                    book_internal_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+                    from app.services.personal_metadata_service import personal_metadata_service
+                    personal_metadata_service.update_personal_metadata(
+                        str(current_user.id),
+                        str(book_internal_id or uid),
+                        custom_updates={'needs_review': None},
+                        merge=True,
+                    )
+                except Exception as e:
+                    current_app.logger.debug(f"[NEEDS_REVIEW][AUTO_CLEAR_FAIL] uid={uid} err={e}")
+
+            # Invalidate cache so UI updates immediately
+            try:
+                from app.utils.simple_cache import bump_user_library_version
+                bump_user_library_version(str(current_user.id))
+            except Exception:
+                pass  # Don't fail the request if cache bump fails
+
+            updated_fields = sorted(changes.keys()) if changes else []
+            if publisher_posted:
+                updated_fields.append('publisher')
+            if clear_needs_review:
+                updated_fields.append('needs_review')
+
+            if updated_fields:
+                flash(f"Updated: {', '.join(sorted(set(updated_fields)))}", 'success')
             else:
-                flash('No changes saved (update rejected).', 'warning')
-        except Exception as e:
-            current_app.logger.error(f"[BOOK_EDIT] Update failed: {e}")
-            flash('Error saving changes.', 'error')
-        return redirect(url_for('book.view_book_enhanced', uid=uid))
-    else:
-        flash('No changes detected.', 'info')
-        return redirect(url_for('book.view_book_enhanced', uid=uid))
+                flash('No changes detected.', 'info')
+        else:
+            flash('No changes saved (update rejected).', 'warning')
+    except Exception as e:
+        current_app.logger.error(f"[BOOK_EDIT] Update failed: {e}")
+        flash('Error saving changes.', 'error')
+
+    return redirect(url_for('book.view_book_enhanced', uid=uid))
 
 # Create book blueprint
 book_bp = Blueprint('book', __name__)
@@ -812,6 +921,230 @@ def fetch_book(isbn):
         if not book_data.get('cover'):
             book_data['cover'] = url_for('serve_static', filename='bookshelf.png')
         return jsonify(book_data), 200 if book_data else 404
+
+
+@book_bp.route('/book/<uid>/refresh_metadata', methods=['POST'])
+@login_required
+def refresh_book_metadata(uid):
+    """Refresh a single book's metadata using unified metadata providers.
+
+    ISBN-first. If ISBN is missing, fall back to title/author search.
+    Updates only Book-level fields (not contributor relationships).
+    """
+    try:
+        user_id = str(current_user.id)
+        user_book = book_service.get_book_by_uid_sync(uid, user_id)
+        if not user_book:
+            abort(404)
+
+        refresh_mode = (request.form.get('refresh_mode') or 'missing').strip().lower()
+        selected_fields = set([f.strip() for f in request.form.getlist('refresh_fields') if f and f.strip()])
+
+        def _get_attr(obj, key, default=None):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        isbn = (_get_attr(user_book, 'isbn13') or _get_attr(user_book, 'isbn10') or '').strip()
+        title = (_get_attr(user_book, 'title') or '').strip()
+        author = None
+        try:
+            authors = _get_attr(user_book, 'authors', None)
+            if isinstance(authors, list) and authors:
+                first = authors[0]
+                if isinstance(first, dict):
+                    author = (first.get('name') or '').strip() or None
+                else:
+                    author = (getattr(first, 'name', '') or '').strip() or None
+        except Exception:
+            author = None
+
+        from app.utils.metadata_aggregator import fetch_unified_by_isbn, fetch_unified_by_title
+
+        used_fallback = False
+        if isbn:
+            unified = fetch_unified_by_isbn(isbn) or {}
+        else:
+            # Title/author fallback: pick the top search hit with an ISBN and then hydrate via ISBN.
+            used_fallback = True
+            results = fetch_unified_by_title(title, max_results=5, author=author) if title else []
+            candidate_isbn = None
+            for r in results or []:
+                candidate_isbn = (r.get('isbn13') or r.get('isbn10') or '').strip() or None
+                if candidate_isbn:
+                    break
+            if candidate_isbn:
+                unified = fetch_unified_by_isbn(candidate_isbn) or {}
+                isbn = candidate_isbn
+            else:
+                unified = {}
+
+        if not unified:
+            flash('No metadata found for this book. Try adding an ISBN, then retry.', 'warning')
+            return redirect(url_for('book.edit_book', uid=uid))
+
+        candidate_updates = {}
+        # Book node fields (see schema in kuzu_graph.py)
+        for key in (
+            'title', 'subtitle', 'publisher', 'description', 'language', 'cover_url',
+            'google_books_id', 'openlibrary_id', 'isbn10', 'isbn13', 'average_rating',
+            'rating_count', 'series'
+        ):
+            if key in unified and unified.get(key) is not None:
+                candidate_updates[key] = unified.get(key)
+
+        # Normalize types
+        if 'page_count' in unified and unified.get('page_count') is not None:
+            try:
+                candidate_updates['page_count'] = int(unified.get('page_count'))
+            except Exception:
+                pass
+
+        if unified.get('published_date'):
+            try:
+                pd = unified.get('published_date')
+                if isinstance(pd, str):
+                    pd = _convert_published_date_to_date(pd)
+                candidate_updates['published_date'] = pd
+            except Exception:
+                pass
+
+        # Categories: push as raw_categories (category service will normalize)
+        cats = unified.get('categories')
+        if isinstance(cats, list) and cats:
+            candidate_updates['raw_categories'] = cats
+
+        # Apply refresh mode
+        allowed_fields = {
+            'title', 'subtitle', 'publisher', 'description', 'language', 'cover_url',
+            'google_books_id', 'openlibrary_id', 'isbn10', 'isbn13', 'average_rating',
+            'rating_count', 'series', 'page_count', 'published_date', 'raw_categories'
+        }
+
+        if refresh_mode not in {'full', 'missing', 'select'}:
+            refresh_mode = 'missing'
+
+        if refresh_mode == 'select':
+            # If the user didn't pick anything, don't overwrite anything.
+            selected_fields = {f for f in selected_fields if f in allowed_fields}
+            if not selected_fields:
+                flash('Select at least one field to refresh.', 'warning')
+                return redirect(url_for('book.edit_book', uid=uid))
+            updates = {k: v for k, v in candidate_updates.items() if k in selected_fields}
+        elif refresh_mode == 'missing':
+            def _is_missing_value(field_name, value):
+                if value is None:
+                    return True
+                if isinstance(value, str):
+                    return value.strip() == ''
+                if isinstance(value, (list, dict, tuple, set)):
+                    return len(value) == 0
+                if field_name == 'page_count' and isinstance(value, int):
+                    return value <= 0
+                return False
+
+            updates = {}
+            for k, v in candidate_updates.items():
+                if _is_missing_value(k, _get_attr(user_book, k, None)):
+                    updates[k] = v
+        else:
+            updates = dict(candidate_updates)
+
+        # Cache cover locally when possible
+        try:
+            cover_url = updates.get('cover_url') if 'cover_url' in updates else None
+            if cover_url and isbn and isinstance(cover_url, str) and not cover_url.startswith('/covers/'):
+                from app.services.cover_service import cover_service
+                cr = cover_service.fetch_and_cache(
+                    isbn=isbn,
+                    title=updates.get('title') or title,
+                    author=author,
+                )
+                if getattr(cr, 'cached_url', None):
+                    updates['cover_url'] = cr.cached_url
+        except Exception:
+            pass
+
+        if not updates:
+            flash('Metadata was fetched, but no updatable fields were returned by your current metadata settings.', 'info')
+            return redirect(url_for('book.edit_book', uid=uid))
+
+        ok = book_service.update_book_sync(uid, user_id, **updates)
+        if ok:
+            # If a book was marked Needs Review (e.g., imported without ISBN), a successful refresh should clear it.
+            try:
+                book_internal_id = _get_attr(user_book, 'id', None) or uid
+                from app.services.personal_metadata_service import personal_metadata_service
+                personal_metadata_service.update_personal_metadata(
+                    user_id,
+                    str(book_internal_id),
+                    custom_updates={'needs_review': None},
+                    merge=True,
+                )
+            except Exception:
+                pass
+            try:
+                from app.utils.simple_cache import bump_user_library_version
+                bump_user_library_version(user_id)
+            except Exception:
+                pass
+            if refresh_mode == 'full':
+                msg = 'Metadata refreshed (full overwrite).'
+            elif refresh_mode == 'select':
+                msg = 'Metadata refreshed (selected fields).'
+            else:
+                msg = 'Metadata refreshed (filled missing fields).'
+            if used_fallback:
+                msg += ' (Matched via title search)'
+            flash(msg, 'success')
+        else:
+            flash('Metadata refresh failed (update rejected).', 'error')
+
+        return redirect(url_for('book.edit_book', uid=uid))
+
+    except Exception as e:
+        current_app.logger.error(f"Error refreshing book metadata for {uid}: {e}")
+        flash('Error refreshing metadata. Please try again.', 'error')
+        return redirect(url_for('book.edit_book', uid=uid))
+
+
+@book_bp.route('/book/<uid>/clear_needs_review', methods=['POST'])
+@login_required
+def clear_needs_review(uid):
+    """Manually clear the per-user Needs Review flag for a book."""
+    try:
+        user_id = str(current_user.id)
+        user_book = book_service.get_book_by_uid_sync(uid, user_id)
+        if not user_book:
+            abort(404)
+
+        book_internal_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+        if not book_internal_id:
+            flash('Unable to clear Needs Review (missing book id).', 'error')
+            return redirect(url_for('book.edit_book', uid=uid))
+
+        from app.services.personal_metadata_service import personal_metadata_service
+        personal_metadata_service.update_personal_metadata(
+            user_id,
+            str(book_internal_id),
+            custom_updates={'needs_review': None},
+            merge=True,
+        )
+
+        try:
+            from app.utils.simple_cache import bump_user_library_version
+            bump_user_library_version(user_id)
+        except Exception:
+            pass
+
+        flash('Needs Review cleared.', 'success')
+        return redirect(url_for('book.edit_book', uid=uid))
+    except Exception as e:
+        current_app.logger.error(f"Error clearing needs_review for {uid}: {e}")
+        flash('Error clearing Needs Review. Please try again.', 'error')
+        return redirect(url_for('book.edit_book', uid=uid))
+
+
 @api_book_bp.route('/quick_isbn/<isbn>', methods=['GET'])
 def api_quick_isbn(isbn):
     """API-first fast ISBN metadata endpoint with optional async cover processing (no auth redirect)."""
@@ -3272,7 +3605,7 @@ def edit_book(uid):
             'contributors': contributors,
             'raw_categories': (raw_categories_payload if raw_categories_payload is not None else (categories if categories else None)),
             # Additional metadata fields - these are Book properties, not user-specific
-            'publisher': request.form.get('publisher', '').strip() or None,
+            'publisher': request.form.get('publisher', '').strip() if 'publisher' in request.form else None,
             'asin': request.form.get('asin', '').strip() or None,
             'google_books_id': request.form.get('google_books_id', '').strip() or None,
             'openlibrary_id': request.form.get('openlibrary_id', '').strip() or None,
@@ -3285,11 +3618,11 @@ def edit_book(uid):
             'personal_notes': request.form.get('personal_notes', '').strip() or None,
             'review': request.form.get('review', '').strip() or None,
         }
-        
-    # Remove properties that belong to relationships from the node update payload (avoids Kuzu errors)
+
+        # Remove properties that belong to relationships from the node update payload (avoids Kuzu errors)
         # They are handled elsewhere (e.g., publisher via separate relationship updates)
-        if 'publisher' in update_data:
-            update_data.pop('publisher', None)
+        publisher_posted = 'publisher' in request.form
+        publisher_name = update_data.pop('publisher', None) if publisher_posted else None
 
         # Handle user rating
         user_rating = request.form.get('user_rating', '').strip()
@@ -3312,6 +3645,14 @@ def edit_book(uid):
             traceback.print_exc()
             flash(f'Error updating book: {str(e)}', 'error')
             return redirect(url_for('book.view_book_enhanced', uid=uid))
+
+        # Persist publisher relationship (publisher is not a Book node property)
+        if publisher_posted:
+            try:
+                book_id_for_pub = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+                _set_publisher_relationship(book_id_for_pub or uid, publisher_name, str(current_user.id))
+            except Exception as pub_err:
+                current_app.logger.debug(f"[PUBLISHER][SET_FAIL] uid={uid} err={pub_err}")
 
         # New series relationship handling (autocomplete integration)
         try:
@@ -3357,6 +3698,24 @@ def edit_book(uid):
                 bump_user_library_version(str(current_user.id))
             except Exception:
                 pass  # Don't fail the request if cache bump fails
+
+            # If metadata was applied from the search modal and the user saved,
+            # automatically clear the Needs Review flag.
+            try:
+                clear_flag_raw = request.form.get('clear_needs_review', '')
+                clear_flag = isinstance(clear_flag_raw, str) and clear_flag_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+                if clear_flag:
+                    book_internal_id = user_book.get('id') if isinstance(user_book, dict) else getattr(user_book, 'id', None)
+                    from app.services.personal_metadata_service import personal_metadata_service
+                    personal_metadata_service.update_personal_metadata(
+                        str(current_user.id),
+                        str(book_internal_id or uid),
+                        custom_updates={'needs_review': None},
+                        merge=True,
+                    )
+            except Exception as e:
+                current_app.logger.debug(f"[NEEDS_REVIEW][AUTO_CLEAR_FAIL] uid={uid} err={e}")
+
             flash('Book updated successfully.', 'success')
         else:
             flash('Failed to update book.', 'error')

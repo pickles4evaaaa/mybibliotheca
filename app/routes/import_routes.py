@@ -2020,7 +2020,9 @@ async def process_simple_import(import_config):
 
     from app.simplified_book_service import SimplifiedBookService
 
-    if format_type in ['goodreads', 'storygraph']:
+    # For these formats we default enrichment on, but must respect an explicit disable
+    # (e.g., onboarding Quick Start).
+    if format_type in ['goodreads', 'storygraph'] and 'enable_api_enrichment' not in import_config:
         enable_api_enrichment = True
 
     if _META_DEBUG_FLAG:

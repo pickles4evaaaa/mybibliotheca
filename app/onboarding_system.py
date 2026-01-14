@@ -566,6 +566,10 @@ def site_config_step():
 def data_options_step():
     """Step 3: Data import/migration options."""
     logger.info(f"🔍 ONBOARDING DEBUG: data_options_step called, method={request.method}")
+
+    # Load any existing selection so the UI can reflect it.
+    existing_data_options = (get_onboarding_data().get('data_options') or {})
+    existing_data_option = existing_data_options.get('option')
     
     # Detect existing databases
     migration_system = AdvancedMigrationSystem()
@@ -711,6 +715,9 @@ def data_options_step():
                                          total_steps=5)
             
             elif data_option == 'import':
+                # Quick Start: skip external metadata lookup/enrichment during onboarding import.
+                data_options['quick_start'] = ('quick_start' in request.form)
+
                 # Handle file upload for import
                 uploaded_file = request.files.get('import_file')
                 if not uploaded_file or not uploaded_file.filename:
@@ -719,6 +726,8 @@ def data_options_step():
                     # Return to the same step instead of advancing
                     return render_template('onboarding/step3_data_options.html',
                                          databases=db_analysis,
+                                         data_option=data_option,
+                                         data_options=data_options,
                                          step=3,
                                          total_steps=5)
                 
@@ -774,6 +783,8 @@ def data_options_step():
     
     return render_template('onboarding/step3_data_options.html',
                          databases=db_analysis,
+                         data_option=existing_data_option,
+                         data_options=existing_data_options,
                          step=3,
                          total_steps=5)
 
@@ -945,6 +956,7 @@ def import_config_step(data_options: Dict):
                 'csv_file_path': csv_file_path,
                 'field_mappings': field_mappings,
                 'detected_type': detected_type,
+                'quick_start': bool(data_options.get('quick_start')),
                 'default_reading_status': '',
                 'duplicate_handling': 'skip',
                 'custom_fields_enabled': True,
@@ -1030,6 +1042,7 @@ def import_config_step(data_options: Dict):
             'csv_file_path': csv_file_path,
             'field_mappings': field_mappings,
             'detected_type': detected_type,
+            'quick_start': bool(data_options.get('quick_start')),
             'default_reading_status': '',
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
@@ -2156,6 +2169,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         
         # Create job data structure exactly like the working post-onboarding import
         detected_type = import_config.get('detected_type', 'unknown')
+        quick_start = bool(import_config.get('quick_start'))
         job_data = {
             'task_id': task_id,
             'user_id': user_id,
@@ -2165,6 +2179,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
             'format_type': detected_type,  # Pass the detected format type
+            'quick_start': quick_start,
             'status': 'pending',
             'processed': 0,
             'success': 0,
@@ -2291,7 +2306,8 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     'duplicate_handling': 'skip',
                     'custom_fields_enabled': True,
                     'format_type': import_config.get('detected_type', 'unknown'),
-                    'enable_api_enrichment': True,
+                    # Quick Start: import "as-is" and skip metadata lookups.
+                    'enable_api_enrichment': (not quick_start),
                     # Onboarding UX: don't let metadata prefetch block actual importing.
                     'metadata_prefetch_max_seconds': 10.0,
                     'metadata_prefetch_batch_timeout': 6.0,
