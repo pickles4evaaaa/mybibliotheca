@@ -71,6 +71,7 @@ import_bp = Blueprint('import', __name__)
 UNASSIGNED_READING_LOG_TITLE = 'Unassigned Reading Logs'
 
 MAX_PROGRESS_RECENT_BOOKS = int(os.getenv('IMPORT_PROGRESS_RECENT', '25'))
+MAX_PROGRESS_RECENT_ACTIVITY = int(os.getenv('IMPORT_PROGRESS_RECENT_ACTIVITY', str(MAX_PROGRESS_RECENT_BOOKS)))
 MAX_PROGRESS_ERROR_MESSAGES = int(os.getenv('IMPORT_PROGRESS_MAX_ERRORS', '200'))
 PROGRESS_EMIT_INTERVAL = float(os.getenv('IMPORT_PROGRESS_INTERVAL', '0.35'))
 
@@ -2396,12 +2397,17 @@ async def process_simple_import(import_config):
                     remaining_budget = max(0.0, prefetch_deadline - time.monotonic())
                     eff_batch_timeout = min(base_batch_timeout, max(5.0, remaining_budget))
                     eff_future_timeout = min(base_future_timeout, max(2.0, remaining_budget))
-                    chunk_metadata, chunk_failures = batch_fetch_book_metadata(
+                    _bf_res = batch_fetch_book_metadata(
                         batch,
                         attempt=1,
                         batch_timeout_seconds=eff_batch_timeout,
                         per_future_timeout_seconds=eff_future_timeout,
                     )
+                    # Compatibility: some tests/mocks may return only a metadata dict.
+                    if isinstance(_bf_res, tuple) and len(_bf_res) == 2:
+                        chunk_metadata, chunk_failures = _bf_res
+                    else:
+                        chunk_metadata, chunk_failures = _bf_res, {}
                     if chunk_metadata:
                         aggregated_metadata.update(chunk_metadata)
                     if chunk_failures:
@@ -2443,13 +2449,17 @@ async def process_simple_import(import_config):
                             remaining_budget = max(0.0, prefetch_deadline - time.monotonic())
                             eff_batch_timeout = min(base_batch_timeout, max(5.0, remaining_budget))
                             eff_future_timeout = min(base_future_timeout, max(2.0, remaining_budget))
-                            retry_meta, retry_failures = batch_fetch_book_metadata(
+                            _retry_res = batch_fetch_book_metadata(
                                 retry_batch,
                                 attempt=2,
                                 batch_timeout_seconds=eff_batch_timeout,
                                 per_future_timeout_seconds=eff_future_timeout,
                                 max_workers_override=2,
                             )
+                            if isinstance(_retry_res, tuple) and len(_retry_res) == 2:
+                                retry_meta, retry_failures = _retry_res
+                            else:
+                                retry_meta, retry_failures = _retry_res, {}
                             if retry_meta:
                                 aggregated_metadata.update(retry_meta)
                                 # Clear failures for any ISBN now fetched.
@@ -2509,10 +2519,30 @@ async def process_simple_import(import_config):
                         # Failed if not in metadata OR title is still placeholder (exactly equals any isbn form)
                         placeholder_title = not simplified_book.title or simplified_book.title.strip() == '' or simplified_book.title in {simplified_book.isbn13, simplified_book.isbn10}
                         lookup_failed = (not in_meta) or placeholder_title
-                        # If original CSV provided no title (row mapping produced empty title) and lookup failed, treat as error
-                        if lookup_failed and (not row.get(mappings.get('title', ''))):
-                            # Graceful behavior: import as a placeholder book flagged for review,
-                            # rather than failing the row. If metadata timed out twice, mark Needs Review.
+
+                        # Only treat as an ISBN-only row if the *input CSV* row had no mapped title.
+                        # (mappings is keyed by CSV column name; invert it to find the source title column.)
+                        title_csv_field = None
+                        try:
+                            for _csv_field, _book_field in (mappings or {}).items():
+                                if _book_field == 'title':
+                                    title_csv_field = _csv_field
+                                    break
+                        except Exception:
+                            title_csv_field = None
+                        raw_input_title = row.get(title_csv_field) if title_csv_field else None
+                        has_input_title = False
+                        try:
+                            if isinstance(raw_input_title, str):
+                                has_input_title = bool(raw_input_title.strip())
+                            else:
+                                has_input_title = bool(raw_input_title)
+                        except Exception:
+                            has_input_title = False
+
+                        # If original CSV provided no title and lookup failed, treat as a lookup failure.
+                        # We skip persistence for ISBN-only rows that couldn't be enriched.
+                        if lookup_failed and (not has_input_title):
                             try:
                                 fail = (metadata_failures or {}).get(isbn_key) or {}
                                 if not fail and simplified_book.isbn13:
@@ -2524,30 +2554,70 @@ async def process_simple_import(import_config):
                             except Exception:
                                 reason, attempts = None, 1
 
-                            # Ensure a non-empty title to satisfy downstream creation constraints.
-                            if not simplified_book.title or simplified_book.title.strip() == '':
-                                simplified_book.title = isbn_key
+                            processed_count += 1
+                            error_count += 1
+                            raw_isbn = row.get('ISBN13') or row.get('ISBN') or row.get('ISBN/UID') or row.get('isbn') or ''
+                            error_payload = {
+                                'row_number': row_num,
+                                'title': '',
+                                'author': row.get('Author') or row.get('author') or '',
+                                'isbn': isbn_key or '',
+                                'raw_isbn': raw_isbn,
+                                'file_name': source_filename,
+                                'error_type': 'lookup_failed',
+                                'message': f"Metadata lookup failed for ISBN {isbn_key} (reason={reason or 'not_found'}, attempts={attempts})",
+                                'raw_row': {k: v for k, v in row.items() if v},
+                            }
+                            progress_entry = {'title': isbn_key or 'Untitled', 'status': 'error'}
+                            pending_processed_entries.append(progress_entry)
+                            progress_update = {
+                                'processed': processed_count,
+                                'success': success_count,
+                                'merged': merged_count,
+                                'errors': error_count,
+                                'skipped': skipped_count,
+                                'current_book': isbn_key or 'Untitled',
+                            }
+                            _update_import_progress(
+                                user_id,
+                                task_id,
+                                updates=progress_update,
+                                processed_book=pending_processed_entries,
+                                error_message=error_payload,
+                            )
+                            pending_processed_entries.clear()
+                            last_progress_emit = time.perf_counter()
+                            continue
 
-                            # Flag for review if we had timeouts (especially after retry).
-                            try:
-                                personal_md = getattr(simplified_book, 'personal_custom_metadata', None) or {}
-                                if isinstance(personal_md, dict):
-                                    if reason == 'timeout' and attempts >= 2:
-                                        personal_md.setdefault('needs_review', 'Needs Review')
-                                        personal_md.setdefault('metadata_lookup', 'timeout')
-                                    elif reason:
-                                        # Still highlight that enrichment was missing.
-                                        personal_md.setdefault('needs_review', 'Needs Review')
-                                        personal_md.setdefault('metadata_lookup', reason)
-                                    setattr(simplified_book, 'personal_custom_metadata', personal_md)
-                            except Exception:
-                                pass
+                    # If metadata prefetch was throttled/time-budgeted and we still don't have a cover,
+                    # attempt a lightweight best-cover lookup (Google-first) so the created Book ends
+                    # up with a usable cover_url.
+                    try:
+                        if enable_api_enrichment and (not getattr(simplified_book, 'cover_url', None)):
+                            cover_isbn = getattr(simplified_book, 'isbn13', None) or getattr(simplified_book, 'isbn10', None)
+                            if cover_isbn:
+                                from app.utils.book_utils import get_best_cover_for_book
+                                best = get_best_cover_for_book(isbn=cover_isbn, title=simplified_book.title, author=simplified_book.author)
+                                if best and best.get('cover_url'):
+                                    simplified_book.cover_url = best['cover_url']
+                    except Exception:
+                        pass
 
-                            try:
-                                logger.warning(f"[IMPORT][LOOKUP_FAIL_CONTINUE] row={row_num} isbn={isbn_key} reason={reason} attempts={attempts} proceeding_as_review")
-                            except Exception:
-                                pass
-                            # Do not count as an error; proceed to create a placeholder entry.
+                    # Cover quality upgrade: if we fell back to OpenLibrary (often placeholder/low quality),
+                    # try a direct Google ISBN cover lookup once more before persisting.
+                    try:
+                        if enable_api_enrichment and isinstance(getattr(simplified_book, 'cover_url', None), str):
+                            cur = simplified_book.cover_url or ''
+                            if cur and 'covers.openlibrary.org' in cur:
+                                cover_isbn = getattr(simplified_book, 'isbn13', None) or getattr(simplified_book, 'isbn10', None)
+                                if cover_isbn:
+                                    from app.utils.book_utils import get_google_books_cover, normalize_cover_url
+                                    gb = get_google_books_cover(cover_isbn, fetch_title_author=False) or {}
+                                    gb_url = normalize_cover_url((gb or {}).get('cover_url'))
+                                    if gb_url and isinstance(gb_url, str):
+                                        simplified_book.cover_url = gb_url
+                    except Exception:
+                        pass
 
                     if not simplified_book.reading_status:
                         simplified_book.reading_status = import_config.get('default_reading_status', '')
@@ -2859,6 +2929,9 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
                 simplified_book.cover_url = cr.cached_url
                 simplified_book.global_custom_metadata['cover_source'] = cr.source
                 simplified_book.global_custom_metadata['cover_quality'] = cr.quality
+            elif cr.original_url and not simplified_book.cover_url:
+                # Fall back to remote URL so the UI shows a cover even if caching failed.
+                simplified_book.cover_url = cr.original_url
     except Exception as e:
         print(f"[MERGE_API][COVER] Failed unified cover selection: {e}")
 

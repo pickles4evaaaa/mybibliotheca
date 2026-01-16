@@ -854,11 +854,23 @@ def _unified_fetch_pair(isbn: str):
 		except Exception as ex_var:
 			google = {}
 			_errors['google'] = f"exception:{ex_var}"
+
+		# If Google already provides a cover in bulk mode, we can usually skip OpenLibrary
+		# (OpenLibrary is often slower and more likely to throttle during imports).
+		skip_openlib = False
+		try:
+			skip_flag = os.getenv('UNIFIED_METADATA_SKIP_OPENLIB_IF_GOOGLE_COVER', 'true').lower() in ('1', 'true', 'yes', 'on')
+			skip_openlib = bool(skip_flag and google and google.get('cover_url'))
+		except Exception:
+			skip_openlib = False
 		if time.monotonic() >= deadline and not google:
 			_errors.setdefault('google', 'timeout')
 			# Skip OpenLibrary if we've already burned the budget.
 			openlib = {}
 			_errors.setdefault('openlib', 'timeout')
+		elif skip_openlib:
+			openlib = {}
+			_errors.setdefault('openlib', 'skipped_google_cover')
 		else:
 			try:
 				openlib = _fetch_openlibrary_by_isbn(isbn_clean) or {}

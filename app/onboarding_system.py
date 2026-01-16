@@ -2169,7 +2169,17 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         
         # Create job data structure exactly like the working post-onboarding import
         detected_type = import_config.get('detected_type', 'unknown')
-        quick_start = bool(import_config.get('quick_start'))
+
+        def _boolish(val: Any) -> bool:
+            if isinstance(val, bool):
+                return val
+            if val in (None, ''):
+                return False
+            if isinstance(val, str):
+                return val.strip().lower() in ('1', 'true', 'yes', 'on')
+            return bool(val)
+
+        quick_start = _boolish(import_config.get('quick_start'))
         job_data = {
             'task_id': task_id,
             'user_id': user_id,
@@ -2308,13 +2318,18 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     'format_type': import_config.get('detected_type', 'unknown'),
                     # Quick Start: import "as-is" and skip metadata lookups.
                     'enable_api_enrichment': (not quick_start),
-                    # Onboarding UX: don't let metadata prefetch block actual importing.
-                    'metadata_prefetch_max_seconds': 10.0,
-                    'metadata_prefetch_batch_timeout': 6.0,
-                    'metadata_prefetch_future_timeout': 5.0,
-                    'metadata_prefetch_retry_timeouts': False,
-                    'metadata_prefetch_batch_size': 25,
                 }
+
+                # Onboarding UX: keep imports responsive, but still fetch enough metadata
+                # to actually populate covers/titles when enrichment is enabled.
+                if not quick_start:
+                    pipeline_config.update({
+                        'metadata_prefetch_max_seconds': 25.0,
+                        'metadata_prefetch_batch_timeout': 25.0,
+                        'metadata_prefetch_future_timeout': 15.0,
+                        'metadata_prefetch_retry_timeouts': True,
+                        'metadata_prefetch_batch_size': 50,
+                    })
                 try:
                     asyncio.run(process_simple_import(pipeline_config))
                 finally:

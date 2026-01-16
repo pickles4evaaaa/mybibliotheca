@@ -844,6 +844,16 @@ def fetch_book(isbn):
                         cover_url = cr.cached_url
                         book_data['cover_source'] = cr.source
                         book_data['cover_quality'] = cr.quality
+                    else:
+                        # If caching fails and we're currently pointing at an OpenLibrary cover,
+                        # prefer the best remote candidate (often Google) for UI display.
+                        try:
+                            if isinstance(cover_url, str) and 'covers.openlibrary.org' in cover_url:
+                                cand = cover_service.select_candidate(isbn=isbn, title=book_data.get('title'), author=book_data.get('author'))
+                                if cand and cand.get('url'):
+                                    cover_url = cand.get('url')
+                        except Exception:
+                            pass
                 book_data['cover'] = cover_url
                 book_data['cover_url'] = cover_url
             except Exception as e:
@@ -1201,6 +1211,18 @@ def api_quick_isbn(isbn):
                 data['cover_url'] = cr.cached_url
                 data['cover_source'] = cr.source
                 data['cover_quality'] = cr.quality
+            elif cr.original_url and not data.get('cover_url'):
+                data['cover_url'] = cr.original_url
+            elif not cr.cached_url:
+                # Avoid returning an OpenLibrary placeholder when a better remote candidate exists.
+                try:
+                    existing = data.get('cover_url')
+                    if isinstance(existing, str) and 'covers.openlibrary.org' in existing:
+                        cand = cover_service.select_candidate(isbn=isbn, title=data.get('title'), author=data.get('author'))
+                        if cand and cand.get('url'):
+                            data['cover_url'] = cand.get('url')
+                except Exception:
+                    pass
             _mark('cover_process')
         try:
             current_app.logger.info(f"[BOOK][QUICK_ISBN][PERF] isbn={isbn} { _summary() }")
@@ -2020,11 +2042,16 @@ def cover_candidates():
         isbn = (request.args.get('isbn') or '').strip()
         title = (request.args.get('title') or '').strip()
         author = (request.args.get('author') or '').strip()
+        debug = (request.args.get('debug') or '').strip() == '1'
+        fast = (request.args.get('fast') or '').strip() == '1'
         if not (isbn or title or author):
             return jsonify({'success': False, 'message': 'Provide isbn or title/author'}), 400
 
-        from app.utils.book_utils import get_cover_candidates, normalize_cover_url
-        cands = get_cover_candidates(isbn=isbn or None, title=title or None, author=author or None) or []
+        from app.utils.book_utils import get_cover_candidates, get_cover_candidates_fast, normalize_cover_url, probe_cover_url_details
+        if fast:
+            cands = get_cover_candidates_fast(isbn=isbn or None, title=title or None, author=author or None) or []
+        else:
+            cands = get_cover_candidates(isbn=isbn or None, title=title or None, author=author or None) or []
         results = []
         for c in cands:
             url = c.get('url')
@@ -2034,12 +2061,42 @@ def cover_candidates():
                 url = normalize_cover_url(url)
             except Exception:
                 pass
+
+            # Filter known placeholder/invalid candidates (OpenLibrary default placeholder).
+            try:
+                provider = (c.get('provider') or '')
+                if isinstance(url, str) and 'covers.openlibrary.org' in url:
+                    if 'default=false' not in url:
+                        continue
+            except Exception:
+                pass
+
+            # Prefer request context title/author (when provided), otherwise fall back to provider metadata.
+            cand_title = (title or '').strip() or (c.get('title') or '').strip()
+            cand_authors_list = None
+            try:
+                if author and author.strip():
+                    cand_authors_list = [a.strip() for a in author.split(',') if a.strip()]
+                elif isinstance(c.get('authors_list'), list):
+                    cand_authors_list = [str(a).strip() for a in c.get('authors_list') if str(a).strip()]
+            except Exception:
+                cand_authors_list = None
+            if not cand_authors_list:
+                cand_authors_list = []
+
+            cand_published_date = ''
+            try:
+                cand_published_date = (c.get('published_date') or '').strip()
+            except Exception:
+                cand_published_date = ''
             results.append({
-                'title': title or '',
-                'authors_list': [a.strip() for a in (author.split(',') if author else []) if a.strip()],
+                'title': cand_title,
+                'authors_list': cand_authors_list,
+                'published_date': cand_published_date,
                 'cover_url': url,
                 'source': c.get('provider'),
                 'size': c.get('size'),
+                **({'debug': probe_cover_url_details(url, provider=c.get('provider'))} if debug else {}),
             })
         return jsonify({
             'success': bool(results),
@@ -2049,6 +2106,64 @@ def cover_candidates():
     except Exception as e:
         current_app.logger.error(f"[COVER][CANDIDATES] Failed: {e}")
         return jsonify({'success': False, 'message': 'Error fetching cover candidates'}), 500
+
+
+@book_bp.route('/cover_candidate_probe', methods=['GET'])
+@login_required
+def cover_candidate_probe():
+    """Probe a single candidate cover URL and return validation details.
+
+    This powers progressive UI validation. Includes a basic SSRF guard by allowing
+    only known cover hosts (Google Books / OpenLibrary).
+    """
+    try:
+        url = (request.args.get('url') or '').strip()
+        provider = (request.args.get('provider') or '').strip().lower() or None
+        if not url:
+            return jsonify({'success': False, 'message': 'Missing url'}), 400
+
+        # SSRF guard: allowlist known hosts and schemes.
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(url)
+            if p.scheme not in ('http', 'https'):
+                return jsonify({'success': False, 'message': 'Invalid scheme'}), 400
+            host = (p.hostname or '').lower()
+            allowed_hosts = {
+                'books.google.com',
+                'books.googleusercontent.com',
+                'covers.openlibrary.org',
+            }
+            if host not in allowed_hosts:
+                return jsonify({'success': False, 'message': 'Host not allowed'}), 400
+        except Exception:
+            return jsonify({'success': False, 'message': 'Invalid url'}), 400
+
+        from app.utils.book_utils import probe_cover_url_details
+        details = probe_cover_url_details(url, provider=provider)
+
+        # Placeholder verdict: keep it simple and aligned with server-side filtering.
+        is_placeholder = False
+        try:
+            from app.utils.book_utils import _PLACEHOLDER_IMAGE_HASHES
+            ah = details.get('ahash')
+            b = details.get('bytes')
+            fmt = (details.get('format') or '')
+            try:
+                bytes_int = int(b) if b is not None else 0
+            except Exception:
+                bytes_int = 0
+            fmt_str = str(fmt).upper() if fmt is not None else ''
+            if ah and ah in _PLACEHOLDER_IMAGE_HASHES:
+                if (bytes_int and bytes_int < 30_000) or (fmt_str == 'PNG' and bytes_int and bytes_int < 60_000):
+                    is_placeholder = True
+        except Exception:
+            is_placeholder = False
+
+        return jsonify({'success': True, 'url': url, 'provider': provider, 'is_placeholder': is_placeholder, 'details': details})
+    except Exception as e:
+        current_app.logger.error(f"[COVER][PROBE] Failed: {e}")
+        return jsonify({'success': False, 'message': 'Error probing candidate'}), 500
 
 @book_bp.route('/search', methods=['GET', 'POST'])
 @login_required
