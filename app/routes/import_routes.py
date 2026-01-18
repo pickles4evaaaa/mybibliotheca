@@ -142,6 +142,61 @@ def _update_import_progress(user_id: str, task_id: str, *, updates: Optional[dic
     snapshot = safe_get_import_job(user_id, task_id) or {}
     payload = dict(updates or {})
 
+    def _coerce_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _status_rank(status: str) -> int:
+        s = (status or '').strip().lower()
+        if s in ('completed', 'success'):
+            return 100
+        if s in ('failed', 'error'):
+            return 90
+        if s in ('cancelled',):
+            return 80
+        if s in ('cancelling',):
+            return 40
+        if s in ('running', 'processing'):
+            return 30
+        if s in ('pending', 'queued'):
+            return 20
+        return 10
+
+    # Prevent progress from jumping backwards when different phases/chunks emit updates.
+    # All counters are treated as monotonic (never decrease) and totals never decrease.
+    monotonic_keys = {
+        'processed', 'total',
+        'success', 'merged', 'errors', 'skipped', 'unmatched',
+        'scan_processed',
+        'prefetch_processed', 'prefetch_total', 'prefetch_batches_done', 'prefetch_batches_total', 'prefetch_fetched',
+    }
+    for key in list(payload.keys()):
+        if key not in monotonic_keys:
+            continue
+        new_val = _coerce_int(payload.get(key))
+        if new_val is None:
+            continue
+        old_val = _coerce_int(snapshot.get(key))
+        if old_val is None:
+            old_val = 0
+        if new_val < old_val:
+            payload[key] = old_val
+
+    # Never regress status from a terminal state (completed/failed/cancelled) back to running/pending.
+    if 'status' in payload:
+        old_status = str(snapshot.get('status') or 'pending')
+        new_status = str(payload.get('status') or 'pending')
+        if _status_rank(old_status) >= 80 and _status_rank(new_status) < _status_rank(old_status):
+            payload['status'] = old_status
+
     # Treat recent_activity updates as additions (append + bound) rather than overwrites.
     # Most callers pass a single-item list like ['Scanning...'].
     if 'recent_activity' in payload:
@@ -2503,7 +2558,26 @@ async def process_simple_import(import_config):
                         processed_count += 1
                         skipped_count += 1
                         raw_title = row.get('Title') or row.get('title') or row.get('Book Title') or row.get('Name') or row.get('Book Name') or 'Untitled'
-                        _update_import_progress(user_id, task_id, processed_book={'title': raw_title, 'status': 'skipped'})
+                        progress_entry = {'title': raw_title, 'status': 'skipped'}
+                        pending_processed_entries.append(progress_entry)
+                        progress_update = {
+                            'processed': processed_count,
+                            'success': success_count,
+                            'merged': merged_count,
+                            'errors': error_count,
+                            'skipped': skipped_count,
+                            'current_book': raw_title,
+                        }
+                        elapsed = time.perf_counter() - last_progress_emit
+                        if elapsed >= PROGRESS_EMIT_INTERVAL or processed_count % 25 == 0:
+                            _update_import_progress(
+                                user_id,
+                                task_id,
+                                updates=progress_update,
+                                processed_book=pending_processed_entries,
+                            )
+                            pending_processed_entries.clear()
+                            last_progress_emit = time.perf_counter()
                         continue
 
                     if enable_api_enrichment and book_metadata:

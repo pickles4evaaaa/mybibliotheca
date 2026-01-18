@@ -78,6 +78,7 @@
 
 #importProgressBar {
     background-color: #6f42c1; /* Bootstrap-ish purple, higher contrast than default blue */
+    transition: width 0.4s ease;
 }
 
 [data-theme="dark"] #importProgressBar {
@@ -183,6 +184,7 @@ let checkStartTime = Date.now();
 
 let lastProgressSignature = null;
 let lastMeaningfulChangeAt = Date.now();
+let lastRenderedPercent = 0;
 
 function clamp(n, min, max) {
     return Math.max(min, Math.min(max, n));
@@ -241,27 +243,21 @@ function updateProgressUI(data) {
     const processed = Number(data.processed || 0);
     const total = Number(data.total || 0);
 
-    // During early phases (scan/prefetch), processed may remain 0. Use scan/prefetch counters
-    // so the UI still shows movement.
-    const scanProcessed = Number(data.scan_processed || 0);
-    const prefetchProcessed = Number(data.prefetch_processed || 0);
-    const prefetchTotal = Number(data.prefetch_total || 0);
+    // Progress bar must always be relative to the overall import file (rows processed / total rows).
+    // Do NOT use scan/prefetch counters for the bar; those phases can legitimately reach 100% early
+    // and would cause the bar to jump backwards when row-processing begins.
+    let percent = total > 0
+        ? clamp(Math.round((processed / total) * 100), 0, 100)
+        : 5;
 
-    let denom = total;
-    let numer = processed;
-    if (processed <= 0) {
-        if (prefetchTotal > 0 && prefetchProcessed > 0) {
-            denom = prefetchTotal;
-            numer = prefetchProcessed;
-        } else if (total > 0 && scanProcessed > 0) {
-            denom = total;
-            numer = scanProcessed;
-        }
+    const status = (data.status || 'pending').toString().toLowerCase();
+    if (status === 'completed' || status === 'success') {
+        percent = 100;
     }
 
-    const percent = denom > 0
-        ? clamp(Math.round((numer / denom) * 100), 0, 100)
-        : clamp(Math.round(numer > 0 ? 10 : 5), 0, 100);
+    // Defensive: never render a lower % than we already showed.
+    percent = Math.max(lastRenderedPercent, percent);
+    lastRenderedPercent = percent;
 
     const bar = document.getElementById('importProgressBar');
     if (bar) {
@@ -270,15 +266,13 @@ function updateProgressUI(data) {
         bar.textContent = `${percent}%`;
     }
 
-    const status = (data.status || 'pending').toString().toLowerCase();
     if (status === 'completed' || status === 'success') setBadge('Completed', 'bg-success');
     else if (status === 'failed' || status === 'error') setBadge('Completed (with errors)', 'bg-warning text-dark');
     else if (status === 'running') setBadge('Importing…', 'bg-primary');
     else if (status === 'cancelling') setBadge('Cancelling…', 'bg-warning text-dark');
     else setBadge('Starting…', 'bg-secondary');
 
-    const displayProcessed = processed > 0 ? processed : (prefetchProcessed > 0 ? prefetchProcessed : scanProcessed);
-    setMetric('metricProcessed', displayProcessed);
+    setMetric('metricProcessed', processed);
     setMetric('metricSuccess', Number(data.success || 0));
     setMetric('metricMerged', Number(data.merged || 0));
     setMetric('metricErrors', Number(data.errors || 0));
