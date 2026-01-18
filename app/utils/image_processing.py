@@ -8,19 +8,28 @@ from urllib.parse import urlparse
 from pathlib import Path
 import uuid
 from typing import Any, Dict, Optional
+import logging
 
 import requests
 from PIL import Image, ImageOps
-from flask import current_app
+from flask import current_app, has_app_context
 
 
 MAX_REMOTE_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB safety ceiling
+
+logger = logging.getLogger(__name__)
 
 
 
 def _get_base_dir() -> Path:
     """Resolve the repo base dir in both Docker and local dev."""
-    return Path(current_app.root_path).parent
+    try:
+        if has_app_context():
+            return Path(current_app.root_path).parent
+    except Exception:
+        pass
+    # app/utils/image_processing.py -> app/ -> repo_root
+    return Path(__file__).resolve().parents[2]
 
 
 def get_covers_dir() -> Path:
@@ -33,7 +42,12 @@ def get_covers_dir() -> Path:
     """
     covers_dir = Path('/app/data/covers')
     if not covers_dir.exists():
-        data_dir = getattr(current_app.config, 'DATA_DIR', None)
+        data_dir = None
+        try:
+            if has_app_context():
+                data_dir = getattr(current_app.config, 'DATA_DIR', None)
+        except Exception:
+            data_dir = None
         if data_dir:
             covers_dir = Path(data_dir) / 'covers'
         else:
@@ -148,7 +162,13 @@ def process_image_from_url(
 
     # Already a processed local cover path
     if url.startswith('/covers/'):
-        current_app.logger.info(f"[COVER][SKIP] Already local cover path: {url}")
+        try:
+            if has_app_context():
+                current_app.logger.info(f"[COVER][SKIP] Already local cover path: {url}")
+            else:
+                logger.info("[COVER][SKIP] Already local cover path: %s", url)
+        except Exception:
+            pass
         return url
 
     parsed = urlparse(url)
@@ -159,14 +179,26 @@ def process_image_from_url(
         fname = parsed.path.split('/covers/')[-1]
         local_path = covers_dir / fname
         if local_path.exists():
-            current_app.logger.info(f"[COVER][SKIP] Loopback cover fetch avoided, using existing file: {local_path}")
+            try:
+                if has_app_context():
+                    current_app.logger.info(f"[COVER][SKIP] Loopback cover fetch avoided, using existing file: {local_path}")
+                else:
+                    logger.info("[COVER][SKIP] Loopback cover fetch avoided, using existing file: %s", local_path)
+            except Exception:
+                pass
             return f"/covers/{fname}"
         # Fall through to download if not present
 
     ensure_safe_remote_image_url(url)
 
     start_total = time.perf_counter()
-    current_app.logger.info(f"[COVER][DL] Start url={url}")
+    try:
+        if has_app_context():
+            current_app.logger.info(f"[COVER][DL] Start url={url}")
+        else:
+            logger.info("[COVER][DL] Start url=%s", url)
+    except Exception:
+        pass
     dl_start = time.perf_counter()
     # Shorter timeout to avoid long hangs; retries could be added later
     request_kwargs: Dict[str, Any] = {"timeout": 6, "stream": True}
@@ -202,9 +234,17 @@ def process_image_from_url(
     out_url = process_image_bytes_and_store(buf.getvalue())
     proc_time = time.perf_counter() - proc_start
     total_time = time.perf_counter() - start_total
-    current_app.logger.info(
-        f"[COVER][TIMING] total={total_time:.3f}s download={dl_time:.3f}s copy={copy_time:.3f}s process={proc_time:.3f}s -> {out_url} src={url}"
-    )
+    try:
+        msg = (
+            f"[COVER][TIMING] total={total_time:.3f}s download={dl_time:.3f}s copy={copy_time:.3f}s "
+            f"process={proc_time:.3f}s -> {out_url} src={url}"
+        )
+        if has_app_context():
+            current_app.logger.info(msg)
+        else:
+            logger.info("%s", msg)
+    except Exception:
+        pass
     return out_url
 
 

@@ -566,6 +566,10 @@ def site_config_step():
 def data_options_step():
     """Step 3: Data import/migration options."""
     logger.info(f"🔍 ONBOARDING DEBUG: data_options_step called, method={request.method}")
+
+    # Load any existing selection so the UI can reflect it.
+    existing_data_options = (get_onboarding_data().get('data_options') or {})
+    existing_data_option = existing_data_options.get('option')
     
     # Detect existing databases
     migration_system = AdvancedMigrationSystem()
@@ -711,6 +715,9 @@ def data_options_step():
                                          total_steps=5)
             
             elif data_option == 'import':
+                # Quick Start: skip external metadata lookup/enrichment during onboarding import.
+                data_options['quick_start'] = ('quick_start' in request.form)
+
                 # Handle file upload for import
                 uploaded_file = request.files.get('import_file')
                 if not uploaded_file or not uploaded_file.filename:
@@ -719,6 +726,8 @@ def data_options_step():
                     # Return to the same step instead of advancing
                     return render_template('onboarding/step3_data_options.html',
                                          databases=db_analysis,
+                                         data_option=data_option,
+                                         data_options=data_options,
                                          step=3,
                                          total_steps=5)
                 
@@ -774,6 +783,8 @@ def data_options_step():
     
     return render_template('onboarding/step3_data_options.html',
                          databases=db_analysis,
+                         data_option=existing_data_option,
+                         data_options=existing_data_options,
                          step=3,
                          total_steps=5)
 
@@ -945,6 +956,7 @@ def import_config_step(data_options: Dict):
                 'csv_file_path': csv_file_path,
                 'field_mappings': field_mappings,
                 'detected_type': detected_type,
+                'quick_start': bool(data_options.get('quick_start')),
                 'default_reading_status': '',
                 'duplicate_handling': 'skip',
                 'custom_fields_enabled': True,
@@ -1030,6 +1042,7 @@ def import_config_step(data_options: Dict):
             'csv_file_path': csv_file_path,
             'field_mappings': field_mappings,
             'detected_type': detected_type,
+            'quick_start': bool(data_options.get('quick_start')),
             'default_reading_status': '',
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
@@ -1359,12 +1372,26 @@ def import_progress_json(task_id: str):
             return jsonify({
                 'status': job.get('status', 'pending'),
                 'processed': job.get('processed', 0),
+                'scan_processed': job.get('scan_processed', 0),
+                'prefetch_processed': job.get('prefetch_processed', 0),
+                'prefetch_total': job.get('prefetch_total', 0),
+                'prefetch_batches_done': job.get('prefetch_batches_done', 0),
+                'prefetch_batches_total': job.get('prefetch_batches_total', 0),
+                'prefetch_fetched': job.get('prefetch_fetched', 0),
+                'precheck': job.get('precheck', {}),
                 'success': job.get('success', 0),
+                'merged': job.get('merged', 0),
                 'errors': job.get('errors', 0),
+                'skipped': job.get('skipped', 0),
+                'unmatched': job.get('unmatched', 0),
                 'total': job.get('total', 0),
                 'current_book': job.get('current_book'),
                 'error_messages': job.get('error_messages', []),
-                'recent_activity': job.get('recent_activity', [])
+                'recent_activity': job.get('recent_activity', []),
+                # Timestamps for UI freshness / perceived-stall handling
+                'created_at': job.get('created_at'),
+                'updated_at': job.get('updated_at') or job.get('created_at'),
+                'server_time': datetime.now(timezone.utc).isoformat(),
             })
         
         # For simple onboarding fallback (when no real import was started)
@@ -2142,6 +2169,17 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         
         # Create job data structure exactly like the working post-onboarding import
         detected_type = import_config.get('detected_type', 'unknown')
+
+        def _boolish(val: Any) -> bool:
+            if isinstance(val, bool):
+                return val
+            if val in (None, ''):
+                return False
+            if isinstance(val, str):
+                return val.strip().lower() in ('1', 'true', 'yes', 'on')
+            return bool(val)
+
+        quick_start = _boolish(import_config.get('quick_start'))
         job_data = {
             'task_id': task_id,
             'user_id': user_id,
@@ -2151,6 +2189,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             'duplicate_handling': 'skip',
             'custom_fields_enabled': True,
             'format_type': detected_type,  # Pass the detected format type
+            'quick_start': quick_start,
             'status': 'pending',
             'processed': 0,
             'success': 0,
@@ -2200,21 +2239,73 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
         # Start the import using the proven working import system
         def run_import():
             try:
+                # Heartbeat updater: keeps updated_at fresh during long backoffs/sleeps
+                # so the UI doesn't look stalled.
+                heartbeat_stop = threading.Event()
+
+                def _heartbeat_loop():
+                    while not heartbeat_stop.wait(5.0):
+                        try:
+                            # Empty update is sufficient: SafeImportJobManager stamps updated_at.
+                            safe_update_import_job(user_id, task_id, {})
+                        except Exception:
+                            pass
+
+                heartbeat_thread = threading.Thread(target=_heartbeat_loop, name=f"import-heartbeat-{task_id}")
+                heartbeat_thread.daemon = True
+                heartbeat_thread.start()
+
                 print(f"🚀 [IMPORT_JOB] Starting background import thread for task {task_id}")
                 print(f"🚀 [IMPORT_JOB] Import config: {import_config}")
                 
                 # Update job status to running safely
                 running_update = {
                     'status': 'running',
-                    'current_book': 'Starting import...'
+                    'current_book': 'Starting import...',
+                    'recent_activity': ['Starting import...']
                 }
                 safe_update_import_job(user_id, task_id, running_update)
                 print(f"🚀 [IMPORT_JOB] Updated job status to running")
+
+                # If importing the pipeline module is slow/hangs, surface that in the UI.
+                try:
+                    safe_update_import_job(user_id, task_id, {
+                        'current_book': 'Loading import pipeline…',
+                        'recent_activity': ['Loading import pipeline…'],
+                    })
+                except Exception:
+                    pass
 
                 # Use the exact same import pipeline used post-onboarding.
                 # Avoid starting nested threads via start_import_job().
                 from app.routes.import_routes import process_simple_import
                 import asyncio
+
+                try:
+                    safe_update_import_job(user_id, task_id, {
+                        'current_book': 'Starting import pipeline…',
+                        'recent_activity': ['Starting import pipeline…'],
+                    })
+                except Exception:
+                    pass
+
+                # If we hang inside asyncio.run() (or deeper in service init), dump tracebacks to logs.
+                # This makes "stuck at Starting import pipeline" actionable.
+                try:
+                    import faulthandler
+                    faulthandler.enable()
+                    faulthandler.dump_traceback_later(120, repeat=True)
+                except Exception:
+                    faulthandler = None  # type: ignore[assignment]
+
+                # Surface that we're entering the async pipeline runner.
+                try:
+                    safe_update_import_job(user_id, task_id, {
+                        'current_book': 'Initializing import service…',
+                        'recent_activity': ['Initializing import service…'],
+                    })
+                except Exception:
+                    pass
 
                 pipeline_config = {
                     'task_id': task_id,
@@ -2225,13 +2316,42 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
                     'duplicate_handling': 'skip',
                     'custom_fields_enabled': True,
                     'format_type': import_config.get('detected_type', 'unknown'),
-                    'enable_api_enrichment': True,
+                    # Quick Start: import "as-is" and skip metadata lookups.
+                    'enable_api_enrichment': (not quick_start),
                 }
-                asyncio.run(process_simple_import(pipeline_config))
+
+                # Onboarding UX: keep imports responsive, but still fetch enough metadata
+                # to actually populate covers/titles when enrichment is enabled.
+                if not quick_start:
+                    pipeline_config.update({
+                        'metadata_prefetch_max_seconds': 25.0,
+                        'metadata_prefetch_batch_timeout': 25.0,
+                        'metadata_prefetch_future_timeout': 15.0,
+                        'metadata_prefetch_retry_timeouts': True,
+                        'metadata_prefetch_batch_size': 50,
+                    })
+                try:
+                    asyncio.run(process_simple_import(pipeline_config))
+                finally:
+                    try:
+                        heartbeat_stop.set()
+                    except Exception:
+                        pass
+                    try:
+                        if 'faulthandler' in locals() and faulthandler is not None:
+                            faulthandler.cancel_dump_traceback_later()
+                    except Exception:
+                        pass
                     
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+
+                try:
+                    if 'heartbeat_stop' in locals():
+                        heartbeat_stop.set()
+                except Exception:
+                    pass
                 
                 # Update job status to failed safely
                 error_update = {

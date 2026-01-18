@@ -415,8 +415,81 @@ class SimplifiedBookService:
                         
                 except Exception as cover_error:
                     print(f"⚠️ [COVER_DOWNLOAD] Failed to download cover for '{book_data.title}': {cover_error}")
-                    # Continue with original cover URL if download fails
-                    final_cover_url = book_data.cover_url
+                    # If OpenLibrary failed (often placeholder/default), retry with Google-first best cover.
+                    try:
+                        from app.utils.book_utils import get_best_cover_for_book
+
+                        original_url = str(book_data.cover_url or '')
+                        is_openlib = 'covers.openlibrary.org' in original_url
+                        isbn_for_cover = (book_data.isbn13 or book_data.isbn10 or '').strip()
+                        if is_openlib and isbn_for_cover:
+                            best = get_best_cover_for_book(isbn=isbn_for_cover, title=book_data.title, author=book_data.author)
+                            alt_url = (best or {}).get('cover_url') if isinstance(best, dict) else None
+                            if alt_url and isinstance(alt_url, str) and alt_url.startswith('http') and alt_url != original_url:
+                                print(f"🖼️ [COVER_DOWNLOAD] Retrying cover with alternate source: {alt_url}")
+                                # Swap and try the same download path once more.
+                                book_data.cover_url = alt_url
+                                try:
+                                    import requests  # type: ignore
+                                    response = requests.get(alt_url, timeout=10, stream=True,
+                                                          headers={'User-Agent': 'Mozilla/5.0 (compatible; BookLibrary/1.0)'})
+                                    response.raise_for_status()
+
+                                    # Recompute covers dir here in case the original path setup failed early.
+                                    from pathlib import Path
+                                    covers_dir_local = Path('/app/data/covers')
+                                    if not covers_dir_local.exists():
+                                        try:
+                                            from flask import current_app
+                                            data_dir = getattr(current_app.config, 'DATA_DIR', None)
+                                            if data_dir:
+                                                covers_dir_local = Path(data_dir) / 'covers'
+                                            else:
+                                                base_dir = Path(__file__).parent.parent.parent
+                                                covers_dir_local = base_dir / 'data' / 'covers'
+                                        except Exception:
+                                            covers_dir_local = Path('./data/covers')
+                                    covers_dir_local.mkdir(parents=True, exist_ok=True)
+
+                                    # Reuse existing covers_dir/filename logic above
+                                    book_temp_id = str(uuid.uuid4())
+                                    file_extension = '.jpg'
+                                    if alt_url.lower().endswith('.png'):
+                                        file_extension = '.png'
+                                    elif alt_url.lower().endswith('.gif'):
+                                        file_extension = '.gif'
+                                    elif alt_url.lower().endswith('.webp'):
+                                        file_extension = '.webp'
+                                    filename = f"{book_temp_id}{file_extension}"
+                                    filepath = covers_dir_local / filename
+                                    with open(filepath, 'wb') as f:
+                                        for chunk in response.iter_content(chunk_size=8192):
+                                            f.write(chunk)
+                                    final_cover_url = f"/covers/{filename}"
+                                    safe_execute_kuzu_query(
+                                        """
+                                        MATCH (b:Book {id: $book_id})
+                                        SET b.cover_url = $cover_url,
+                                            b.updated_at = CASE WHEN $updated_at_str IS NULL OR $updated_at_str = '' THEN b.updated_at ELSE timestamp($updated_at_str) END
+                                        RETURN b.id
+                                        """,
+                                        {
+                                            "book_id": book_id,
+                                            "cover_url": final_cover_url,
+                                            "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                                        },
+                                    )
+                                    print(f"✅ [COVER_DOWNLOAD] Successfully cached alternate cover: {final_cover_url}")
+                                except Exception as alt_err:
+                                    print(f"⚠️ [COVER_DOWNLOAD] Alternate cover download failed: {alt_err}")
+                                    final_cover_url = alt_url
+                            else:
+                                final_cover_url = original_url
+                        else:
+                            # Continue with original cover URL if download fails
+                            final_cover_url = original_url
+                    except Exception:
+                        final_cover_url = book_data.cover_url
             
             # Update the book_data with the final cover URL for logging
             book_data.cover_url = final_cover_url

@@ -72,8 +72,24 @@ def load_user(user_id):
 @login_manager.unauthorized_handler
 def unauthorized():
     """Custom unauthorized handler that returns JSON for API requests."""
+    # Treat API paths and XHR/JSON requests as API-like, so the frontend can
+    # handle auth expiry gracefully (instead of fetching HTML login pages).
+    wants_json = False
+    try:
+        if request.headers.get('X-Requested-With', '').lower() == 'xmlhttprequest':
+            wants_json = True
+    except Exception:
+        wants_json = False
+    if not wants_json:
+        try:
+            accept = getattr(request, 'accept_mimetypes', None)
+            if accept is not None:
+                wants_json = accept['application/json'] >= accept['text/html']
+        except Exception:
+            wants_json = False
+
     # Check if this is an API request
-    if request.path.startswith('/api/'):
+    if request.path.startswith('/api/') or wants_json:
         return jsonify({
             'error': 'Authentication required',
             'message': 'This API endpoint requires authentication. Provide an API token or login.',

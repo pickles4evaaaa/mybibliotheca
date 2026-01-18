@@ -6,6 +6,8 @@ with intelligent ranking and deduplication of results.
 """
 
 import requests
+
+from app.utils.adaptive_http import adaptive_get
 from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Any
 import re
@@ -259,7 +261,7 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
     url = f"https://www.googleapis.com/books/v1/volumes?q={q}&maxResults={max_results}"
     
     try:
-        response = requests.get(url, timeout=(_GOOGLE_CONNECT_TIMEOUT, _GOOGLE_READ_TIMEOUT))
+        response = adaptive_get('google_books', url, timeout=(_GOOGLE_CONNECT_TIMEOUT, _GOOGLE_READ_TIMEOUT))
         response.raise_for_status()
         data = response.json()
         
@@ -413,7 +415,7 @@ def search_openlibrary(title: str, max_results: int = 20, author: Optional[str] 
         url = f"https://openlibrary.org/search.json?title={q_title}&limit={max_results}"
     
     try:
-        response = requests.get(url, timeout=(_OPENLIBRARY_CONNECT_TIMEOUT, _OPENLIBRARY_READ_TIMEOUT))
+        response = adaptive_get('openlibrary', url, timeout=(_OPENLIBRARY_CONNECT_TIMEOUT, _OPENLIBRARY_READ_TIMEOUT))
         response.raise_for_status()
         data = response.json()
         
