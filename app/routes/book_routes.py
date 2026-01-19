@@ -3,7 +3,7 @@ Core book management routes for the Bibliotheca application.
 Handles book CRUD operations, library views, and book-specific actions.
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, abort, make_response, send_file
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, abort, make_response, send_file, after_this_request
 from flask_login import login_required, current_user
 from datetime import datetime, date, timezone
 import uuid
@@ -12,6 +12,10 @@ import requests
 import re
 import csv
 import io
+import contextlib
+import zipfile
+import tempfile
+import json
 from pathlib import Path
 from io import BytesIO
 from typing import Optional, Any, Dict, List
@@ -4777,53 +4781,319 @@ def add_book_from_search():
 @book_bp.route('/download_db', methods=['GET'])
 @login_required
 def download_db():
-    """Export user data from Kuzu to CSV format."""
+    """Export library data.
+
+    Produces a ZIP containing:
+      - books.csv
+      - authors.csv
+      - reading_history.csv
+    Admin users additionally receive the full Kuzu database directory under kuzu/.
+    """
     try:
         # Get all user books with global visibility
         user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
-        
-        # Create CSV export
-        import io
-        output = io.StringIO()
-        writer = csv.writer(output)
-        
-        # Write header
-        writer.writerow(['Title', 'Author', 'ISBN', 'Reading Status', 'Start Date', 'Finish Date', 'Rating', 'Notes'])
-        
-        # Write book data
-        for book in user_books:
-            # Handle both dict and object book types
-            if isinstance(book, dict):
-                author_names = ', '.join([author.get('name', '') for author in book.get('authors', [])]) if book.get('authors') else ''
-                isbn = book.get('isbn13', '') or book.get('isbn10', '') or ''
-                start_date = book.get('start_date', '').isoformat() if book.get('start_date') and hasattr(book.get('start_date'), 'isoformat') else ''
-                finish_date = book.get('finish_date', '').isoformat() if book.get('finish_date') and hasattr(book.get('finish_date'), 'isoformat') else ''
-                title = book.get('title', '')
+
+        def _as_iso_date(value: Any) -> str:
+            if not value:
+                return ''
+            if hasattr(value, 'isoformat'):
+                try:
+                    return value.isoformat()
+                except Exception:
+                    return ''
+            if isinstance(value, str):
+                return value
+            return ''
+
+        def _author_names(book_obj: Any) -> str:
+            """Robust author extraction (handles list[str], list[dict], list[objects], or single string)."""
+            if isinstance(book_obj, dict):
+                authors_val = book_obj.get('authors')
+                if not authors_val:
+                    author_single = book_obj.get('author')
+                    return str(author_single) if author_single else ''
+                if isinstance(authors_val, str):
+                    return authors_val
+                names: List[str] = []
+                if isinstance(authors_val, list):
+                    for a in authors_val:
+                        if isinstance(a, str):
+                            if a.strip():
+                                names.append(a.strip())
+                        elif isinstance(a, dict):
+                            name = (a.get('name') or a.get('full_name') or '').strip()
+                            if name:
+                                names.append(name)
+                        else:
+                            name = str(getattr(a, 'name', '') or '').strip()
+                            if name:
+                                names.append(name)
+                return ', '.join([n for n in names if n])
+
+            authors_val = getattr(book_obj, 'authors', None)
+            if not authors_val:
+                author_single = getattr(book_obj, 'author', None)
+                return str(author_single) if author_single else ''
+            if isinstance(authors_val, str):
+                return authors_val
+            names: List[str] = []
+            if isinstance(authors_val, list):
+                for a in authors_val:
+                    if isinstance(a, str):
+                        if a.strip():
+                            names.append(a.strip())
+                    else:
+                        name = str(getattr(a, 'name', '') or '').strip()
+                        if name:
+                            names.append(name)
+            return ', '.join([n for n in names if n])
+
+        def _object_to_dict(obj: Any) -> Dict[str, Any]:
+            if obj is None:
+                return {}
+            if isinstance(obj, dict):
+                return dict(obj)
+            to_dict = getattr(obj, 'to_dict', None)
+            if callable(to_dict):
+                try:
+                    maybe = to_dict()
+                    if isinstance(maybe, dict):
+                        return dict(maybe)
+                except Exception:
+                    pass
+            try:
+                d = vars(obj)
+                if isinstance(d, dict):
+                    return dict(d)
+            except Exception:
+                pass
+            return {'value': str(obj)}
+
+        def _stringify_csv_value(value: Any) -> str:
+            if value is None:
+                return ''
+            if hasattr(value, 'isoformat'):
+                try:
+                    return value.isoformat()
+                except Exception:
+                    return ''
+            if isinstance(value, (str, int, float, bool)):
+                return str(value)
+            if isinstance(value, (list, dict)):
+                try:
+                    return json.dumps(value, ensure_ascii=False, default=str)
+                except Exception:
+                    return str(value)
+            return str(value)
+
+        def _flatten_dict(value: Any, prefix: str = '', depth: int = 0, max_depth: int = 2) -> Dict[str, Any]:
+            """Flatten nested dicts into dotted keys up to max_depth; lists remain as-is (JSON-encoded later)."""
+            if isinstance(value, dict) and depth < max_depth:
+                out: Dict[str, Any] = {}
+                for k, v in value.items():
+                    key = f"{prefix}.{k}" if prefix else str(k)
+                    if isinstance(v, dict) and (depth + 1) < max_depth:
+                        out.update(_flatten_dict(v, key, depth + 1, max_depth))
+                    else:
+                        out[key] = v
+                return out
+            if prefix:
+                return {prefix: value}
+            if isinstance(value, dict):
+                return dict(value)
+            return {'value': value}
+
+        def _csv_bytes_from_records(records: List[Dict[str, Any]], preferred_first: Optional[List[str]] = None) -> bytes:
+            preferred_first = preferred_first or []
+            all_cols: set[str] = set()
+            for r in records:
+                all_cols.update([str(k) for k in r.keys()])
+
+            cols: List[str] = []
+            for k in preferred_first:
+                if k in all_cols and k not in cols:
+                    cols.append(k)
+            for k in sorted(all_cols):
+                if k not in cols:
+                    cols.append(k)
+
+            out = io.StringIO()
+            writer = csv.writer(out)
+            writer.writerow(cols)
+            for r in records:
+                row = [_stringify_csv_value(r.get(c)) for c in cols]
+                writer.writerow(row)
+            return out.getvalue().encode('utf-8')
+
+        def _extract_authors(book_obj: Any) -> List[Dict[str, Any]]:
+            """Extract author objects with full available attributes."""
+            authors: List[Dict[str, Any]] = []
+            if isinstance(book_obj, dict):
+                authors_val = book_obj.get('authors')
+                if not authors_val:
+                    single = book_obj.get('author')
+                    if single:
+                        authors.append({'id': '', 'name': str(single)})
+                    return authors
+                if isinstance(authors_val, str):
+                    return [{'id': '', 'name': authors_val}]
+                if isinstance(authors_val, list):
+                    for a in authors_val:
+                        if isinstance(a, str):
+                            if a.strip():
+                                authors.append({'id': '', 'name': a.strip()})
+                        elif isinstance(a, dict):
+                            rec = dict(a)
+                            name = (rec.get('name') or rec.get('full_name') or '').strip()
+                            if name:
+                                rec['name'] = name
+                            rec['id'] = str(rec.get('id') or '')
+                            if rec.get('name'):
+                                authors.append(rec)
+                        else:
+                            rec = _object_to_dict(a)
+                            name = str(rec.get('name') or '').strip()
+                            if not name:
+                                name = str(getattr(a, 'name', '') or '').strip()
+                            if name:
+                                rec['name'] = name
+                                rec['id'] = str(rec.get('id') or getattr(a, 'id', '') or '')
+                                authors.append(rec)
+                return authors
+
+            authors_val = getattr(book_obj, 'authors', None)
+            if not authors_val:
+                single = getattr(book_obj, 'author', None)
+                if single:
+                    authors.append({'id': '', 'name': str(single)})
+                return authors
+            if isinstance(authors_val, str):
+                return [{'id': '', 'name': authors_val}]
+            if isinstance(authors_val, list):
+                for a in authors_val:
+                    if isinstance(a, str):
+                        if a.strip():
+                            authors.append({'id': '', 'name': a.strip()})
+                    else:
+                        rec = _object_to_dict(a)
+                        name = str(rec.get('name') or getattr(a, 'name', '') or '').strip()
+                        if name:
+                            rec['name'] = name
+                            rec['id'] = str(rec.get('id') or getattr(a, 'id', '') or '')
+                            authors.append(rec)
+            return authors
+
+        # -------------------- books.csv (all attributes) --------------------
+        book_records: List[Dict[str, Any]] = []
+        all_authors: List[Dict[str, Any]] = []
+
+        for book in (user_books or []):
+            raw = _object_to_dict(book)
+            # Keep original authors field (may be list/dict), plus a derived display name field
+            raw['authors_names'] = _author_names(book)
+            flat = _flatten_dict(raw, max_depth=2)
+            book_records.append(flat)
+            all_authors.extend(_extract_authors(book))
+
+        books_csv_bytes = _csv_bytes_from_records(
+            book_records,
+            preferred_first=['id', 'uid', 'title', 'authors_names', 'isbn10', 'isbn13', 'reading_status']
+        )
+
+        # -------------------- authors.csv (all attributes) --------------------
+        # Dedupe while merging fields across duplicates.
+        authors_by_key: Dict[str, Dict[str, Any]] = {}
+        for a in all_authors:
+            rec = _object_to_dict(a)
+            name = str(rec.get('name') or '').strip()
+            if not name:
+                continue
+            rec['name'] = name
+            rec['id'] = str(rec.get('id') or '').strip()
+            dedupe_key = (rec['id'] or rec['name']).lower()
+            existing = authors_by_key.get(dedupe_key)
+            if existing is None:
+                authors_by_key[dedupe_key] = rec
             else:
-                author_names = ', '.join([author.name for author in getattr(book, 'authors', [])]) if hasattr(book, 'authors') and getattr(book, 'authors', []) else ''
-                isbn = getattr(book, 'isbn13', '') or getattr(book, 'isbn10', '') or ''
-                start_date_val = getattr(book, 'start_date', None)
-                start_date = start_date_val.isoformat() if start_date_val and hasattr(start_date_val, 'isoformat') else ''
-                finish_date_val = getattr(book, 'finish_date', None)
-                finish_date = finish_date_val.isoformat() if finish_date_val and hasattr(finish_date_val, 'isoformat') else ''
-                title = getattr(book, 'title', '')
-            
-            rating = getattr(book, 'user_rating', '') or ''
-            notes = getattr(book, 'personal_notes', '') or ''
-            reading_status = getattr(book, 'reading_status', '') or ''
-            writer.writerow([title, author_names, isbn, reading_status, start_date, finish_date, rating, notes])
-        
-        # Create response
-        output.seek(0)
-        response = make_response(output.getvalue())
-        response.headers['Content-Type'] = 'text/csv'
-        response.headers['Content-Disposition'] = f'attachment; filename=bibliotheca_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-        
-        return response
+                for k, v in rec.items():
+                    if k not in existing or existing.get(k) in (None, '', []):
+                        existing[k] = v
+
+        author_records = [_flatten_dict(a, max_depth=2) for a in authors_by_key.values()]
+        authors_csv_bytes = _csv_bytes_from_records(author_records, preferred_first=['id', 'name'])
+
+        # -------------------- reading_history.csv (all attributes) --------------------
+        logs = reading_log_service.get_user_reading_logs_sync(str(current_user.id), days_back=36500, limit=None)
+        reading_records: List[Dict[str, Any]] = []
+        for log in (logs or []):
+            raw = _object_to_dict(log)
+            # Flatten nested book dict into book.* columns
+            flat = _flatten_dict(raw, max_depth=2)
+            reading_records.append(flat)
+
+        reading_csv_bytes = _csv_bytes_from_records(
+            reading_records,
+            preferred_first=['id', 'date', 'book_id', 'book.title', 'pages_read', 'minutes_read', 'notes']
+        )
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        # Admin: include Kuzu DB directory in the zip
+        include_db = bool(getattr(current_user, 'is_admin', False))
+        kuzu_root: Optional[Path] = None
+        if include_db:
+            kuzu_root = Path(_os_for_verbose.getenv('KUZU_DB_PATH', 'data/kuzu'))
+            if not kuzu_root.is_absolute():
+                kuzu_root = (Path.cwd() / kuzu_root).resolve()
+            if not kuzu_root.exists() or not kuzu_root.is_dir():
+                raise FileNotFoundError(f"Kuzu directory not found: {kuzu_root}")
+
+        tmp = tempfile.NamedTemporaryFile(prefix='bibliotheca_export_', suffix='.zip', delete=False)
+        tmp_path = Path(tmp.name)
+        tmp.close()
+
+        @after_this_request
+        def _cleanup_download_file(response):
+            try:
+                tmp_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+            except Exception:
+                pass
+            return response
+
+        manager = None
+        if include_db:
+            try:
+                manager = get_safe_kuzu_manager()
+            except Exception:
+                manager = None
+
+        quiesce_ctx = manager.quiesce_for_backup(reason='download_db') if manager else contextlib.nullcontext()
+        with quiesce_ctx:
+            with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.writestr('books.csv', books_csv_bytes)
+                zipf.writestr('authors.csv', authors_csv_bytes)
+                zipf.writestr('reading_history.csv', reading_csv_bytes)
+
+                if include_db and kuzu_root is not None:
+                    for file_path in kuzu_root.rglob('*'):
+                        if file_path.is_file():
+                            rel = file_path.relative_to(kuzu_root)
+                            zipf.write(file_path, f"kuzu/{rel}")
+
+        return send_file(
+            str(tmp_path),
+            as_attachment=True,
+            download_name=f"bibliotheca_export_{timestamp}.zip",
+            mimetype='application/zip'
+        )
     except Exception as e:
         current_app.logger.error(f"Error exporting data: {e}")
         flash('Error exporting data.', 'danger')
-        return redirect(url_for('main.reading_history'))
+        # Prefer returning to Settings -> Data where the action was initiated
+        try:
+            return redirect(url_for('auth.settings', section='data'))
+        except Exception:
+            return redirect(url_for('main.library'))
 
 @book_bp.route('/community_activity/active_readers')
 @login_required
